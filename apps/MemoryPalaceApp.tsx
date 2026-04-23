@@ -1022,6 +1022,15 @@ export default function MemoryPalaceApp() {
                 setAutoArchiveSyncProgress(`第 ${round} 轮：${batch.length} 条 / 剩余 ${unprocessed.length}`);
 
                 const result = await processNewMessages(batch, charId, charName, mpEmb, mpLLM, userProfile.name, true);
+
+                // 软跳过：缓冲区没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 palace 失败
+                if (result?.skipReason) {
+                    if (result.skipReason !== 'lock') {
+                        addToast('当前聊天不足以触发总结，请保持这个状态聊天~', 'info');
+                    }
+                    break;
+                }
+
                 totalProcessed += batch.length;
 
                 if (result?.autoArchive) {

@@ -1015,6 +1015,16 @@ export interface PipelineResult {
         /** 这一批 buffer 处理完后的水位线（= 最后一条被处理 Message.id），应设到 char.hideBeforeMessageId */
         hideBeforeMessageId: number;
     } | null;
+    /**
+     * 软跳过原因（非错误）：LLM 根本没跑，原因可能是缓冲区未到阈值 / 热区还没被挤出 / 已有任务在跑。
+     * caller 看到这个字段就应当提示"聊天还不够，继续聊"，而不是报"LLM 提取失败"。
+     */
+    skipReason?: 'lock' | 'hot_zone' | 'threshold';
+}
+
+/** 构造一个"软跳过"结果，统一 caller 的分支处理 */
+function makeSkipResult(reason: 'lock' | 'hot_zone' | 'threshold'): PipelineResult {
+    return { stored: 0, skipped: 0, memories: [], batches: [], skipReason: reason };
 }
 
 export async function processNewMessages(
@@ -1032,7 +1042,7 @@ export async function processNewMessages(
     // 并发锁：同一角色同时只能跑一次
     if (processingLocks.has(charId)) {
         console.log(`🏰 [Pipeline] 跳过：${charName} 已有处理任务在运行`);
-        return null;
+        return makeSkipResult('lock');
     }
     processingLocks.add(charId);
 
@@ -1049,7 +1059,7 @@ export async function processNewMessages(
 
         if (totalCount <= HOT_ZONE_SIZE) {
             console.log(`🏰 [Pipeline] 跳过：消息总数 ${totalCount} <= 热区 ${HOT_ZONE_SIZE}，无需处理`);
-            return null;
+            return makeSkipResult('hot_zone');
         }
 
         // 2. 热区 = 最后 HOT_ZONE_SIZE 条
@@ -1063,7 +1073,7 @@ export async function processNewMessages(
         const minThreshold = force ? 10 : BUFFER_THRESHOLD;
         if (buffer.length < minThreshold) {
             console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
-            return null;
+            return makeSkipResult('threshold');
         }
 
         // 4. 取前 85% 处理，保留尾部 15%
@@ -1071,7 +1081,7 @@ export async function processNewMessages(
         const toProcess = buffer.slice(0, processCount);
         const keptTail = buffer.length - processCount;
 
-        if (toProcess.length === 0) return;
+        if (toProcess.length === 0) return makeSkipResult('threshold');
 
         console.log(`🏰 [Pipeline] 开始处理缓冲区：${toProcess.length} 条消息（保留尾部 ${keptTail} 条）`);
         console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);

@@ -1055,6 +1055,15 @@ const Chat: React.FC = () => {
                 console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
 
                 const pipelineResult = await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
+
+                // 软跳过：缓冲区还没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 LLM 失败
+                if (pipelineResult?.skipReason) {
+                    if (pipelineResult.skipReason !== 'lock') {
+                        addToast('当前聊天不足以触发总结，请保持这个状态聊天~', 'info');
+                    }
+                    break;
+                }
+
                 totalProcessed += batch.length;
 
                 // 累积自动归档，统一在循环结束后 updateCharacter

@@ -678,16 +678,66 @@ ${memoryContext}
         const usage = data.usage;
         console.log(`🎭 [PersonalityDetect] ${charName} LLM 原始返回 (finish=${finishReason}, usage=${JSON.stringify(usage || {})}):\n${reply}`);
 
-        // 尝试提取 JSON
-        const jsonMatch = reply.match(/\{[\s\S]*?\}/);
-        if (jsonMatch) {
-            let parsed: any;
-            try {
-                parsed = JSON.parse(jsonMatch[0]);
-            } catch (parseErr: any) {
-                console.warn(`🎭 [PersonalityDetect] ${charName} JSON 解析失败: ${parseErr.message}，原始片段: ${jsonMatch[0]}`);
-                throw new Error(`性格检测: JSON 解析失败 (${parseErr.message})`);
+        // 带引号意识的大括号栈扫描：从 reply 里提取所有顶层 {...} 候选
+        // 老版本用 /\{[\s\S]*?\}/ 非贪婪匹配，遇到思考型模型 reasoning 里的
+        // "{迷茫,焦虑}" 之类 stray braces 会匹配错对象，JSON.parse 恰好成功
+        // 但 parsed.style / ruminationTendency 都是 undefined，然后被下面的
+        // fallback 静默吞成 emotional/0.3 —— 这就是"LLM 明明说了 0.6 结果还是 0.3"的根因
+        const jsonCandidates: string[] = [];
+        {
+            let depth = 0;
+            let start = -1;
+            let inString = false;
+            let escape = false;
+            for (let i = 0; i < reply.length; i++) {
+                const c = reply[i];
+                if (inString) {
+                    if (escape) { escape = false; continue; }
+                    if (c === '\\') { escape = true; continue; }
+                    if (c === '"') { inString = false; }
+                    continue;
+                }
+                if (c === '"') { inString = true; continue; }
+                if (c === '{') {
+                    if (depth === 0) start = i;
+                    depth++;
+                } else if (c === '}') {
+                    if (depth > 0) {
+                        depth--;
+                        if (depth === 0 && start !== -1) {
+                            jsonCandidates.push(reply.slice(start, i + 1));
+                            start = -1;
+                        }
+                    }
+                }
             }
+        }
+
+        // 在候选里挑第一个真正带 style 或 ruminationTendency 字段的
+        let parsed: any = null;
+        let pickedCandidate: string | null = null;
+        const parseErrors: string[] = [];
+        for (const cand of jsonCandidates) {
+            try {
+                const p = JSON.parse(cand);
+                if (p && typeof p === 'object' && ('style' in p || 'ruminationTendency' in p)) {
+                    parsed = p;
+                    pickedCandidate = cand;
+                    break;
+                }
+            } catch (e: any) {
+                parseErrors.push(e?.message || String(e));
+            }
+        }
+
+        if (parsed) {
+            console.log(`🎭 [PersonalityDetect] ${charName} 从 ${jsonCandidates.length} 个 JSON 候选中命中目标：${pickedCandidate}`);
+        } else {
+            console.warn(`🎭 [PersonalityDetect] ${charName} 在 ${jsonCandidates.length} 个 JSON 候选里找不到含 style/ruminationTendency 的块。候选：${JSON.stringify(jsonCandidates)}，解析错误：${JSON.stringify(parseErrors)}`);
+            throw new Error(`性格检测: 回复里找不到含 style/ruminationTendency 的 JSON${finishReason === 'length' ? '（疑似输出被截断 finish_reason=length）' : ''}`);
+        }
+
+        {
             const style = VALID_STYLES.includes(parsed.style) ? parsed.style : 'emotional';
             const rawRum = parseFloat(parsed.ruminationTendency);
             const ruminationTendency = isNaN(rawRum) ? 0.3 : Math.max(0, Math.min(1, Math.round(rawRum * 10) / 10));

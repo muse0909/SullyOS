@@ -7,7 +7,55 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>SullyOS</title>
-    
+
+    <!-- Stale-chunk auto-recovery: when a cached index.html references a chunk
+         hash that no longer exists, GitHub Pages returns 404.html (text/html),
+         which Chrome rejects with "not a valid JavaScript MIME type". Force a
+         single hard reload so the user fetches the fresh index.html. -->
+    <script>
+      (function () {
+        var KEY = '__chunk_recovery__';
+        function safeGet() { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } }
+        function safeSet() { try { sessionStorage.setItem(KEY, '1'); } catch (e) {} }
+        function safeRemove() { try { sessionStorage.removeItem(KEY); } catch (e) {} }
+        function isChunkErr(msg) {
+          msg = String(msg || '');
+          return msg.indexOf('MIME type') !== -1
+              || msg.indexOf('disallowed MIME') !== -1
+              || msg.indexOf('Failed to fetch dynamically imported module') !== -1
+              || msg.indexOf('error loading dynamically imported module') !== -1
+              || msg.indexOf('Importing a module script failed') !== -1;
+        }
+        function isSameOriginScript(target) {
+          if (!target || target.tagName !== 'SCRIPT') return false;
+          var src = target.src;
+          if (!src) return false;
+          try { return new URL(src, location.href).origin === location.origin; }
+          catch (e) { return false; }
+        }
+        function recover() {
+          if (safeGet()) return;
+          safeSet();
+          try {
+            var u = new URL(location.href);
+            u.searchParams.set('_r', Date.now().toString());
+            location.replace(u.toString());
+          } catch (e) { location.reload(); }
+        }
+        window.addEventListener('error', function (e) {
+          if (!e) return;
+          if (isChunkErr(e.message) || isSameOriginScript(e.target)) recover();
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          if (isChunkErr(r && (r.message || r))) recover();
+        });
+        window.addEventListener('load', function () {
+          setTimeout(safeRemove, 5000);
+        });
+      })();
+    </script>
+
     <!-- PWA Settings -->
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#0f1115" />

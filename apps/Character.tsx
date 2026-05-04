@@ -55,7 +55,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks, addWorldbook } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -890,20 +890,43 @@ ${isInitialGeneration ? `
                   }
               }
 
+              // Sync mounted worldbooks into the global worldbook app so they
+              // appear under their original category (or the character's name
+              // as a sensible fallback when the card has no category set).
+              const incomingMounted = (data.mountedWorldbooks || []).map(wb => ({ ...wb }));
+              const fallbackCategory = `${data.name || '导入角色'} 的世界书`;
+              let importedWbCount = 0;
+              for (const wb of incomingMounted) {
+                  if (!wb.id || worldbooks.some(existing => existing.id === wb.id)) continue;
+                  const category = wb.category && wb.category.trim() ? wb.category : fallbackCategory;
+                  wb.category = category;
+                  await addWorldbook({
+                      id: wb.id,
+                      title: wb.title || '未命名设定',
+                      content: wb.content || '',
+                      category,
+                      createdAt: Date.now(),
+                      updatedAt: Date.now(),
+                  });
+                  importedWbCount++;
+              }
+
               const newChar: CharacterProfile = {
                   ...data,
-                  id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, 
+                  id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
                   memories: [],
                   refinedMemories: {},
                   activeMemoryMonths: [],
-                  embeddedTheme: undefined 
+                  mountedWorldbooks: incomingMounted,
+                  embeddedTheme: undefined
               } as CharacterProfile;
 
               await DB.saveCharacter(newChar);
               addCharacter(); // Force refresh (naive)
-              setTimeout(() => window.location.reload(), 500); 
-              
-              addToast(`角色 ${newChar.name} 导入成功`, 'success');
+              setTimeout(() => window.location.reload(), 500);
+
+              const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
+              addToast(`角色 ${newChar.name} 导入成功${wbToastSuffix}`, 'success');
 
           } catch (err: any) {
               console.error(err);

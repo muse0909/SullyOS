@@ -50,12 +50,18 @@ const GlobalMiniPlayer: React.FC = () => {
   } | null>(null);
   const longPressTimer = useRef<number | null>(null);
 
-  // 切歌时如果被隐藏了，自动再显示
+  // 只有用户真正"重新按下播放"（playing 从 false → true）才自动取消隐藏。
+  // 仅靠 current.id 判断会让组件每次挂载（比如打开聊天 App）就把上一首歌"复活"显示出来——
+  // 即使用户上次已经手动关掉了球、并且当下并没有在听歌。
+  // ref 初始化为当前 playing 值：避免挂载瞬间被误判为 false→true 跳变。
+  const prevPlayingRef = useRef(playing);
   useEffect(() => {
-    if (!current) return;
-    setHidden(false);
-    try { sessionStorage.removeItem(HIDDEN_KEY); } catch {}
-  }, [current?.id]);
+    if (playing && !prevPlayingRef.current) {
+      setHidden(false);
+      try { sessionStorage.removeItem(HIDDEN_KEY); } catch {}
+    }
+    prevPlayingRef.current = playing;
+  }, [playing]);
 
   // 持久化位置
   useEffect(() => {

@@ -5,6 +5,7 @@ import { Sparkle } from '@phosphor-icons/react';
 import {
     FAQ_TARGET_SECTION_KEY,
     CHANGELOG_2026_04,
+    CHANGELOG_2026_05,
 } from '../components/UpdateNotificationEvent';
 
 const FAQ_DATA = [
@@ -91,12 +92,20 @@ interface ChangelogEntry {
 
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     {
+        id: CHANGELOG_2026_05,
+        title: '2026 年 5 月更新',
+        subtitle: 'GitHub 备份 · 音乐 App 网络优化 · 麦当劳 MCP · SULLY 默认皮肤 等',
+        date: '2026-05',
+        src: 'changelogs/2026-5.html',
+        accent: 'from-amber-100 to-orange-100 border-amber-200',
+    },
+    {
         id: CHANGELOG_2026_04,
         title: '2026 年 4 月更新',
         subtitle: '向量记忆 · 更新说明与配置指南',
         date: '2026-04',
         src: 'changelogs/2026-4.html',
-        accent: 'from-amber-100 to-rose-100 border-amber-200',
+        accent: 'from-indigo-100 to-purple-100 border-indigo-200',
     },
 ];
 

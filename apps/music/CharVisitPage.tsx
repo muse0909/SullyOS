@@ -132,28 +132,69 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
     setExpandedPl(prev => (prev === plId ? null : plId));
   };
 
-  /** 让 char 用偏爱艺人作为关键词去搜歌 → 自动填充空歌单 */
+  /** 让 char 用偏爱艺人作为关键词去搜歌 → 自动填充空歌单
+   *  关键：每个歌单走一组**不同**的关键词，否则三个歌单会搜出一模一样的歌。
+   *  - 用歌单自己的 title / mood 作为主关键词（区别度最高）
+   *  - 再按歌单 index 旋转 signatureArtists 取一段，保证不同歌单艺人不重叠
+   *  - 还要去掉本角色其它歌单已经有的歌，避免跨歌单撞曲
+   */
   const fillPlaylistFromTaste = useCallback(async (pl: CharPlaylist) => {
     if (!char || !profile || fillingPl) return;
     setFillingPl(pl.id);
     try {
-      // 混合曲风 + 艺人作为搜索关键词，取前 2 个艺人或前 2 个曲风
-      const artists = profile.signatureArtists.slice(0, 3).map(a => a.name);
-      const keywords = artists.length > 0 ? artists : profile.genreTags.slice(0, 2);
-      if (keywords.length === 0) {
+      const moodKeywordMap: Record<string, string> = {
+        happy: '快乐', sad: '悲伤', romantic: '浪漫', angry: '发泄',
+        chill: '放松', epic: '史诗', nostalgic: '怀旧', dreamy: '氛围',
+      };
+
+      const plIndex = Math.max(0, profile.playlists.findIndex(p => p.id === pl.id));
+      const allArtists = profile.signatureArtists.map(a => a.name).filter(Boolean);
+      const allGenres = profile.genreTags.filter(Boolean);
+
+      // 按歌单序号轮换艺人/曲风，让 A/B/C 三个歌单永远拿到不同切片
+      const rotate = (arr: string[], offset: number, take: number): string[] => {
+        if (arr.length === 0) return [];
+        const out: string[] = [];
+        for (let i = 0; i < take && i < arr.length; i++) {
+          out.push(arr[(offset + i) % arr.length]);
+        }
+        return out;
+      };
+
+      const keywords: string[] = [];
+      // 1) 歌单自己的 title 直接当关键词 — 这是最能拉开差异的一项
+      const cleanTitle = (pl.title || '').trim();
+      if (cleanTitle && !/^歌单\s*\d*$/.test(cleanTitle)) keywords.push(cleanTitle);
+      // 2) mood → 中文搜索词
+      if (pl.mood && moodKeywordMap[pl.mood]) keywords.push(moodKeywordMap[pl.mood]);
+      // 3) 旋转后的艺人（每歌单 2 个，错开起点）
+      keywords.push(...rotate(allArtists, plIndex * 2, 2));
+      // 4) 没艺人就用旋转后的曲风兜底
+      if (allArtists.length === 0) keywords.push(...rotate(allGenres, plIndex, 2));
+
+      // 去重 + 去空
+      const uniqKeywords = Array.from(new Set(keywords.map(k => k.trim()).filter(Boolean)));
+      if (uniqKeywords.length === 0) {
         addToast('还没有足够的品味数据，先初始化一下吧', 'info');
         return;
       }
 
+      // 跨歌单去重：本角色其它歌单已经有的歌不要再塞进来
+      const usedInOthers = new Set<number>();
+      for (const other of profile.playlists) {
+        if (other.id === pl.id) continue;
+        for (const s of other.songs) usedInOthers.add(s.id);
+      }
+
       const picked: CharPlaylistSong[] = [];
       const seen = new Set<number>();
-      for (const kw of keywords) {
+      for (const kw of uniqKeywords) {
         if (picked.length >= 8) break;
         try {
           const r = await musicApi.search(cfg, kw);
           const songs: Song[] = (r?.result?.songs || []).slice(0, 4).map(songFromSearch);
           for (const s of songs) {
-            if (seen.has(s.id)) continue;
+            if (seen.has(s.id) || usedInOthers.has(s.id)) continue;
             seen.add(s.id);
             picked.push(toPlaylistSong(s));
             if (picked.length >= 8) break;

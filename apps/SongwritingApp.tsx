@@ -1,17 +1,62 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { SongSheet, SongLine, SongComment, SongMood, SongGenre } from '../types';
-import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
+import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio, MusicProvider, AppID } from '../types';
+import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts, LYRIC_TEMPLATES, getLyricTemplate } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson, extractJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
+import {
+    synthesizeSong,
+    buildAceStepTags,
+    buildAceStepLyrics,
+    hashSongInputs,
+    loadSongAudioBlob,
+    generatePromptViaLLM,
+    VOICE_PRESETS,
+    type AceStepInput,
+} from '../utils/aceStepApi';
+import {
+    synthesizeSongMinimax,
+    buildMinimaxMusicPrompt,
+    buildMinimaxMusicLyrics,
+    hashMinimaxMusicInputs,
+    loadMinimaxMusicBlob,
+    type MinimaxMusicInput,
+} from '../utils/minimaxMusic';
+import { C as MusicC, Sparkle, CrossStar, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
-import { Check, PencilSimple } from '@phosphor-icons/react';
+import {
+    Check, PencilSimple,
+    Sparkle as SparkleP, Butterfly, Feather, Lightning, MicrophoneStage,
+    MusicNotes, Wind, Cookie, UsersThree, Heart, Diamond, MusicNoteSimple,
+    HeartStraight,
+} from '@phosphor-icons/react';
+import { useMusic, type Song as MusicSong } from '../context/MusicContext';
 
 // --- Helper Components ---
+
+// Phosphor icon map for voice presets — replaces flat emoji with weighted line art
+const VOICE_ICONS: Record<string, React.ComponentType<any>> = {
+    'auto':         SparkleP,
+    'female-sweet': Butterfly,
+    'female-soft':  Feather,
+    'female-rock':  Lightning,
+    'male-deep':    MicrophoneStage,
+    'male-high':    MusicNotes,
+    'male-soft':    Wind,
+    'child':        Cookie,
+    'duet':         UsersThree,
+};
+
+// Phosphor icon map for music providers (used in modal segmented picker)
+const PROVIDER_ICONS: Record<string, React.ComponentType<any>> = {
+    'minimax-free': Heart,
+    'minimax-paid': Diamond,
+    'ace-step':     MusicNoteSimple,
+};
 
 const SectionBadge: React.FC<{ section: string; small?: boolean }> = ({ section, small }) => {
     const info = SECTION_LABELS[section] || { label: section, color: 'bg-stone-200/60 text-stone-600' };
@@ -31,10 +76,11 @@ function mkPendingItem(l: SongLine): TimelineItem { return { kind: 'pending', da
 // --- Main App ---
 
 const SongwritingApp: React.FC = () => {
-    const { closeApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, openApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
+    const { addLocalSong, removeLocalSong, localAlbumSongs, playSong, current: currentMusicSong, markRegenerating } = useMusic();
 
     // Navigation
-    const [view, setView] = useState<'shelf' | 'create' | 'write' | 'preview'>('shelf');
+    const [view, setView] = useState<'shelf' | 'create' | 'partner' | 'write' | 'preview'>('shelf');
     const [activeSong, setActiveSong] = useState<SongSheet | null>(null);
 
     // Create Form State
@@ -44,6 +90,8 @@ const SongwritingApp: React.FC = () => {
     const [tempMood, setTempMood] = useState<SongMood>('happy');
     const [tempCollaboratorId, setTempCollaboratorId] = useState('');
     const [tempCoverStyle, setTempCoverStyle] = useState(COVER_STYLES[0]?.id || 'dawn-blush');
+    const [tempTemplate, setTempTemplate] = useState<string>('free');
+    const [showStructureBanner, setShowStructureBanner] = useState(true);
     const [customCoverFrom, setCustomCoverFrom] = useState('#FB7185');
     const [customCoverVia, setCustomCoverVia] = useState('#A855F7');
     const [customCoverTo, setCustomCoverTo] = useState('#2563EB');
@@ -66,6 +114,39 @@ const SongwritingApp: React.FC = () => {
     const [isCompleting, setIsCompleting] = useState(false);
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareTargetCharId, setShareTargetCharId] = useState('');
+
+    // ACE-Step audio synth (preview view)
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+    const [audioGenStatus, setAudioGenStatus] = useState<string>('');
+    const [audioError, setAudioError] = useState<string | null>(null);
+    const audioAbortRef = useRef<AbortController | null>(null);
+    // Track which song the current blob: URL belongs to so we can revoke it on switch
+    const currentAudioOwnerRef = useRef<string | null>(null);
+    // Voice preset (per-song, persisted in localStorage)
+    const [voicePresetId, setVoicePresetIdState] = useState<string>('auto');
+    // Unified "AI 出歌引导" modal — entry point now lives on the big button
+    const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+    const [promptGuidance, setPromptGuidance] = useState('');
+    const [promptDraft, setPromptDraft] = useState('');
+    const [isAiWritingPrompt, setIsAiWritingPrompt] = useState(false);
+    // Active music provider for the modal — defaults to whichever key the user has,
+    // preferring free MiniMax over paid ACE-Step. Saved per song via SongSheet.musicProvider.
+    const [provider, setProvider] = useState<MusicProvider>('minimax-free');
+    // Custom shizuku-styled audio player state (replaces <audio controls>)
+    const audioElRef = useRef<HTMLAudioElement | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [playProgress, setPlayProgress] = useState(0);
+    const [playDuration, setPlayDuration] = useState(0);
+    // Cover confirm modal — opens between ❤︎ click and music-app jump
+    type CoverMode = 'char' | 'user' | 'dual';
+    const [showCoverConfirm, setShowCoverConfirm] = useState(false);
+    const [coverMode, setCoverMode] = useState<CoverMode>('char');
+    const [dualCoverUrl, setDualCoverUrl] = useState<string | null>(null);
+    const [isBuildingDual, setIsBuildingDual] = useState(false);
+    // 冷却已关闭 — 后端撑得住, 留 0 让所有 cooldownSecsLeft > 0 分支自然成 dead code。
+    const COOLDOWN_MS = 0;
+    const [cooldownSecsLeft, setCooldownSecsLeft] = useState(0);
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -169,6 +250,12 @@ const SongwritingApp: React.FC = () => {
 
     // --- CRUD ---
 
+    /** Step 1 → step 2: validate basics, then jump to partner-pick view. */
+    const handleGoPartner = () => {
+        if (!tempTitle.trim()) { addToast('请给歌曲起个名字', 'error'); return; }
+        setView('partner');
+    };
+
     const handleCreate = () => {
         if (!tempTitle.trim()) { addToast('请给歌曲起个名字', 'error'); return; }
         if (!tempCollaboratorId) { addToast('请选择一个角色作为创作伙伴', 'error'); return; }
@@ -186,6 +273,7 @@ const SongwritingApp: React.FC = () => {
             coverStyle: tempCoverStyle,
             createdAt: Date.now(),
             lastActiveAt: Date.now(),
+            lyricTemplate: tempTemplate || 'free',
         };
         addSong(newSong);
         setActiveSong(newSong);
@@ -197,6 +285,7 @@ const SongwritingApp: React.FC = () => {
         setTempTitle(''); setTempSubtitle(''); setTempGenre('pop'); setTempMood('happy');
         setTempCollaboratorId(''); setTempCoverStyle(COVER_STYLES[0]?.id || 'dawn-blush');
         setCustomCoverFrom('#FB7185'); setCustomCoverVia('#A855F7'); setCustomCoverTo('#2563EB');
+        setTempTemplate('free');
     };
 
     const handleDeleteSong = (id: string) => {
@@ -615,6 +704,546 @@ const SongwritingApp: React.FC = () => {
         setPendingLines([]);
     };
 
+    // --- ACE-Step audio synth (preview view) ---
+
+    // Provider availability — detected from configured keys
+    const hasMiniMaxKey = !!(apiConfig.minimaxApiKey || apiConfig.apiKey);
+    const hasReplicateKey = !!apiConfig.aceStepApiKey?.trim();
+
+    /** Pick the best default provider given keys + previous song setting. */
+    const pickDefaultProvider = useCallback((song?: SongSheet | null): MusicProvider => {
+        if (song?.musicProvider) {
+            // Honor previous choice if its key is still configured
+            if (song.musicProvider === 'ace-step' && hasReplicateKey) return 'ace-step';
+            if (song.musicProvider !== 'ace-step' && hasMiniMaxKey) return song.musicProvider;
+        }
+        if (hasMiniMaxKey) return 'minimax-free';
+        if (hasReplicateKey) return 'ace-step';
+        return 'minimax-free'; // best fallback — modal will warn
+    }, [hasMiniMaxKey, hasReplicateKey]);
+
+    // Per-song voice preset persistence + reset provider on song switch
+    const voicePresetStorageKey = (songId: string) => `ace-step:voice:${songId}`;
+    useEffect(() => {
+        if (!activeSong?.id) return;
+        try {
+            const stored = localStorage.getItem(voicePresetStorageKey(activeSong.id));
+            setVoicePresetIdState(stored || 'auto');
+        } catch {
+            setVoicePresetIdState('auto');
+        }
+        setProvider(pickDefaultProvider(activeSong));
+    }, [activeSong?.id, pickDefaultProvider]);
+    const setVoicePresetId = useCallback((id: string) => {
+        setVoicePresetIdState(id);
+        if (activeSong?.id) {
+            try { localStorage.setItem(voicePresetStorageKey(activeSong.id), id); } catch { /* ignore */ }
+        }
+    }, [activeSong?.id]);
+
+    // Cooldown ticker — reads last-fire timestamp from localStorage so cooldown
+    // survives reloads. Free-plan sfworker protection: 60s between requests.
+    const COOLDOWN_KEY = 'ace-step:last-fire-at';
+    useEffect(() => {
+        const tick = () => {
+            try {
+                const last = parseInt(localStorage.getItem(COOLDOWN_KEY) || '0', 10);
+                if (!last) { setCooldownSecsLeft(0); return; }
+                const remaining = Math.max(0, Math.ceil((last + COOLDOWN_MS - Date.now()) / 1000));
+                setCooldownSecsLeft(remaining);
+            } catch { setCooldownSecsLeft(0); }
+        };
+        tick();
+        const id = setInterval(tick, 500);
+        return () => clearInterval(id);
+    }, []);
+
+    // Hydrate previously rendered audio when entering preview, and revoke any
+    // stale blob URL when switching songs / leaving the view.
+    useEffect(() => {
+        let cancelled = false;
+        if (view !== 'preview' || !activeSong?.audio?.assetKey) {
+            // Switching away — drop the URL we last created.
+            if (audioUrl && currentAudioOwnerRef.current !== activeSong?.id) {
+                URL.revokeObjectURL(audioUrl);
+                setAudioUrl(null);
+                currentAudioOwnerRef.current = null;
+            }
+            setAudioError(null);
+            return;
+        }
+        // Already showing this song's audio — nothing to do.
+        if (currentAudioOwnerRef.current === activeSong.id && audioUrl) return;
+
+        const assetKey = activeSong.audio.assetKey;
+        loadSongAudioBlob(assetKey).then(result => {
+            if (cancelled || !result) return;
+            const url = URL.createObjectURL(result.blob);
+            setAudioUrl(url);
+            currentAudioOwnerRef.current = activeSong.id;
+        }).catch(() => { /* ignore — user can regenerate */ });
+
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, activeSong?.id, activeSong?.audio?.assetKey]);
+
+    // Cancel any in-flight generation when the component unmounts or song changes.
+    useEffect(() => {
+        return () => {
+            audioAbortRef.current?.abort();
+            audioAbortRef.current = null;
+        };
+    }, [activeSong?.id]);
+
+    /**
+     * Run a synth with the given provider + style prompt string. Single source
+     * of truth for both modal confirm and "重录" button.
+     */
+    const runSynth = async (providerArg: MusicProvider, promptArg: string) => {
+        if (!activeSong) return;
+
+        // Provider-specific key check
+        if (providerArg === 'ace-step') {
+            if (!apiConfig.aceStepApiKey?.trim()) {
+                addToast('请先在「设置」里填 Replicate API Token', 'error');
+                return;
+            }
+        } else {
+            if (!apiConfig.minimaxApiKey && !apiConfig.apiKey) {
+                addToast('请先在「设置」里填 MiniMax API Key', 'error');
+                return;
+            }
+        }
+
+        // Cooldown gate — protects sfworker / MiniMax RPM
+        if (cooldownSecsLeft > 0) {
+            addToast(`冷却中，再等 ${cooldownSecsLeft}s`, 'info');
+            return;
+        }
+
+        const finalLines = activeSong.lines.filter(l => !l.isDraft);
+        if (finalLines.length === 0) {
+            addToast('歌词是空的，先写两句再来', 'error');
+            return;
+        }
+
+        const styleStr = (promptArg || '').trim() || buildAceStepTags(activeSong, voicePresetId);
+
+        // Stamp the cooldown immediately so a same-second double-tap is blocked
+        try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch { /* ignore */ }
+        setCooldownSecsLeft(Math.ceil(COOLDOWN_MS / 1000));
+
+        setIsGeneratingAudio(true);
+        setAudioError(null);
+        setAudioGenStatus('排队中…');
+        const ctrl = new AbortController();
+        audioAbortRef.current = ctrl;
+
+        // Push regen state to MusicContext so MusicApp / MiniPlayer also show progress
+        const localId = localSongIdFor(activeSong.id);
+        const wasInAlbumBefore = localAlbumSongs.some(s => s.id === localId);
+        markRegenerating(localId, '排队中…');
+
+        const statusMap: Record<string, string> = {
+            resolving: '查询模型版本…',
+            starting: '模型冷启动中…',
+            processing: '生成中…',
+            downloading: '下载音频…',
+            done: '完成',
+            cached: '已命中缓存',
+        };
+
+        try {
+            let assetKey: string;
+            let resultUrl: string;
+            let resultMime: string;
+            let cached: boolean;
+            let promptHash: string;
+
+            // Wrap status callback so it updates BOTH local dock and global music app indicator
+            const pushStatus = (s: string) => {
+                const friendly = statusMap[s] || s;
+                setAudioGenStatus(friendly);
+                markRegenerating(localId, friendly);
+            };
+
+            if (providerArg === 'ace-step') {
+                const lyrics = buildAceStepLyrics(activeSong.lines);
+                const input: AceStepInput = { tags: styleStr, lyrics };
+                const result = await synthesizeSong(input, apiConfig, {
+                    signal: ctrl.signal,
+                    onStatus: pushStatus,
+                    // Modal flow always means user wants a fresh take; cooldown +
+                    // explicit "开始录制" click already establishes intent.
+                    forceRegenerate: true,
+                });
+                assetKey = result.assetKey;
+                resultUrl = result.url;
+                resultMime = result.mimeType;
+                cached = result.cached;
+                promptHash = hashSongInputs(input);
+            } else {
+                const lyrics = buildMinimaxMusicLyrics(activeSong.lines);
+                const model = providerArg === 'minimax-paid' ? 'music-2.6' : 'music-2.6-free';
+                const input: MinimaxMusicInput = { model, prompt: styleStr, lyrics };
+                const result = await synthesizeSongMinimax(input, apiConfig, {
+                    signal: ctrl.signal,
+                    onStatus: pushStatus,
+                    forceRegenerate: true,
+                });
+                assetKey = result.assetKey;
+                resultUrl = result.url;
+                resultMime = result.mimeType;
+                cached = result.cached;
+                promptHash = hashMinimaxMusicInputs(input);
+            }
+
+            // Replace any previous blob URL on this song
+            if (audioUrl && currentAudioOwnerRef.current === activeSong.id) {
+                URL.revokeObjectURL(audioUrl);
+            }
+            setAudioUrl(resultUrl);
+            currentAudioOwnerRef.current = activeSong.id;
+
+            const audioMeta: SongAudio = {
+                assetKey,
+                mimeType: resultMime,
+                generatedAt: Date.now(),
+                provider: providerArg,
+                promptHash,
+                tagsUsed: styleStr,
+                lyricsLineCount: finalLines.length,
+            };
+            const updated = { ...activeSong, audio: audioMeta, musicProvider: providerArg };
+            setActiveSong(updated);
+            await updateSong(activeSong.id, { audio: audioMeta, musicProvider: providerArg });
+            addToast(cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
+
+            // ── 默认 like 点亮 ── 一生成出来就自动加入「一起写的歌」相册，
+            // 用 char 头像作默认封面。用户依然可以点 ❤︎ 改封面 / 移除 / 去音乐 App 听。
+            const authorNames = [
+                userProfile?.name || '我',
+                collaborator?.name || 'AI',
+            ].filter(Boolean).join(' & ');
+            const localSong: MusicSong = {
+                id: localId,
+                name: activeSong.title || '未命名',
+                artists: authorNames,
+                album: '一起写的歌',
+                albumPic: collaborator?.avatar || '',
+                duration: audioMeta.durationSec ?? finalLines.length * 5,
+                fee: 0,
+                local: true,
+                localAssetKey: audioMeta.assetKey,
+                localMimeType: audioMeta.mimeType,
+                localCoverStyle: activeSong.coverStyle,
+                customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+                localLyrics: buildMinimaxMusicLyrics(activeSong.lines),
+            };
+            addLocalSong(localSong);
+
+            // ── 如果音乐 App 此刻正在播这首歌（重录前的旧版本），自动重播新版本 ──
+            // playSong 的本地分支会从 IndexedDB 重读 blob → 用户立即听到新版本，
+            // 不用手动操作。
+            if (wasInAlbumBefore && currentMusicSong?.id === localId) {
+                playSong(localSong, { alsoSetQueue: false });
+                addToast('音乐 App 已切到新版本', 'info');
+            }
+        } catch (err: any) {
+            if (err?.name === 'AbortError') {
+                setAudioGenStatus('已取消');
+            } else {
+                console.error('[Music] generate failed', err);
+                const msg = err?.message || String(err);
+                setAudioError(msg);
+                addToast(`出歌失败: ${msg.slice(0, 60)}`, 'error');
+            }
+        } finally {
+            setIsGeneratingAudio(false);
+            audioAbortRef.current = null;
+            // Always clear regen state, even on error/abort
+            markRegenerating(null);
+        }
+    };
+
+    const handleCancelGenerate = () => {
+        audioAbortRef.current?.abort();
+    };
+
+    // ── Shizuku-styled audio player wiring ──
+
+    // Reset player state whenever the audio source changes (new render or song switch)
+    useEffect(() => {
+        setIsPlaying(false);
+        setPlayProgress(0);
+        setPlayDuration(0);
+    }, [audioUrl]);
+
+    const handleTogglePlay = useCallback(() => {
+        const el = audioElRef.current;
+        if (!el) return;
+        if (el.paused) {
+            el.play().catch(() => { /* autoplay can fail silently */ });
+        } else {
+            el.pause();
+        }
+    }, []);
+
+    const handleSeek = useCallback((pct: number) => {
+        const el = audioElRef.current;
+        if (!el || !playDuration) return;
+        el.currentTime = Math.max(0, Math.min(playDuration, pct * playDuration));
+        setPlayProgress(el.currentTime);
+    }, [playDuration]);
+
+    const fmtTime = (s: number): string => {
+        if (!isFinite(s) || s < 0) return '0:00';
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m}:${String(sec).padStart(2, '0')}`;
+    };
+
+    // ── Prompt modal: entry point + AI helper + confirm ──
+
+    /** Open the unified "AI 出歌引导" modal — also the entry point for generation. */
+    const openCustomPromptModal = () => {
+        if (!activeSong) return;
+        // Pre-fill the editable tags with whatever would be sent right now
+        const current = activeSong.aceStepCustomTags || buildAceStepTags(activeSong, voicePresetId);
+        setPromptDraft(current);
+        setPromptGuidance('');
+        setShowCustomPrompt(true);
+    };
+
+    /**
+     * Modal "开始录制" — persist the final tags then kick off synth with them
+     * passed directly (so we don't have to wait for state to flush).
+     */
+    const handleConfirmAndGenerate = async () => {
+        if (!activeSong) return;
+        if (cooldownSecsLeft > 0) {
+            addToast(`冷却中，再等 ${cooldownSecsLeft}s`, 'info');
+            return;
+        }
+        const tags = promptDraft.trim();
+        if (!tags) {
+            addToast('tags 不能为空', 'error');
+            return;
+        }
+        const updatedSong = { ...activeSong, aceStepCustomTags: tags };
+        setActiveSong(updatedSong);
+        await updateSong(activeSong.id, { aceStepCustomTags: tags });
+        setShowCustomPrompt(false);
+        runSynth(provider, tags);
+    };
+
+    const handleAiWritePrompt = async () => {
+        if (!activeSong) return;
+        if (!apiConfig.baseUrl || !apiConfig.apiKey) {
+            addToast('请先在「设置」里配置 LLM API', 'error');
+            return;
+        }
+        setIsAiWritingPrompt(true);
+        try {
+            // MiniMax 是中文模型 → 输出中文 natural-language prompt
+            // ACE-Step 国外模型 → 输出英文 comma-separated tags
+            const lang: 'en' | 'zh' = provider === 'ace-step' ? 'en' : 'zh';
+            const generated = await generatePromptViaLLM(promptGuidance.trim(), activeSong, apiConfig, collaborator, undefined, lang);
+            setPromptDraft(generated);
+            addToast(promptGuidance.trim() ? 'AI 已结合角色生成' : `AI 凭${collaborator?.name || '角色'}的气质写了一段`, 'success');
+        } catch (err: any) {
+            console.error('[ACE-Step] LLM prompt failed', err);
+            addToast(`生成失败: ${err?.message?.slice(0, 80) || err}`, 'error');
+        } finally {
+            setIsAiWritingPrompt(false);
+        }
+    };
+
+    /** Reset draft tags back to whatever the preset+genre+mood combo would be. */
+    const handleResetCustomPrompt = () => {
+        if (!activeSong) return;
+        setPromptDraft(buildAceStepTags(activeSong, voicePresetId));
+    };
+
+    // ── 喜欢 → 加入「一起写的歌」专辑（同步到音乐 App） ──
+
+    /** Stable synthetic song id derived from songId — avoids netease numeric collision. */
+    const localSongIdFor = useCallback((songId: string): number => {
+        // Use a hash of songId + a fixed negative offset to guarantee non-netease range
+        let h = 0;
+        for (let i = 0; i < songId.length; i++) {
+            h = (Math.imul(31, h) + songId.charCodeAt(i)) | 0;
+        }
+        // Negative range is "free" — netease ids are positive 32/64-bit ints.
+        return -1_000_000 - Math.abs(h);
+    }, []);
+
+    const isLikedToMusic = useMemo(() => {
+        if (!activeSong) return false;
+        const localId = localSongIdFor(activeSong.id);
+        return localAlbumSongs.some(s => s.id === localId);
+    }, [activeSong?.id, localAlbumSongs, localSongIdFor]);
+
+    /** Compose user + char avatars side-by-side on canvas → data URL. */
+    const buildDualCover = useCallback(async (charUrl: string, userUrl: string): Promise<string | null> => {
+        try {
+            const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+            });
+            const canvas = document.createElement('canvas');
+            const SIZE = 400;
+            canvas.width = SIZE; canvas.height = SIZE;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+
+            // 樱粉 → 薰衣草 → 水蓝渐变背景
+            const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+            grad.addColorStop(0, '#f2b8c6');
+            grad.addColorStop(0.5, '#c5b3e6');
+            grad.addColorStop(1, '#9bcbf8');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, SIZE, SIZE);
+
+            // 半圆裁切左右两边 — 用户在左，char 在右
+            const drawCircle = (img: HTMLImageElement, cx: number, cy: number, r: number) => {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+                const ratio = Math.max(2 * r / img.width, 2 * r / img.height);
+                const w = img.width * ratio; const h = img.height * ratio;
+                ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+                ctx.restore();
+                // 描边
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                ctx.lineWidth = 5;
+                ctx.stroke();
+            };
+
+            const tasks: Promise<HTMLImageElement | null>[] = [
+                charUrl ? loadImg(charUrl).catch(() => null) : Promise.resolve(null),
+                userUrl ? loadImg(userUrl).catch(() => null) : Promise.resolve(null),
+            ];
+            const [charImg, userImg] = await Promise.all(tasks);
+            if (userImg) drawCircle(userImg, SIZE * 0.32, SIZE * 0.55, SIZE * 0.22);
+            if (charImg) drawCircle(charImg, SIZE * 0.68, SIZE * 0.55, SIZE * 0.22);
+
+            // 顶部小标题
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.font = 'bold 22px Georgia, "Noto Serif SC", serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('一起写的歌', SIZE / 2, SIZE * 0.18);
+
+            try {
+                return canvas.toDataURL('image/jpeg', 0.85);
+            } catch {
+                // CORS taint — fallback null
+                return null;
+            }
+        } catch {
+            return null;
+        }
+    }, []);
+
+    /** Open the manage-album-entry modal. Always opens regardless of liked state —
+     *  for liked songs it lets you edit cover / remove / go listen; for unliked
+     *  (user previously removed) it re-adds. */
+    const handleSendToMusicApp = async () => {
+        if (!activeSong || !activeSong.audio) {
+            addToast('歌还没生成出来', 'info');
+            return;
+        }
+        // Reset modal state — pre-pick char avatar, no dual cached
+        setCoverMode('char');
+        setDualCoverUrl(null);
+        setShowCoverConfirm(true);
+    };
+
+    /** Remove the song from local album (un-like). Closes modal. */
+    const handleRemoveFromAlbum = () => {
+        if (!activeSong) return;
+        const localId = localSongIdFor(activeSong.id);
+        removeLocalSong(localId);
+        setShowCoverConfirm(false);
+        addToast('已从「一起写的歌」移除', 'info');
+    };
+
+    /** Step 2: confirm cover → actually add to album + play + jump to MusicApp. */
+    const handleConfirmAddToAlbum = async () => {
+        if (!activeSong || !activeSong.audio) return;
+
+        const localId = localSongIdFor(activeSong.id);
+        const authorNames = [
+            userProfile?.name || '我',
+            collaborator?.name || 'AI',
+        ].filter(Boolean).join(' & ');
+
+        // Resolve the chosen albumPic
+        let albumPic = '';
+        if (coverMode === 'char') {
+            albumPic = collaborator?.avatar || '';
+        } else if (coverMode === 'user') {
+            albumPic = userProfile?.avatar || '';
+        } else if (coverMode === 'dual') {
+            // Reuse cached dual URL or build now
+            if (dualCoverUrl) {
+                albumPic = dualCoverUrl;
+            } else {
+                setIsBuildingDual(true);
+                const built = await buildDualCover(collaborator?.avatar || '', userProfile?.avatar || '');
+                setIsBuildingDual(false);
+                albumPic = built || collaborator?.avatar || '';
+            }
+        }
+
+        const durationSec = activeSong.audio.durationSec
+            ?? Math.max(playDuration, 0)
+            ?? 0;
+        const lyricsText = buildMinimaxMusicLyrics(activeSong.lines);
+
+        const localSong: MusicSong = {
+            id: localId,
+            name: activeSong.title || '未命名',
+            artists: authorNames,
+            album: '一起写的歌',
+            albumPic,
+            duration: durationSec,
+            fee: 0,
+            local: true,
+            localAssetKey: activeSong.audio.assetKey,
+            localMimeType: activeSong.audio.mimeType,
+            localCoverStyle: activeSong.coverStyle,
+            customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+            localLyrics: lyricsText,
+        };
+        addLocalSong(localSong);
+        setShowCoverConfirm(false);
+        addToast(`已加入「一起写的歌」专辑 ❤︎`, 'success');
+        playSong(localSong, { alsoSetQueue: true });
+        openApp(AppID.Music);
+    };
+
+    // Pre-compute the dual cover when user picks that mode for instant preview.
+    useEffect(() => {
+        if (coverMode !== 'dual' || dualCoverUrl || isBuildingDual) return;
+        if (!collaborator?.avatar && !userProfile?.avatar) return;
+        setIsBuildingDual(true);
+        buildDualCover(collaborator?.avatar || '', userProfile?.avatar || '').then(url => {
+            if (url) setDualCoverUrl(url);
+            setIsBuildingDual(false);
+        });
+    }, [coverMode, collaborator?.avatar, userProfile?.avatar, dualCoverUrl, isBuildingDual, buildDualCover]);
+
+    /** Apply a voice-preset chip click — overwrite the draft with new tag string. */
+    const applyVoicePreset = (presetId: string) => {
+        if (!activeSong) return;
+        setVoicePresetId(presetId);
+        setPromptDraft(buildAceStepTags(activeSong, presetId));
+    };
+
     // ==================== RENDER ====================
 
     // --- Shelf View ---
@@ -623,19 +1252,41 @@ const SongwritingApp: React.FC = () => {
         const completed = songs.filter(s => s.status === 'completed');
 
         return (
-            <div className="h-full w-full bg-[#F5F0E8] flex flex-col font-sans relative overflow-hidden">
+            <div
+                className="h-full w-full flex flex-col font-sans relative overflow-hidden"
+                style={{ background: `linear-gradient(180deg, ${MusicC.bg} 0%, ${MusicC.bgDeep} 60%, ${MusicC.bgTint} 100%)` }}
+            >
+                {/* 装饰星星 */}
+                <Sparkle size={9} color={MusicC.glow}    delay={0}   className="absolute top-20 left-6"   />
+                <Sparkle size={7} color={MusicC.sakura}  delay={1.0} className="absolute top-44 right-8"  />
+                <Sparkle size={6} color={MusicC.lavender} delay={0.6} className="absolute bottom-32 left-10" />
+                <CrossStar size={8} color={MusicC.glow} delay={0.4} className="absolute bottom-20 right-7" solid={false} />
+
                 {/* Header */}
-                <div className="h-24 flex items-end pb-4 px-6 border-b border-stone-200/80 shrink-0 z-10 bg-[#F5F0E8]">
+                <div className="h-24 flex items-end pb-4 px-6 shrink-0 z-10 relative">
                     <div className="flex justify-between items-center w-full">
-                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-stone-200/50 active:scale-95 transition-transform text-stone-500">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
-                        <div className="text-center">
-                            <h1 className="text-[11px] tracking-[0.35em] text-stone-400 uppercase">Lyric</h1>
-                            <p className="text-lg font-semibold text-stone-700 -mt-0.5" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>歌词手帖</p>
+                        <div className="text-center flex flex-col items-center">
+                            <div className="flex items-center gap-2">
+                                <Sparkle size={7} color={MusicC.glow} delay={0} />
+                                <h1 className="text-[10px] tracking-[0.4em] uppercase" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>Lyric</h1>
+                                <Sparkle size={7} color={MusicC.sakura} delay={0.7} />
+                            </div>
+                            <p className="text-lg font-bold mt-0.5" style={{ color: MusicC.primary, fontFamily: 'Georgia, "Noto Serif SC", serif' }}>歌词手帖</p>
                         </div>
-                        <button onClick={() => setView('create')} className="p-2 rounded-full hover:bg-stone-200/50 active:scale-95 transition-transform text-stone-500" title="新建歌词本">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                        <button
+                            onClick={() => setView('create')}
+                            className="p-2.5 rounded-full active:scale-95 transition-all"
+                            style={{
+                                background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                color: 'white',
+                                boxShadow: `0 3px 14px ${MusicC.sakura}55`,
+                            }}
+                            title="新建歌词本"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                         </button>
                     </div>
                 </div>
@@ -780,103 +1431,375 @@ const SongwritingApp: React.FC = () => {
     // --- Create View ---
     if (view === 'create') {
         return (
-            <div className="h-full w-full bg-[#F5F0E8] flex flex-col font-sans relative overflow-hidden">
-                <div className="h-14 flex items-center px-4 border-b border-stone-200/80 shrink-0 bg-[#F5F0E8] z-10">
-                    <button onClick={() => setView('shelf')} className="p-2 -ml-2 rounded-full hover:bg-stone-200/50 active:scale-95 transition-transform text-stone-500">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+            <div
+                className="h-full w-full flex flex-col font-sans relative overflow-hidden"
+                style={{ background: `linear-gradient(180deg, ${MusicC.bg} 0%, ${MusicC.bgDeep} 55%, ${MusicC.bgTint} 100%)` }}
+            >
+                {/* Floating background sparkles — purely decorative */}
+                <Sparkle size={9} color={MusicC.glow}    delay={0}   className="absolute top-16 left-6"   />
+                <Sparkle size={7} color={MusicC.sakura}  delay={1.2} className="absolute top-32 right-8"  />
+                <Sparkle size={6} color={MusicC.lavender} delay={0.6} className="absolute top-52 left-12"  />
+                <Sparkle size={8} color={MusicC.glow}    delay={1.8} className="absolute bottom-40 right-5" />
+                <CrossStar size={9} color={MusicC.lavender} delay={0.4} className="absolute bottom-56 left-8" solid={false} />
+
+                {/* Header — back + decorative title */}
+                <div className="h-16 flex items-center justify-between px-4 shrink-0 z-10 relative">
+                    <button onClick={() => setView('shelf')} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                    <h2 className="font-medium text-stone-600 ml-2 text-sm">新建手帖</h2>
+                    <div className="flex flex-col items-center">
+                        <div className="flex items-center gap-2">
+                            <Sparkle size={8} color={MusicC.glow} delay={0} />
+                            <h2 className="text-sm font-bold tracking-[0.18em]" style={{ color: MusicC.primary, fontFamily: 'Georgia, "Noto Serif SC", serif' }}>新建手帖</h2>
+                            <Sparkle size={8} color={MusicC.sakura} delay={0.8} />
+                        </div>
+                        <div className="text-[8.5px] tracking-[0.4em] mt-0.5" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>— NEW PROJECT —</div>
+                    </div>
+                    <div className="w-9" />
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar pb-28 z-10">
-                    {/* Title */}
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">歌名</label>
-                        <input value={tempTitle} onChange={e => setTempTitle(e.target.value)} placeholder="给这本歌词手帖起个名字" className="w-full mt-2 bg-white border border-stone-200 rounded-lg px-4 py-3 text-sm text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-stone-400 transition-colors" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }} />
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">副标题</label>
-                        <input value={tempSubtitle} onChange={e => setTempSubtitle(e.target.value)} placeholder="这首歌想说什么" className="w-full mt-2 bg-white border border-stone-200 rounded-lg px-4 py-3 text-sm text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-stone-400 transition-colors italic" />
-                    </div>
-
-                    {/* Genre */}
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">风格</label>
-                        <div className="flex flex-wrap gap-2 mt-2">
-                            {SONG_GENRES.map(g => (
-                                <button key={g.id} onClick={() => setTempGenre(g.id)} className={`px-3 py-1.5 rounded text-xs transition-all ${tempGenre === g.id ? 'bg-stone-700 text-stone-50' : 'bg-white text-stone-500 border border-stone-200 hover:border-stone-300'}`}>
-                                    {g.icon} {g.label}
-                                </button>
-                            ))}
+                <div className="flex-1 overflow-y-auto px-5 pb-32 space-y-6 no-scrollbar relative z-10">
+                    {/* 01 — 歌名 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 18, letterSpacing: '0.05em' }}>01</span>
+                            <CrossStar size={7} color={MusicC.glow} delay={0} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>歌名</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>SONG TITLE</span>
+                        </div>
+                        <div className="relative">
+                            <input
+                                value={tempTitle}
+                                onChange={e => setTempTitle(e.target.value)}
+                                placeholder="给本首歌取个名字吧～"
+                                className="w-full rounded-2xl px-4 py-3 text-[13px] focus:outline-none transition-colors shizuku-glass"
+                                style={{ color: MusicC.text, border: `1px solid ${MusicC.faint}40`, fontFamily: `'Noto Serif SC', Georgia, serif` }}
+                            />
+                            <PencilSimple size={14} weight="duotone" className="absolute right-4 top-1/2 -translate-y-1/2" style={{ color: MusicC.accent }} />
                         </div>
                     </div>
 
-                    {/* Mood */}
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">情绪</label>
-                        <div className="flex flex-wrap gap-2 mt-2">
-                            {SONG_MOODS.map(m => (
-                                <button key={m.id} onClick={() => setTempMood(m.id)} className={`px-3 py-1.5 rounded text-xs transition-all ${tempMood === m.id ? 'bg-stone-700 text-stone-50' : 'bg-white text-stone-500 border border-stone-200 hover:border-stone-300'}`}>
-                                    {m.icon} {m.label}
-                                </button>
-                            ))}
+                    {/* 02 — 副标题 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 18, letterSpacing: '0.05em' }}>02</span>
+                            <CrossStar size={7} color={MusicC.sakura} delay={0.4} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>副标题</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>SUBTITLE</span>
+                        </div>
+                        <input
+                            value={tempSubtitle}
+                            onChange={e => setTempSubtitle(e.target.value)}
+                            placeholder="这首歌想说什么呢？"
+                            className="w-full rounded-2xl px-4 py-3 text-[13px] focus:outline-none transition-colors italic shizuku-glass"
+                            style={{ color: MusicC.text, border: `1px solid ${MusicC.faint}40`, fontFamily: `'Noto Serif SC', Georgia, serif` }}
+                        />
+                    </div>
+
+                    {/* 03 — 风格 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 18, letterSpacing: '0.05em' }}>03</span>
+                            <CrossStar size={7} color={MusicC.lavender} delay={0.7} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>风格</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>GENRE</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {SONG_GENRES.map(g => {
+                                const active = tempGenre === g.id;
+                                return (
+                                    <button
+                                        key={g.id}
+                                        onClick={() => setTempGenre(g.id)}
+                                        className="px-2 py-2 rounded-xl text-[11px] transition-all active:scale-95 flex items-center justify-center"
+                                        style={active ? {
+                                            background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                            color: 'white',
+                                            boxShadow: `0 3px 12px ${MusicC.glow}50`,
+                                            border: '1px solid transparent',
+                                            fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                        } : {
+                                            background: 'rgba(255,255,255,0.7)',
+                                            color: MusicC.primary,
+                                            border: `1px solid ${MusicC.faint}50`,
+                                            fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                        }}
+                                    >
+                                        <span className="font-medium tracking-wider">{g.label}</span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
-                    {/* Collaborator */}
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">创作伙伴</label>
-                        <p className="text-[10px] text-stone-400 mt-0.5 mb-2">选一个角色，陪你一起写</p>
-                        <div className="space-y-2 max-h-[30vh] overflow-y-auto">
-                            {characters.map(c => (
-                                <button key={c.id} onClick={() => setTempCollaboratorId(c.id)} className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all ${tempCollaboratorId === c.id ? 'bg-white border-2 border-stone-400' : 'bg-white border border-stone-200 hover:border-stone-300'}`}>
-                                    <img src={c.avatar} className="w-9 h-9 rounded-full object-cover" />
-                                    <div className="text-left flex-1 min-w-0">
-                                        <div className="font-medium text-sm text-stone-700">{c.name}</div>
-                                        <div className="text-[10px] text-stone-400 truncate">{c.description || '将作为你的音乐导师'}</div>
+                    {/* 04 — 情绪 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 18, letterSpacing: '0.05em' }}>04</span>
+                            <CrossStar size={7} color={MusicC.glow} delay={0.3} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>情绪</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>MOOD</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {SONG_MOODS.map(m => {
+                                const active = tempMood === m.id;
+                                return (
+                                    <button
+                                        key={m.id}
+                                        onClick={() => setTempMood(m.id)}
+                                        className="px-2 py-2 rounded-xl text-[11px] transition-all active:scale-95 flex items-center justify-center"
+                                        style={active ? {
+                                            background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                            color: 'white',
+                                            boxShadow: `0 3px 12px ${MusicC.sakura}50`,
+                                            border: '1px solid transparent',
+                                            fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                        } : {
+                                            background: 'rgba(255,255,255,0.7)',
+                                            color: MusicC.primary,
+                                            border: `1px solid ${MusicC.faint}50`,
+                                            fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                        }}
+                                    >
+                                        <span className="font-medium tracking-wider">{m.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* 05 — 歌词结构 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 18, letterSpacing: '0.05em' }}>05</span>
+                            <CrossStar size={7} color={MusicC.sakura} delay={0.9} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>歌词结构</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>LYRIC STRUCTURE</span>
+                        </div>
+                        <p className="text-[10px] pl-1" style={{ color: MusicC.muted }}>选一个结构作为歌词骨架，之后可自由调整</p>
+                        <div className="grid grid-cols-2 gap-2">
+                            {LYRIC_TEMPLATES.map(t => {
+                                const active = tempTemplate === t.id;
+                                const totalLines = t.structure.reduce((sum, s) => sum + s.lines, 0);
+                                return (
+                                    <button
+                                        key={t.id}
+                                        onClick={() => setTempTemplate(t.id)}
+                                        className="text-left p-3 rounded-2xl transition-all active:scale-[0.98] relative overflow-hidden"
+                                        style={active ? {
+                                            background: `linear-gradient(135deg, ${MusicC.glow}25, ${MusicC.sakura}15)`,
+                                            border: `1.5px solid ${MusicC.accent}80`,
+                                            boxShadow: `0 3px 14px ${MusicC.glow}30`,
+                                        } : {
+                                            background: 'rgba(255,255,255,0.7)',
+                                            border: `1px solid ${MusicC.faint}40`,
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-1.5 mb-1">
+                                            <span className="text-[14px] leading-none" style={{ color: active ? MusicC.accent : MusicC.primary, fontFamily: 'Georgia, serif' }}>{t.icon}</span>
+                                            <span className="text-[12px] font-bold" style={{ color: MusicC.primary }}>{t.label}</span>
+                                            {totalLines > 0 && (
+                                                <span className="text-[9px] ml-auto" style={{ color: MusicC.muted }}>
+                                                    {totalLines} 句
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-[10px] leading-snug" style={{ color: MusicC.muted }}>
+                                            {t.desc}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+
+                {/* "下一步" 大粉色游戏风按钮 */}
+                <div
+                    className="absolute bottom-0 w-full px-5 pt-4 pb-6 z-20"
+                    style={{
+                        background: `linear-gradient(to top, ${MusicC.bg}f5 60%, ${MusicC.bg}cc 90%, ${MusicC.bg}00 100%)`,
+                    }}
+                >
+                    <button
+                        onClick={handleGoPartner}
+                        className="relative w-full rounded-[28px] py-4 font-bold tracking-[0.15em] text-white active:scale-[0.98] transition-transform overflow-hidden"
+                        style={{
+                            background: `linear-gradient(135deg, ${MusicC.sakura} 0%, ${MusicC.lavender} 100%)`,
+                            boxShadow: `0 8px 28px ${MusicC.sakura}55, 0 0 60px ${MusicC.sakura}25, inset 0 1px 0 rgba(255,255,255,0.4)`,
+                            fontFamily: 'Georgia, "Noto Serif SC", serif',
+                        }}
+                    >
+                        {/* 装饰星星 */}
+                        <Sparkle size={8}  color="#fff" delay={0}   className="absolute top-2 left-6  opacity-80" />
+                        <Sparkle size={6}  color="#fff" delay={0.7} className="absolute bottom-3 left-12 opacity-70" />
+                        <Sparkle size={7}  color="#fff" delay={1.4} className="absolute top-3 right-14 opacity-80" />
+                        <CrossStar size={9} color="#fff" delay={0.5} className="absolute bottom-2 right-6" solid={false} />
+                        {/* 移动高光 */}
+                        <span className="absolute inset-0 pointer-events-none"
+                            style={{
+                                background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
+                                backgroundSize: '200% 100%',
+                                animation: 'shizuku-shimmer 4s ease-in-out infinite',
+                            }} />
+                        <span className="relative inline-flex flex-col items-center justify-center gap-0.5">
+                            <span className="inline-flex items-center gap-2 text-[14px]">
+                                下一步，选择你的创作伙伴
+                                <MusicNotes size={16} weight="fill" />
+                            </span>
+                            <span className="text-[9px] tracking-[0.5em] opacity-80" style={{ fontFamily: 'Georgia, serif' }}>— NEXT STEP —</span>
+                        </span>
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // --- Partner View (Step 2 of create flow) ---
+    if (view === 'partner') {
+        return (
+            <div
+                className="h-full w-full flex flex-col font-sans relative overflow-hidden"
+                style={{ background: `linear-gradient(180deg, ${MusicC.bg} 0%, ${MusicC.bgDeep} 55%, ${MusicC.bgTint} 100%)` }}
+            >
+                {/* 装饰 */}
+                <Sparkle size={9} color={MusicC.glow}    delay={0}   className="absolute top-14 right-6"  />
+                <Sparkle size={7} color={MusicC.sakura}  delay={1.0} className="absolute top-36 left-7"   />
+                <Sparkle size={6} color={MusicC.lavender} delay={0.5} className="absolute top-60 right-10" />
+                <CrossStar size={8} color={MusicC.glow} delay={1.6} className="absolute bottom-48 left-6" solid={false} />
+                <Sparkle size={8} color={MusicC.sakura}  delay={0.3} className="absolute bottom-32 right-12" />
+
+                {/* Header */}
+                <div className="h-16 flex items-center justify-between px-4 shrink-0 z-10 relative">
+                    <button onClick={() => setView('create')} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                    </button>
+                    <div className="flex flex-col items-center">
+                        <div className="flex items-center gap-2">
+                            <Sparkle size={8} color={MusicC.glow} delay={0} />
+                            <h2 className="text-sm font-bold tracking-[0.18em]" style={{ color: MusicC.primary, fontFamily: 'Georgia, "Noto Serif SC", serif' }}>创作伙伴</h2>
+                            <Sparkle size={8} color={MusicC.sakura} delay={0.8} />
+                        </div>
+                        <div className="text-[8.5px] tracking-[0.4em] mt-0.5" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>— PARTNER —</div>
+                    </div>
+                    <div className="w-9" />
+                </div>
+
+                <p className="text-[11px] text-center pb-3 px-6 z-10 relative" style={{ color: MusicC.muted }}>选一个伙伴，陪你一起创作吧</p>
+
+                <div className="flex-1 overflow-y-auto px-5 pb-32 space-y-5 no-scrollbar relative z-10">
+                    {/* Collaborator list */}
+                    <div className="space-y-2">
+                        {characters.map(c => {
+                            const active = tempCollaboratorId === c.id;
+                            return (
+                                <button
+                                    key={c.id}
+                                    onClick={() => setTempCollaboratorId(c.id)}
+                                    className="w-full flex items-center gap-3 p-3 rounded-2xl transition-all active:scale-[0.99] relative overflow-hidden"
+                                    style={active ? {
+                                        background: `linear-gradient(135deg, ${MusicC.glow}28, ${MusicC.sakura}15)`,
+                                        border: `1.5px solid ${MusicC.accent}90`,
+                                        boxShadow: `0 4px 16px ${MusicC.glow}35`,
+                                    } : {
+                                        background: 'rgba(255,255,255,0.75)',
+                                        border: `1px solid ${MusicC.faint}40`,
+                                    }}
+                                >
+                                    <div className="relative shrink-0">
+                                        <img src={c.avatar} className="w-12 h-12 rounded-2xl object-cover" />
+                                        {active && <Sparkle size={9} color={MusicC.sakura} delay={0} className="absolute -top-1 -right-1" />}
                                     </div>
-                                    {tempCollaboratorId === c.id && <div className="w-4 h-4 bg-stone-700 rounded-full flex items-center justify-center text-white"><Check size={10} weight="bold" /></div>}
+                                    <div className="text-left flex-1 min-w-0">
+                                        <div className="font-bold text-[13px]" style={{ color: MusicC.primary }}>{c.name}</div>
+                                        <div className="text-[10px] truncate leading-snug mt-0.5" style={{ color: MusicC.muted }}>{c.description || '将作为你的音乐导师'}</div>
+                                    </div>
+                                    {active && (
+                                        <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                                            style={{ background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`, color: 'white', boxShadow: `0 2px 8px ${MusicC.glow}60` }}>
+                                            <Check size={11} weight="bold" />
+                                        </div>
+                                    )}
                                 </button>
-                            ))}
-                        </div>
+                            );
+                        })}
+                        {characters.length === 0 && (
+                            <div className="rounded-2xl p-5 text-center" style={{ background: 'rgba(255,255,255,0.6)', border: `1px dashed ${MusicC.faint}80` }}>
+                                <p className="text-[12px]" style={{ color: MusicC.muted }}>还没有可选角色 — 先去创建一个</p>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Cover Style */}
-                    <div>
-                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">纸张色调</label>
-                        <div className="flex gap-2.5 mt-2 overflow-x-auto no-scrollbar">
-                            {COVER_STYLES.map(s => (
-                                <div key={s.id} className="flex flex-col items-center gap-1 shrink-0">
-                                    <button onClick={() => setTempCoverStyle(s.id)} className={`w-11 h-11 rounded-lg bg-gradient-to-br ${s.gradient} shrink-0 transition-all border ${tempCoverStyle === s.id ? 'border-stone-500 ring-1 ring-stone-400 ring-offset-1' : 'border-stone-200 opacity-75 hover:opacity-100'}`} title={s.label} />
-                                    <span className="text-[8px] text-stone-400">{s.label}</span>
-                                </div>
-                            ))}
+                    {/* 纸张色调 */}
+                    <div className="space-y-2 pt-1">
+                        <div className="flex items-center gap-2 pl-1">
+                            <CrossStar size={7} color={MusicC.glow} delay={0} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>纸张色调</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>PAPER TONE</span>
+                        </div>
+                        <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                            {COVER_STYLES.map(s => {
+                                const active = tempCoverStyle === s.id;
+                                return (
+                                    <div key={s.id} className="flex flex-col items-center gap-1 shrink-0">
+                                        <button
+                                            onClick={() => setTempCoverStyle(s.id)}
+                                            className={`w-12 h-12 rounded-xl bg-gradient-to-br ${s.gradient} shrink-0 transition-all active:scale-95`}
+                                            style={active ? {
+                                                boxShadow: `0 0 0 2px ${MusicC.accent}, 0 4px 14px ${MusicC.glow}40`,
+                                            } : {
+                                                border: `1px solid ${MusicC.faint}60`,
+                                                opacity: 0.85,
+                                            }}
+                                            title={s.label}
+                                        />
+                                        <span className="text-[8.5px]" style={{ color: active ? MusicC.primary : MusicC.muted }}>{s.label}</span>
+                                    </div>
+                                );
+                            })}
                             <div className="flex flex-col items-center gap-1 shrink-0">
                                 <button
                                     onClick={() => setTempCoverStyle(buildCustomCoverStyleId())}
-                                    className={`w-11 h-11 rounded-lg shrink-0 transition-all border ${isCustomCoverStyle(tempCoverStyle) ? 'border-stone-500 ring-1 ring-stone-400 ring-offset-1' : 'border-stone-200 opacity-75 hover:opacity-100'}`}
-                                    style={{ backgroundImage: `linear-gradient(135deg, ${customCoverFrom} 0%, ${customCoverVia} 50%, ${customCoverTo} 100%)` }}
+                                    className="w-12 h-12 rounded-xl shrink-0 transition-all active:scale-95"
+                                    style={isCustomCoverStyle(tempCoverStyle) ? {
+                                        backgroundImage: `linear-gradient(135deg, ${customCoverFrom} 0%, ${customCoverVia} 50%, ${customCoverTo} 100%)`,
+                                        boxShadow: `0 0 0 2px ${MusicC.accent}, 0 4px 14px ${MusicC.glow}40`,
+                                    } : {
+                                        backgroundImage: `linear-gradient(135deg, ${customCoverFrom} 0%, ${customCoverVia} 50%, ${customCoverTo} 100%)`,
+                                        border: `1px solid ${MusicC.faint}60`,
+                                        opacity: 0.85,
+                                    }}
                                     title="自定义"
                                 />
-                                <span className="text-[8px] text-stone-400">自定义</span>
+                                <span className="text-[8.5px]" style={{ color: isCustomCoverStyle(tempCoverStyle) ? MusicC.primary : MusicC.muted }}>自定义</span>
                             </div>
                         </div>
-                        <div className="mt-3 rounded-lg bg-white border border-stone-200 p-3">
-                            <div className="text-[10px] text-stone-400 mb-2">自定义色调</div>
-                            <div className="grid grid-cols-3 gap-2">
+                    </div>
+
+                    {/* 自定义色调 */}
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 pl-1">
+                            <CrossStar size={7} color={MusicC.sakura} delay={0.3} />
+                            <label className="text-[11px] font-bold" style={{ color: MusicC.primary }}>自定义色调</label>
+                            <span className="text-[9px] tracking-[0.3em]" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>CUSTOM COLOR</span>
+                        </div>
+                        <div className="rounded-2xl p-4 shizuku-glass" style={{ border: `1px solid ${MusicC.faint}40` }}>
+                            <div className="grid grid-cols-3 gap-3">
                                 {[
-                                    { label: '起点', color: customCoverFrom, position: 'from' },
-                                    { label: '中间', color: customCoverVia, position: 'via' },
-                                    { label: '终点', color: customCoverTo, position: 'to' }
+                                    { label: '起点色', color: customCoverFrom, position: 'from' },
+                                    { label: '中间色', color: customCoverVia, position: 'via' },
+                                    { label: '终点色', color: customCoverTo,  position: 'to'   }
                                 ].map(item => (
-                                    <label key={item.label} className="text-[10px] text-stone-400 space-y-1">
-                                        <span className="block">{item.label}</span>
-                                        <input
-                                            type="color"
-                                            value={item.color}
-                                            onChange={(e) => updateCustomCoverColor(item.position, e.target.value)}
-                                            className="w-full h-8 rounded cursor-pointer border border-stone-200 bg-white p-0.5"
-                                        />
+                                    <label key={item.label} className="space-y-1.5">
+                                        <span className="block text-[10px]" style={{ color: MusicC.muted }}>{item.label}</span>
+                                        <div className="rounded-lg overflow-hidden" style={{ height: 28, background: item.color, border: `1px solid ${MusicC.faint}40`, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.2)` }}>
+                                            <input
+                                                type="color"
+                                                value={item.color}
+                                                onChange={(e) => updateCustomCoverColor(item.position, e.target.value)}
+                                                className="w-full h-full opacity-0 cursor-pointer"
+                                            />
+                                        </div>
                                     </label>
                                 ))}
                             </div>
@@ -884,10 +1807,40 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Create Button */}
-                <div className="absolute bottom-0 w-full p-4 bg-[#F5F0E8]/90 border-t border-stone-200/80 pb-safe backdrop-blur-sm z-20">
-                    <button onClick={handleCreate} className="w-full py-3 bg-stone-700 text-stone-50 font-medium rounded-lg active:scale-[0.98] transition-transform text-sm">
-                        翻开新的一页
+                {/* "翻开新的第一页" 大紫色游戏风按钮 */}
+                <div
+                    className="absolute bottom-0 w-full px-5 pt-4 pb-6 z-20"
+                    style={{
+                        background: `linear-gradient(to top, ${MusicC.bg}f5 60%, ${MusicC.bg}cc 90%, ${MusicC.bg}00 100%)`,
+                    }}
+                >
+                    <button
+                        onClick={handleCreate}
+                        disabled={!tempCollaboratorId}
+                        className="relative w-full rounded-[28px] py-4 font-bold tracking-[0.15em] text-white active:scale-[0.98] transition-transform overflow-hidden disabled:opacity-50"
+                        style={{
+                            background: `linear-gradient(135deg, ${MusicC.primary} 0%, ${MusicC.accent} 55%, ${MusicC.lavender} 100%)`,
+                            boxShadow: `0 8px 28px ${MusicC.glow}70, 0 0 70px ${MusicC.lavender}30, inset 0 1px 0 rgba(255,255,255,0.4)`,
+                            fontFamily: 'Georgia, "Noto Serif SC", serif',
+                        }}
+                    >
+                        <Sparkle size={8}  color="#fff" delay={0}   className="absolute top-2 left-7  opacity-80" />
+                        <Sparkle size={6}  color="#fff" delay={0.7} className="absolute bottom-3 left-14 opacity-70" />
+                        <CrossStar size={9} color="#fff" delay={0.4} className="absolute top-2 right-7" solid={false} />
+                        <Sparkle size={7}  color="#fff" delay={1.4} className="absolute bottom-2 right-12 opacity-80" />
+                        <span className="absolute inset-0 pointer-events-none"
+                            style={{
+                                background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
+                                backgroundSize: '200% 100%',
+                                animation: 'shizuku-shimmer 4s ease-in-out infinite',
+                            }} />
+                        <span className="relative inline-flex flex-col items-center justify-center gap-0.5">
+                            <span className="inline-flex items-center gap-2 text-[14px]">
+                                <Feather size={16} weight="fill" />
+                                翻开新的第一页
+                            </span>
+                            <span className="text-[9px] tracking-[0.5em] opacity-80" style={{ fontFamily: 'Georgia, serif' }}>— LET'S BEGIN —</span>
+                        </span>
                     </button>
                 </div>
             </div>
@@ -932,7 +1885,7 @@ const SongwritingApp: React.FC = () => {
                 </div>
 
                 {/* Lyrics body — like a booklet page (draft lines excluded) */}
-                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10">
+                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10 pb-32">
                     {activeSong.lines.filter(l => !l.isDraft).map(line => {
                         const showSection = line.section !== currentSec;
                         if (showSection) currentSec = line.section;
@@ -955,6 +1908,260 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </div>
 
+                {/* ─── Shizuku-themed AI 出歌 / Audio Dock ─── */}
+                <div
+                    className="absolute bottom-0 left-0 right-0 z-20 pb-safe"
+                    style={{
+                        background: `linear-gradient(to top, ${MusicC.bg}f8 60%, ${MusicC.bg}cc 90%, ${MusicC.bg}00 100%)`,
+                        backdropFilter: 'blur(18px)',
+                        WebkitBackdropFilter: 'blur(18px)',
+                        borderTop: `1px solid ${MusicC.glow}25`,
+                        boxShadow: `0 -8px 32px ${MusicC.glow}10`,
+                    }}
+                >
+                    {/* Hidden audio element drives our custom shizuku player */}
+                    {audioUrl && (
+                        <audio
+                            ref={audioElRef}
+                            src={audioUrl}
+                            onPlay={() => setIsPlaying(true)}
+                            onPause={() => setIsPlaying(false)}
+                            onLoadedMetadata={(e) => setPlayDuration((e.target as HTMLAudioElement).duration || 0)}
+                            onTimeUpdate={(e) => setPlayProgress((e.target as HTMLAudioElement).currentTime || 0)}
+                            onEnded={() => setIsPlaying(false)}
+                            preload="metadata"
+                            className="hidden"
+                        />
+                    )}
+
+                    <div className="relative px-4 py-3.5">
+                        {/* Floating sparkle decorations — pointer-none */}
+                        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                            <Sparkle size={9} className="absolute top-2 right-6" color={MusicC.glow} delay={0} />
+                            <Sparkle size={7} className="absolute top-4 left-8" color={MusicC.sakura} delay={1.2} />
+                            <Sparkle size={5} className="absolute bottom-3 right-1/3" color={MusicC.lavender} delay={0.6} />
+                        </div>
+
+                        {audioUrl ? (
+                            // ── State A: audio ready — shizuku mini player ──
+                            <div className="relative flex items-center gap-3">
+                                <div
+                                    className="relative w-12 h-12 rounded-full shrink-0 flex items-center justify-center overflow-hidden"
+                                    style={{
+                                        background: `radial-gradient(circle at 35% 35%, ${MusicC.accent}, ${MusicC.primary})`,
+                                        boxShadow: `0 4px 18px ${MusicC.glow}40, inset 0 1px 0 rgba(255,255,255,0.3)`,
+                                        animation: isPlaying ? 'shizuku-vinyl 6s linear infinite' : 'none',
+                                    }}
+                                >
+                                    <div
+                                        className="absolute inset-1 rounded-full pointer-events-none"
+                                        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 2px, rgba(255,255,255,0.08) 3px, transparent 4px)` }}
+                                    />
+                                    <div
+                                        className="w-4 h-4 rounded-full"
+                                        style={{
+                                            background: `radial-gradient(circle at 30% 30%, white, ${MusicC.soft})`,
+                                            boxShadow: `inset 0 1px 2px rgba(0,0,0,0.15)`,
+                                        }}
+                                    />
+                                </div>
+
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                        <MetaChip>
+                                            {activeSong.audio?.provider === 'ace-step'
+                                                ? 'ACE-Step'
+                                                : activeSong.audio?.provider === 'minimax-paid'
+                                                    ? 'MiniMax'
+                                                    : 'MiniMax · 免费'}
+                                        </MetaChip>
+                                        {activeSong.audio?.generatedAt && (
+                                            <span className="text-[9px]" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
+                                                {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                        )}
+                                        <div className="flex-1" />
+                                        {/* ❤︎ 喜欢 → 同步到音乐 App「一起写的歌」 */}
+                                        <button
+                                            onClick={handleSendToMusicApp}
+                                            className="w-7 h-7 rounded-full transition-all active:scale-90 flex items-center justify-center shrink-0"
+                                            style={isLikedToMusic ? {
+                                                color: 'white',
+                                                background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                                boxShadow: `0 2px 10px ${MusicC.sakura}50`,
+                                            } : {
+                                                color: MusicC.sakura,
+                                                background: `${MusicC.sakura}18`,
+                                                border: `1px solid ${MusicC.sakura}40`,
+                                            }}
+                                            title={isLikedToMusic ? '已加入「一起写的歌」专辑' : '加入音乐 App'}
+                                            aria-label={isLikedToMusic ? '已喜欢' : '喜欢'}
+                                        >
+                                            <HeartStraight size={12} weight={isLikedToMusic ? 'fill' : 'regular'} />
+                                        </button>
+                                        <button
+                                            onClick={openCustomPromptModal}
+                                            disabled={cooldownSecsLeft > 0}
+                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 disabled:opacity-40"
+                                            style={{
+                                                color: MusicC.primary,
+                                                background: `${MusicC.glow}15`,
+                                                border: `1px solid ${MusicC.glow}30`,
+                                            }}
+                                            title={cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '换个版本'}
+                                        >
+                                            ↻ 重录{cooldownSecsLeft > 0 ? ` ${cooldownSecsLeft}s` : ''}
+                                        </button>
+                                    </div>
+                                    <GlassProgress
+                                        progress={playProgress}
+                                        duration={playDuration}
+                                        fmtTime={fmtTime}
+                                        onSeek={handleSeek}
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={handleTogglePlay}
+                                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition-transform relative"
+                                    style={{
+                                        background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                        boxShadow: `0 4px 18px ${MusicC.glow}40, 0 0 40px ${MusicC.glow}15`,
+                                        animation: isPlaying ? 'shizuku-glow 3s ease-in-out infinite' : 'none',
+                                    }}
+                                >
+                                    {isPlaying ? (
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" /></svg>
+                                    ) : (
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7L8 5z" /></svg>
+                                    )}
+                                    <div
+                                        className="absolute inset-[-3px] rounded-full pointer-events-none"
+                                        style={{ border: `1px solid rgba(255,255,255,0.25)` }}
+                                    />
+                                </button>
+                            </div>
+                        ) : isGeneratingAudio ? (
+                            // ── State B: recording — multi-ring vinyl with deep glow ──
+                            <div className="relative flex items-center gap-3.5 py-1.5">
+                                {/* 三层叠唱片 — 外圈 conic 旋转 + 中层静止描边 + 内圈 emoji */}
+                                <div className="relative w-14 h-14 shrink-0">
+                                    {/* 外圈光晕 */}
+                                    <div className="absolute pointer-events-none rounded-full"
+                                        style={{
+                                            inset: -6,
+                                            background: `radial-gradient(circle, ${MusicC.glow}40, ${MusicC.sakura}20 50%, transparent 75%)`,
+                                            filter: 'blur(8px)',
+                                            animation: 'shizuku-glow 2.5s ease-in-out infinite',
+                                        }}
+                                    />
+                                    {/* 旋转外环 */}
+                                    <div className="absolute inset-0 rounded-full"
+                                        style={{
+                                            background: `conic-gradient(from 0deg, ${MusicC.primary}, ${MusicC.accent}, ${MusicC.sakura}, ${MusicC.lavender}, ${MusicC.primary})`,
+                                            animation: 'shizuku-vinyl 2s linear infinite',
+                                            boxShadow: `0 0 18px ${MusicC.glow}50`,
+                                        }}
+                                    />
+                                    {/* 内核 */}
+                                    <div className="absolute inset-[5px] rounded-full flex items-center justify-center"
+                                        style={{
+                                            background: `radial-gradient(circle at 35% 35%, white, ${MusicC.bg} 70%)`,
+                                            border: `1px solid ${MusicC.glow}50`,
+                                            boxShadow: `inset 0 2px 6px ${MusicC.glow}25, 0 1px 4px ${MusicC.primary}20`,
+                                        }}
+                                    >
+                                        <span className="text-base" style={{ filter: `drop-shadow(0 1px 2px ${MusicC.primary}20)` }}>🎤</span>
+                                    </div>
+                                    {/* 浮游星芒 */}
+                                    <CrossStar size={9} className="absolute -top-1 -right-1" color={MusicC.sakura} delay={0} />
+                                    <Sparkle size={7} className="absolute -bottom-0.5 -left-1" color={MusicC.lavender} delay={0.7} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="text-[14px] font-semibold tracking-wider" style={{ color: MusicC.primary, fontFamily: 'Georgia, "Noto Serif SC", serif' }}>
+                                            正在录制
+                                        </div>
+                                        {/* 三个跳动的小点 */}
+                                        <span className="flex gap-0.5">
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out infinite' }} />
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out 0.3s infinite' }} />
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out 0.6s infinite' }} />
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] truncate mt-1 tracking-[0.2em]" style={{ color: MusicC.muted, fontFamily: `'Space Grotesk', monospace` }}>
+                                        {audioGenStatus || '处理中'}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleCancelGenerate}
+                                    className="text-[11px] px-3.5 py-2 rounded-full transition-all active:scale-95 shrink-0 shizuku-glass"
+                                    style={{
+                                        color: MusicC.muted,
+                                        border: `1px solid ${MusicC.faint}40`,
+                                    }}
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        ) : (
+                            // ── State C: idle — single big shizuku button ──
+                            <div className="relative flex flex-col items-center gap-1.5">
+                                <button
+                                    onClick={openCustomPromptModal}
+                                    disabled={cooldownSecsLeft > 0}
+                                    className="relative w-full py-3.5 rounded-2xl font-medium text-sm active:scale-[0.98] transition-all overflow-hidden disabled:cursor-not-allowed"
+                                    style={{
+                                        background: cooldownSecsLeft > 0
+                                            ? `linear-gradient(135deg, ${MusicC.faint}80, ${MusicC.muted}50)`
+                                            : `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                        color: 'white',
+                                        boxShadow: cooldownSecsLeft > 0
+                                            ? 'none'
+                                            : `0 4px 24px ${MusicC.glow}50, 0 0 60px ${MusicC.glow}20`,
+                                        animation: cooldownSecsLeft > 0 ? 'none' : 'shizuku-glow 3.5s ease-in-out infinite',
+                                    }}
+                                >
+                                    {cooldownSecsLeft === 0 && (
+                                        <div
+                                            className="absolute inset-0 pointer-events-none"
+                                            style={{
+                                                background: `linear-gradient(90deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)`,
+                                                backgroundSize: '200% 100%',
+                                                animation: 'shizuku-shimmer 3.5s ease-in-out infinite',
+                                            }}
+                                        />
+                                    )}
+                                    <span className="relative flex items-center justify-center gap-2.5 tracking-[0.15em]" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>
+                                        {cooldownSecsLeft > 0 ? (
+                                            <>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm-.75 5.25a.75.75 0 0 1 1.5 0v4.59l3.22 3.22a.75.75 0 1 1-1.06 1.06l-3.44-3.44a.75.75 0 0 1-.22-.53V7.5Z" clipRule="evenodd" /></svg>
+                                                COOLING DOWN · {cooldownSecsLeft}s
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span style={{ fontSize: 13 }}>✦</span>
+                                                AI 出歌 · 让它唱出来
+                                                <span style={{ fontSize: 13 }}>✦</span>
+                                            </>
+                                        )}
+                                    </span>
+                                </button>
+
+                                {audioError ? (
+                                    <div className="text-[10.5px] leading-relaxed text-center px-2 max-w-full" style={{ color: MusicC.danger }}>
+                                        <span className="font-semibold">出错：</span>{audioError}
+                                    </div>
+                                ) : (
+                                    <div className="text-[9.5px] tracking-[0.18em] text-center" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
+                                        点击配置声线/风格 · 30-60s 出一首
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 {/* Share Modal */}
                 <Modal isOpen={showShareModal} title="分享乐谱" onClose={() => setShowShareModal(false)}>
                     <div className="space-y-2 max-h-[50vh] overflow-y-auto">
@@ -965,6 +2172,410 @@ const SongwritingApp: React.FC = () => {
                                 <span className="font-medium text-sm text-stone-700">{c.name}</span>
                             </button>
                         ))}
+                    </div>
+                </Modal>
+
+                {/* ─── 封面确认 Modal — 喜欢按钮 → 跳转音乐 App 之间的中间步骤 ─── */}
+                <Modal isOpen={showCoverConfirm} title="给这首歌选个封面" onClose={() => setShowCoverConfirm(false)}>
+                    <div className="space-y-4">
+                        {/* 封面大预览 */}
+                        <div className="flex items-center justify-center">
+                            <div
+                                className="relative w-44 h-44 rounded-2xl overflow-hidden"
+                                style={{
+                                    boxShadow: `0 8px 32px ${MusicC.glow}50, inset 0 1px 0 rgba(255,255,255,0.5)`,
+                                    border: `1px solid ${MusicC.glow}40`,
+                                }}
+                            >
+                                {coverMode === 'char' && collaborator?.avatar && (
+                                    <img src={collaborator.avatar} alt="" className="w-full h-full object-cover" />
+                                )}
+                                {coverMode === 'user' && userProfile?.avatar && (
+                                    <img src={userProfile.avatar} alt="" className="w-full h-full object-cover" />
+                                )}
+                                {coverMode === 'dual' && (
+                                    isBuildingDual ? (
+                                        <div className="w-full h-full flex items-center justify-center"
+                                            style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender}, ${MusicC.glow})` }}>
+                                            <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        </div>
+                                    ) : dualCoverUrl ? (
+                                        <img src={dualCoverUrl} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-white text-xs"
+                                            style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})` }}>
+                                            合影封面
+                                        </div>
+                                    )
+                                )}
+                                {/* 黑胶反光 */}
+                                <div className="absolute inset-0 pointer-events-none"
+                                    style={{ background: 'linear-gradient(45deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%)' }} />
+                            </div>
+                        </div>
+
+                        {/* 三个候选缩略图 */}
+                        <div className="grid grid-cols-3 gap-2">
+                            {([
+                                { id: 'char' as CoverMode, label: collaborator?.name || '搭档', src: collaborator?.avatar || '' },
+                                { id: 'user' as CoverMode, label: userProfile?.name || '我', src: userProfile?.avatar || '' },
+                                { id: 'dual' as CoverMode, label: '合影', src: dualCoverUrl || '' },
+                            ]).map(opt => {
+                                const active = opt.id === coverMode;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        onClick={() => setCoverMode(opt.id)}
+                                        className="rounded-xl p-2 border transition-all active:scale-95 flex flex-col items-center gap-1"
+                                        style={active ? {
+                                            background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                            color: 'white',
+                                            borderColor: 'transparent',
+                                            boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                        } : {
+                                            background: 'rgba(255,255,255,0.7)',
+                                            color: MusicC.text,
+                                            borderColor: `${MusicC.faint}50`,
+                                        }}
+                                    >
+                                        <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0"
+                                            style={{
+                                                border: `1.5px solid ${active ? 'rgba(255,255,255,0.6)' : `${MusicC.faint}50`}`,
+                                            }}>
+                                            {opt.src ? (
+                                                <img src={opt.src} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center"
+                                                    style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})` }}>
+                                                    {opt.id === 'dual' && (isBuildingDual ? (
+                                                        <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <SparkleP size={14} weight="fill" color="white" />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="text-[10px] font-medium leading-tight">{opt.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* 元信息 */}
+                        <div className="rounded-xl px-3 py-2 text-[11px] leading-relaxed"
+                            style={{
+                                background: `linear-gradient(135deg, ${MusicC.glow}15, ${MusicC.sakura}10)`,
+                                border: `1px solid ${MusicC.glow}25`,
+                                color: MusicC.muted,
+                            }}>
+                            <div><span style={{ color: MusicC.primary }}>♪ </span>《{activeSong.title}》</div>
+                            <div className="mt-0.5">作者：{userProfile?.name || '我'} & {collaborator?.name || 'AI'}</div>
+                            <div className="mt-0.5">专辑：一起写的歌</div>
+                        </div>
+
+                        {/* 按钮 */}
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowCoverConfirm(false)}
+                                className="flex-1 py-3 rounded-xl text-[11px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                style={{
+                                    background: 'rgba(255,255,255,0.7)',
+                                    color: MusicC.muted,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                }}
+                            >
+                                取消
+                            </button>
+                            {isLikedToMusic && (
+                                <button
+                                    onClick={handleRemoveFromAlbum}
+                                    className="flex-1 py-3 rounded-xl text-[11px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.7)',
+                                        color: MusicC.danger,
+                                        border: `1px solid ${MusicC.danger}40`,
+                                    }}
+                                >
+                                    移除
+                                </button>
+                            )}
+                            <button
+                                onClick={handleConfirmAddToAlbum}
+                                disabled={isBuildingDual && coverMode === 'dual'}
+                                className="flex-[2] py-3 rounded-xl text-[12px] font-bold tracking-[0.18em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                style={{
+                                    background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                    color: 'white',
+                                    boxShadow: `0 4px 18px ${MusicC.sakura}60, 0 0 50px ${MusicC.sakura}25`,
+                                    fontFamily: 'Georgia, serif',
+                                }}
+                            >
+                                ❤︎ {isLikedToMusic ? '保存并去听' : '加入并去听'}
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+
+                {/* ─── Unified AI 出歌引导 Modal — shizuku theme ─── */}
+                <Modal
+                    isOpen={showCustomPrompt}
+                    title="✦ 让 AI 把它唱出来"
+                    onClose={() => setShowCustomPrompt(false)}
+                    footer={
+                        <>
+                            <button
+                                onClick={() => setShowCustomPrompt(false)}
+                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                style={{
+                                    background: 'rgba(255,255,255,0.7)',
+                                    color: MusicC.muted,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                }}
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleConfirmAndGenerate}
+                                disabled={cooldownSecsLeft > 0 || !promptDraft.trim()}
+                                className="flex-[2] py-3.5 rounded-xl text-[12px] font-bold tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                style={{
+                                    background: cooldownSecsLeft > 0
+                                        ? `linear-gradient(135deg, ${MusicC.faint}, ${MusicC.muted})`
+                                        : `linear-gradient(135deg, ${MusicC.primary} 0%, ${MusicC.accent} 60%, ${MusicC.lavender} 100%)`,
+                                    color: 'white',
+                                    boxShadow: cooldownSecsLeft > 0
+                                        ? 'none'
+                                        : `0 6px 22px ${MusicC.glow}70, 0 0 60px ${MusicC.lavender}30, inset 0 1px 0 rgba(255,255,255,0.35)`,
+                                    fontFamily: 'Georgia, "Noto Serif SC", serif',
+                                }}
+                            >
+                                {/* Moving sheen */}
+                                {cooldownSecsLeft === 0 && (
+                                    <span className="absolute inset-0 pointer-events-none"
+                                        style={{
+                                            background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
+                                            backgroundSize: '200% 100%',
+                                            animation: 'shizuku-shimmer 4s ease-in-out infinite',
+                                        }} />
+                                )}
+                                <span className="relative inline-flex items-center justify-center gap-2">
+                                    {cooldownSecsLeft > 0 ? (
+                                        `冷却中 ${cooldownSecsLeft}s`
+                                    ) : (
+                                        <>
+                                            <CrossStar size={11} color="white" delay={0} solid />
+                                            开始录制
+                                            <CrossStar size={11} color="white" delay={0.5} solid />
+                                        </>
+                                    )}
+                                </span>
+                            </button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4">
+                        {/* ── Provider picker — segmented ── */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <Sparkle size={8} color={MusicC.accent} delay={0.2} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>选生成器</label>
+                            </div>
+                            {(() => {
+                                const opts: { id: MusicProvider; title: string; sub: string; available: boolean; needs: string }[] = [
+                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整长歌', available: hasReplicateKey, needs: 'Replicate Token' },
+                                ];
+                                return (
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {opts.map(opt => {
+                                            const isActive = opt.id === provider;
+                                            const Ico = PROVIDER_ICONS[opt.id] || Heart;
+                                            return (
+                                                <button
+                                                    key={opt.id}
+                                                    onClick={() => setProvider(opt.id)}
+                                                    disabled={!opt.available}
+                                                    className="relative text-left p-2 rounded-xl border transition-all active:scale-95 disabled:cursor-not-allowed"
+                                                    style={isActive ? {
+                                                        background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                                        color: 'white',
+                                                        borderColor: 'transparent',
+                                                        boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                                    } : opt.available ? {
+                                                        background: 'rgba(255,255,255,0.7)',
+                                                        color: MusicC.text,
+                                                        borderColor: `${MusicC.faint}50`,
+                                                    } : {
+                                                        background: 'rgba(0,0,0,0.03)',
+                                                        color: MusicC.faint,
+                                                        borderColor: `${MusicC.faint}30`,
+                                                        opacity: 0.55,
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1.5 mb-0.5">
+                                                        <Ico size={14} weight={isActive ? 'fill' : 'duotone'} />
+                                                        <span className="text-[10.5px] font-bold leading-none">{opt.title}</span>
+                                                    </div>
+                                                    <div className="text-[9px] opacity-80 leading-tight">{opt.sub}</div>
+                                                    {!opt.available && (
+                                                        <div className="text-[8.5px] mt-0.5 leading-tight" style={{ color: MusicC.danger }}>需填 {opt.needs}</div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                {provider === 'ace-step'
+                                    ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
+                                    : provider === 'minimax-paid'
+                                        ? '完整长歌（最长 4-6 分钟）— Token Plan，RPM 高'
+                                        : '完整长歌（最长 4-6 分钟）— 完全免费 · 用你已填的 MiniMax Key'}
+                            </p>
+                        </div>
+
+                        {/* Section I — Quick voice preset chips */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>I</span>
+                                <CrossStar size={7} color={MusicC.glow} delay={0} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: MusicC.primary }}>快速选声线</label>
+                                <div className="flex-1 h-px" style={{ background: `linear-gradient(to right, ${MusicC.glow}55, transparent)` }} />
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                                {VOICE_PRESETS.map(preset => {
+                                    const isActive = preset.id === voicePresetId;
+                                    const Ico = VOICE_ICONS[preset.id] || SparkleP;
+                                    return (
+                                        <button
+                                            key={preset.id}
+                                            onClick={() => applyVoicePreset(preset.id)}
+                                            className="text-[11px] py-2.5 rounded-xl border transition-all active:scale-95 flex flex-col items-center justify-center gap-1 relative overflow-hidden"
+                                            style={isActive ? {
+                                                background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                                color: 'white',
+                                                borderColor: 'transparent',
+                                                boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                            } : {
+                                                background: 'rgba(255,255,255,0.7)',
+                                                color: MusicC.primary,
+                                                borderColor: `${MusicC.faint}50`,
+                                            }}
+                                        >
+                                            <Ico size={18} weight={isActive ? 'fill' : 'duotone'} />
+                                            <span className="font-medium leading-tight">{preset.label}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Section II — Natural language guidance */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>II</span>
+                                <CrossStar size={7} color={MusicC.sakura} delay={0.4} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: MusicC.primary }}>或描述更细的风格</label>
+                                <div className="flex-1 h-px" style={{ background: `linear-gradient(to right, ${MusicC.sakura}55, transparent)` }} />
+                            </div>
+                            <textarea
+                                value={promptGuidance}
+                                onChange={(e) => setPromptGuidance(e.target.value)}
+                                placeholder="慵懒的爵士女声，钢琴和萨克斯为主，60bpm，雨夜的感觉…"
+                                rows={3}
+                                className="w-full rounded-xl px-3 py-2 text-[13px] focus:outline-none transition-colors resize-none shizuku-glass"
+                                style={{
+                                    color: MusicC.text,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                    fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                }}
+                            />
+                            <button
+                                onClick={handleAiWritePrompt}
+                                disabled={isAiWritingPrompt}
+                                className="w-full py-2.5 rounded-xl text-[12px] font-medium tracking-[0.15em] transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 relative overflow-hidden"
+                                style={{
+                                    background: `linear-gradient(135deg, ${MusicC.lavender}, ${MusicC.sakura})`,
+                                    color: 'white',
+                                    boxShadow: `0 3px 14px ${MusicC.sakura}40`,
+                                    fontFamily: 'Georgia, serif',
+                                }}
+                            >
+                                {isAiWritingPrompt ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        AI 思考中…
+                                    </>
+                                ) : (
+                                    <>
+                                        <SparkleP size={14} weight="fill" />
+                                        {promptGuidance.trim()
+                                            ? `让 AI 结合${collaborator?.name || '角色'}的气质改`
+                                            : `让 AI 凭${collaborator?.name || '角色'}的气质写一段`}
+                                    </>
+                                )}
+                            </button>
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                AI 会读{collaborator ? `「${collaborator.name}」` : '这首歌'}的人设，**自己拿主意**——你不用懂音乐。
+                            </p>
+                        </div>
+
+                        {/* Section III — Final editable tag string */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between pl-1 gap-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <span className="font-bold italic shrink-0" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>III</span>
+                                    <CrossStar size={7} color={MusicC.lavender} delay={0.8} />
+                                    <label className="text-[10px] font-bold uppercase tracking-[0.25em] truncate" style={{ color: MusicC.primary }}>最终 prompt（喂给{provider === 'ace-step' ? ' ACE-Step' : ' MiniMax'}）</label>
+                                </div>
+                                <button
+                                    onClick={handleResetCustomPrompt}
+                                    className="text-[10px] underline transition-colors"
+                                    style={{ color: MusicC.muted }}
+                                >
+                                    重置默认
+                                </button>
+                            </div>
+                            <textarea
+                                value={promptDraft}
+                                onChange={(e) => setPromptDraft(e.target.value)}
+                                placeholder={provider === 'ace-step'
+                                    ? 'female vocal, breathy, dreamy pop, soft piano, 75 bpm, c minor'
+                                    : '女声, 气声, 梦幻流行, 钢琴轻柔, 黑胶噪点, 75bpm, c 小调'}
+                                rows={3}
+                                className="w-full rounded-xl px-3 py-2 text-[12px] font-mono focus:outline-none transition-colors resize-none"
+                                style={{
+                                    background: '#0d1418',
+                                    color: '#9bcbf8',
+                                    border: `1px solid ${MusicC.primary}40`,
+                                }}
+                            />
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                {provider === 'ace-step'
+                                    ? '逗号分隔的英文 tag。常用 vocal 类：female/male vocal、breathy/husky/sweet；风格：pop/rock/jazz/lo-fi；情绪：dreamy/upbeat/melancholy。'
+                                    : '逗号分隔的中文描述（MiniMax 中文模型，自然中文最好用）。例：女声 / 气声 / 慵懒哼唱 / 爵士 / 钢琴 / 黑胶噪点 / 60bpm / e 小调。'}
+                            </p>
+                        </div>
+
+                        {/* Hint strip — content depends on provider */}
+                        <div
+                            className="rounded-xl px-3 py-2 flex items-center gap-2 text-[10.5px] leading-relaxed"
+                            style={{
+                                background: `linear-gradient(135deg, ${MusicC.glow}15, ${MusicC.sakura}10)`,
+                                border: `1px solid ${MusicC.glow}25`,
+                                color: MusicC.muted,
+                            }}
+                        >
+                            <Sparkle size={9} color={MusicC.accent} delay={0} />
+                            <span>
+                                {provider === 'ace-step'
+                                    ? '约 30-60s 出歌 · ~¥0.1-0.3/首'
+                                    : '约 30-60s 出歌 · 免费完整长歌'}
+                            </span>
+                        </div>
+
                     </div>
                 </Modal>
             </div>
@@ -1017,23 +2628,69 @@ const SongwritingApp: React.FC = () => {
                     )}
                 </div>
 
-                {/* Structure Guide (collapsible) */}
-                {showStructureGuide && (
-                    <div className="bg-white border-b border-stone-200/80 p-4 z-10">
-                        <h3 className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em] mb-2">歌曲结构</h3>
-                        <div className="space-y-1.5">
-                            {Object.entries(SECTION_LABELS).map(([key, info]) => (
-                                <div key={key} className="flex items-center gap-2">
-                                    <SectionBadge section={key} small />
-                                    <span className="text-[10px] text-stone-400">{info.desc}</span>
-                                </div>
-                            ))}
+                {/* Structure Guide (collapsible) — 先优先显示当前 song 的歌词模板 */}
+                {showStructureGuide && (() => {
+                    const tpl = getLyricTemplate(activeSong.lyricTemplate);
+                    const writtenBySection = activeSong.lines.filter(l => !l.isDraft).reduce<Record<string, number>>((acc, l) => {
+                        acc[l.section] = (acc[l.section] || 0) + 1;
+                        return acc;
+                    }, {});
+                    return (
+                        <div className="bg-white border-b border-stone-200/80 p-4 z-10">
+                            {tpl.id !== 'free' && tpl.structure.length > 0 ? (
+                                <>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[14px] leading-none" style={{ fontFamily: 'Georgia, serif' }}>{tpl.icon}</span>
+                                            <h3 className="text-[10px] font-medium text-stone-500 uppercase tracking-[0.2em]">{tpl.label} · 推荐结构</h3>
+                                        </div>
+                                        <span className="text-[9px] text-stone-400">已写 {activeSong.lines.filter(l => !l.isDraft).length} 句</span>
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mb-3 italic">{tpl.desc}</p>
+                                    <div className="space-y-1.5">
+                                        {tpl.structure.map((sec, i) => {
+                                            const written = writtenBySection[sec.section] || 0;
+                                            // count this section's slot — distribute writes across repeat sections
+                                            const sectionSlotIdx = tpl.structure.slice(0, i + 1).filter(s => s.section === sec.section).length - 1;
+                                            const sectionTotal = tpl.structure.filter(s => s.section === sec.section).length;
+                                            const writtenForSlot = sectionTotal === 1 ? written : Math.min(sec.lines, Math.max(0, written - sectionSlotIdx * sec.lines));
+                                            const fullyWritten = writtenForSlot >= sec.lines;
+                                            return (
+                                                <div key={i} className="flex items-center gap-2 py-0.5">
+                                                    <span className="text-[9px] tabular-nums w-4 text-stone-300">{i + 1}.</span>
+                                                    <SectionBadge section={sec.section} small />
+                                                    <span className="text-[10px] text-stone-500">{sec.lines} 句 · {sec.chars} 字</span>
+                                                    <div className="flex-1" />
+                                                    <span className={`text-[9px] tabular-nums ${fullyWritten ? 'text-emerald-500 font-semibold' : 'text-stone-400'}`}>
+                                                        {writtenForSlot}/{sec.lines}{fullyWritten && ' ✓'}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mt-3 border-t border-stone-100 pt-2">
+                                        提示：点底部「段落」按钮切换章节，跟着模板填就行。AI 也会按这个结构提建议。
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <h3 className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em] mb-2">歌曲结构</h3>
+                                    <div className="space-y-1.5">
+                                        {Object.entries(SECTION_LABELS).map(([key, info]) => (
+                                            <div key={key} className="flex items-center gap-2">
+                                                <SectionBadge section={key} small />
+                                                <span className="text-[10px] text-stone-400">{info.desc}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mt-2 border-t border-stone-100 pt-2">
+                                        常见结构：主歌 → 导歌 → 副歌 → 主歌 → 导歌 → 副歌 → 桥段 → 副歌
+                                    </p>
+                                </>
+                            )}
                         </div>
-                        <p className="text-[10px] text-stone-400 mt-2 border-t border-stone-100 pt-2">
-                            常见结构：主歌 → 导歌 → 副歌 → 主歌 → 导歌 → 副歌 → 桥段 → 副歌
-                        </p>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {/* Timeline Content */}
                 <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 no-scrollbar pb-48 relative z-10" ref={scrollRef} onClick={() => longPressLineId && setLongPressLineId(null)}>

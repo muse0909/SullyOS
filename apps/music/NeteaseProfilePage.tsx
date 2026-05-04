@@ -9,7 +9,7 @@ import { useMusic, musicApi, toHttps, Song } from '../../context/MusicContext';
 import {
   C, Sparkle, MizuHeader, BokehBg, MiniPlayer,
 } from './MusicUI';
-import { MagnifyingGlass, Gear } from '@phosphor-icons/react';
+import { MagnifyingGlass, Gear, User as UserIcon } from '@phosphor-icons/react';
 import NeteaseLoginPanel from './NeteaseLoginPanel';
 
 interface Playlist {
@@ -35,13 +35,131 @@ interface Props {
   onVisitChar?: (charId: string) => void;
 }
 
+// ─── 「一起写的歌」本地专辑卡 — 写歌 App 同步过来的 ACE-Step / MiniMax 出歌 ───
+interface LocalAlbumCardProps {
+  songs: Song[];
+  expanded: boolean;
+  setExpanded: (next: ((v: boolean) => boolean) | boolean) => void;
+  currentId: number | null;
+  playing: boolean;
+  onPlay: (song: Song, idx: number) => void;
+  onRemove: (id: number) => void;
+}
+const LocalAlbumCard: React.FC<LocalAlbumCardProps> = ({ songs, expanded, setExpanded, currentId, playing, onPlay, onRemove }) => (
+  <div
+    className="rounded-2xl overflow-hidden relative"
+    style={{
+      background: `linear-gradient(135deg, ${C.sakura}25, ${C.lavender}22, ${C.glow}20)`,
+      border: `1px solid ${C.sakura}50`,
+      boxShadow: `0 4px 18px ${C.sakura}25, inset 0 1px 0 rgba(255,255,255,0.5)`,
+    }}
+  >
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0 opacity-50"
+      style={{ background: `radial-gradient(ellipse at 80% 20%, ${C.sakura}40 0%, transparent 50%)` }}
+    />
+    <button
+      onClick={() => setExpanded((v: boolean) => !v)}
+      className="relative w-full flex items-center gap-3 p-2.5 text-left"
+    >
+      <div className="relative w-12 h-12 shrink-0">
+        <div className="absolute inset-0 rounded-xl flex items-center justify-center overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+            border: `1.5px solid ${C.glow}80`,
+            boxShadow: `0 2px 8px ${C.glow}40`,
+          }}
+        >
+          <Sparkle size={20} color="white" delay={0} />
+        </div>
+        <Sparkle size={9} className="absolute -top-1 -right-1" color={C.sakura} delay={0.5} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium tracking-wider"
+            style={{ color: C.primary, fontFamily: `'Georgia', 'Noto Serif SC', serif` }}>
+            一起写的歌
+          </span>
+          <span className="text-[8px] px-1.5 py-[1px] rounded-full font-bold"
+            style={{
+              background: `linear-gradient(135deg, ${C.sakura}, ${C.lavender})`,
+              color: 'white',
+              letterSpacing: '0.1em',
+            }}>
+            OURS
+          </span>
+        </div>
+        <div className="text-[10px] truncate mt-0.5" style={{ color: C.muted }}>
+          {songs.length} 首 · 你和 char 共同创作
+        </div>
+      </div>
+      <div className="text-[10px] shrink-0" style={{ color: C.sakura }}>
+        {expanded ? '收起' : '展开'}
+      </div>
+    </button>
+    {expanded && (
+      <div className="relative border-t px-1 py-1" style={{ borderColor: `${C.sakura}30` }}>
+        {songs.map((s, idx) => {
+          const active = currentId === s.id;
+          return (
+            <div key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/30 transition-colors">
+              <button
+                onClick={() => onPlay(s, idx)}
+                className="flex-1 flex items-center gap-2 min-w-0 text-left"
+              >
+                <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+                  style={{ background: active ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : `${C.faint}25` }}>
+                  {active && playing ? (
+                    <span className="flex gap-0.5">
+                      <span className="w-0.5 h-2 bg-white rounded-full" style={{ animation: 'shizuku-twinkle 0.6s ease-in-out infinite' }} />
+                      <span className="w-0.5 h-3 bg-white rounded-full" style={{ animation: 'shizuku-twinkle 0.8s ease-in-out 0.15s infinite' }} />
+                      <span className="w-0.5 h-2 bg-white rounded-full" style={{ animation: 'shizuku-twinkle 0.7s ease-in-out 0.3s infinite' }} />
+                    </span>
+                  ) : (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill={active ? 'white' : C.muted}>
+                      <path d="M8 5v14l11-7L8 5z" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] truncate" style={{ color: active ? C.primary : C.text, fontWeight: active ? 600 : 400 }}>
+                    {s.name}
+                  </div>
+                  <div className="text-[9.5px] truncate" style={{ color: C.muted }}>
+                    {s.artists}
+                  </div>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.confirm(`从专辑移除《${s.name}》？`)) onRemove(s.id);
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded shrink-0 transition-colors"
+                style={{ color: C.faint }}
+                title="移除"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+);
+
 const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings, onVisitChar }) => {
   const { addToast, characters, userProfile } = useOS();
   const {
     cfg, setCfg, profile, refreshProfile, playSong,
     current, playing, togglePlay, nextSong, prevSong,
     listeningTogetherWith, removeListeningPartner,
+    localAlbumSongs, removeLocalSong,
+    regeneratingId, regeneratingStatus,
   } = useMusic();
+  const [localAlbumExpanded, setLocalAlbumExpanded] = useState(false);
+  const [showNeteaseLogin, setShowNeteaseLogin] = useState(false);
 
   // 伴听 char 名单（MiniPlayer 徽章用）—— 带头像
   const companions = useMemo(() => {
@@ -190,21 +308,75 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
     await refreshProfile();
   }, [setCfg, refreshProfile]);
 
-  // 未登录 → 登录面板
-  // ⚠️ 注意: 所有 hooks 必须在这个 early-return **之前** 声明完,
-  // 否则登录/登出切换时会触发 React error #310 (rendered more hooks)
+  // 未登录 → 默认展示「一起写的歌」本地专辑 + 网易云登录入口；
+  // 没本地专辑 → 直接进登录面板（保持原来体验）。
+  // ⚠️ 所有 hooks 必须在这个 early-return **之前** 声明完。
   if (!cfg.cookie || !profile) {
+    if (localAlbumSongs.length === 0 || showNeteaseLogin) {
+      return (
+        <NeteaseLoginPanel
+          onBack={localAlbumSongs.length > 0 ? () => setShowNeteaseLogin(false) : onBack}
+          onLoggedIn={async (cookie) => {
+            setCfg({ ...cfgRef.current, cookie });
+            await new Promise(r => setTimeout(r, 300));
+            await refreshProfile();
+            toastRef.current('登录成功', 'success');
+            setShowNeteaseLogin(false);
+          }}
+        />
+      );
+    }
+    // 有本地专辑 → 简洁单页：仅 album + 一个登录入口卡
     return (
-      <NeteaseLoginPanel
-        onBack={onBack}
-        onLoggedIn={async (cookie) => {
-          setCfg({ ...cfgRef.current, cookie });
-          // 给网络一点时间把 cookie 应用到上游
-          await new Promise(r => setTimeout(r, 300));
-          await refreshProfile();
-          toastRef.current('登录成功', 'success');
-        }}
-      />
+      <div className="flex flex-col h-full relative"
+        style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
+        <BokehBg />
+        <MizuHeader title="My Cloud" onBack={onBack} />
+        <div className="relative z-10 flex-1 overflow-y-auto pb-24 px-3 pt-3 shizuku-scrollbar">
+          {/* 本地专辑卡 */}
+          <LocalAlbumCard
+            songs={localAlbumSongs}
+            expanded={localAlbumExpanded}
+            setExpanded={setLocalAlbumExpanded}
+            currentId={current?.id ?? null}
+            playing={playing}
+            onPlay={(s, idx) => playSong(s, { alsoSetQueue: true, replaceQueue: localAlbumSongs, startIdx: idx })}
+            onRemove={removeLocalSong}
+          />
+          {/* 登录入口卡 */}
+          <button
+            onClick={() => setShowNeteaseLogin(true)}
+            className="mt-3 w-full rounded-2xl shizuku-glass p-4 flex items-center gap-3 transition-all active:scale-[0.99]"
+          >
+            <div className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: `linear-gradient(135deg, ${C.faint}40, ${C.muted}30)`, border: `1px solid ${C.faint}40` }}>
+              <UserIcon size={18} color={C.muted} weight="duotone" />
+            </div>
+            <div className="flex-1 text-left">
+              <div className="text-sm" style={{ color: C.text }}>登录网易云</div>
+              <div className="text-[10.5px]" style={{ color: C.muted }}>解锁海量曲库 · 自己的歌单 · 一起听</div>
+            </div>
+            <span className="text-[12px]" style={{ color: C.accent }}>→</span>
+          </button>
+        </div>
+        {current && (
+          <MiniPlayer
+            name={current.name}
+            artists={current.artists}
+            albumPic={current.albumPic}
+            playing={playing}
+            onTap={onOpenPlayer}
+            onPrev={prevSong}
+            onToggle={togglePlay}
+            onNext={nextSong}
+            userAvatar={userProfile?.avatar}
+            userName={userProfile?.name}
+            companions={companions}
+            onKickCompanion={removeListeningPartner}
+            regenStatus={current.id === regeneratingId ? regeneratingStatus : undefined}
+          />
+        )}
+      </div>
     );
   }
 
@@ -455,7 +627,18 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
 
         {tab === 'playlist' && (
           <div className="px-3 mt-3 space-y-2">
-            {playlists.length === 0 && !loading && (
+            {localAlbumSongs.length > 0 && (
+              <LocalAlbumCard
+                songs={localAlbumSongs}
+                expanded={localAlbumExpanded}
+                setExpanded={setLocalAlbumExpanded}
+                currentId={current?.id ?? null}
+                playing={playing}
+                onPlay={(s, idx) => playSong(s, { alsoSetQueue: true, replaceQueue: localAlbumSongs, startIdx: idx })}
+                onRemove={removeLocalSong}
+              />
+            )}
+            {playlists.length === 0 && !loading && localAlbumSongs.length === 0 && (
               <div className="text-center text-[11px] py-10" style={{ color: C.faint }}>还没有歌单</div>
             )}
             {playlists.map(pl => (
@@ -571,6 +754,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           userName={userProfile?.name}
           companions={companions}
           onKickCompanion={removeListeningPartner}
+          regenStatus={current.id === regeneratingId ? regeneratingStatus : undefined}
         />
       )}
     </div>

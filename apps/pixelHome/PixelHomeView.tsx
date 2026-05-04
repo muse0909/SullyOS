@@ -38,7 +38,7 @@ interface Props {
 }
 
 const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName, onBack }) => {
-  const { addToast, apiConfig, characters, userProfile, remoteVectorConfig } = useOS();
+  const { addToast, apiConfig, characters, userProfile, remoteVectorConfig, memoryPalaceConfig } = useOS();
   const char = characters.find(c => c.id === charId);
   const [viewMode, setViewMode] = useState<PixelHomeViewMode>('map');
   const [homeState, setHomeState] = useState<PixelHomeState | null>(null);
@@ -328,6 +328,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
             userName={userName}
             homeState={homeState} assets={assets}
             apiConfig={apiConfig}
+            memoryPalaceConfig={memoryPalaceConfig}
             remoteVectorConfig={remoteVectorConfig}
             onExit={handleDiveExit}
           />

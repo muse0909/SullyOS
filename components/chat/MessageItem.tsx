@@ -4,6 +4,7 @@
 import React, { useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
+import McdCard from './McdCard';
 
 // --- Forward Card with expand/collapse ---
 const ForwardCard: React.FC<{
@@ -206,6 +207,9 @@ interface MessageItemProps {
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
     messageSpacing?: 'compact' | 'default' | 'spacious';
     showTimestamp?: 'always' | 'hover' | 'never';
+    /** 麦当劳菜单卡里点了"发送给角色"时调用 */
+    onMcdSendCart?: (items: import('./McdCard').McdCartItem[]) => void;
+    onMcdCandidate?: (item: import('./McdCard').McdCartItem) => void;
 }
 
 const MessageItem = React.memo(({
@@ -233,6 +237,8 @@ const MessageItem = React.memo(({
     bubbleVariant = 'modern',
     messageSpacing = 'default',
     showTimestamp = 'hover',
+    onMcdSendCart,
+    onMcdCandidate,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -776,6 +782,98 @@ const MessageItem = React.memo(({
                         <span className="text-red-400 font-bold">小红书</span> <span>·</span> <span>{note.type === 'video' ? '视频' : '笔记'}{isUser ? '分享' : '推荐'}</span>
                     </div>
                 </div>
+            </div>
+        );
+    }
+
+    if (m.type === 'mcd_card') {
+        const meta = m.metadata || {};
+        const kind = meta.mcdCardKind;
+        // 来自小程序的卡片 (proposal / cart / candidate) → 主聊天里只渲染一张漂亮的"刷卡"占位
+        // 真实可交互内容只在小程序界面里展示, 主聊天里点小程序按钮回到那个界面看。
+        if (kind === 'proposal' || kind === 'cart' || kind === 'candidate' || meta.fromMcdMiniApp) {
+            const label = kind === 'proposal' ? '推荐了几样'
+                : kind === 'cart' ? '想下单的购物车'
+                : kind === 'candidate' ? '问问意见'
+                : '麦当劳卡片';
+            const summary = kind === 'proposal' && Array.isArray(meta.mcdProposal?.items)
+                ? `${meta.mcdProposal.items.length} 件: ${meta.mcdProposal.items.slice(0, 3).map((i: any) => i.name).join(' / ')}${meta.mcdProposal.items.length > 3 ? '…' : ''}`
+                : kind === 'cart' && Array.isArray(meta.mcdCartItems)
+                ? `${meta.mcdCartItems.length} 件: ${meta.mcdCartItems.slice(0, 3).map((i: any) => i.name).join(' / ')}${meta.mcdCartItems.length > 3 ? '…' : ''}`
+                : kind === 'candidate' && meta.mcdCandidate?.name
+                ? `「${meta.mcdCandidate.name}」`
+                : '';
+            return commonLayout(
+                <div className="w-60 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50 select-none">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-yellow-300 to-amber-300">
+                        <span className="text-lg">🍟</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[10px] text-yellow-900/70 leading-none">麦当劳卡片</div>
+                            <div className="text-[11px] font-bold text-yellow-900 leading-tight">{label}</div>
+                        </div>
+                    </div>
+                    <div className="px-3 py-2 text-[10px] text-slate-500 leading-snug min-h-[28px]">
+                        {summary || '在麦当劳小程序里查看完整内容'}
+                    </div>
+                    <div className="px-3 pb-2 text-[9px] text-yellow-700/60 italic">
+                        💳 已记录在麦记录里
+                    </div>
+                </div>
+            );
+        }
+        // 老的 mcd_card (从旧 LLM 工具调用残留 / 无 kind), 保持原有 McdCard 渲染兼容
+        return commonLayout(
+            <McdCard
+                toolName={meta.mcdToolName || m.content || 'mcd_tool'}
+                args={meta.mcdToolArgs}
+                result={meta.mcdToolResult}
+                error={meta.mcdToolError}
+                rawText={meta.mcdToolRawText}
+                kind={kind || 'generic'}
+                onSendCart={onMcdSendCart}
+                onCandidate={onMcdCandidate}
+                cartItems={meta.mcdCartItems}
+                candidateItem={meta.mcdCandidate}
+            />
+        );
+    }
+
+    if (m.type === 'html_card') {
+        const meta: any = m.metadata || {};
+        const html: string = (typeof meta.htmlSource === 'string' && meta.htmlSource) ? meta.htmlSource : '';
+        if (!html) {
+            // 元数据丢了 (老消息或导入数据), 给个友好占位
+            return commonLayout(
+                <div className="px-4 py-3 rounded-2xl bg-fuchsia-50 text-fuchsia-500 text-xs italic border border-fuchsia-100">
+                    [HTML 卡片数据缺失]
+                </div>
+            );
+        }
+        // 沙盒 iframe：禁用脚本 / 同源 / 表单提交，避免任意 HTML 越权访问父页面。
+        // srcDoc 用一个全宽中心化的 wrapper, 让 270px 的卡片在 iframe 里居中、背景透明。
+        const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}</style></head><body>${html}</body></html>`;
+        return commonLayout(
+            <div className="rounded-[18px] overflow-hidden bg-white/0 shadow-sm border border-fuchsia-100/60 max-w-[280px]">
+                <iframe
+                    title="html-card"
+                    srcDoc={srcDoc}
+                    // allow-same-origin: 让父页面能读 contentDocument 自动调高度
+                    // 故意不给 allow-scripts / allow-forms / allow-popups —
+                    // AI 输出里的 <script> 不会执行, 表单 / 弹窗 / 顶层跳转 也都被拦。
+                    sandbox="allow-same-origin"
+                    referrerPolicy="no-referrer"
+                    className="block w-[280px] min-h-[120px] border-0 bg-transparent"
+                    style={{ height: 200 }}
+                    onLoad={(e) => {
+                        try {
+                            const f = e.currentTarget;
+                            const doc = f.contentDocument;
+                            if (!doc || !doc.body) return;
+                            const h = Math.min(800, Math.max(60, doc.body.scrollHeight + 4));
+                            f.style.height = h + 'px';
+                        } catch { /* 同源也读不到时静默 */ }
+                    }}
+                />
             </div>
         );
     }

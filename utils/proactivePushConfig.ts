@@ -18,12 +18,14 @@
 //   FILL THESE IN AFTER DEPLOYING THE CLOUDFLARE WORKER
 //   (all three are safe to ship in the client bundle)
 // ═══════════════════════════════════════════════════════════════════
-const WORKER_URL = 'https://tiny-credit-9ad1.gv157167.workers.dev';
+const WORKER_URL = 'https://noir2.cc.cd';
 const VAPID_PUBLIC_KEY = 'BAKnuYYBsb6LXnpGApVCpMkumFqDLjZOSDmzjVPx32jIA5fbz-OWaRdk0RH8qftpVuNwzNO-l49CBEwieyezh0g';
 const CLIENT_TOKEN = 'weqwqewqeqwdcsccagdgs32132';
 // ═══════════════════════════════════════════════════════════════════
 
 const ENABLED_STORAGE_KEY = 'proactive_push_enabled_v1';
+const LAST_WAKE_AT_KEY = 'proactive_push_last_wake_at_v1';
+const LAST_WAKE_CHAR_KEY = 'proactive_push_last_wake_char_v1';
 
 export interface ProactivePushConfig {
   enabled: boolean;
@@ -90,7 +92,7 @@ interface SubscriptionInfo {
   auth: string;
 }
 
-async function getOrCreateSubscription(vapidPublicKey: string): Promise<SubscriptionInfo | null> {
+export async function getOrCreateSubscription(vapidPublicKey: string): Promise<SubscriptionInfo | null> {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
 
   const reg = await navigator.serviceWorker.ready;
@@ -256,4 +258,205 @@ export function stopHeartbeat() {
     document.removeEventListener('visibilitychange', visListener);
     visListener = null;
   }
+}
+
+// ---------- Upfront subscribe (decoupled from schedules) ----------
+
+export interface SubscribeResult {
+  ok: boolean;
+  reason?: string;
+  endpoint?: string;
+}
+
+/**
+ * Request notification permission, build a Push subscription, and POST it to
+ * the Worker as a "ping" record (intervalMs = a sentinel large value so cron
+ * never fires for it; charId = '__ping__' so it doesn't collide with real
+ * character schedules).  After this succeeds the user has a working endpoint
+ * in D1 even before any character has proactive-msg enabled, which is what
+ * /test needs to verify the round-trip.
+ */
+export async function ensureSubscribed(): Promise<SubscribeResult> {
+  const cfg = loadPushConfig();
+  if (!cfg.workerUrl.startsWith('https://') || cfg.vapidPublicKey.length < 80) {
+    return { ok: false, reason: '推送加速器未配置（前端常量未填写）' };
+  }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { ok: false, reason: '当前浏览器不支持 Service Worker 或 Push API' };
+  }
+  if (typeof Notification === 'undefined') {
+    return { ok: false, reason: '当前环境没有 Notification API' };
+  }
+
+  // Request permission first so the popup is tied to the user's click.
+  if (Notification.permission === 'default') {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return { ok: false, reason: '通知权限未授予' };
+  } else if (Notification.permission === 'denied') {
+    return { ok: false, reason: '通知权限已被拒绝（请到浏览器站点设置里手动开启）' };
+  }
+
+  const sub = await getOrCreateSubscription(cfg.vapidPublicKey);
+  if (!sub) return { ok: false, reason: '订阅创建失败（可能 SW 未注册或浏览器拦截）' };
+
+  // Register a sentinel row so /test can find the endpoint by URL.  We use a
+  // very large intervalMs so the cron sweep never picks it up — this row is
+  // purely an addressable record of "endpoint X belongs to this device".
+  try {
+    const NEVER_FIRE_INTERVAL_MS = 365 * 24 * 60 * 60 * 1000; // 1 year
+    const res = await fetch(`${cfg.workerUrl}/subscribe`, {
+      method: 'POST',
+      headers: buildHeaders(cfg),
+      body: JSON.stringify({
+        subscription: { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        charId: '__ping__',
+        intervalMs: NEVER_FIRE_INTERVAL_MS,
+      }),
+    });
+    if (!res.ok) return { ok: false, reason: `Worker /subscribe 返回 HTTP ${res.status}`, endpoint: sub.endpoint };
+  } catch (e: any) {
+    return { ok: false, reason: `Worker 连接失败：${e?.message || '网络错误'}`, endpoint: sub.endpoint };
+  }
+
+  return { ok: true, endpoint: sub.endpoint };
+}
+
+/** Ask the Worker to fire a one-shot test push at this device's endpoint. */
+export async function sendTestPush(): Promise<{ ok: boolean; status?: number; reason?: string }> {
+  const cfg = loadPushConfig();
+  if (!cfg.workerUrl.startsWith('https://')) return { ok: false, reason: 'Worker URL 未配置' };
+
+  const reg = await navigator.serviceWorker?.ready?.catch(() => null);
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  if (!sub) return { ok: false, reason: '本设备没有现有订阅，请先点"开启系统通知"' };
+
+  try {
+    const res = await fetch(`${cfg.workerUrl}/test`, {
+      method: 'POST',
+      headers: buildHeaders(cfg),
+      body: JSON.stringify({ endpoint: sub.endpoint }),
+    });
+    const data = await res.json().catch(() => ({})) as any;
+    if (!res.ok) return { ok: false, status: res.status, reason: data?.error || data?.reason || `HTTP ${res.status}` };
+    if (!data?.ok) return { ok: false, status: data?.status, reason: data?.reason || data?.error || '推送失败' };
+    return { ok: true, status: data?.status };
+  } catch (e: any) {
+    return { ok: false, reason: e?.message || '网络错误' };
+  }
+}
+
+// ---------- Diagnostic info ----------
+
+export interface PushDiagnostics {
+  /** Browser feature support */
+  supported: boolean;
+  /** Notification.permission (or 'unavailable' if API missing) */
+  permission: 'default' | 'granted' | 'denied' | 'unavailable';
+  /** SW registration scope, or null if not registered */
+  swScope: string | null;
+  /** SW state: 'activated' | 'installing' | 'waiting' | 'redundant' | 'none' */
+  swState: string;
+  /** Current Push subscription endpoint, or null */
+  endpoint: string | null;
+  /** Friendly name of the push channel (FCM/Mozilla/Windows/Apple/...) */
+  channel: string;
+  /** True if the deployment constants are in place */
+  workerConfigured: boolean;
+  /** True if the user-facing toggle is on */
+  enabled: boolean;
+  /** ms since epoch of the last wake we received, or null */
+  lastWakeAt: number | null;
+  /** charId of the last wake, or null */
+  lastWakeChar: string | null;
+  /** True if we are inside an iOS Safari that is NOT a standalone PWA */
+  iosNeedsPwa: boolean;
+}
+
+function detectChannelFromEndpoint(endpoint: string | null): string {
+  if (!endpoint) return '未知';
+  if (/fcm\.googleapis\.com|android\.googleapis\.com/i.test(endpoint)) return 'Google FCM (Chrome / Edge / 安卓)';
+  if (/updates\.push\.services\.mozilla\.com/i.test(endpoint)) return 'Mozilla autopush (Firefox)';
+  if (/notify\.windows\.com|wns2/i.test(endpoint)) return 'Windows WNS (Edge)';
+  if (/web\.push\.apple\.com/i.test(endpoint)) return 'Apple APNs (Safari / iOS PWA)';
+  return '未识别厂商';
+}
+
+function detectIosNeedsPwa(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIos = /iPad|iPhone|iPod/.test(ua) || (ua.includes('Macintosh') && 'ontouchend' in document);
+  if (!isIos) return false;
+  // Consider standalone if either iOS legacy `navigator.standalone` or display-mode media query says so.
+  const standalone =
+    (navigator as any).standalone === true ||
+    (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+  return !standalone;
+}
+
+export async function getPushDiagnostics(): Promise<PushDiagnostics> {
+  const cfg = loadPushConfig();
+  const supported = typeof navigator !== 'undefined'
+    && 'serviceWorker' in navigator
+    && typeof window !== 'undefined'
+    && 'PushManager' in window;
+  const permission: PushDiagnostics['permission'] = typeof Notification === 'undefined'
+    ? 'unavailable'
+    : (Notification.permission as PushDiagnostics['permission']);
+
+  let swScope: string | null = null;
+  let swState = 'none';
+  let endpoint: string | null = null;
+  if (supported) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        swScope = reg.scope;
+        const w = reg.active || reg.waiting || reg.installing;
+        swState = w ? w.state : 'none';
+        const sub = await reg.pushManager.getSubscription();
+        endpoint = sub?.endpoint || null;
+      }
+    } catch { /* ignore */ }
+  }
+
+  let lastWakeAt: number | null = null;
+  let lastWakeChar: string | null = null;
+  try {
+    const v = localStorage.getItem(LAST_WAKE_AT_KEY);
+    if (v) lastWakeAt = parseInt(v, 10) || null;
+    lastWakeChar = localStorage.getItem(LAST_WAKE_CHAR_KEY);
+  } catch { /* ignore */ }
+
+  return {
+    supported,
+    permission,
+    swScope,
+    swState,
+    endpoint,
+    channel: detectChannelFromEndpoint(endpoint),
+    workerConfigured: cfg.workerUrl.startsWith('https://') && cfg.vapidPublicKey.length > 80,
+    enabled: cfg.enabled,
+    lastWakeAt,
+    lastWakeChar,
+    iosNeedsPwa: detectIosNeedsPwa(),
+  };
+}
+
+// ---------- Last-wake tracking via SW postMessage ----------
+
+let wakeListenerInstalled = false;
+
+/** Install a one-time global listener that records every wake the SW reports. */
+export function installWakeListener() {
+  if (wakeListenerInstalled) return;
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  wakeListenerInstalled = true;
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const data: any = event.data;
+    if (!data || data.type !== 'proactive-wake-received') return;
+    try {
+      if (data.t) localStorage.setItem(LAST_WAKE_AT_KEY, String(data.t));
+      if (data.charId) localStorage.setItem(LAST_WAKE_CHAR_KEY, String(data.charId));
+    } catch { /* ignore */ }
+  });
 }

@@ -60,6 +60,7 @@ function parseSseToCompletion(raw: string): any | null {
     let role = 'assistant';
     let finishReason: string | null = null;
     let firstChunk: any = null;
+    let usage: any = undefined;
     let gotAnyChunk = false;
 
     // 按行切，逐行找 "data: " 开头（允许 \r\n、空行分隔）
@@ -72,6 +73,9 @@ function parseSseToCompletion(raw: string): any | null {
         try { chunk = JSON.parse(payload); } catch { continue; }
         gotAnyChunk = true;
         if (!firstChunk) firstChunk = chunk;
+        // OpenAI 流式 usage 在最后一个 chunk（include_usage=true 时），也可能出现在中途；
+        // 始终取最后一个非空的 usage，兼容各家代理。
+        if (chunk.usage) usage = chunk.usage;
         const choice = chunk.choices?.[0];
         if (!choice) continue;
         // delta 路径（OpenAI 流式常见）
@@ -102,7 +106,7 @@ function parseSseToCompletion(raw: string): any | null {
             message: { role, content: assembled },
             finish_reason: finishReason,
         }],
-        usage: firstChunk?.usage,
+        usage: usage || firstChunk?.usage,
     };
 }
 

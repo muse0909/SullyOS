@@ -15,6 +15,7 @@
 import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
+import { recordRecallReceipt } from './recallReceipts';
 
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
@@ -32,6 +33,8 @@ interface RenderItem {
     importance: number;
     /** 调试日志用 */
     debugLabel: string;
+    /** 实际落到 prompt 里的 memoryId 列表（事件盒会展开成 summary + 活节点） */
+    sourceIds: string[];
 }
 
 /**
@@ -113,6 +116,19 @@ export async function expandAndFormat(
     });
     const finalItems = renderItems.slice(0, MAX_OUTPUT_ITEMS);
     const cutItems = renderItems.slice(MAX_OUTPUT_ITEMS);
+
+    // ── 召回回执：把这次实际注入 prompt 的 memoryId 落到 localStorage ──
+    // 用途见 ./recallReceipts.ts。便利贴也算注入（用户对某条便利贴可能纠正）。
+    // 截断/过期记忆不计入（cut 部分没进 prompt，pinnedIds 已经过 archived 过滤）。
+    try {
+        const injectedIds: string[] = [];
+        for (const it of finalItems) injectedIds.push(...it.sourceIds);
+        for (const id of pinnedIds) injectedIds.push(id);
+        recordRecallReceipt(charId, injectedIds);
+    } catch (e) {
+        // 回执只是 extraction 阶段的辅助，写失败不影响本次召回输出
+        console.warn('🏰 [MemoryPalace] recordRecallReceipt failed:', e);
+    }
 
     // ─── 调试：打印最终注入 prompt 的完整列表 ─────────────
     //
@@ -234,6 +250,7 @@ function buildStandaloneItem(r: ScoredMemory): RenderItem {
         createdAt: node.createdAt,
         importance: node.importance,
         debugLabel: `mem ${node.id}`,
+        sourceIds: [node.id],
     };
 }
 
@@ -289,6 +306,10 @@ async function buildBoxItem(
         if (omitted > 0) body += `（另有 ${omitted} 条同盒活节点未展示）\n`;
     }
 
+    const sourceIds: string[] = [];
+    if (summary) sourceIds.push(summary.id);
+    for (const n of liveToShow) sourceIds.push(n.id);
+
     return {
         score: topScore,
         room,
@@ -296,5 +317,6 @@ async function buildBoxItem(
         createdAt,
         importance,
         debugLabel: `box ${box.id} (${liveNodes.length} live${summary ? ' + summary' : ''})`,
+        sourceIds,
     };
 }

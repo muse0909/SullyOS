@@ -188,17 +188,33 @@ export async function testConnection(config: RemoteVectorConfig): Promise<{
 /**
  * 插入或更新向量（upsert）
  */
+/**
+ * Decode local-vector storage forms safely for the wire format. After we
+ * switched IndexedDB to Uint8Array(Float32 raw bytes), `instanceof Float32Array`
+ * checks alone would silently miss Uint8Array and fall through to `.join`,
+ * which would stringify the BYTES instead of the floats — corrupting every
+ * remote upsert for hybrid (local+remote) users.
+ */
+function vectorToWireArray(vec: number[] | Float32Array | Uint8Array): number[] {
+    if (vec instanceof Float32Array) return Array.from(vec);
+    if (vec instanceof Uint8Array) {
+        const f32 = new Float32Array(vec.buffer, vec.byteOffset, vec.byteLength >>> 2);
+        return Array.from(f32);
+    }
+    return vec;
+}
+
 export async function upsertVector(
     config: RemoteVectorConfig,
     memoryId: string,
     charId: string,
-    vector: number[] | Float32Array,
+    vector: number[] | Float32Array | Uint8Array,
     node: MemoryNode,
     dimensions: number,
     model?: string,
 ): Promise<boolean> {
     try {
-        const vecArray = vector instanceof Float32Array ? Array.from(vector) : vector;
+        const vecArray = vectorToWireArray(vector);
         const body = {
             memory_id: memoryId,
             char_id: charId,
@@ -246,7 +262,7 @@ export async function upsertVectorBatch(
     items: {
         memoryId: string;
         charId: string;
-        vector: number[] | Float32Array;
+        vector: number[] | Float32Array | Uint8Array;
         node: MemoryNode;
         dimensions: number;
         model?: string;
@@ -255,7 +271,7 @@ export async function upsertVectorBatch(
     if (items.length === 0) return true;
     try {
         const body = items.map(item => {
-            const vecArray = item.vector instanceof Float32Array ? Array.from(item.vector) : item.vector;
+            const vecArray = vectorToWireArray(item.vector);
             return {
                 memory_id: item.memoryId,
                 char_id: item.charId,
@@ -306,7 +322,7 @@ export async function upsertVectorBatch(
  */
 export async function searchVectors(
     config: RemoteVectorConfig,
-    queryVector: number[] | Float32Array,
+    queryVector: number[] | Float32Array | Uint8Array,
     charId: string,
     threshold: number = 0.3,
     topK: number = 20,
@@ -330,7 +346,7 @@ export async function searchVectors(
     isSummary: boolean;
     eventBoxId: string | null;
 }[]> {
-    const vecArray = queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector;
+    const vecArray = vectorToWireArray(queryVector);
 
     const res = await fetch(rpcUrl(config, 'match_vectors'), {
         method: 'POST',
@@ -524,7 +540,7 @@ export async function getVectorCount(config: RemoteVectorConfig, charId?: string
  */
 export async function syncLocalToRemote(
     config: RemoteVectorConfig,
-    getLocalVectors: () => Promise<{ memoryId: string; charId: string; vector: number[] | Float32Array; node: MemoryNode; dimensions: number; model?: string }[]>,
+    getLocalVectors: () => Promise<{ memoryId: string; charId: string; vector: number[] | Float32Array | Uint8Array; node: MemoryNode; dimensions: number; model?: string }[]>,
     onProgress?: (done: number, total: number) => void,
 ): Promise<{ synced: number; failed: number }> {
     const locals = await getLocalVectors();

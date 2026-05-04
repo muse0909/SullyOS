@@ -7,6 +7,9 @@ import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression } from '../utils/impression';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -185,6 +188,9 @@ interface OSContextType {
   memoryPalaceConfig: MemoryPalaceGlobalConfig;
   updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
 
+  // 情绪 API（所有角色同步；是否启用仍各自独立）
+  syncEmotionApiToAllCharacters: (api: { baseUrl: string; apiKey: string; model: string } | undefined) => void;
+
   // 远程向量存储配置 (Supabase pgvector)
   remoteVectorConfig: import('../utils/memoryPalace/types').RemoteVectorConfig;
   updateRemoteVectorConfig: (updates: Partial<import('../utils/memoryPalace/types').RemoteVectorConfig>) => void;
@@ -214,6 +220,11 @@ interface OSContextType {
   unreadMessages: Record<string, number>; // New: Track unread counts per character
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
+  // Set of charIds whose proactive AI generation is currently in flight.
+  // Chat UI subscribes to this to render a soft "正在送达消息…" indicator
+  // instead of having the message just pop in.
+  proactiveComposingChars: Record<string, true>;
+
   // Cloud Backup
   cloudBackupConfig: CloudBackupConfig;
   updateCloudBackupConfig: (updates: Partial<CloudBackupConfig>) => void;
@@ -242,11 +253,13 @@ interface OSContextType {
   clearSuspendedCall: () => void;
 }
 
+export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
+
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
   saturation: 25,
-  lightness: 65, 
-  wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)', 
+  lightness: 65,
+  wallpaper: DEFAULT_WALLPAPER,
   darkMode: false,
   contentColor: '#ffffff', // Default white text
 };
@@ -258,6 +271,8 @@ const defaultApiConfig: APIConfig = {
   minimaxGroupId: '',
   minimaxRegion: 'domestic',
   model: 'gpt-4o-mini',
+  stream: false,
+  temperature: 0.85,
 };
 
 const generateAvatar = (seed: string) => {
@@ -465,6 +480,42 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => clearInterval(timer);
   }, []);
 
+  // 启动后台扫描一次，把还停留在老 number[] 形态的向量记录升级到 Uint8Array
+  // 紧凑存储。完全无损，不影响召回质量。重度用户磁盘可省 ~12×（500MB → 40MB
+  // 量级）。fire-and-forget，不阻塞 UI；只在确实有数据被升级时弹一次 toast
+  // 让用户知道发生了什么。重复调用幂等，下次启动如果没有老数据就立刻退出。
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 2000)); // 让首屏渲染先呼吸一下
+              if (cancelled) return;
+              const { MemoryVectorDB } = await import('../utils/memoryPalace/db');
+              const migrated = await MemoryVectorDB.scanAndMigrateLegacy((m, s) => {
+                  if (cancelled || m === 0) return;
+                  if (s % 1000 === 0 && s > 0) {
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩记忆向量到紧凑格式... ${m}/${s}`,
+                          progress: 0,
+                      });
+                  }
+              });
+              if (cancelled) return;
+              if (migrated > 0) {
+                  setSysOperation({ status: 'idle', message: '', progress: 0 });
+                  addToast(`已把 ${migrated} 条记忆向量压缩到紧凑格式，磁盘空间已释放`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] vector migration scan failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
 
@@ -501,6 +552,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
+  const [proactiveComposingChars, setProactiveComposingChars] = useState<Record<string, true>>({});
   
   // LOGS
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
@@ -677,12 +729,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
              try {
                  const parsed = JSON.parse(savedThemeStr);
                  loadedTheme = { ...loadedTheme, ...parsed };
+                 // Strip the legacy Unsplash hard-coded wallpaper, keep user-imported http(s) URLs
                  if (
-                     loadedTheme.wallpaper.includes('unsplash') || 
-                     loadedTheme.wallpaper === '' || 
-                     loadedTheme.wallpaper.startsWith('http') && !loadedTheme.wallpaper.includes('data:')
+                     loadedTheme.wallpaper.includes('unsplash') ||
+                     loadedTheme.wallpaper === ''
                  ) {
-                     loadedTheme.wallpaper = 'linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)';
+                     loadedTheme.wallpaper = DEFAULT_WALLPAPER;
                  }
                  if (loadedTheme.wallpaper.startsWith('data:')) {
                      loadedTheme.wallpaper = defaultTheme.wallpaper;
@@ -758,6 +810,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                         } catch {}
                     }
                 });
+
                 loadedPresets.sort((a, b) => b.createdAt - a.createdAt);
                 setAppearancePresets(loadedPresets);
 
@@ -783,6 +836,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     const initData = async () => {
       try {
+        // 请求持久化存储：标记后浏览器在磁盘压力时不会优先驱逐我们的 IndexedDB，
+        // 角色 / 聊天 / 资产这些大体积数据被默认随手清掉的概率显著降低。
+        // 接口未授权会直接 reject —— 我们不在乎结果，吞掉异常。
+        if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.persist === 'function') {
+            navigator.storage.persist().catch(() => {});
+        }
+
         await loadSettings();
 
         const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs] = await Promise.all([
@@ -1120,6 +1180,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
+  // Per-character innerState cache for proactive turns — mirrors useChatAI's
+  // evolvedNarrative state so consecutive proactive triggers carry continuity.
+  const proactiveInnerStateRef = useRef<Map<string, string>>(new Map());
 
   // Refs to avoid stale closures in proactive callback
   const charactersRef = useRef(characters);
@@ -1138,6 +1201,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   groupsRef.current = groups;
   const realtimeConfigRef = useRef(realtimeConfig);
   realtimeConfigRef.current = realtimeConfig;
+  const memoryPalaceConfigRef = useRef(memoryPalaceConfig);
+  memoryPalaceConfigRef.current = memoryPalaceConfig;
 
   useEffect(() => {
       if (!isDataLoaded) return;
@@ -1187,6 +1252,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
 
           proactiveRunningRef.current = true;
+          setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
           console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
 
           try {
@@ -1221,9 +1287,38 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, currentUserProfile, currentGroups, emojis, categories, allMsgs, currentRealtimeConfig);
+
+              // 3a. 记忆宫殿向量召回 — 与 useChatAI 主流程一致，挂到 char.memoryPalaceInjection
+              //     buildSystemPrompt 内部 buildCoreContext 会自动读取并注入
+              await injectMemoryPalace(char, allMsgs, undefined, currentUserProfile?.name);
+
+              // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
+              const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
+
+              const systemPrompt = await ChatPrompts.buildSystemPrompt(
+                  char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
+                  currentRealtimeConfig, cachedInnerState,
+              );
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
+
+              // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
+              //     角色专属情绪 API > 全局 lightLLM > 主 apiConfig
+              if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                  const lightLLM = memoryPalaceConfigRef.current?.lightLLM;
+                  const emotionApi = (char.emotionConfig.api?.baseUrl)
+                      ? char.emotionConfig.api
+                      : (lightLLM && lightLLM.baseUrl)
+                          ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+                          : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
+                  if (emotionApi.baseUrl && currentUserProfile) {
+                      evaluateEmotionBackground(char, currentUserProfile, systemPrompt, apiMessages, emotionApi)
+                          .then((innerState) => {
+                              if (innerState) proactiveInnerStateRef.current.set(charId, innerState);
+                          })
+                          .catch(() => {});
+                  }
+              }
 
               // 4. API call
               const baseUrl = api.baseUrl.replace(/\/+$/, '');
@@ -1304,6 +1399,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
           } finally {
               proactiveRunningRef.current = false;
+              setProactiveComposingChars(prev => {
+                  if (!prev[charId]) return prev;
+                  const next = { ...prev };
+                  delete next[charId];
+                  return next;
+              });
               drainQueuedProactive();
           }
       };
@@ -1343,7 +1444,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     // Save widget images to IndexedDB (each slot is a separate asset)
     if (launcherWidgets !== undefined) {
-        const slots = ['tl', 'tr', 'wide', 'bl', 'br'];
+        const slots = ['tl', 'tr', 'wide', 'bl', 'br', 'dsq'];
         for (const slot of slots) {
             const val = launcherWidgets[slot];
             if (val && val.startsWith('data:')) {
@@ -1425,8 +1526,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       localStorage.setItem('os_cloud_backup_config', JSON.stringify(newConfig));
   };
 
+  // Backup provider router — picks the right client module based on
+  // cloudBackupConfig.provider ('github' or 'webdav', defaulting to webdav
+  // for back-compat with users who configured before the GitHub option).
+  const loadBackupProvider = async () => {
+      if (cloudBackupConfig.provider === 'github') {
+          return await import('../utils/githubClient');
+      }
+      return await import('../utils/webdavClient');
+  };
+
   const cloudBackupToWebDAV = async (mode: 'text_only' | 'media_only' | 'full') => {
-      const { uploadBackup, cleanupOldBackups } = await import('../utils/webdavClient');
+      const { uploadBackup, cleanupOldBackups } = await loadBackupProvider();
       try {
           setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
           const blob = await exportSystem(mode);
@@ -1457,7 +1568,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
-      const { downloadBackup } = await import('../utils/webdavClient');
+      const { downloadBackup } = await loadBackupProvider();
       try {
           setSysOperation({ status: 'processing', message: '正在从云端下载...', progress: 0 });
           const blob = await downloadBackup(cloudBackupConfig, file, (pct) => {
@@ -1477,7 +1588,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const listCloudBackups = async (): Promise<CloudBackupFile[]> => {
-      const { listBackups } = await import('../utils/webdavClient');
+      const { listBackups } = await loadBackupProvider();
       return listBackups(cloudBackupConfig);
   };
 
@@ -1489,6 +1600,34 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     };
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+  };
+
+  // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
+  // 各角色自身的 enabled 标志保持不变。同时把同一份值写到全局 lightLLM，
+  // 让记忆宫殿轻量 LLM 与情绪 API 保持一致（两者本来就指向同一个副 API 概念）。
+  const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
+    setCharacters(prev => {
+      const updated = prev.map(c => {
+        const prevEmotion = c.emotionConfig;
+        const nextEmotion = {
+          enabled: !!prevEmotion?.enabled,
+          ...(api && api.baseUrl ? { api: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model } } : {}),
+        };
+        const next = normalizeCharacterImpression({ ...c, emotionConfig: nextEmotion });
+        DB.saveCharacter(next);
+        return next;
+      });
+      return updated;
+    });
+    if (api && api.baseUrl) {
+      const newConfig: MemoryPalaceGlobalConfig = {
+        embedding: { ...memoryPalaceConfig.embedding },
+        lightLLM: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
+        rerank: { ...memoryPalaceConfig.rerank },
+      };
+      setMemoryPalaceConfig(newConfig);
+      localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+    }
   };
   const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
     const newConfig = { ...remoteVectorConfig, ...updates };
@@ -1528,51 +1667,47 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const updateWorldbook = async (id: string, updates: Partial<Worldbook>) => {
+      // Compute the updated entity up-front. Relying on a closure side-effect
+      // inside a setState updater is unsafe — React calls updaters lazily
+      // during reconciliation, so the closure variable would still be
+      // undefined when the synchronous code below runs, silently skipping
+      // the DB persist + character cache sync (causing the saved content
+      // to revert on reload).
+      const existing = worldbooks.find(wb => wb.id === id);
+      if (!existing) return;
+      const fullUpdatedWb: Worldbook = { ...existing, ...updates, updatedAt: Date.now() };
+
       // 1. Optimistic Update Local State
-      let fullUpdatedWb: Worldbook | undefined;
-      setWorldbooks(prev => {
-          const next = prev.map(wb => {
-              if (wb.id === id) {
-                  fullUpdatedWb = { ...wb, ...updates, updatedAt: Date.now() };
-                  return fullUpdatedWb;
-              }
-              return wb;
-          });
-          return next;
-      });
+      setWorldbooks(prev => prev.map(wb => (wb.id === id ? fullUpdatedWb : wb)));
 
       // 2. Persist to DB
-      if (fullUpdatedWb) {
-          await DB.saveWorldbook(fullUpdatedWb);
+      await DB.saveWorldbook(fullUpdatedWb);
 
-          // 3. AUTO-SYNC: Update Characters that have this book mounted
-          // This ensures data redundancy is kept fresh
-          const charsToSync = characters.filter(c => c.mountedWorldbooks?.some(m => m.id === id));
-          
-          if (charsToSync.length > 0) {
-              const updatedChars = characters.map(char => {
-                  if (char.mountedWorldbooks?.some(m => m.id === id)) {
-                      const newMounted = char.mountedWorldbooks.map(m => 
-                          m.id === id 
-                              // Updated to sync category as well
-                              ? { 
-                                  id: fullUpdatedWb!.id, 
-                                  title: fullUpdatedWb!.title, 
-                                  content: fullUpdatedWb!.content,
-                                  category: fullUpdatedWb!.category
-                                } 
-                              : m
-                      );
-                      // Side effect: Save individual char to DB
-                      const newChar = { ...char, mountedWorldbooks: newMounted };
-                      DB.saveCharacter(newChar); 
-                      return newChar;
-                  }
-                  return char;
-              });
-              setCharacters(updatedChars);
-              addToast(`已同步更新 ${charsToSync.length} 个相关角色的缓存`, 'info');
-          }
+      // 3. AUTO-SYNC: Update Characters that have this book mounted
+      // This ensures data redundancy is kept fresh
+      const charsToSync = characters.filter(c => c.mountedWorldbooks?.some(m => m.id === id));
+
+      if (charsToSync.length > 0) {
+          const updatedChars = characters.map(char => {
+              if (char.mountedWorldbooks?.some(m => m.id === id)) {
+                  const newMounted = char.mountedWorldbooks.map(m =>
+                      m.id === id
+                          ? {
+                              id: fullUpdatedWb.id,
+                              title: fullUpdatedWb.title,
+                              content: fullUpdatedWb.content,
+                              category: fullUpdatedWb.category,
+                            }
+                          : m
+                  );
+                  const newChar = { ...char, mountedWorldbooks: newMounted };
+                  DB.saveCharacter(newChar);
+                  return newChar;
+              }
+              return char;
+          });
+          setCharacters(updatedChars);
+          addToast(`已同步更新 ${charsToSync.length} 个相关角色的缓存`, 'info');
       }
   };
 
@@ -1660,7 +1795,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (!preset) return;
       // Apply theme
       setTheme(preset.theme);
-      localStorage.setItem('os_theme', JSON.stringify(preset.theme));
+      // 写 LS 前必须剥 data URI，否则 base64 壁纸会撑爆 5MB quota
+      const lsTheme: any = { ...preset.theme };
+      if (lsTheme.wallpaper && typeof lsTheme.wallpaper === 'string' && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
+      if (lsTheme.launcherWidgetImage && typeof lsTheme.launcherWidgetImage === 'string' && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = '';
+      if (lsTheme.launcherWidgets) {
+          const cleanWidgets: Record<string, string> = {};
+          for (const [k, v] of Object.entries(lsTheme.launcherWidgets as Record<string, string>)) {
+              cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
+          }
+          lsTheme.launcherWidgets = cleanWidgets;
+      }
+      if (lsTheme.desktopDecorations) {
+          lsTheme.desktopDecorations = lsTheme.desktopDecorations.map((d: any) => ({
+              ...d,
+              content: (d.content && typeof d.content === 'string' && d.content.startsWith('data:') && d.type === 'image') ? '' : d.content,
+          }));
+      }
+      if (lsTheme.customFont && typeof lsTheme.customFont === 'string' && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = '';
+      try {
+          localStorage.setItem('os_theme', JSON.stringify(lsTheme));
+      } catch (e) {
+          console.warn('[applyAppearancePreset] localStorage 写入失败，已跳过', e);
+      }
       applyCustomFont(preset.theme.customFont);
       // Apply custom icons if present
       if (preset.customIcons) {
@@ -1717,13 +1874,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const exportAppearancePreset = async (id: string): Promise<Blob> => {
       const preset = appearancePresets.find(p => p.id === id);
       if (!preset) throw new Error('预设不存在');
+      // 保留原始壁纸画质，把整个预设 JSON 塞进 zip 包压体积
       const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...preset }, null, 2);
-      return new Blob([data], { type: 'application/json' });
+      const JSZip = await loadJSZip();
+      const zip = new JSZip();
+      (zip as any).file('preset.json', data);
+      return (zip as any).generateAsync(
+          { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } },
+      );
   };
 
   const importAppearancePreset = async (file: File): Promise<void> => {
-      const text = await file.text();
-      const raw = JSON.parse(text);
+      // 兼容两种格式：新版 .zip（内含 preset.json）/ 旧版 .json 明文
+      let raw: any;
+      const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      const isZip = head[0] === 0x50 && head[1] === 0x4b && (head[2] === 0x03 || head[2] === 0x05 || head[2] === 0x07);
+      if (isZip) {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(file);
+          const entry = zip.file('preset.json') || Object.values((zip as any).files || {}).find((f: any) => !f.dir && /\.json$/i.test(f.name));
+          if (!entry) throw new Error('压缩包内未找到 preset.json');
+          const text = await (entry as any).async('string');
+          raw = JSON.parse(text);
+      } else {
+          const text = await file.text();
+          raw = JSON.parse(text);
+      }
       if (raw.type !== 'sully_appearance_preset') throw new Error('无效的外观预设文件');
       const preset: AppearancePreset = {
           id: `ap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1748,6 +1924,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const zip = new JSZip();
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
+
+          // Dedup table — same base64 payload reused across stores (角色头像在
+          // 多个 chat / handbook / room 里被嵌入) gets stored exactly once. Key
+          // is the base64 string itself, value is the assets/* path. For a
+          // heavy user with 50 chats sharing a 200KB avatar this trims ~10MB.
+          const assetDedupMap = new Map<string, string>();
 
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
@@ -1784,13 +1966,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       let value = obj[key];
                       if (typeof value === 'string' && value.startsWith('data:image/')) {
                           try {
-                              const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                              if (extMatch) {
-                                  const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
-                                  const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
-                                  const base64Data = value.split(',')[1];
-                                  assetsFolder?.file(filename, base64Data, { base64: true });
-                                  value = `assets/${filename}`;
+                              const cached = assetDedupMap.get(value);
+                              if (cached) {
+                                  value = cached;
+                              } else {
+                                  const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                                  if (extMatch) {
+                                      const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+                                      const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
+                                      const base64Data = value.split(',')[1];
+                                      assetsFolder?.file(filename, base64Data, { base64: true });
+                                      const path = `assets/${filename}`;
+                                      assetDedupMap.set(value, path);
+                                      value = path;
+                                  }
                               }
                           } catch (e) {
                               console.warn("Failed to process asset", e);
@@ -2029,7 +2218,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // Fast path: stores with no image data skip expensive recursive traversal
               if (noImageStores.has(storeName)) {
-                  processedData = rawData;
+                  if (storeName === 'memory_vectors' && Array.isArray(rawData)) {
+                      // 向量在 IndexedDB 里是 Uint8Array（Float32 原始字节）或老
+                      // number[]，JSON.stringify 没法序列化 Uint8Array（结果是 {}）
+                      // 所以这里统一解码成 plain number[]，让备份能 JSON 圆规一周。
+                      // 重做时 MemoryVectorDB.saveMany 会把 number[] 重新压回
+                      // Uint8Array，磁盘还是省的。
+                      processedData = rawData.map((v: any) => {
+                          if (!v || !v.vector) return v;
+                          let arr: number[];
+                          if (v.vector instanceof Uint8Array) {
+                              const f32 = new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength >>> 2);
+                              arr = Array.from(f32);
+                          } else if (v.vector instanceof Float32Array) {
+                              arr = Array.from(v.vector);
+                          } else {
+                              arr = v.vector;
+                          }
+                          return { ...v, vector: arr };
+                      });
+                  } else {
+                      processedData = rawData;
+                  }
               } else if (mode === 'text_only') {
                   processedData = Array.isArray(rawData) && rawData.length > 200
                       ? await processArrayChunked(rawData, stripBase64)
@@ -2048,8 +2258,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const mediaList = rawData.map((c: CharacterProfile) => {
                           const extracted = {
                               charId: c.id,
-                              avatar: c.avatar, 
+                              avatar: c.avatar,
                               sprites: c.sprites,
+                              // Date app sprite data: skin sets carry alternate sprite maps,
+                              // and customDateSprites/activeSkinSetId are required to wire them up.
+                              dateSkinSets: c.dateSkinSets,
+                              activeSkinSetId: c.activeSkinSetId,
+                              customDateSprites: c.customDateSprites,
+                              spriteConfig: c.spriteConfig,
                               roomItems: c.roomConfig?.items?.reduce((acc: any, item: any) => {
                                   if (item.image && item.image.startsWith('data:')) {
                                       acc[item.id] = item.image;
@@ -2128,7 +2344,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
+          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
+          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
+          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
 
           // --- MEMORY-OPTIMIZED INCREMENTAL SERIALIZATION ---
           // Instead of JSON.stringify(entire backupData) which doubles peak memory,
@@ -2174,11 +2392,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Release parts
           jsonParts.length = 0;
 
+          // 进度提示：每 ~5% 更新一次（避免高频 React 重渲染），同时让进度
+          // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
+          let lastReportedPercent = -10;
           const content = await zip.generateAsync(
-              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 6 } },
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
               (metadata) => {
-                  if (Math.random() > 0.8) {
-                      setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+                  const p = metadata.percent;
+                  if (p - lastReportedPercent >= 5 || p >= 99) {
+                      lastReportedPercent = p;
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩备份数据 ${p.toFixed(0)}%...`,
+                          progress: Math.min(99, 70 + Math.floor(p * 0.29)),
+                      });
                   }
               }
           );
@@ -2220,51 +2447,77 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
-          const restoreAssets = async (obj: any): Promise<any> => {
-              if (obj === null || typeof obj !== 'object') return obj;
-              
-              if (Array.isArray(obj)) {
-                  const arr = [];
-                  for (const item of obj) {
-                      arr.push(await restoreAssets(item));
+          // Walk the tree once to collect every "assets/<name>" reference, then
+          // decode them in parallel batches. The previous version awaited each
+          // base64 decode sequentially, which made a 42 MB backup take 5+
+          // minutes and left the UI frozen at 50% — users assumed it had
+          // hung and refreshed before the success toast / reload could fire.
+          const restoreAssetsInPlace = async (root: any): Promise<void> => {
+              if (!zip) return;
+
+              type Ref = { parent: any; key: string | number; filename: string };
+              const refs: Ref[] = [];
+              const seen = new WeakSet<object>();
+              const stack: any[] = [root];
+              while (stack.length) {
+                  const node = stack.pop();
+                  if (node === null || typeof node !== 'object') continue;
+                  if (seen.has(node)) continue;
+                  seen.add(node);
+                  if (Array.isArray(node)) {
+                      for (let i = 0; i < node.length; i++) {
+                          const v = node[i];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: i, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
+                  } else {
+                      for (const k in node) {
+                          if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+                          const v = node[k];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: k, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
                   }
-                  return arr;
               }
 
-              const newObj: any = {};
-              for (const key in obj) {
-                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                      let value = obj[key];
-                      if (typeof value === 'string' && value.startsWith('assets/') && zip) {
-                          try {
-                              const filename = value.split('/')[1];
-                              const fileInZip = zip.file(`assets/${filename}`);
-                              if (fileInZip) {
-                                  const base64 = await fileInZip.async("base64");
-                                  const ext = filename.split('.').pop() || 'png';
-                                  let mime = 'image/png';
-                                  if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
-                                  if (ext === 'gif') mime = 'image/gif';
-                                  if (ext === 'webp') mime = 'image/webp';
-                                  
-                                  value = `data:${mime};base64,${base64}`;
-                              }
-                          } catch (e) {
-                              console.warn(`Failed to restore asset: ${value}`);
-                          }
-                      } else {
-                          value = await restoreAssets(value);
+              const total = refs.length;
+              if (total === 0) return;
+
+              const BATCH = 8;
+              let done = 0;
+              for (let i = 0; i < total; i += BATCH) {
+                  const batch = refs.slice(i, i + BATCH);
+                  await Promise.all(batch.map(async ({ parent, key, filename }) => {
+                      try {
+                          const fileInZip = zip!.file(`assets/${filename}`);
+                          if (!fileInZip) return;
+                          const base64 = await fileInZip.async("base64");
+                          const ext = (filename.split('.').pop() || 'png').toLowerCase();
+                          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                              : ext === 'gif' ? 'image/gif'
+                              : ext === 'webp' ? 'image/webp'
+                              : 'image/png';
+                          parent[key] = `data:${mime};base64,${base64}`;
+                      } catch {
+                          console.warn(`Failed to restore asset: assets/${filename}`);
                       }
-                      newObj[key] = value;
-                  }
+                  }));
+                  done += batch.length;
+                  const pct = 50 + Math.floor((done / total) * 40);
+                  setSysOperation({ status: 'processing', message: `正在恢复素材 ${Math.min(done, total)}/${total}...`, progress: pct });
               }
-              return newObj;
           };
 
           setSysOperation({ status: 'processing', message: '正在恢复数据与素材...', progress: 50 });
-          
+
           if (zip) {
-              data = await restoreAssets(data);
+              await restoreAssetsInPlace(data);
           }
 
           await DB.importFullData(data);
@@ -2510,6 +2763,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     updateRealtimeConfig,
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
+    syncEmotionApiToAllCharacters,
     remoteVectorConfig,
     updateRemoteVectorConfig,
     customThemes,
@@ -2529,6 +2783,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,
+    proactiveComposingChars,
     cloudBackupConfig,
     updateCloudBackupConfig,
     cloudBackupToWebDAV,

@@ -15,8 +15,8 @@ export default defineConfig({
   // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
   base: process.env.GITHUB_PAGES ? './' : '/',
   esbuild: {
-    // 构建时移除所有 console.* 和 debugger 语句，减小包体并消除运行时开销
-    drop: ['console', 'debugger'],
+    // 只剥 debugger，保留 console.* —— 部署后按 F12 仍能看到运行时日志，方便排查。
+    drop: ['debugger'],
   },
   server: {
     proxy: {
@@ -36,6 +36,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
         rewrite: () => '/v1/get_voice',
+        router: (req) => {
+          const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
+          return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
+        },
+      },
+      '/api/minimax/music': {
+        target: 'https://api.minimaxi.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: () => '/v1/music_generation',
         router: (req) => {
           const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
           return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';

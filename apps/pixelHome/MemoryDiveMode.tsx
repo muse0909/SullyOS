@@ -46,6 +46,7 @@ interface Props {
   homeState: PixelHomeState;
   assets: PixelAsset[];
   apiConfig: APIConfig;
+  memoryPalaceConfig?: { lightLLM?: { baseUrl: string; apiKey: string; model: string } };
   remoteVectorConfig?: RemoteVectorConfig;
   onExit: (result: DiveResult | null) => void;
 }
@@ -65,7 +66,7 @@ type PlaybackStep =
 
 const MemoryDiveMode: React.FC<Props> = ({
   charId, charName, charProfile, userProfile, charSprite, playerSprite,
-  userName, homeState, assets, apiConfig, remoteVectorConfig, onExit,
+  userName, homeState, assets, apiConfig, memoryPalaceConfig, remoteVectorConfig, onExit,
 }) => {
   const fullCharContext = useMemo(() =>
     ContextBuilder.buildCoreContext(charProfile, userProfile, true),
@@ -604,9 +605,12 @@ const MemoryDiveMode: React.FC<Props> = ({
     // 但潜意识里会留一层情绪底色，与 chat app 的 buff 系统共用同一套机制
     // 情绪 API 未单独配置时自动回退到主 apiConfig
     if (charProfile.emotionConfig?.enabled) {
+      const lightLLM = memoryPalaceConfig?.lightLLM;
       const emotionApi = (charProfile.emotionConfig.api?.baseUrl)
         ? charProfile.emotionConfig.api
-        : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        : (lightLLM && lightLLM.baseUrl)
+          ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+          : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
       // fire-and-forget
       emitDiveEmotion({
         charProfile,

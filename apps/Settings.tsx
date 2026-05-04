@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -8,9 +8,17 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
-import { Sun, Newspaper, NotePencil, Notebook, Book } from '@phosphor-icons/react';
-import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable } from '../utils/proactivePushConfig';
+import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
+import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife } from '@phosphor-icons/react';
+import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
+
+const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
+    <div className="flex items-start justify-between gap-3">
+        <span className="text-slate-500 shrink-0">{label}</span>
+        <span className={`text-right ${bad ? 'text-rose-600 font-medium' : 'text-slate-700'}`}>{value}</span>
+    </div>
+);
 
 const Settings: React.FC = () => {
   const {
@@ -26,11 +34,20 @@ const Settings: React.FC = () => {
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
+  const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
+  const [localTemperature, setLocalTemperature] = useState<number>(
+    typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
+  );
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
+  const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
+  const [showAceStepGuide, setShowAceStepGuide] = useState(false);
+  const [otherStatusMsg, setOtherStatusMsg] = useState('');
+  // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
+  const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
   
@@ -42,16 +59,27 @@ const Settings: React.FC = () => {
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
+  const [showGithubModal, setShowGithubModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
   const [cloudTestResult, setCloudTestResult] = useState<string>('');
   const [cloudTesting, setCloudTesting] = useState(false);
 
-  // Cloud backup local config state
+  // Cloud backup local config state (WebDAV)
   const [cbUrl, setCbUrl] = useState(cloudBackupConfig.webdavUrl);
   const [cbUsername, setCbUsername] = useState(cloudBackupConfig.username);
   const [cbPassword, setCbPassword] = useState(cloudBackupConfig.password);
   const [cbPath, setCbPath] = useState(cloudBackupConfig.remotePath || '/SullyBackup/');
+
+  // GitHub local state
+  const [ghToken, setGhToken] = useState(cloudBackupConfig.githubToken || '');
+  const [ghRepo, setGhRepo] = useState(cloudBackupConfig.githubRepo || 'sully-backup');
+  // Default proxy ON — most users in mainland China can't reach github.com
+  // directly. Only flip to false if the user has explicitly opted out before.
+  const [ghUseProxy, setGhUseProxy] = useState(cloudBackupConfig.githubUseProxy !== false);
+  const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
+  const [ghTesting, setGhTesting] = useState(false);
+  const [ghTestResult, setGhTestResult] = useState<string>('');
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
@@ -75,6 +103,12 @@ const Settings: React.FC = () => {
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
   const [rtTestStatus, setRtTestStatus] = useState('');
 
+  // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
+  const [mcdToken, setMcdTokenState] = useState(() => getMcdToken());
+  const [mcdEnabled, setMcdEnabledState] = useState(() => isMcdEnabled());
+  const [mcdTestStatus, setMcdTestStatus] = useState('');
+  const [mcdTesting, setMcdTesting] = useState(false);
+
   // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
   const initialPushCfg = loadPushConfig();
   const ppAvailable = isPushConfigAvailable();
@@ -82,6 +116,8 @@ const Settings: React.FC = () => {
   const [ppStatus, setPpStatus] = useState<string>('');
   const [ppBusy, setPpBusy] = useState(false);
   const [showPpConfirm, setShowPpConfirm] = useState(false);
+  const [ppDiag, setPpDiag] = useState<PushDiagnostics | null>(null);
+  const [ppTestBusy, setPpTestBusy] = useState(false);
 
   // 模型选择 Modal 的过滤 + 公共前缀（memo 掉，避免每次 Settings 重渲染都重算）
   const modelPickerView = useMemo(() => {
@@ -104,10 +140,14 @@ const Settings: React.FC = () => {
       return { filtered, commonPrefix };
   }, [modelFilter, availableModels]);
 
+  const refreshPpDiag = useCallback(async () => {
+      try { setPpDiag(await getPushDiagnostics()); } catch { /* ignore */ }
+  }, []);
+
   const doEnablePushAccelerator = async () => {
       if (ppBusy) return;
       setPpBusy(true);
-      setPpStatus('正在连接…');
+      setPpStatus('正在连接 Worker…');
       try {
           const res = await fetch(`${initialPushCfg.workerUrl}/health`);
           if (!res.ok) { setPpStatus(`失败：Worker HTTP ${res.status}`); setPpBusy(false); return; }
@@ -115,32 +155,67 @@ const Settings: React.FC = () => {
           setPpStatus(`失败：${e?.message || '网络错误'}`); setPpBusy(false); return;
       }
 
+      // Step 1: ensure permission + subscription up front, regardless of schedules.
+      // This is the fix for the old bug where toggle "succeeded" without ever
+      // requesting permission when the user hadn't enabled any character timer yet.
+      setPpStatus('正在请求通知权限并创建订阅…');
+      const sub = await ensureSubscribed();
+      if (!sub.ok) {
+          setPpStatus(`失败：${sub.reason || '订阅创建失败'}`);
+          setPpBusy(false);
+          await refreshPpDiag();
+          return;
+      }
+
+      // Step 2: persist enabled flag and start heartbeat.
       savePushConfig(true);
       setPpEnabled(true);
+      startHeartbeat();
 
+      // Step 3: register any existing per-character schedules.
       const schedules = ProactiveChat.getSchedules();
       let okCount = 0;
       for (const s of schedules) {
           if (await registerScheduleOnWorker(s.charId, s.intervalMs)) okCount++;
       }
-      startHeartbeat();
 
       if (schedules.length === 0) {
-          setPpStatus('已启用（暂无主动消息定时，下次开启角色主动消息时会自动注册）');
+          setPpStatus('已启用（订阅已建立。暂无主动消息定时，下次开启角色主动消息时会自动注册）');
       } else if (okCount < schedules.length) {
-          setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功${Notification.permission !== 'granted' ? '（请允许通知权限）' : ''}`);
+          setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功`);
       } else {
           setPpStatus(`已启用，${okCount} 个主动消息定时已注册`);
       }
       setPpBusy(false);
+      await refreshPpDiag();
   };
 
-  const doDisablePushAccelerator = () => {
+  const doDisablePushAccelerator = async () => {
       savePushConfig(false);
       setPpEnabled(false);
       stopHeartbeat();
       setPpStatus('已关闭（主动消息退回本地计时器）');
+      await refreshPpDiag();
   };
+
+  const doSendTestPush = async () => {
+      if (ppTestBusy) return;
+      setPpTestBusy(true);
+      setPpStatus('正在让 Worker 发一条测试推送…');
+      const res = await sendTestPush();
+      if (res.ok) {
+          setPpStatus('测试推送已发出。如果 5 秒内系统通知里没出现"推送测试成功"，说明送达环节有问题——看下方诊断面板。');
+      } else {
+          setPpStatus(`测试失败：${res.reason || '未知错误'}${res.status ? `（HTTP ${res.status}）` : ''}`);
+      }
+      setPpTestBusy(false);
+      await refreshPpDiag();
+  };
+
+  // Refresh diagnostics whenever the panel is mounted or the toggle changes.
+  useEffect(() => {
+      void refreshPpDiag();
+  }, [refreshPpDiag, ppEnabled]);
 
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
@@ -155,17 +230,22 @@ const Settings: React.FC = () => {
       setLocalUrl(apiConfig.baseUrl);
       setLocalKey(apiConfig.apiKey);
       setLocalModel(apiConfig.model);
+      setLocalStream(apiConfig.stream === true);
+      setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
+      setLocalAceStepKey(apiConfig.aceStepApiKey || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
       setLocalUrl(preset.config.baseUrl);
       setLocalKey(preset.config.apiKey);
       setLocalModel(preset.config.model);
-      // MiniMax settings are NOT overwritten by presets — typically one user has
-      // only one MiniMax account regardless of which LLM API preset they use.
+      setLocalStream(preset.config.stream === true);
+      setLocalTemperature(typeof preset.config.temperature === 'number' ? preset.config.temperature : 0.85);
+      // MiniMax / AceStep settings are NOT overwritten by presets — typically one user
+      // has only one MiniMax / Replicate account regardless of which LLM preset they use.
       addToast(`已加载配置: ${preset.name}`, 'info');
   };
 
@@ -178,6 +258,8 @@ const Settings: React.FC = () => {
         baseUrl: localUrl,
         apiKey: localKey,
         model: localModel,
+        stream: localStream,
+        temperature: localTemperature,
       });
       setNewPresetName('');
       setShowPresetModal(false);
@@ -187,14 +269,24 @@ const Settings: React.FC = () => {
   const handleSaveApi = () => {
     updateApiConfig({
       apiKey: localKey,
-      minimaxApiKey: localMiniMaxKey,
-      minimaxGroupId: localMiniMaxGroupId,
-      minimaxRegion: localMiniMaxRegion,
       baseUrl: localUrl,
-      model: localModel
+      model: localModel,
+      stream: localStream,
+      temperature: localTemperature,
     });
     setStatusMsg('配置已保存');
     setTimeout(() => setStatusMsg(''), 2000);
+  };
+
+  const handleSaveOtherApis = () => {
+    updateApiConfig({
+      minimaxApiKey: localMiniMaxKey,
+      minimaxGroupId: localMiniMaxGroupId,
+      minimaxRegion: localMiniMaxRegion,
+      aceStepApiKey: localAceStepKey,
+    });
+    setOtherStatusMsg('已保存');
+    setTimeout(() => setOtherStatusMsg(''), 2000);
   };
 
   const fetchModels = async () => {
@@ -308,6 +400,7 @@ const Settings: React.FC = () => {
   const handleSaveCloudConfig = () => {
       updateCloudBackupConfig({
           enabled: true,
+          provider: 'webdav',
           webdavUrl: cbUrl, username: cbUsername, password: cbPassword,
           remotePath: cbPath,
       });
@@ -331,6 +424,66 @@ const Settings: React.FC = () => {
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
       setShowCloudRestoreModal(false);
       try { await cloudRestoreFromWebDAV(file); } catch { /* toast handled in context */ }
+  };
+
+  // GitHub backup handlers — single "测试并连接" button does verify-token +
+  // ensure-repo, persists owner/login on success so users never type 'owner'.
+  const handleTestGithub = async () => {
+      if (!ghToken.trim()) { setGhTestResult('✗ 请先粘贴 Token'); return; }
+      setGhTesting(true);
+      setGhTestResult('');
+      try {
+          const { testConnection } = await import('../utils/githubClient');
+          const result = await testConnection({
+              ...cloudBackupConfig,
+              githubToken: ghToken.trim(),
+              githubRepo: ghRepo.trim() || 'sully-backup',
+              githubUseProxy: ghUseProxy,
+          });
+          setGhTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+          if (result.ok && result.login) {
+              updateCloudBackupConfig({
+                  enabled: true,
+                  provider: 'github',
+                  githubToken: ghToken.trim(),
+                  githubOwner: result.login,
+                  githubRepo: ghRepo.trim() || 'sully-backup',
+                  githubUseProxy: ghUseProxy,
+              });
+          }
+      } catch (e: any) {
+          setGhTestResult(`✗ ${e?.message || '连接失败'}`);
+      }
+      setGhTesting(false);
+  };
+
+  const handleDisableCloud = () => {
+      updateCloudBackupConfig({ enabled: false });
+      setShowCloudModal(false);
+      setShowGithubModal(false);
+      addToast('云端备份已关闭', 'info');
+  };
+
+  // One-click provider switch — if the target provider was already configured
+  // before, just flip the 'provider' field and show a toast. Otherwise open
+  // the setup modal. Critically: switching does NOT touch the other side's
+  // saved credentials, so old WebDAV users keep their old backups visible
+  // when they switch back.
+  const switchToGithub = () => {
+      if (cloudBackupConfig.githubToken && cloudBackupConfig.githubOwner) {
+          updateCloudBackupConfig({ provider: 'github' });
+          addToast(`已切换到 GitHub @${cloudBackupConfig.githubOwner}`, 'success');
+      } else {
+          setShowGithubModal(true);
+      }
+  };
+  const switchToWebDAV = () => {
+      if (cloudBackupConfig.webdavUrl && cloudBackupConfig.username) {
+          updateCloudBackupConfig({ provider: 'webdav' });
+          addToast('已切换回 WebDAV，旧备份依旧在', 'success');
+      } else {
+          setShowCloudModal(true);
+      }
   };
 
   const confirmReset = () => {
@@ -455,6 +608,37 @@ const Settings: React.FC = () => {
       }
   };
 
+  // 麦当劳 MCP: 改 token / 启用态都即时落 localStorage; "测试连接"调 initialize+tools/list
+  const handleMcdTokenChange = (v: string) => {
+      setMcdTokenState(v);
+      saveMcdToken(v);
+      resetMcdSession();
+      setMcdTestStatus('');
+  };
+  const handleMcdEnabledChange = (v: boolean) => {
+      setMcdEnabledState(v);
+      saveMcdEnabled(v);
+      if (!v) resetMcdSession();
+  };
+  const testMcdApi = async () => {
+      if (!mcdToken.trim()) { setMcdTestStatus('请先填写 MCP Token'); return; }
+      setMcdTesting(true);
+      setMcdTestStatus('正在连接麦当劳 MCP...');
+      try {
+          const r = await testMcdConnection();
+          if (r.ok) {
+              const names = (r.tools || []).map(t => t.name).slice(0, 6).join(', ');
+              setMcdTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`);
+          } else {
+              setMcdTestStatus(`❌ ${r.message}`);
+          }
+      } catch (e: any) {
+          setMcdTestStatus(`❌ ${e?.message || String(e)}`);
+      } finally {
+          setMcdTesting(false);
+      }
+  };
+
   return (
     <div className="h-full w-full bg-slate-50/50 flex flex-col font-light relative">
 
@@ -543,34 +727,93 @@ const Settings: React.FC = () => {
                 <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
                 </div>
-                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端备份 (WebDAV)</h2>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端备份</h2>
             </div>
 
             {!cloudBackupConfig.enabled ? (
-                <div className="text-center py-4">
-                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-                        将备份自动上传到你自己的云端存储<br/>
-                        支持 InfiniCloud、Nextcloud、群晖 NAS 等
+                <div className="space-y-3 py-2">
+                    <p className="text-[11px] text-slate-400 leading-relaxed text-center">
+                        把备份上传到你自己的云端，换设备、丢手机都不怕。<br/>
+                        国内推荐 <b>GitHub</b>（不用梯子，2GB/份）。
                     </p>
-                    <button
-                        onClick={() => setShowCloudModal(true)}
-                        className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all"
-                    >
-                        设置云端备份
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => setShowGithubModal(true)}
+                            className="py-3 px-2 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1.5 relative"
+                        >
+                            <span className="absolute top-1 right-1.5 text-[8px] bg-amber-300 text-slate-800 px-1.5 py-0.5 rounded-full font-bold">推荐</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+                            <span>GitHub</span>
+                            <span className="text-[9px] text-slate-300 font-normal">不用梯子 · 2GB</span>
+                        </button>
+                        <button
+                            onClick={() => setShowCloudModal(true)}
+                            className="py-3 px-2 bg-gradient-to-br from-sky-500 to-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1.5"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
+                            <span>WebDAV</span>
+                            <span className="text-[9px] text-sky-100 font-normal">日本/NAS · 需梯子</span>
+                        </button>
+                    </div>
                 </div>
             ) : (
                 <div className="space-y-3">
-                    <div className="flex items-center justify-between bg-sky-50 rounded-xl px-3 py-2">
+                    <div className={`flex items-center justify-between rounded-xl px-3 py-2 ${cloudBackupConfig.provider === 'github' ? 'bg-slate-100' : 'bg-sky-50'}`}>
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                            <span className="text-[11px] text-slate-600 font-medium">已连接</span>
+                            <span className="text-[11px] text-slate-600 font-medium">
+                                已连接 · {cloudBackupConfig.provider === 'github'
+                                    ? `GitHub${cloudBackupConfig.githubOwner ? ` (@${cloudBackupConfig.githubOwner})` : ''}`
+                                    : 'WebDAV'}
+                            </span>
                         </div>
-                        <button onClick={() => setShowCloudModal(true)} className="text-[10px] text-sky-500 font-medium">
+                        <button
+                            onClick={() => cloudBackupConfig.provider === 'github' ? setShowGithubModal(true) : setShowCloudModal(true)}
+                            className={`text-[10px] font-medium ${cloudBackupConfig.provider === 'github' ? 'text-slate-600' : 'text-sky-500'}`}
+                        >
                             修改配置
                         </button>
                     </div>
 
+                    {/* Quick link to the GitHub releases page so the user knows
+                        where their backups physically live and can browse /
+                        delete them on github.com directly if they want. */}
+                    {cloudBackupConfig.provider === 'github' && cloudBackupConfig.githubOwner && (
+                        <a
+                            href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="block text-center text-[10px] text-slate-500 hover:text-slate-800 underline-offset-2 hover:underline transition-colors"
+                        >
+                            🔗 在 GitHub 上查看备份 (github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases) ↗
+                        </a>
+                    )}
+
+                    {/* Switch-provider hint — shown to existing users so the
+                        new GitHub option is discoverable from the connected
+                        state, not only on the first-time setup screen. If the
+                        other provider was previously configured, the click is
+                        a one-shot flip; old credentials and backups stay put. */}
+                    {cloudBackupConfig.provider !== 'github' ? (
+                        <>
+                            <button
+                                onClick={switchToGithub}
+                                className="w-full py-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-xl text-[11px] font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+                                <span>{cloudBackupConfig.githubToken ? '切换到 GitHub' : '试试 GitHub 备份（不用梯子 · 2GB/份）'}</span>
+                            </button>
+                            <p className="text-[10px] text-slate-400 text-center">
+                                你 WebDAV 上的旧备份不会被动，可随时切回。
+                            </p>
+                        </>
+                    ) : (
+                        <button
+                            onClick={switchToWebDAV}
+                            className="w-full py-1.5 text-[10px] text-slate-400 hover:text-sky-500 transition-colors"
+                        >
+                            {cloudBackupConfig.webdavUrl ? '切换回 WebDAV →' : '改用 WebDAV 备份 →'}
+                        </button>
+                    )}
                     {cloudBackupConfig.lastBackupTime && (
                         <p className="text-[10px] text-slate-400 text-center">
                             上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
@@ -608,8 +851,7 @@ const Settings: React.FC = () => {
             )}
 
             <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
-                数据存储在你自己的云盘中，我们不保存任何凭据到服务器。<br/>
-                推荐: <b>InfiniCloud</b>（免费 20GB）、Nextcloud、群晖 NAS
+                数据存储在你自己的账号下，我们不保存任何凭据到服务器。
             </p>
         </section>
 
@@ -657,41 +899,54 @@ const Settings: React.FC = () => {
                     <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                 </div>
 
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>
-                    <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
-                        <button
-                            type="button"
-                            onClick={() => setLocalMiniMaxRegion('domestic')}
-                            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localMiniMaxRegion === 'domestic' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}
-                        >
-                            国服
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setLocalMiniMaxRegion('overseas')}
-                            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localMiniMaxRegion === 'overseas' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}
-                        >
-                            海外
-                        </button>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1 pl-1">
-                        {localMiniMaxRegion === 'overseas'
-                            ? '海外站（api.minimax.io）— 请使用海外账号签发的 Key。'
-                            : '国服（api.minimaxi.com）— 默认，适配国内账号。'}
-                    </p>
-                </div>
-
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label>
-                    <input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                    <p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p>
-                </div>
-
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
-                    <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                    <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
+                {/* 高级（流式 / 温度）— 默认折叠，灰色低调，明确写"不建议修改" */}
+                <div className="pt-1">
+                    <button
+                        type="button"
+                        onClick={() => setShowApiAdvanced(v => !v)}
+                        className="text-[10px] text-slate-300 hover:text-slate-400 transition-colors flex items-center gap-1 pl-1 active:scale-95"
+                    >
+                        <span>高级（不建议修改）</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-2.5 h-2.5 transition-transform ${showApiAdvanced ? 'rotate-180' : ''}`}>
+                            <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                    {showApiAdvanced && (
+                        <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-3 py-2">
+                            <p className="text-[10px] text-slate-300 leading-relaxed">
+                                这两项绝大多数用户保持默认即可。除非接口报错"only stream supported"或对回复风格有强需求，否则不建议改。
+                            </p>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <span className="text-[10px] text-slate-400">流式输出 (Stream)</span>
+                                    <p className="text-[9px] text-slate-300 mt-0.5">仅在你的 API 强制要求时打开</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setLocalStream(v => !v)}
+                                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${localStream ? 'bg-slate-400' : 'bg-slate-200'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${localStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                                </button>
+                            </div>
+                            <div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-400">温度 (Temperature)</span>
+                                    <span className="text-[10px] font-mono text-slate-400">{localTemperature.toFixed(2)}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="2"
+                                    step="0.05"
+                                    value={localTemperature}
+                                    onChange={(e) => setLocalTemperature(parseFloat(e.target.value))}
+                                    className="w-full accent-slate-400 mt-1"
+                                />
+                                <p className="text-[9px] text-slate-300 mt-0.5">默认 0.85；只作用于聊天和约会的主回复</p>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="pt-2">
@@ -732,10 +987,12 @@ const Settings: React.FC = () => {
                                     model: localModel.trim(),
                                     messages: [{ role: 'user', content: 'Hi' }],
                                     max_tokens: 5,
+                                    stream: localStream,
                                 }),
                             });
                             if (res.ok) {
-                                const data = await res.json();
+                                // 走 safeResponseJson —— 它能透明把 SSE 流响应拼成普通 chat/completion 结构
+                                const data = await safeResponseJson(res);
                                 const reply = data.choices?.[0]?.message?.content || '';
                                 setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
                             } else {
@@ -765,6 +1022,139 @@ const Settings: React.FC = () => {
                         {testApiResult}
                     </div>
                 )}
+            </div>
+        </section>
+
+        {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-amber-100/50 rounded-xl text-amber-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+                    </svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">
+                语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。
+            </p>
+
+            <div className="space-y-4">
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>
+                    <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
+                        <button
+                            type="button"
+                            onClick={() => setLocalMiniMaxRegion('domestic')}
+                            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localMiniMaxRegion === 'domestic' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}
+                        >
+                            国服
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setLocalMiniMaxRegion('overseas')}
+                            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localMiniMaxRegion === 'overseas' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}
+                        >
+                            海外
+                        </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                        {localMiniMaxRegion === 'overseas'
+                            ? '海外站（api.minimax.io）— 请使用海外账号签发的 Key。'
+                            : '国服（api.minimaxi.com）— 默认，适配国内账号。'}
+                    </p>
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label>
+                    <input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p>
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
+                    <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
+                </div>
+
+                <div className="group">
+                    <div className="flex items-center justify-between mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">写歌 · Replicate Token (可选)</label>
+                        <button
+                            type="button"
+                            onClick={() => setShowAceStepGuide(v => !v)}
+                            className="text-[10px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all flex items-center gap-1"
+                        >
+                            {showAceStepGuide ? '收起' : '怎么拿？'}
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 transition-transform ${showAceStepGuide ? 'rotate-180' : ''}`}>
+                                <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                    <input type="password" value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">填了之后写歌 App 的歌词页能一键调 ACE-Step 出真人声整首歌（约 ¥0.1/首，走 sfworker 代理免梯子）。</p>
+
+                    {showAceStepGuide && (
+                        <div className="mt-3 rounded-2xl overflow-hidden border border-rose-200/60 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 shadow-sm animate-slide-down">
+                            <div className="px-4 pt-3.5 pb-2 flex items-center gap-2 border-b border-rose-200/40">
+                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 text-white flex items-center justify-center text-base shadow-sm shadow-rose-500/30">🎤</div>
+                                <div className="flex-1">
+                                    <div className="text-[12px] font-bold text-stone-700">3 步搞定 Replicate Token</div>
+                                    <div className="text-[10px] text-stone-500">让 ACE-Step 帮你把歌唱出来</div>
+                                </div>
+                            </div>
+                            <div className="px-4 py-3 space-y-2.5">
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">1</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">注册 Replicate 账号</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">用 GitHub 一键登录最快。无需邮箱验证。</p>
+                                        <a
+                                            href="https://replicate.com/signin"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-rose-600 hover:text-rose-700 active:scale-95 transition-all px-2 py-1 rounded-lg bg-white/70 border border-rose-200/50"
+                                        >
+                                            打开注册页
+                                        </a>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-orange-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">复制 API Token</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">登录后访问 Account → API Tokens，复制以 <span className="font-mono text-rose-600">r8_</span> 开头的那一串。</p>
+                                        <a
+                                            href="https://replicate.com/account/api-tokens"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-orange-600 hover:text-orange-700 active:scale-95 transition-all px-2 py-1 rounded-lg bg-white/70 border border-orange-200/50"
+                                        >
+                                            打开 Token 页
+                                        </a>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">3</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">绑卡充值（必须）</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">Replicate 没有免费试用额度，需先绑信用卡。<span className="text-rose-600 font-semibold">国内卡基本不行</span>，建议 Visa / MC 美区卡。最低充 $1（约 ¥7.3）≈ 50-100 首歌。</p>
+                                    </div>
+                                </div>
+                                <div className="mt-2 pt-2.5 border-t border-rose-200/40 flex gap-2 items-start">
+                                    <span className="text-rose-500 text-sm leading-none mt-0.5">💡</span>
+                                    <p className="text-[11px] text-stone-500 leading-relaxed">
+                                        粘贴到上面输入框 → 点保存配置 → 进写歌 App 打开任意一首歌的预览页 → 底部「AI 出歌」即可。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <button onClick={handleSaveOtherApis} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-amber-500/20 bg-amber-500 active:scale-95 transition-all mt-2">
+                    {otherStatusMsg || '保存其他 API'}
+                </button>
             </div>
         </section>
 
@@ -830,7 +1220,9 @@ const Settings: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                让主动消息在后台标签也能准点触发。AI 仍在本地生成，云端只管"到点喊醒浏览器"。启用时会弹一次通知权限请求。
+                让主动消息在浏览器后台标签里也能准点触发。AI 仍在本地生成，云端只管"到点喊醒浏览器"。
+                浏览器进程被完全关闭时无法唤醒——下次打开 app 会自动补跑漏掉的主动消息，
+                你看到的就是"开 app 即有"，不会半路弹窗打扰你。
             </p>
 
             {ppStatus && (
@@ -849,7 +1241,7 @@ const Settings: React.FC = () => {
                     onClick={() => {
                         if (ppBusy) return;
                         if (ppEnabled) {
-                            doDisablePushAccelerator();
+                            void doDisablePushAccelerator();
                         } else {
                             setShowPpConfirm(true);
                         }
@@ -858,6 +1250,83 @@ const Settings: React.FC = () => {
                 >
                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${ppEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
                 </button>
+            </div>
+
+            {/* ───── 诊断面板 ───── */}
+            <div className="mt-4 bg-slate-50/70 rounded-2xl p-4 border border-slate-100">
+                <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-semibold text-slate-600">Web Push 状态</p>
+                    <button
+                        onClick={() => void refreshPpDiag()}
+                        className="text-[10px] px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-500 hover:bg-slate-50"
+                    >
+                        刷新
+                    </button>
+                </div>
+
+                {ppDiag ? (
+                    <div className="space-y-1.5 text-[11px]">
+                        <DiagRow label="浏览器支持" value={ppDiag.supported ? '是' : '否（Service Worker / PushManager 缺失）'} bad={!ppDiag.supported} />
+                        <DiagRow
+                            label="通知权限"
+                            value={
+                                ppDiag.permission === 'granted' ? '已授权' :
+                                ppDiag.permission === 'denied' ? '已拒绝（请到浏览器站点设置手动开启）' :
+                                ppDiag.permission === 'default' ? '未决定' :
+                                '不可用'
+                            }
+                            bad={ppDiag.permission !== 'granted'}
+                        />
+                        <DiagRow
+                            label="Service Worker"
+                            value={
+                                ppDiag.swState === 'activated' ? `已激活（scope: ${ppDiag.swScope || '?'}）` :
+                                ppDiag.swState === 'none' ? '未注册' :
+                                `${ppDiag.swState}（scope: ${ppDiag.swScope || '?'}）`
+                            }
+                            bad={ppDiag.swState !== 'activated'}
+                        />
+                        <DiagRow
+                            label="订阅"
+                            value={ppDiag.endpoint ? '已建立' : '不存在'}
+                            bad={!ppDiag.endpoint}
+                        />
+                        <DiagRow label="推送通道" value={ppDiag.channel} />
+                        <DiagRow
+                            label="最近一次唤醒"
+                            value={
+                                ppDiag.lastWakeAt
+                                    ? `${new Date(ppDiag.lastWakeAt).toLocaleString()}${ppDiag.lastWakeChar ? `（${ppDiag.lastWakeChar}）` : ''}`
+                                    : '从未'
+                            }
+                        />
+                        {ppDiag.endpoint && (
+                            <div className="pt-2 mt-2 border-t border-slate-200">
+                                <p className="text-[10px] text-slate-400 mb-1">订阅端点（前 60 字符）</p>
+                                <p className="text-[10px] font-mono text-slate-500 break-all leading-relaxed">{ppDiag.endpoint.slice(0, 60)}…</p>
+                            </div>
+                        )}
+                        {ppDiag.iosNeedsPwa && (
+                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-700 leading-relaxed">
+                                检测到 iOS Safari，但当前不是已添加到主屏幕的 PWA。<br/>
+                                iOS 的 Web Push 必须先把网站"添加到主屏幕"启动后才能用。
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <p className="text-[10px] text-slate-400">加载中…</p>
+                )}
+
+                <button
+                    disabled={ppTestBusy || !ppDiag?.endpoint}
+                    onClick={() => void doSendTestPush()}
+                    className={`mt-4 w-full py-2 rounded-xl text-xs font-bold ${ppTestBusy || !ppDiag?.endpoint ? 'bg-slate-200 text-slate-400' : 'bg-teal-500 text-white hover:bg-teal-600'}`}
+                >
+                    {ppTestBusy ? '测试中…' : '发一条测试推送'}
+                </button>
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                    点这个按钮会让 Worker 立刻给你这台设备发一条 push。如果系统通知中心 5 秒内出现"推送测试成功"，说明从后端到浏览器这条链路是通的。如果一直没动静，问题在浏览器/系统的推送送达策略上。
+                </p>
             </div>
         </section>
         )}
@@ -914,6 +1383,11 @@ const Settings: React.FC = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <p className="font-bold text-slate-700 mb-1">一句话</p>
                   <p className="text-slate-700">聊天记录和 AI 请求只在你自己和 AI 提供商之间，和现在没开 Push 加速时完全一样。Cloudflare 只是一个"到点按门铃"的闹钟。</p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                  <p className="font-bold text-blue-800 mb-1">不会主动弹通知打扰你</p>
+                  <p className="text-blue-900">浏览器后台标签 → 静默触发，进 app 就看到。浏览器整个关掉 → 下次打开 app 自动补跑，开 app 即有。中间不弹"有人想找你"那种窗口扰你。</p>
               </div>
           </div>
       </Modal>
@@ -973,6 +1447,132 @@ const Settings: React.FC = () => {
               {cloudBackupConfig.enabled && (
                   <button onClick={() => { updateCloudBackupConfig({ enabled: false }); setShowCloudModal(false); addToast('云端备份已关闭', 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">关闭云端备份</button>
               )}
+          </div>
+      </Modal>
+
+      {/* GitHub Backup Modal — minimum-input flow: paste a token, we figure
+          out owner via /user and auto-create a private 'sully-backup' repo. */}
+      <Modal isOpen={showGithubModal} title="GitHub 备份" onClose={() => setShowGithubModal(false)}>
+          <div className="space-y-4 p-1">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-700 leading-relaxed">
+                      <b>三步搞定，不用梯子：</b><br/>
+                      ① 点下面按钮跳到 GitHub 创建 Token<br/>
+                      ② 复制 token，回来粘到下面框里<br/>
+                      ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                  </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-[10px] text-amber-800 leading-relaxed">
+                      <b>⚠️ 在 GitHub 那一页只改一处:</b><br/>
+                      把 <b>Expiration</b>(有效期)下拉框 <b>从 90天 改成 No expiration</b>（永不过期）。
+                      不改的话 90 天后 token 过期，备份会突然 401。<br/>
+                      其它都别动 —— Note 已经填好「Sully 备份」，<b>repo</b> 权限已经勾上了，
+                      直接拉到最底点绿色 <b>Generate token</b> 即可。
+                  </p>
+              </div>
+
+              <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=Sully%20%E5%A4%87%E4%BB%BD"
+                  target="_blank" rel="noopener noreferrer"
+                  className="block w-full py-3 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold text-center shadow-sm active:scale-95 transition-all"
+              >
+                  ① 去 GitHub 创建 Token ↗
+              </a>
+
+              <div>
+                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">② Personal Access Token</label>
+                  <input
+                      type="password"
+                      value={ghToken}
+                      onChange={(e) => setGhToken(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 focus:ring-1 focus:ring-slate-300 outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                      Token 只存在你本机，永远不会发到我们服务器。
+                  </p>
+              </div>
+
+              <button
+                  onClick={handleTestGithub}
+                  disabled={ghTesting || !ghToken.trim()}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all disabled:opacity-40"
+              >
+                  {ghTesting ? '连接中...' : '③ 测试并连接'}
+              </button>
+              {ghTestResult && (
+                  <p className={`text-[11px] text-center font-medium ${ghTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+                      {ghTestResult}
+                  </p>
+              )}
+              {ghTestResult.startsWith('✓') && cloudBackupConfig.githubOwner && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1.5">
+                      <p className="text-[11px] text-emerald-800 font-medium">
+                          🎉 备份会上传到这里:
+                      </p>
+                      <a
+                          href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="block text-[10px] text-emerald-700 font-mono break-all underline hover:text-emerald-900"
+                      >
+                          github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases ↗
+                      </a>
+                      <p className="text-[10px] text-emerald-700 leading-relaxed">
+                          每次备份会创建一个新的 release（带时间戳）。想看 / 删除旧备份就去这个网址。
+                      </p>
+                  </div>
+              )}
+
+              <button
+                  onClick={() => setGhShowAdvanced(v => !v)}
+                  className="w-full text-[10px] text-slate-400 underline-offset-2 hover:underline"
+              >
+                  {ghShowAdvanced ? '收起高级选项 ▲' : '高级选项 ▼'}
+              </button>
+              {ghShowAdvanced && (
+                  <div className="space-y-3 bg-slate-50 rounded-xl p-3">
+                      <div>
+                          <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份仓库名</label>
+                          <input
+                              type="text"
+                              value={ghRepo}
+                              onChange={(e) => setGhRepo(e.target.value)}
+                              placeholder="sully-backup"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 outline-none"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-1">不存在会自动创建为私有仓库。</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
+                          <input
+                              type="checkbox"
+                              checked={ghUseProxy}
+                              onChange={(e) => setGhUseProxy(e.target.checked)}
+                              className="rounded"
+                          />
+                          <span>走 Cloudflare 代理（默认开，国内必需；能直连 GitHub 的可关掉提速）</span>
+                      </label>
+                      <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
+                          大于 80MB 的备份会自动切成多片上传，所以勾着也能传 1GB+ 的完整备份，恢复时自动拼回来。能直连 github.com 的可以关掉提速。
+                      </p>
+                  </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button onClick={() => setShowGithubModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">关闭</button>
+                  {cloudBackupConfig.enabled && cloudBackupConfig.provider === 'github' ? (
+                      <button onClick={handleDisableCloud} className="py-2.5 bg-red-50 text-red-500 rounded-xl text-xs font-bold">断开 GitHub</button>
+                  ) : (
+                      <button
+                          onClick={() => setShowGithubModal(false)}
+                          disabled={!cloudBackupConfig.enabled || cloudBackupConfig.provider !== 'github'}
+                          className="py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold disabled:opacity-30"
+                      >
+                          完成
+                      </button>
+                  )}
+              </div>
           </div>
       </Modal>
 
@@ -1292,6 +1892,46 @@ const Settings: React.FC = () => {
                               需安装 Python + xiaohongshu-skills + 运行 xhs-bridge.mjs<br/>
                               <br/>
                               系统根据 URL 结尾自动判断模式（/mcp 或 /api）
+                          </p>
+                      </div>
+                  )}
+              </div>
+
+              {/* 麦当劳 MCP */}
+              <div className="bg-yellow-50/60 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <ForkKnife size={20} weight="fill" className="text-yellow-600" />
+                          <span className="text-sm font-bold text-yellow-700">麦当劳</span>
+                          <span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">官方 MCP</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-yellow-700/70 leading-relaxed">
+                      启用后，在聊天里点 + 号 → 第二页 → 麦当劳，发送"麦请求"激活，角色就能为你查菜单、查门店、点麦乐送/到店取餐/团餐、积分兑券、查活动。
+                  </p>
+                  {mcdEnabled && (
+                      <div className="space-y-2">
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label>
+                              <input type="password" value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.mcd.cn/mcp 申请" />
+                          </div>
+                          <button onClick={testMcdApi} disabled={mcdTesting} className="w-full py-2 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">
+                              {mcdTesting ? '测试中…' : '测试连接'}
+                          </button>
+                          {mcdTestStatus && (
+                              <div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${mcdTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : mcdTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
+                                  {mcdTestStatus}
+                              </div>
+                          )}
+                          <p className="text-[10px] text-yellow-700/70 leading-relaxed">
+                              1. 访问 <a href="https://open.mcd.cn/mcp" target="_blank" className="underline">open.mcd.cn/mcp</a> 用麦当劳账号登录申请 Token<br/>
+                              2. 粘贴到上面的输入框（仅存本地，<b>不会上传服务器</b>）<br/>
+                              3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
+                              4. 仅中国大陆 (不含港澳台)
                           </p>
                       </div>
                   )}

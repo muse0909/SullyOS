@@ -10,20 +10,20 @@ import {
 
 /* ══════════ 色板 — 水滴 × 星空 ══════════ */
 export const C = {
-  bg:       '#f7fafe',       // 几乎纯白 (一抹蓝灰)
-  bgDeep:   '#eef2f6',       // 轻微更深的雾白
-  bgTint:   '#e8eef3',       // 最深层也只是浅雾
-  primary:  '#30628a',       // 深水蓝 (强调)
-  accent:   '#6ba4d0',       // 天光蓝
-  soft:     '#cae6fc',       // secondary container
-  glow:     '#9bcbf8',       // 发光蓝
-  sakura:   '#f2b8c6',       // 樱花粉 (装饰)
-  lavender: '#c5b3e6',       // 薰衣草 (装饰)
+  bg:       '#fbfbff',       // 几乎纯白 (一抹紫灰)
+  bgDeep:   '#f3f1fa',       // 轻雾紫
+  bgTint:   '#ebe9f5',       // 最深层也只是浅紫雾
+  primary:  '#807c9d',       // 淡紫调灰 — 比深紫更柔，饱和度更低
+  accent:   '#b3a8ce',       // 淡紫
+  soft:     '#e0d9f0',       // secondary container — 紫雾
+  glow:     '#cdc6e9',       // 发光淡紫
+  sakura:   '#f4c2cf',       // 樱花粉 (装饰)
+  lavender: '#cfc3e8',       // 薰衣草 (装饰)
   surface:  'rgba(255,255,255,0.65)',
   glass:    'rgba(255,255,255,0.35)',
-  text:     '#181c1f',       // 正文
-  muted:    '#6a7f8f',       // 弱文字
-  faint:    '#aeb8c2',       // 超弱
+  text:     '#22232a',       // 正文
+  muted:    '#7c779a',       // 弱文字 (紫调)
+  faint:    '#bcb8cc',       // 超弱
   vip:      '#d4a06a',       // VIP
   danger:   '#ba1a1a',
 } as const;
@@ -320,7 +320,8 @@ export const MiniPlayer: React.FC<{
   // 氛围/工具提示词都会掉回旁观措辞。
   onKickCompanion?: (charId: string) => void;
   charsWithSong?: { id: string; name: string; playlistTitle: string }[]; // 歌单里也有这首歌的 char
-}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, userAvatar, userName, companions, onKickCompanion, charsWithSong }) => (
+  regenStatus?: string;  // 当前歌正在重录时的状态文案，置则显示进度条
+}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, userAvatar, userName, companions, onKickCompanion, charsWithSong, regenStatus }) => (
   <div
     onClick={onTap}
     className="absolute left-3 right-3 bottom-3 z-30 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
@@ -342,12 +343,25 @@ export const MiniPlayer: React.FC<{
       {/* 封面 — 水滴圆角 */}
       <div className="relative">
         <img src={albumPic} alt="" className="w-10 h-10 rounded-xl object-cover"
-          style={{ border: `1.5px solid ${C.accent}40` }} />
-        {playing && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+          style={{ border: `1.5px solid ${C.accent}40`, opacity: regenStatus ? 0.4 : 1 }} />
+        {playing && !regenStatus && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+        {regenStatus && (
+          <div className="absolute inset-0 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(2px)' }}>
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
       </div>
       <div className="flex-1 min-w-0 text-left">
         <div className="text-xs font-normal truncate" style={{ color: C.text }}>{name}</div>
-        <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
+        {regenStatus ? (
+          <div className="flex items-center gap-1 text-[10px] truncate" style={{ color: C.primary, fontFamily: 'monospace' }}>
+            <span>● 重录中 ·</span>
+            <span className="truncate" style={{ color: C.muted }}>{regenStatus}</span>
+          </div>
+        ) : (
+          <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <button onClick={(e) => { e.stopPropagation(); onPrev(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipBack size={14} weight="fill" /></button>
@@ -377,54 +391,49 @@ export const VinylDisc: React.FC<{
   bitrate?: string;
 }> = ({ albumPic, playing, size = 180, bitrate }) => (
   <div className="relative" style={{ width: size, height: size }}>
-    {/* 巨型模糊光晕 (aura) */}
+    {/* 单层柔光 — 收敛简洁，不再散乱 */}
     <div className="absolute rounded-full pointer-events-none"
       style={{
-        inset: -size * 0.15,
-        background: `radial-gradient(circle, ${C.glow}35 0%, ${C.sakura}15 40%, ${C.lavender}10 60%, transparent 75%)`,
-        filter: 'blur(28px)',
-        transform: 'scale(1.1)',
-        animation: playing ? 'shizuku-float 6s ease-in-out infinite' : 'none',
+        inset: -size * 0.08,
+        background: `radial-gradient(circle, ${C.glow}30 0%, ${C.glow}10 50%, transparent 75%)`,
+        filter: 'blur(20px)',
       }} />
 
-    {/* 唱片本体 */}
-    <div className="relative w-full h-full rounded-full overflow-hidden flex items-center justify-center shizuku-glass"
+    {/* 唱片本体 — 旋转 */}
+    <div className="relative w-full h-full rounded-full overflow-hidden"
       style={{
         animation: playing ? 'shizuku-vinyl 18s linear infinite' : 'none',
-        border: `1px solid rgba(255,255,255,0.5)`,
-        boxShadow: `0 0 50px ${C.glow}30, 0 0 100px ${C.sakura}10, inset 0 0 40px rgba(255,255,255,0.1)`,
+        border: `1.5px solid rgba(255,255,255,0.6)`,
+        boxShadow: `0 8px 32px ${C.primary}20, 0 0 0 1px ${C.glow}30`,
       }}>
-      {/* 底层封面 — 虹彩混色叠加 */}
+      {/* 单张封面 — 完全不透明，干净清晰 */}
       <img src={albumPic} alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ opacity: 0.55, mixBlendMode: 'overlay', transform: 'rotate(30deg) scale(1.15)' }} />
-      {/* 主封面 — 柔透 */}
-      <img src={albumPic} alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ opacity: 0.35 }} />
-      {/* 环纹 */}
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 10px, rgba(255,255,255,0.07) 11px, transparent 12px)` }} />
-      {/* 内圈标签 */}
-      <div className="z-10 rounded-full flex items-center justify-center backdrop-blur-md"
-        style={{
-          width: size * 0.36,
-          height: size * 0.36,
-          background: `rgba(255,255,255,0.75)`,
-          border: `1px solid rgba(255,255,255,0.7)`,
-          boxShadow: `inset 0 2px 8px rgba(255,255,255,0.6), 0 4px 12px ${C.primary}15`,
-        }}>
-        <div className="rounded-full"
+        className="absolute inset-0 w-full h-full object-cover" />
+
+      {/* 中心标签 — 不旋转跟随，保持唱片标识 */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="rounded-full flex items-center justify-center"
           style={{
-            width: size * 0.045,
-            height: size * 0.045,
-            background: C.soft,
-            boxShadow: `inset 0 1px 2px rgba(0,0,0,0.1)`,
-          }} />
+            width: size * 0.34,
+            height: size * 0.34,
+            background: `radial-gradient(circle at 35% 35%, rgba(255,255,255,0.95), ${C.soft})`,
+            border: `1px solid rgba(255,255,255,0.85)`,
+            boxShadow: `inset 0 2px 6px rgba(255,255,255,0.6), 0 2px 8px ${C.primary}20`,
+          }}>
+          {/* 中心轴心 */}
+          <div className="rounded-full"
+            style={{
+              width: size * 0.04,
+              height: size * 0.04,
+              background: C.muted,
+              boxShadow: `inset 0 1px 2px rgba(0,0,0,0.2)`,
+            }} />
+        </div>
       </div>
-      {/* 表面反光 */}
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)' }} />
+
+      {/* 极轻表面反光 — 一道高光，不抢戏 */}
+      <div className="absolute inset-0 pointer-events-none rounded-full"
+        style={{ background: 'linear-gradient(135deg, transparent 35%, rgba(255,255,255,0.12) 50%, transparent 65%)' }} />
     </div>
 
     {/* 比特率徽章 (chip) */}
@@ -440,11 +449,13 @@ export const VinylDisc: React.FC<{
       </div>
     )}
 
-    {/* 装饰粒子 */}
-    <Sparkle size={13} className="absolute -top-3 right-2" color={C.glow} delay={0} />
-    <Sparkle size={9} className="absolute top-1/4 -left-4" color={C.sakura} delay={0.8} />
-    <Sparkle size={7} className="absolute -bottom-1 left-6" color={C.lavender} delay={1.5} />
-    <WaterDrop size={6} className="absolute top-[60%] -right-3" />
+    {/* 装饰粒子 — 星芒 + 水滴，绕着唱片漂浮 */}
+    <Sparkle size={11} className="absolute -top-2 right-3" color={C.glow} delay={0} />
+    <Sparkle size={9} className="absolute top-1/4 -left-3.5" color={C.sakura} delay={0.8} />
+    <Sparkle size={7} className="absolute -bottom-1 left-7" color={C.lavender} delay={1.5} />
+    <Sparkle size={6} className="absolute top-[58%] -right-3" color={C.glow} delay={2.2} />
+    <WaterDrop size={6} className="absolute top-[60%] -right-3.5" />
+    <WaterDrop size={5} className="absolute top-[12%] left-[18%]" />
   </div>
 );
 
@@ -461,27 +472,76 @@ export const MetaChip: React.FC<{ children: React.ReactNode; className?: string 
   </span>
 );
 
-/* ══════════ 子操作行 (Like / Shuffle / Add) ══════════ */
+/* ══════════ 子操作行 (Like / Sync / Loop / Add) ══════════ */
+export type SubPlayMode = 'loop' | 'single' | 'shuffle';
 export const SubActions: React.FC<{
   onLike?: () => void;
-  onAdd?: () => void;
   liked?: boolean;
-}> = ({ onLike, onAdd, liked }) => {
-  const Item = ({ icon, label, onClick, active }: any) => (
+  onSync?: () => void;             // 手动对轴 (仅本地歌显示)
+  showSync?: boolean;
+  playMode?: SubPlayMode;
+  onCyclePlayMode?: () => void;    // 循环模式切换
+  onAdd?: () => void;
+}> = ({ onLike, liked, onSync, showSync, playMode = 'loop', onCyclePlayMode, onAdd }) => {
+  const Item = ({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick?: () => void; active?: boolean }) => (
     <button onClick={onClick}
-      className="flex flex-col items-center gap-1 transition-opacity"
-      style={{ opacity: active ? 1 : 0.45 }}>
+      className="flex flex-col items-center gap-1 transition-opacity active:scale-95"
+      style={{ opacity: active ? 1 : 0.5 }}>
       <div className="flex items-center justify-center w-8 h-8">{icon}</div>
       <span className="text-[8px] uppercase tracking-[0.15em]"
         style={{ color: C.primary, fontFamily: `'Space Grotesk', 'SF Mono', monospace` }}>{label}</span>
     </button>
   );
+
+  // SVG icon factories
+  const heartSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5">
+      <path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z" />
+    </svg>
+  );
+  const syncSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="3" x2="12" y2="9" />
+      <line x1="12" y1="15" x2="12" y2="21" />
+      <line x1="3" y1="12" x2="9" y2="12" />
+      <line x1="15" y1="12" x2="21" y2="12" />
+      <circle cx="12" cy="12" r="2" fill={C.primary} stroke="none" />
+    </svg>
+  );
+  const loopSvg = playMode === 'single' ? (
+    // 单曲循环 — 圆环带数字 1
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M17 4l3 3-3 3" /><path d="M20 7H8a4 4 0 0 0-4 4v0" />
+      <path d="M7 20l-3-3 3-3" /><path d="M4 17h12a4 4 0 0 0 4-4v0" />
+      <text x="12" y="14.5" fontSize="7" fontWeight="700" fill={C.primary} stroke="none" textAnchor="middle">1</text>
+    </svg>
+  ) : playMode === 'shuffle' ? (
+    // 随机
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M3 6h3l12 12h3" /><path d="M18 6h3l-3-3M3 18h3l12-12h3" /><path d="M18 18h3l-3 3" />
+    </svg>
+  ) : (
+    // 列表循环
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M17 4l3 3-3 3" /><path d="M20 7H8a4 4 0 0 0-4 4v0" />
+      <path d="M7 20l-3-3 3-3" /><path d="M4 17h12a4 4 0 0 0 4-4v0" />
+    </svg>
+  );
+  const addSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6" />
+    </svg>
+  );
+
+  const playModeLabel: Record<SubPlayMode, string> = { loop: 'Loop', single: 'One', shuffle: 'Mix' };
+
   return (
-    <div className="grid grid-cols-2 gap-10 max-w-[180px] mx-auto">
-      <Item onClick={onLike} active={liked} label="Like"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5"><path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"/></svg>} />
-      <Item onClick={onAdd} label="Add"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6"/></svg>} />
+    <div className="flex items-end justify-around gap-4 max-w-[280px] mx-auto">
+      <Item onClick={onLike} active={liked} label="Like" icon={heartSvg} />
+      {showSync && onSync && <Item onClick={onSync} active label="Sync" icon={syncSvg} />}
+      {onCyclePlayMode && <Item onClick={onCyclePlayMode} active={playMode !== 'loop'} label={playModeLabel[playMode]} icon={loopSvg} />}
+      {onAdd && <Item onClick={onAdd} label="Add" icon={addSvg} />}
     </div>
   );
 };

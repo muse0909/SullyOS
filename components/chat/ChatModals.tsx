@@ -78,6 +78,11 @@ interface ChatModalsProps {
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
+    // HTML mode
+    htmlModeEnabled?: boolean;
+    onToggleHtmlMode?: () => void;
+    htmlModeCustomPrompt?: string;
+    setHtmlModeCustomPrompt?: (v: string) => void;
     // Voice TTS
     chatVoiceEnabled?: boolean;
     onToggleChatVoice?: () => void;
@@ -128,6 +133,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
+    htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
@@ -290,6 +296,32 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后，角色在聊天中可以搜索、浏览、发帖、评论小红书。需要在全局设置中配置 MCP 或 Cookie。
                          </p>
+                     </div>
+
+                     {/* HTML 模块模式 */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleHtmlMode}>
+                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">HTML 模块模式</label>
+                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${htmlModeEnabled ? 'bg-fuchsia-500' : 'bg-slate-200'}`}>
+                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${htmlModeEnabled ? 'translate-x-4' : ''}`}></div>
+                             </div>
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                             开启后注入"用 [html]...[/html] 包裹的精美卡片"提示词，AI 会在合适场景输出邀请函 / 票据 / 通知等可视化模块。
+                             历史上下文里只保留剥离 HTML 后的文字摘要，不浪费 token。
+                         </p>
+                         {htmlModeEnabled && (
+                             <div className="mt-3">
+                                 <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">自定义提示词补充（追加在内置提示词之后，不会覆盖）</label>
+                                 <textarea
+                                     value={htmlModeCustomPrompt || ''}
+                                     onChange={e => setHtmlModeCustomPrompt?.(e.target.value)}
+                                     placeholder="比如：偏好暖色调 / 默认风格走 minimal 杂志感 / 票据类必须含二维码占位…"
+                                     className="w-full h-28 bg-slate-50 rounded-2xl p-3 text-[12px] resize-none border border-slate-200 focus:outline-none focus:border-fuchsia-300"
+                                 />
+                                 <p className="text-[10px] text-slate-400 mt-1">留空则只使用内置提示词。</p>
+                             </div>
+                         )}
                      </div>
 
                      {/* Voice TTS */}

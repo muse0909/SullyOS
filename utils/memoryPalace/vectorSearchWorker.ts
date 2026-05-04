@@ -34,8 +34,17 @@ self.onmessage = (e: MessageEvent) => {
 
     const scored: { memoryId: string; similarity: number }[] = [];
 
+    // Decode any of (Float32Array / Uint8Array of float32 bytes / number[]) into
+    // a Float32Array. Worker can't import shared utils without a build step, so
+    // this is inlined.
+    const decode = (v: any): Float32Array => {
+        if (v instanceof Float32Array) return v;
+        if (v instanceof Uint8Array) return new Float32Array(v.buffer, v.byteOffset, v.byteLength >>> 2);
+        return new Float32Array(v);
+    };
+
     for (const entry of vectors) {
-        const bv = entry.vector instanceof Float32Array ? entry.vector : new Float32Array(entry.vector);
+        const bv = decode(entry.vector);
 
         // Inline cosine similarity with loop unrolling
         let dot = 0, bNorm = 0;

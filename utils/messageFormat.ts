@@ -65,6 +65,16 @@ export function normalizeMessageContent(
         return `[系统] ${msg.content}`;
     }
 
+    // HTML 卡片：上下文 / 归档 / palace 都只看到剥离 HTML 后的纯文字摘要，
+    // 避免 270px 的视觉 div 把上下文 token 全占了 + LLM 误把 HTML 当正经分析对象。
+    if (type === 'html_card') {
+        const meta: any = msg.metadata || {};
+        const preview = (typeof meta.htmlTextPreview === 'string' && meta.htmlTextPreview)
+            ? meta.htmlTextPreview
+            : (typeof msg.content === 'string' ? msg.content.replace(/^\[HTML卡片\]\s*/, '') : '');
+        return preview ? `[HTML卡片] ${preview}` : '[HTML卡片]';
+    }
+
     // 音乐卡片：把 metadata.song + intent 翻成自然文本，否则归档/palace/向量只看到
     // "[音乐卡片]" 这种没信息量的占位，丢掉"谁因为什么歌做了什么"的语义
     if (type === 'music_card') {

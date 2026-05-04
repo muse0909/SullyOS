@@ -91,10 +91,23 @@ export const ContextBuilder = {
      * @param char 角色档案
      * @param user 用户档案
      * @param includeDetailedMemories 是否包含激活月份的详细 Log (默认 true)
+     * @param memoryPalaceContext 外部注入的记忆宫殿文本（优先级低于 char.memoryPalaceInjection）
+     * @param groupOptions 群聊场景下的去重选项：避免和 buildGroupSharedScene 产出的共享块重复
      * @returns 标准化的 Markdown 格式 System Prompt
      */
-    buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true, memoryPalaceContext?: string): string => {
-        let context = `[System: Roleplay Configuration]\n\n`;
+    buildCoreContext: (
+        char: CharacterProfile,
+        user: UserProfile,
+        includeDetailedMemories: boolean = true,
+        memoryPalaceContext?: string,
+        groupOptions?: {
+            skipUserProfile?: boolean;
+            skipWorldview?: boolean;
+            skipWorldbookIds?: Set<string>;
+            headerOverride?: string;
+        },
+    ): string => {
+        let context = `${groupOptions?.headerOverride ?? '[System: Roleplay Configuration]'}\n\n`;
 
         // 1. 核心身份 (Identity)
         context += `### 你的身份 (Character)\n`;
@@ -116,17 +129,20 @@ export const ContextBuilder = {
         }
 
         // 2. 世界观 (Worldview) - New Centralized Logic
-        if (char.worldview && char.worldview.trim()) {
+        if (char.worldview && char.worldview.trim() && !groupOptions?.skipWorldview) {
             context += `### 世界观与设定 (World Settings)\n${char.worldview}\n\n`;
         }
 
         // [NEW] 挂载的世界书 (Mounted Worldbooks) - GROUPED BY CATEGORY
-        if (char.mountedWorldbooks && char.mountedWorldbooks.length > 0) {
+        // 群聊场景下：共享世界书已被 buildGroupSharedScene 提取到顶部场景块，这里跳过去重 ID
+        const skipBookIds = groupOptions?.skipWorldbookIds;
+        const filteredBooks = (char.mountedWorldbooks || []).filter(wb => !skipBookIds || !skipBookIds.has(wb.id));
+        if (filteredBooks.length > 0) {
             context += `### 扩展设定集 (Worldbooks)\n`;
-            
+
             // Group books by category
-            const groupedBooks: Record<string, typeof char.mountedWorldbooks> = {};
-            char.mountedWorldbooks.forEach(wb => {
+            const groupedBooks: Record<string, typeof filteredBooks> = {};
+            filteredBooks.forEach(wb => {
                 const cat = wb.category || '通用设定 (General)';
                 if (!groupedBooks[cat]) groupedBooks[cat] = [];
                 groupedBooks[cat].push(wb);
@@ -143,9 +159,12 @@ export const ContextBuilder = {
         }
 
         // 3. 用户画像 (User Profile)
-        context += `### 互动对象 (User)\n`;
-        context += `- 名字: ${user.name}\n`;
-        context += `- 设定/备注: ${user.bio || '无'}\n\n`;
+        // 群聊场景下：用户画像已在共享场景块顶部，这里跳过避免重复
+        if (!groupOptions?.skipUserProfile) {
+            context += `### 互动对象 (User)\n`;
+            context += `- 名字: ${user.name}\n`;
+            context += `- 设定/备注: ${user.bio || '无'}\n\n`;
+        }
 
         // 4. [NEW] 印象档案 (Private Impression)
         // 这是角色对用户的私密看法，只有角色知道
@@ -253,6 +272,96 @@ export const ContextBuilder = {
         }
 
         return context;
+    },
+
+    /**
+     * 群聊场景共享块。
+     *
+     * 单次调用里如果给每个角色都重复贴一遍"用户档案+世界书+世界观"，
+     * 三人群就是 3 倍的布景重复，把 token 烧光。这里把"舞台"提前一次性铺好：
+     *
+     *   - 用户档案：所有角色看到的都是同一个用户，去重必然安全。
+     *   - 世界书：按 id 统计，被 ≥2 个角色挂载的视为"群共有设定"，提到顶部一次。
+     *     只有某个角色独享的世界书仍留在该角色块里，避免别人看到本不该知道的设定。
+     *   - 世界观：仅当所有成员的 worldview 字符串完全一致时才视为共享。
+     *
+     * 返回的 sharedWorldbookIds / worldviewIsShared 用于配合 buildCoreContext
+     * 的 skipUserProfile / skipWorldbookIds / skipWorldview 选项，避免重复输出。
+     *
+     * 男朋友还是男朋友——这里砍的只是"我们现在在这家餐厅"这种描述，
+     * 没有任何一段是把谁的人设、印象、记忆压缩掉。
+     */
+    buildGroupSharedScene: (
+        members: CharacterProfile[],
+        user: UserProfile,
+    ): {
+        text: string;
+        sharedWorldbookIds: Set<string>;
+        worldviewIsShared: boolean;
+    } => {
+        const sharedWorldbookIds = new Set<string>();
+        let worldviewIsShared = false;
+
+        if (members.length === 0) {
+            return { text: '', sharedWorldbookIds, worldviewIsShared };
+        }
+
+        // 1. 找出共享的世界书（被 2+ 角色挂载，按 id 计）
+        const wbCount = new Map<string, { count: number; entry: { id: string; title: string; content: string; category?: string } }>();
+        for (const m of members) {
+            for (const wb of (m.mountedWorldbooks || [])) {
+                if (!wb.id) continue;
+                const existing = wbCount.get(wb.id);
+                if (existing) existing.count += 1;
+                else wbCount.set(wb.id, { count: 1, entry: wb });
+            }
+        }
+        const sharedBooks: { id: string; title: string; content: string; category?: string }[] = [];
+        wbCount.forEach((v, id) => {
+            if (v.count >= 2) {
+                sharedWorldbookIds.add(id);
+                sharedBooks.push(v.entry);
+            }
+        });
+
+        // 2. 共享 worldview：所有成员的非空 worldview 字符串完全一致
+        if (members.every(m => m.worldview && m.worldview.trim())) {
+            const first = members[0].worldview!.trim();
+            if (members.every(m => m.worldview!.trim() === first)) {
+                worldviewIsShared = true;
+            }
+        }
+
+        // 3. 拼装共享场景文本
+        let text = `[System: 群聊场景共享设定 (Group Scene)]\n`;
+        text += `（以下是群里所有角色都共同感知到的"舞台"——用户是谁、共有的世界设定。每位角色的个人卡、印象、记忆等仍在各自的"角色档案"块中保持完整。）\n\n`;
+
+        text += `### 互动对象 (User)\n`;
+        text += `- 名字: ${user.name}\n`;
+        text += `- 设定/备注: ${user.bio || '无'}\n\n`;
+
+        if (worldviewIsShared) {
+            text += `### 共有世界观 (Shared World Settings)\n${members[0].worldview!.trim()}\n\n`;
+        }
+
+        if (sharedBooks.length > 0) {
+            text += `### 共有扩展设定集 (Shared Worldbooks)\n`;
+            const groupedBooks: Record<string, typeof sharedBooks> = {};
+            sharedBooks.forEach(wb => {
+                const cat = wb.category || '通用设定 (General)';
+                if (!groupedBooks[cat]) groupedBooks[cat] = [];
+                groupedBooks[cat].push(wb);
+            });
+            Object.entries(groupedBooks).forEach(([category, books]) => {
+                text += `#### [${category}]\n`;
+                books.forEach(wb => {
+                    text += `**Title: ${wb.title}**\n${wb.content}\n---\n`;
+                });
+                text += `\n`;
+            });
+        }
+
+        return { text, sharedWorldbookIds, worldviewIsShared };
     },
 
     /**

@@ -129,19 +129,25 @@ export const ChatPrompts = {
             : Promise.resolve(null);
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
+        // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
+        // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
         const groupContextPromise: Promise<string> = (async () => {
             try {
                 const memberGroups = groups.filter(g => g.members.includes(char.id));
                 if (memberGroups.length === 0) return '';
                 const perGroup = await Promise.all(
-                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({ groupName: g.name, msgs })))
+                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({
+                        groupName: g.name,
+                        cap: g.privateContextCap ?? 80,
+                        msgs,
+                    })))
                 );
                 const allGroupMsgs: (Message & { groupName: string })[] = [];
-                for (const { groupName, msgs } of perGroup) {
-                    for (const m of msgs) allGroupMsgs.push({ ...m, groupName });
+                for (const { groupName, cap, msgs } of perGroup) {
+                    for (const m of msgs.slice(-cap)) allGroupMsgs.push({ ...m, groupName });
                 }
-                allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
+                allGroupMsgs.sort((a, b) => a.timestamp - b.timestamp);
+                const recentGroupMsgs = allGroupMsgs;
                 if (recentGroupMsgs.length === 0) return '';
                 const groupLogStr = recentGroupMsgs.map(m => {
                     const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
@@ -732,6 +738,42 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     const note = m.metadata?.xhsNote || {};
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
+                }
+                else if ((m.type as string) === 'html_card') {
+                    // html_card：上下文里只塞纯文字摘要，剥离掉所有 HTML，省 token、不污染 LLM 思考
+                    const meta: any = m.metadata || {};
+                    const preview = (typeof meta.htmlTextPreview === 'string' && meta.htmlTextPreview)
+                        ? meta.htmlTextPreview
+                        : (typeof m.content === 'string' ? m.content.replace(/^\[HTML卡片\]\s*/, '') : '');
+                    const sender = m.role === 'user' ? '用户' : '你';
+                    content = `${timeStr} [${sender}发送了一张 HTML 卡片] ${preview || '(纯视觉卡片)'}`;
+                }
+                else if ((m.type as string) === 'mcd_card') {
+                    const meta: any = m.metadata || {};
+                    const userName = userProfile?.name || '用户';
+                    if (meta.mcdCardKind === 'cart' && Array.isArray(meta.mcdCartItems)) {
+                        const items: any[] = meta.mcdCartItems;
+                        const lines = items.map((c: any) => {
+                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                            const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
+                            const codeStr = c.code ? ` (code:${c.code})` : '';
+                            return `  - ${c.name}${priceStr} ×${c.qty}${codeStr}`;
+                        }).join('\n');
+                        const total = items.reduce((s: number, c: any) => {
+                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                            return s + (isFinite(p) ? p * c.qty : 0);
+                        }, 0);
+                        const totalStr = total > 0 ? `\n  合计: ¥${total.toFixed(2)}` : '';
+                        content = `${timeStr} [${userName}在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(${userName}的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
+                    } else if (meta.mcdCardKind === 'candidate' && meta.mcdCandidate) {
+                        const c: any = meta.mcdCandidate;
+                        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                        const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
+                        const codeStr = c.code ? ` (code:${c.code})` : '';
+                        content = `${timeStr} [${userName}在菜单上看到了「${c.name}」${priceStr}${codeStr}, 还没决定要不要点, 想先听听你的意见]\n(请按你的人设自然回一两句: 推荐 / 劝阻 / 调侃 / 建议搭配 / 提一下热量 都行。这只是候选, 别直接调下单工具, 等 ta 真说"那就这个"或者一并选完再下手。)`;
+                    } else if (meta.mcdToolName) {
+                        content = `${timeStr} [麦当劳工具结果: ${meta.mcdToolName}]`;
+                    }
                 }
                 else if (m.type === 'emoji') {
                      const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';

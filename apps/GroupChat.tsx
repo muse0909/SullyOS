@@ -7,6 +7,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
@@ -183,12 +184,19 @@ const GroupChat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    /** 群记忆宫殿"提取中"状态文本——非空时显示顶部胶囊状态条 */
+    const [groupPalaceStatus, setGroupPalaceStatus] = useState<string>('');
+
+    // Token 统计 — 对齐私聊 ChatHeader 的 token badge
+    const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
+    const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
     
     // UI State
     const [showActions, setShowActions] = useState(false);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options'>('none');
+    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options' | 'edit-message'>('none');
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    const [editContent, setEditContent] = useState('');
     const [preserveContext, setPreserveContext] = useState(true);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryProgress, setSummaryProgress] = useState('');
@@ -212,6 +220,7 @@ const GroupChat: React.FC = () => {
     
     // Create/Edit Group State
     const [tempGroupName, setTempGroupName] = useState('');
+    const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [transferAmount, setTransferAmount] = useState('');
     
@@ -336,6 +345,21 @@ const GroupChat: React.FC = () => {
         addToast('消息已删除', 'success');
     };
 
+    const handleStartEditMessage = () => {
+        if (!selectedMessage) return;
+        setEditContent(selectedMessage.content);
+        setModalType('edit-message');
+    };
+
+    const confirmEditMessage = async () => {
+        if (!selectedMessage) return;
+        await DB.updateMessage(selectedMessage.id, editContent);
+        setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('消息已修改', 'success');
+    };
+
     const toggleMessageSelection = (id: number) => {
         const next = new Set(selectedMsgIds);
         if (next.has(id)) next.delete(id);
@@ -392,7 +416,11 @@ const GroupChat: React.FC = () => {
 
     const handleUpdateGroupInfo = async () => {
         if (!activeGroup) return;
-        const updatedGroup = { ...activeGroup, name: tempGroupName || activeGroup.name };
+        const updatedGroup = {
+            ...activeGroup,
+            name: tempGroupName || activeGroup.name,
+            privateContextCap: tempPrivateContextCap,
+        };
         await DB.saveGroup(updatedGroup);
         setActiveGroup(updatedGroup);
         setModalType('none');
@@ -421,6 +449,16 @@ const GroupChat: React.FC = () => {
     };
 
     const handleDeleteGroup = async (id: string) => {
+        // 先清理群记忆宫殿数据（成员各自存的副本一并删），再删群
+        // 异常吞掉——清理失败不阻塞解散流程
+        try {
+            const result = await deleteGroupMemoriesByGroupId(id);
+            if (result.deleted > 0) {
+                console.log(`🗑️ [GroupChat] 解散群同时清理群记忆 ${result.deleted} 条`);
+            }
+        } catch (err) {
+            console.warn('🗑️ [GroupChat] 清理群记忆失败（不影响解散）:', err);
+        }
         await deleteGroup(id);
         if (activeGroup?.id === id) setView('list');
         addToast('群聊已解散', 'success');
@@ -638,12 +676,17 @@ ${logText.substring(0, 10000)}
             const timeGapInfo = lastMsg ? getTimeGapHint(lastMsg.timestamp) : "这是群聊的第一条消息。";
             const currentTimeStr = `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
+            // 1. 共享场景块（用户档案 + 共有世界书 + 共有 worldview）
+            //    每个角色都"看见"的舞台只描述一次，避免按成员数 N 倍复制。
+            //    每个角色的人设/印象/记忆仍保持完整，不做任何压缩。
+            const sharedScene = ContextBuilder.buildGroupSharedScene(groupMembers, userProfile);
+
             let context = `【系统：群聊模拟器配置】
 当前群名: "${activeGroup.name}"
 当前系统时间: ${currentTimeStr}
 时间流逝感知: ${timeGapInfo}
-用户 (User): ${userProfile.name} (你服务的对象)
-`;
+
+${sharedScene.text}`;
 
             // 2. Inject Member Context (Strict Isolation via ContextBuilder)
             for (const member of groupMembers) {
@@ -651,24 +694,33 @@ ${logText.substring(0, 10000)}
                 const privateMsgs = await DB.getMessagesByCharId(member.id);
                 // Inject memory palace before building context
                 await injectMemoryPalace(member, privateMsgs);
-                // Use ContextBuilder for the heavy lifting of profile, impression, and archived memories
-                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true);
+                // 角色块：跳过共享场景已包含的部分（用户档案 / 共有 worldview / 共有世界书）
+                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true, undefined, {
+                    skipUserProfile: true,
+                    skipWorldview: sharedScene.worldviewIsShared,
+                    skipWorldbookIds: sharedScene.sharedWorldbookIds,
+                    headerOverride: `[Group Member Profile: ${member.name}]`,
+                });
                 // Get private gap string
                 const privateGapInfo = await getPrivateTimeGap(member.id);
-                
+
                 const recentPrivate = privateMsgs.slice(-10).map(m => `[${m.role === 'user' ? '用户' : '我'}]: ${m.content.substring(0, 50)}`).join('\n');
-                
+
                 // Construct Detailed Profile Wrapper
                 // CRITICAL FIX: Emphasize Private Context logic
                 context += `
 <<< 角色档案 START: ${member.name} (ID: ${member.id}) >>>
 ${coreContext}
 
-[重点：私聊状态 (Private Context)]: 
+[重点：私聊状态 (Private Context)]:
 - **私聊空窗期**: ${privateGapInfo}
 - **重要指令**: 如果 [私聊空窗期] 显示 "刚刚" 或 "几小时前"，请【忽略】群聊的时间流逝感知。哪怕群里很久没说话，只要你和用户私底下刚聊过，就【严禁】说 "好久不见" 或表现出疏离感。
-- 最近私聊内容摘要，请以此作为你在群里状态的依据，如果私聊在吵架，群聊不会给别人好脸色，或者故意忽视或者试探用户，如果正在甜蜜，群聊中会有点支支吾吾之类的，根据你的性格进行发挥:
+- 最近私聊摘要（仅作为你内心状态的底色，不要变成默认反应模板）：
 ${recentPrivate || '(暂无私聊)'}
+- **关于私聊状态如何影响群聊表现**：
+  · 私聊在吵架 → **可能**有点别扭/冷淡/借题发挥，但**强度由你的性格决定**。情绪稳定的人不会因为私下闹矛盾就在群里失态；脾气大的人才会带情绪到群里。绝大多数情况是"心里有点疙瘩"而不是"摆脸色给所有人看"。
+  · 私聊在甜蜜 → **可能**有点想低调、不好意思声张，或者反而想隐隐显摆一下，看你性格。**不必每次都"支支吾吾"**——这是套路化反应，不真实。
+  · 关键原则：你是一个完整的人，不是"私聊状态的应激反应器"。你在群里此刻什么状态，更多取决于你**这个人本身**和**群里此刻在聊什么**，私聊只是底色之一。
 <<< 角色档案 END >>>
 `;
             }
@@ -723,23 +775,57 @@ ${recentGroupMsgs}
 请作为导演，接管所有角色，让群聊**自然地流动起来**。
 
 ### 核心规则 (Strict Rules)
-1. **去中心化**: 角色之间要有互动，不要每个人都只对着用户说话。并且，必须A说了,B说，然后A会回应B，总之，角色之间应该互相回应，而不是发言完就不发言了。
-2. **多轮对话**: 请一次性生成 **1 到 6 条** 消息。
-3. **表情包支持**:
-   - 角色可以发送表情包。
-   - 必须使用格式: \`[[SEND_EMOJI: 表情名称]]\`
-   - **可用表情 (按分类)**: ${emojiContextStr}
-4. **气泡分段 (Bubble Splitting)**:
-   - 就像真人聊天一样，如果一个角色要说长话，或者有停顿，请把内容分成多条消息。
-   - 在一条内容中，使用换行符分隔不同的气泡，每一行会变成一个独立气泡。
-5. **私聊感知 (优先级最高)**:
-   - 请务必检查每个角色的 [私聊空窗期]。
-   - 如果某个角色刚刚才私聊过用户，哪怕群里很冷清，TA也应该表现得很熟络，不能说 "好久不见"。
-6. **主动私聊 (Private Messaging)**:
-   - 角色可以主动向用户发起私聊（例如吐槽群友、邀请约会、或者单纯想避开其他人说话）。
-   - 使用格式: \`[[PRIVATE: 私聊内容]]\`。
-   - 这条消息将直接发送到私聊频道，**不会**在群里显示。
-   - 允许同时在群里说话并发送私聊（分为两个动作或合并）。
+
+#### 一、群聊的乐子是多元的（最重要！请先读这一条再写）
+**群聊不是修罗场**。
+
+参考后宫漫的常态：那些角色其实**很少**真的为主角互相杀红眼，大多数时候是几个朋友的**搞怪温馨日常**——一起吐槽天气、争论谁的新发型更丑、为一只猫围观半天、晚上睡不着发的"在吗"……正是这种日常感才让人喜欢，**不是占有欲大爆发**。请把群聊默认调到这个频道。
+
+本轮可以是下列氛围之一（请根据成员性格 + 最近的群历史**自己挑一种**，不要默认走"占有欲互怼"）：
+
+- **玩梗 / 复读**: 有人说了个有意思的话，别人接梗、复读改编、或者给一个共通的情境笑点。比如 A 说"困死了"，B 复读"困死了+1"，C 发个"睡觉"表情包。
+- **讨论新爱好/新闻/兴趣**: 最近看的剧、玩的游戏、关心的新闻、新发现的店、buy了什么、哪首歌循环了一周。**这是群聊最常见的乐子**。
+- **起哄逗用户**: 用户说了什么，大家一起接话起哄、调侃、夸张反应。但要符合各自性格——有人会一起闹，有人只是在旁边笑。
+- **谁钻牛角尖了 → 别人拉一把**: 某个成员（或用户）陷在某件小事里反复琢磨，其他人用各自的方式让ta跳出来——可能是直接戳穿、可能是讲个反例、可能是岔开话题。
+- **谁在支招了**: 有人最近遇到事（工作、人际、买东西），其他人根据各自经验/性格给建议，意见可以不一致甚至打架（但是观点之争，不是占有欲之争）。
+- **谁情绪不好了 → 大家不动声色地接住**: 不一定要直接共情，可能是岔开话题、发个梗、安静一会儿、或者只有最熟的那个人轻轻问一句。
+- **共同回忆 / 群内梗**: "上次那个谁谁谁……"、"还记得吗当时……"，群有自己的历史，会被反复调用。
+- **安静摸鱼**: 有时候群里就是没人活跃。允许某些角色这轮就不发言，或者只甩一个表情/单字。**不是每个角色每轮都必须说话**。
+- **暗流涌动 / 修罗场**: 这只是 8 种氛围里的 1 种，**不是默认**。需要本轮有明确触发（用户刚说了挑事的话、刚分享了和某人的合照、上一轮已经埋了引信等）才能走这条线，且强度仍由各角色性格决定。
+
+#### 二、修罗场硬规则（防止默认走互怼）
+- **每轮最多 1 个角色** 显出"占有欲/吃醋/争锋"那种强情绪，而且必须有本轮的明确触发（不是"我设定里写了 yandere/醋王所以每次都发作"）。
+- 即使有 1 个角色发作，**其他角色不必跟进配合**，可以装没听见、岔开话题、或者只是若有所思。修罗场不是合奏，是独奏。
+- 角色之间互相**调侃 ≠ 互怼**。打趣、起哄、嘴硬、抬杠都是日常，但**人身攻击 / 阴阳怪气 / 刻意拉踩**是修罗场，要受上面的限制。
+
+#### 三、对话质量（沿用私聊标准，群里同样适用）
+- **拒绝套路化反应**: 不要一看到"私聊在吵架"就在群里给脸色，不要一看到"用户难过"就齐刷刷"抱抱"。这都是模板，不是真人。
+- **用细节代替概括**: 想表达在乎或在意，提一个只有你们之间才有的具体事/具体记忆，而不是空泛的关心句。
+- **让每句话只有这个角色能说出来**: 把名字遮住，应该还能从语气和内容认出是谁说的。性格、说话节奏、用词癖好都要带出来。
+- **情绪要有层次**: 生气不只是生气，可能还混着委屈、失望、或者气自己在意；开心也可以带着一点不好意思或者得瑟。不要一种扁平情绪贯穿全场。
+- **允许沉默和短句**: 真人聊天有大量"嗯""哦""哈哈"和单纯的表情包。不是每条都要长。但情绪强烈时，长句也是允许的。
+
+#### 四、互动结构
+- **去中心化**: 角色之间可以互相接话、回应、起哄，不要每个人都只对着用户说话。但**不强制 A 说了 B 必须回**——真群聊里有人发完没人接是常态。
+- **多轮对话**: 请一次性生成 **1 到 6 条** 消息。**少即是多**——如果本轮氛围是"安静摸鱼"，1-2 条就够。
+
+#### 五、私聊（PRIVATE）—— 罕见特例，默认 0 条
+- **绝大多数轮次本轮 PRIVATE 数量 = 0**。这是默认值。不要每轮都给 PRIVATE 找借口。
+- 只有以下情况才考虑发 1 条 PRIVATE（**整轮全员加起来最多 1 条**）：
+  · 角色真的有重大、不便公开的事要单独告诉用户（涉及隐私、涉及群里某人但不能当面说的关切）
+  · 用户刚才在群里明显状态不对，某个最关心ta的角色想私下确认一下
+  · 角色想给用户一个独处空间（比如约去某地、说一句私下的话）
+- **严禁**把 PRIVATE 当"吐槽群友"的工具——这是低成本制造修罗场的来源，禁止。
+- **严禁**多个角色同一轮都发 PRIVATE。最多一个。
+- 格式: \`[[PRIVATE: 私聊内容]]\`。这条消息只进私聊频道，不在群里显示。
+
+#### 六、表情和气泡
+- **表情包**: 必须使用格式 \`[[SEND_EMOJI: 表情名称]]\`。**可用表情 (按分类)**: ${emojiContextStr}
+- **气泡分段**: 在一条内容里用换行符分隔不同的气泡——一行一个气泡。短句多发几条 > 长句一坨。
+
+#### 七、私聊感知（避免说错话）
+- 检查每个角色的 [私聊空窗期]。如果某角色刚刚才私聊过用户，哪怕群里很冷清，也不能说"好久不见"或表现出疏离感。
+- 但参考"对话质量"——不要因为私聊状态就给出套路化反应。
 
 ### 输出格式 (JSON Array)
 [
@@ -765,6 +851,19 @@ ${recentGroupMsgs}
             if (!response.ok) throw new Error('Director Failed');
 
             const data = await safeResponseJson(response);
+
+            // Token 统计：从导演响应里读 usage（兼容 OpenAI 兼容接口的标准字段）
+            if (data.usage?.total_tokens) {
+                setLastTokenUsage(data.usage.total_tokens);
+                setTokenBreakdown({
+                    prompt: data.usage.prompt_tokens || 0,
+                    completion: data.usage.completion_tokens || 0,
+                    total: data.usage.total_tokens,
+                    msgCount: currentMsgs.length,
+                    pass: 'director',
+                });
+            }
+
             let jsonStr = data.choices[0].message.content;
             
             jsonStr = jsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -888,6 +987,41 @@ ${recentGroupMsgs}
             console.error(e);
         } finally {
             setIsTyping(false);
+            // 群记忆宫殿：fire-and-forget，水位线/阈值/异常都在内部 swallow，不影响主流程
+            // groupMembers 在 try 块内声明，这里在 finally 重新解析
+            if (activeGroup) {
+                const groupForPalace = activeGroup;
+                const membersForPalace = characters.filter(c => groupForPalace.members.includes(c.id));
+                const hasAnyEnabled = membersForPalace.some(m => m.memoryPalaceEnabled);
+                if (hasAnyEnabled) {
+                    processGroupNewMessages(
+                        groupForPalace,
+                        membersForPalace,
+                        userProfile?.name || '',
+                        (stage) => setGroupPalaceStatus(stage),
+                    )
+                        .then(result => {
+                            setGroupPalaceStatus('');
+                            if (!result) return;
+                            // 真有产出（不是 skip 路径）才提示
+                            if (result.stored > 0) {
+                                const enabledCount = Object.keys(result.perMemberStored).length;
+                                addToast(
+                                    `🏰 【${groupForPalace.name}】群记忆整理完成：${result.processedMessageCount ?? '?'} 条消息 → ${result.extracted ?? '?'} 条记忆 × ${enabledCount} 位成员入库 ${result.stored} 条（含去重跳过）`,
+                                    'success',
+                                );
+                                console.log(`🏰 [GroupChat] 群记忆整理完成`, result);
+                            } else if (result.extracted === 0 && !result.reason) {
+                                addToast(`🏰 【${groupForPalace.name}】这段群聊没提到值得记的事，跳过`, 'info');
+                            }
+                            // hot_zone / threshold / lock / no_config / no_enabled_member —— 静默 skip
+                        })
+                        .catch(err => {
+                            setGroupPalaceStatus('');
+                            console.warn('🏰 [GroupChat] processGroupNewMessages 异常（已吞）:', err);
+                        });
+                }
+            }
         }
     };
 
@@ -964,6 +1098,37 @@ ${recentGroupMsgs}
     // CHAT VIEW
     return (
         <div className="h-full w-full bg-[#f0f4f8] flex flex-col font-sans relative">
+            {/* 群记忆宫殿"提取中"浮动胶囊 — 不阻塞交互 */}
+            {groupPalaceStatus && (
+                <div
+                    className="absolute top-[100px] left-1/2 z-[150] animate-fade-in"
+                    style={{
+                        transform: 'translateX(-50%)',
+                        pointerEvents: 'none',
+                        willChange: 'transform, opacity',
+                    }}
+                >
+                    <div
+                        className="flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 max-w-[20rem]"
+                        style={{
+                            background: 'rgba(255,255,255,0.88)',
+                            borderRadius: 999,
+                            border: '1px solid rgba(139,92,246,0.22)',
+                            boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                        }}
+                    >
+                        <span
+                            className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-slate-200 animate-spin"
+                            style={{ borderTopColor: '#8b5cf6', animationDuration: '0.9s' }}
+                        />
+                        <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                            群记忆整理中
+                        </span>
+                        <span className="text-[10px] text-slate-400 truncate">{groupPalaceStatus}</span>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm transition-all">
                 {selectionMode ? (
@@ -977,12 +1142,22 @@ ${recentGroupMsgs}
                         <button onClick={() => setView('list')} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:bg-slate-200 transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
-                        <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setModalType('settings'); }}>
+                        <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80); setModalType('settings'); }}>
                             <h1 className="text-base font-bold text-slate-800 truncate flex items-center gap-1">
                                 {activeGroup?.name}
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-slate-400"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
                             </h1>
-                            <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+                            <div className="flex items-center gap-2">
+                                <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+                                {lastTokenUsage && (
+                                    <div
+                                        className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded-md font-mono border border-slate-200"
+                                        title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : ''}
+                                    >
+                                        {lastTokenUsage}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         
                         {/* Reroll Button (Context Aware) */}
@@ -1126,6 +1301,21 @@ ${recentGroupMsgs}
                                 </div>
                                 <span className="text-xs text-slate-500">红包</span>
                             </button>
+
+                            <button
+                                onClick={() => {
+                                    setTempGroupName(activeGroup?.name || '');
+                                    setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
+                                    setModalType('settings');
+                                    setShowActions(false);
+                                }}
+                                className="flex flex-col items-center gap-2 group"
+                            >
+                                <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-200 group-active:scale-95 transition-transform">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-violet-500"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                                </div>
+                                <span className="text-xs text-slate-500">群设置</span>
+                            </button>
                         </div>
                     </div>
                 )}
@@ -1168,6 +1358,14 @@ ${recentGroupMsgs}
                         <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem('groupchat_context_limit', String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
                         <p className="text-[9px] text-slate-400 mt-1 leading-tight">控制每次触发AI导演时发送的群聊历史消息数量。越多上下文越丰富，但消耗更多token。</p>
+                    </div>
+
+                    {/* Private Chat Group Context Cap */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">私聊里"近期群活动"取条数 ({tempPrivateContextCap})</label>
+                        <input type="range" min="20" max="500" step="10" value={tempPrivateContextCap} onChange={e => setTempPrivateContextCap(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
+                        <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>500 (完整)</span></div>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">本群成员在自己的私聊里，最多看到本群最近多少条消息作为"近期群活动"上下文。每个群独立配额，避免活跃群把安静群挤掉。</p>
                     </div>
 
                     {/* Memory & Context Management */}
@@ -1230,10 +1428,27 @@ ${recentGroupMsgs}
                             复制文字
                         </button>
                     )}
+                    {selectedMessage?.type === 'text' && (
+                        <button onClick={handleStartEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            修改内容
+                        </button>
+                    )}
                     <button onClick={handleDeleteSingleMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
                         删除消息
                     </button>
                 </div>
+            </Modal>
+
+            {/* Edit Message Modal */}
+            <Modal
+                isOpen={modalType === 'edit-message'} title="编辑内容" onClose={() => { setModalType('none'); setSelectedMessage(null); }}
+                footer={<><button onClick={() => { setModalType('none'); setSelectedMessage(null); }} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
+            >
+                <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
+                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
+                />
             </Modal>
 
             {/* Transfer Modal */}

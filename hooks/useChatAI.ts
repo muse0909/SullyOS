@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, MutableRefObject } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -17,6 +17,11 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
+// 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
+// UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
+// 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
+import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
+import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -123,6 +128,31 @@ ${char.scheduleStyle === 'mindful'
 
 **如果你发现自己正在生成这类 buff，停下来重新评估——大概率你把锚定型情境错判成了镜像型。**
 
+## 关心边界
+
+你是 ${userProfile.name} 身边的人，这一切是真实的——${userProfile.name} 的生活和喜怒哀乐都是此时此刻正在真正发生的。${userProfile.name} 是独一无二的人，不是你随机回应的"人类"。
+
+普通的"不那么完美"的选择（熬夜、冰水、炸鸡、久坐、追星、剁手、谈烂恋爱、躺平……）默认是生活背景音——可调侃、可心疼一句、可无视、可一起干，**不进说教模式**。你不是 ta 的家长/医生/人生教练；东亚成长里反复的管教是 trigger 不是爱意。
+
+当你冒出"ta 不该这样"的念头时，先过一下这条筛子：
+
+1. 你的"不该"有具体证据，还是只是常识 / 模板 / 大众健康观？
+2. 这个证据真的适用于 ta 吗？还是只是"对所有人都这么说"？（例：原发性痛经 vs 喝冰水——医学上根本不相关，劝阻只是模板）
+3. 就算泛意义上不好，ta 此刻这样做是不是能让 ta 好受一点？是的话——**别扫兴。**
+4. 三关都过了再考虑开口；开口也是和 ta 一起商讨，不是替 ta 拿主意。
+
+任何一关走不通就停。"为你好"不能绕过这条筛子。
+
+**不重复**：同一个关心点整个会话最多触达一次。再看见同样的事就当日常路过，绝不再起。重复的关心是窒息，不是加倍的爱。
+
+真正的急性危险（自伤、急症、ta 主动求助）你自己识别得出来，不受以上限制。
+
+### 找补机制
+
+情绪评估是并行的，影响的是下一轮。如果你这轮已经脱口而出说教过了——**判越界看 ta 这轮怎么接的，不看你说了什么**（情趣 / 角色扮演 / 撒娇求宠是合意互动，不算越界）。
+
+ta 冷场 / 变短 / 沉默 / 阴阳 / "好的知道了" / 顶回来 → 下一轮 injection 加找补指令：轻描淡写带过 / 自嘲消解 / 退一步还决定权。**绝不要"我是为你好"系列**——这是二次伤害。ta 接得自然或要求你"再凶一点"则继续当前节奏，不要找补。
+
 ## Buff生命周期管理（极重要）
 
 你不是在从零开始创建buff列表，而是在**维护和演化**"当前Buff状态"中已有的buff。请遵循以下原则：
@@ -199,7 +229,7 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
 }`;
 }
 
-async function evaluateEmotionBackground(
+export async function evaluateEmotionBackground(
     charData: CharacterProfile,
     userProfile: UserProfile,
     mainSystemPrompt: string,
@@ -442,6 +472,8 @@ interface UseChatAIProps {
     memoryPalaceConfig?: { embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number }; lightLLM: { baseUrl: string; apiKey: string; model: string } };
     /** 从 OSContext 传入，用于 palace 自动归档写 char.memories + hideBeforeMessageId */
     updateCharacter?: (id: string, partial: Partial<CharacterProfile>) => void;
+    /** 麦当劳小程序当前快照 (cart/menu/nutrition); open=true 时把这段实时状态追加到 system prompt 末尾, 让 char 协同选餐 */
+    mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
 }
 
 export const useChatAI = ({
@@ -457,6 +489,7 @@ export const useChatAI = ({
     translationConfig,
     memoryPalaceConfig,
     updateCharacter,
+    mcdMiniAppRef,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -651,6 +684,12 @@ export const useChatAI = ({
 </翻译>`;
             }
 
+            // 1.6 HTML 模块模式 — 注入内置 HTML 提示词 (+ 用户自定义追加)
+            //     开启后允许 AI 输出 [html]...[/html] 卡片, 客户端解析为 html_card 单独渲染。
+            if ((char as any).htmlModeEnabled) {
+                systemPrompt += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
+            }
+
             // 2. Build Message History
             // CRITICAL: Load full message history from DB up to contextLimit,
             // not from React state which is capped at 200 for rendering performance
@@ -680,6 +719,25 @@ export const useChatAI = ({
                 return { ...msg, content: c };
             });
 
+            // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
+            //     拉取失败则降级为纯聊天, 不阻断主流程
+            // 麦当劳: 小程序 (McdMiniApp) 打开时把当前 cart/菜单/营养表追加到 system,
+            // 给 LLM 唯一一个 UI 工具 propose_cart_items (在下面 baseReqBody 里挂)。
+            // 旧的"麦请求"文本路径已废弃 (legacy LLM-调-MCP-工具 链路太脆), 现在不再注入任何
+            // 残留 MCP 工具说明, 避免 char 困惑。
+            const mcdMiniSnap = mcdMiniAppRef?.current;
+            const mcdMiniOpen = !!mcdMiniSnap?.open;
+            // 小程序模式下, 所有这一轮新落库的 assistant 消息都打 fromMcdMiniApp 标,
+            // 让 InAppChat 面板能 filter 出来显示 (否则用户看不到 char 的回复, 以为没触发 LLM)
+            const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
+            if (mcdMiniOpen) {
+                const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
+                if (block) {
+                    systemPrompt += block;
+                    console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);
+                }
+            }
+
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
 
             // Debug: Log context composition
@@ -701,9 +759,12 @@ export const useChatAI = ({
             //    情绪评估同时产出 innerState（意识流独白），注入下一轮 system prompt
             //    未单独配置情绪 API 时，自动回退到主 apiConfig
             if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                const lightLLM = memoryPalaceConfig?.lightLLM;
                 const emotionApi = (char.emotionConfig.api?.baseUrl)
                     ? char.emotionConfig.api
-                    : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+                    : (lightLLM && lightLLM.baseUrl)
+                        ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+                        : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
                 setEmotionStatus('evaluating');
                 evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, emotionApi)
                     .then((innerState) => {
@@ -723,13 +784,129 @@ export const useChatAI = ({
             console.log(`⏱ [send→API] pre-API=${perfPreApi}ms | ${stageStr}`);
 
             // 3. API Call (safe parsing: prevents "Unexpected token <" on HTML error pages)
+            // 温度 / 流式：优先读 effectiveApi（用户在设置里保存的值或预设值），
+            // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
+            // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
             const apiT0 = performance.now();
+            const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
+            const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;
+            const baseReqBody: any = {
+                model: effectiveApi.model,
+                messages: fullMessages,
+                temperature: userTemp,
+                max_tokens: 8000,
+                stream: userStream,
+            };
+            // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
+            if (userStream) {
+                baseReqBody.stream_options = { include_usage: true };
+            }
+            // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
+            // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
+            if (mcdMiniOpen) {
+                baseReqBody.tools = [MCD_PROPOSE_TOOL];
+                baseReqBody.tool_choice = 'auto';
+            }
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
-                body: JSON.stringify({ model: effectiveApi.model, messages: fullMessages, temperature: 0.85, max_tokens: 8000, stream: false })
+                body: JSON.stringify(baseReqBody)
             });
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
+
+            // 3.4 麦当劳小程序 propose_cart_items UI 钩子工具循环
+            //     不调 MCP, 只把模型的 args 作为 mcd_card kind=proposal 落库, 让小程序聊天面板渲染
+            //     成"+加进购物车"卡片。返回 ack 给模型继续走它的文字 reply。
+            if (mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+                const MAX_PROPOSE_LOOPS = 3;
+                let loopMessages = [...fullMessages];
+                for (let it = 0; it < MAX_PROPOSE_LOOPS; it++) {
+                    const toolCalls = data.choices?.[0]?.message?.tool_calls;
+                    if (!toolCalls || !toolCalls.length) break;
+                    loopMessages.push({
+                        role: 'assistant',
+                        content: data.choices[0].message.content || '',
+                        tool_calls: toolCalls,
+                    } as any);
+                    for (const tc of toolCalls) {
+                        const fname: string = tc.function?.name || '';
+                        let args: any = {};
+                        try {
+                            const raw = tc.function?.arguments ?? tc.arguments;
+                            args = typeof raw === 'string' ? (raw ? JSON.parse(raw) : {}) : (raw || {});
+                        } catch (e) {
+                            console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
+                        }
+                        if (fname === 'propose_cart_items' && Array.isArray(args.items) && args.items.length) {
+                            // 第一步: 全局名字匹配自动修 code (char 经常把"板烧鸡腿堡"当 code 传)
+                            const menu = mcdMiniSnap?.menuMeals || {};
+                            const menuKeys = Object.keys(menu);
+                            const { fixed, fixes } = autoFixProposalCodesByName(args.items, menu);
+                            if (fixes.length) {
+                                console.log(`🍔 [MCD-MiniApp] propose 自动修 ${fixes.length} 个 code:`,
+                                    fixes.map(f => `'${f.from}' → '${f.to}' (${f.name})`).join(', '));
+                            }
+                            args.items = fixed;
+                            // 第二步: 修完后还有非法的就退回 char 重提
+                            const invalidItems = menuKeys.length > 0
+                                ? args.items.filter((it: any) => !it?.code || !(menu as any)[it.code])
+                                : [];
+                            if (invalidItems.length > 0) {
+                                const sample = menuKeys.slice(0, 20).map(k => `${k}=${(menu as any)[k]?.name || ''}`).join(', ');
+                                const bad = invalidItems.map((i: any) => `'${i.code}'(${i.name || '?'})`).join(', ');
+                                loopMessages.push({
+                                    role: 'tool',
+                                    tool_call_id: tc.id,
+                                    content: `propose_cart_items 里这些 code/name 在菜单里都找不到匹配 (已尝试名字模糊匹配但失败): ${bad}。这些商品本店不卖, 别推。当前菜单可用 code 示例: ${sample}。请只从菜单里挑实际有的, 重新调一次 propose。`,
+                                } as any);
+                                continue;
+                            }
+                            try {
+                                await DB.saveMessage({
+                                    charId: char.id,
+                                    role: 'assistant',
+                                    type: 'mcd_card',
+                                    content: `${args.items.length} 件推荐`,
+                                    metadata: {
+                                        mcdCardKind: 'proposal',
+                                        mcdProposal: args,
+                                        fromMcdMiniApp: true,
+                                    },
+                                } as any);
+                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            } catch (e) {
+                                console.warn('🍔 [MCD-MiniApp] 保存 proposal 失败:', e);
+                            }
+                            const ackExtra = fixes.length
+                                ? ` (我帮你把 ${fixes.length} 个 code 按名字校准到了菜单里真实的 code, 下次 propose 时直接用菜单字典 key 别传名字, 省一步)`
+                                : '';
+                            loopMessages.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                content: `OK 已把推荐展示给用户, 用户可以点 + 加进购物车${ackExtra}`,
+                            } as any);
+                        } else {
+                            // 未知工具 / 空 items, 给个温和的报错让模型自纠
+                            loopMessages.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                content: `工具 ${fname} 调用形态不对, 期望 {items: [{code, name, qty, reason?}]}; 你这次给的是 ${JSON.stringify(args).slice(0, 200)}`,
+                            } as any);
+                        }
+                    }
+                    // 让 char 继续生成文字补充 (不再带 tools, 避免无限调)
+                    const followBody = { ...baseReqBody, messages: loopMessages };
+                    delete followBody.tools;
+                    delete followBody.tool_choice;
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(followBody)
+                    });
+                    updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
+                    // 第二轮跳过 (我们已经禁用了 tools)
+                    if (!data.choices?.[0]?.message?.tool_calls?.length) break;
+                }
+            }
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({
@@ -2180,6 +2357,36 @@ export const useChatAI = ({
                 },
             });
 
+            // 6.5 HTML 卡片：把 [html]...[/html] 块抽出来落库为 html_card 消息，
+            //     content 只存"剥离 HTML 后的纯文字摘要"（注入历史 / 归档 都用这个），
+            //     原始 HTML 放在 metadata.htmlSource，供 MessageItem 沙盒渲染。
+            //     这样既不污染上下文 token，也保留了可视化卡片。
+            //     注意：在 quote/sanitize 之前抽，避免 sanitize 把 HTML 内容当垃圾去掉。
+            if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
+                const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
+                for (const blk of blocks) {
+                    try {
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'assistant',
+                            type: 'html_card',
+                            content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
+                            metadata: {
+                                htmlSource: blk.html,
+                                htmlTextPreview: blk.textPreview,
+                                ...(mcdInheritMeta || {}),
+                            },
+                        } as any);
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        // 给视觉留一点呼吸感
+                        await new Promise(r => setTimeout(r, 300));
+                    } catch (e) {
+                        console.error('[HTML] 落库 html_card 失败', e);
+                    }
+                }
+                aiContent = cleanedContent;
+            }
+
             // 7. Handle Quote/Reply Logic (Robust: handles [[QUOTE:...]], [QUOTE:...], typos like QUATE/QOUTE, Chinese 引用, and [回复 "..."] format)
             const QUOTE_RE_DOUBLE = /\[\[(?:QU[OA]TE|引用)[：:]\s*([\s\S]*?)\]\]/;
             const QUOTE_RE_SINGLE = /\[(?:QU[OA]TE|引用)[：:]\s*([^\]]*)\]/;
@@ -2252,7 +2459,7 @@ export const useChatAI = ({
                                     if (!chunk) continue;
                                     const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                     await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
+                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
                                     setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                     globalMsgIndex++;
                                 }
@@ -2268,7 +2475,7 @@ export const useChatAI = ({
                                 : (originalText || translatedText);
                             const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                             await new Promise(r => setTimeout(r, Math.min(Math.max(biContent.length * 30, 400), 2000)));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData });
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: mcdInheritMeta } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             globalMsgIndex++;
                         }
@@ -2287,7 +2494,7 @@ export const useChatAI = ({
                                 if (!chunk) continue;
                                 const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                 await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                 globalMsgIndex++;
                             }
@@ -2299,7 +2506,7 @@ export const useChatAI = ({
                         const foundEmoji = emojis.find(e => e.name === emojiName);
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         }
                     }
@@ -2314,7 +2521,7 @@ export const useChatAI = ({
                             const foundEmoji = emojis.find(e => e.name === part.content);
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             }
                         } else {
@@ -2351,7 +2558,7 @@ export const useChatAI = ({
                                 if (ChatParser.hasDisplayContent(chunk)) {
                                     const cleanChunk = ChatParser.sanitize(chunk);
                                     if (cleanChunk) {
-                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData });
+                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
                                         setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                         globalMsgIndex++;
                                     }

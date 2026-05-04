@@ -61,12 +61,25 @@ function buildRulesBlock(charName: string, userLabel: string): string {
    - 近期事件："${userLabel}后天考试" → pinDays: 3
    - 临时约定："${userLabel}让我这几天提醒TA喝水" → pinDays: 5
    - 身体状态："${userLabel}感冒了" → pinDays: 5
-   不适用：长期事实（生日、喜好）、已经过去的事件、情感记忆。大多数记忆不需要置顶。`;
+   不适用：长期事实（生日、喜好）、已经过去的事件、情感记忆。大多数记忆不需要置顶。
+
+**日期标注（date，必填）**：每条消息前缀都带了 \`[YYYY-MM-DD HH:MM]\` 时间戳。每条记忆必须根据**该事件实际发生的那一天**填 date 字段（"YYYY-MM-DD"），而不是套用整批的某一天。同一批对话跨多天时，跨日的记忆要分别标各自的日期。`;
 }
 
 function buildConversationText(messages: Message[], charName: string, userLabel: string): string {
+    // 每行带 [YYYY-MM-DD HH:MM] 时间戳前缀。
+    // 没有这个 LLM 完全看不到日期，多日 batch 提取出来的记忆全部会被压到一个时间点
+    // （见 parseMemoryNodesFromBuffer 的 midTime 兜底），跨日时间线就乱了。
+    const pad2 = (n: number) => String(n).padStart(2, '0');
     return messages
-        .map(m => formatMessageForPrompt(m, charName, userLabel).slice(0, 600))
+        .map(m => {
+            const body = formatMessageForPrompt(m, charName, userLabel).slice(0, 600);
+            const ts = m.timestamp;
+            if (!ts || ts <= 0) return body;
+            const d = new Date(ts);
+            const stamp = `[${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}]`;
+            return `${stamp} ${body}`;
+        })
         .join('\n');
 }
 
@@ -82,16 +95,43 @@ function parseMemoryNodesFromBuffer(
     if (parsed.length === 0) return [];
 
     const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
-    const midTime = msgTimestamps.length > 0
-        ? Math.round((msgTimestamps[0] + msgTimestamps[msgTimestamps.length - 1]) / 2)
-        : Date.now();
+    const firstTs = msgTimestamps[0] ?? Date.now();
+    const lastTs = msgTimestamps[msgTimestamps.length - 1] ?? firstTs;
+    const midTime = Math.round((firstTs + lastTs) / 2);
+
+    // 允许 LLM 写出的 date 略微越界（夜聊跨零点等），但要挡住完全不合理的（写错年月）
+    const dayMs = 24 * 60 * 60 * 1000;
+    const minTs = firstTs - dayMs;
+    const maxTs = lastTs + dayMs;
+
+    /** 解析 LLM 写的 date 字段 → 该日 12:00 本地时间。失败 / 越界则回到 midTime。 */
+    const resolveCreatedAt = (raw: unknown): number => {
+        if (typeof raw !== 'string') return midTime;
+        const s = raw.trim();
+        if (!s) return midTime;
+        // 接受 "YYYY-MM-DD" / "YYYY/M/D" / "YYYY年M月D日" 等
+        const norm = s.replace(/[年\/]/g, '-').replace(/[月日]/g, '');
+        const parts = norm.split('-').map(p => parseInt(p, 10));
+        if (parts.length < 3 || parts.some(n => Number.isNaN(n))) return midTime;
+        const [y, m, d] = parts;
+        if (y < 1900 || y > 9999 || m < 1 || m > 12 || d < 1 || d > 31) return midTime;
+        // 用消息时间戳的本地时区表征"该日中午"——避免 UTC 解析跨日漂移
+        const dt = new Date(y, m - 1, d, 12, 0, 0, 0);
+        const ts = dt.getTime();
+        if (Number.isNaN(ts)) return midTime;
+        if (ts < minTs || ts > maxTs) return midTime;
+        return ts;
+    };
 
     return parsed
         .filter(item => item.content && item.room)
         .map((item): MemoryNode => {
+            const createdAt = resolveCreatedAt(item.date);
             const pinDays = parseInt(item.pinDays, 10);
+            // 置顶 deadline 跟着 per-memory createdAt 算，否则"今天感冒 pinDays 5"
+            // 会从 batch 中点起算，跨日 batch 里就直接少算/多算。
             const pinnedUntil = (pinDays > 0 && pinDays <= 30)
-                ? midTime + pinDays * 24 * 60 * 60 * 1000
+                ? createdAt + pinDays * 24 * 60 * 60 * 1000
                 : null;
             // (v, a) 非必需：LLM 没给就不写，下游 getEmotionVA 查表兜底
             const v = typeof item.valence === 'number' ? clampVA(item.valence) : undefined;
@@ -107,8 +147,8 @@ function parseMemoryNodesFromBuffer(
                 valence: v,
                 arousal: a,
                 embedded: false,
-                createdAt: midTime,
-                lastAccessedAt: midTime,
+                createdAt,
+                lastAccessedAt: createdAt,
                 accessCount: 0,
                 pinnedUntil,
                 eventBoxId: null,  // 由 pipeline 在 binding 阶段设置
@@ -149,7 +189,17 @@ export function buildRelatedToRule(): string {
    - eventName：这件事的名字（5-12 字，名词短语，如"买衣服的话题"、"和领导的冲突"）
    - eventTags：3-6 个详细搜索 tag（具体名词、人物、地点、动作，便于日后召回）
    都没关联就不写 relatedTo / sameAs / eventName / eventTags 四个字段。
-10. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。`;
+10. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。
+11. **纠正旧记忆**（corrects，可选，独立于上面的记忆条目，作为 JSON 数组的额外项）：
+   仅在对话中**用户明确指出某条已有记忆记错了 / 已过时 / 不准确**时使用。识别信号：用户用"不对/不是/我说错了/已经不是了/搞错了/那是XX不是YY"之类的反驳句式，明确指向你刚才的某个说法。
+   如果命中，在输出的 JSON 数组**末尾**追加一项，格式为：
+   {"correct": "O编号", "note": "新版本的事实（不带语气，简短陈述句）"}
+   note 写"实情是什么"，不是"为什么错"。例：用户纠正"我已经搬家了，不在朝阳"→ note: "已经搬家，不再住朝阳"。
+   反例（**不要**用 corrects）：
+   - 仅事件后续 / 状态发展 → 用 relatedTo
+   - 仅追加细节 / 补充信息 → 不要标
+   - 你自己想到的歧义 / 自我修正 → 不要标
+   一条对话最多 corrects 1-2 项，不要乱用。`;
 }
 
 /**
@@ -284,6 +334,8 @@ export interface BufferExtractionResult {
     eventBoxHints: EventBoxHint[];
     /** 应提前摘除的便利贴 ID */
     unpinIds: string[];
+    /** 纠正：把对应已有记忆的 content 追加一行"YYYY-MM-DD 纠正：note"，并重新向量化 */
+    corrections: { targetId: string; note: string }[];
 }
 
 // ─── 缓冲区提取：直接从消息提取记忆，不依赖 TopicBox ───
@@ -305,7 +357,7 @@ export async function extractMemoriesFromBuffer(
     relatedMemories?: RelatedMemoryRef[],
     pinnedMemories?: PinnedMemoryRef[],
 ): Promise<BufferExtractionResult> {
-    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [], corrections: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -331,7 +383,7 @@ export async function extractMemoriesFromBuffer(
         : '';
 
     const unpinRule = hasPinned
-        ? `\n11. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
+        ? `\n12. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
         : '';
 
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
@@ -350,10 +402,12 @@ ${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}
     "valence": 0,
     "arousal": 0,
     "tags": ["标签1", "标签2"],
+    "date": "YYYY-MM-DD",
     "pinDays": 3${relatedToFormat}
   }
 ]
 
+date 必填，按该记忆实际发生当天填（参考消息行首的时间戳）。
 pinDays 仅在需要置顶时才写，大多数记忆不需要。
 如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
 
@@ -421,10 +475,28 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
             }
         }
 
-        return { memories, crossTimeLinks, eventBoxHints, unpinIds };
+        // 解析纠正指令：{ "correct": "O0", "note": "实情是..." } → 真实 ID
+        // 仅在有 relatedMemories 时才有意义（O 编号必须能解析回真节点 id）
+        const corrections: { targetId: string; note: string }[] = [];
+        if (hasRelated) {
+            for (const item of parsed) {
+                if (!item || typeof item.correct !== 'string') continue;
+                const note = typeof item.note === 'string' ? item.note.trim() : '';
+                if (!note) continue;
+                const idx = parseInt(item.correct.replace(/^O/i, ''), 10);
+                if (idx >= 0 && idx < relatedMemories!.length) {
+                    corrections.push({ targetId: relatedMemories![idx].id, note });
+                }
+            }
+            if (corrections.length > 0) {
+                console.log(`✏️ [Extraction] LLM 标记 ${corrections.length} 条纠正：${corrections.map(c => c.targetId.slice(0, 12) + '…').join(', ')}`);
+            }
+        }
+
+        return { memories, crossTimeLinks, eventBoxHints, unpinIds, corrections };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
+        return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [], corrections: [] };
     }
 }

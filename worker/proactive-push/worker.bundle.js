@@ -281,6 +281,29 @@ async function handleStatus(req, env) {
   return json({ ok: true, schedules: res.results });
 }
 
+async function handleTest(req, env) {
+  const body = await readJson(req);
+  if (!body?.endpoint) return json({ error: 'endpoint required' }, 400);
+
+  const row = await env.DB.prepare(
+    `SELECT endpoint, p256dh, auth FROM schedules WHERE endpoint = ?1 LIMIT 1`
+  ).bind(body.endpoint).first();
+  if (!row) return json({ error: 'subscription not found — open the app once with push enabled, then retry' }, 404);
+
+  const vapid = await getVapid(env);
+  const payload = JSON.stringify({ type: 'proactive-test', t: Date.now() });
+  try {
+    const result = await sendPush(vapid, row, payload);
+    if (result.gone) {
+      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1`).bind(row.endpoint).run();
+      return json({ ok: false, status: result.status, reason: 'subscription expired and was removed' }, 410);
+    }
+    return json({ ok: result.ok, status: result.status, body: result.responseText || '' });
+  } catch (e) {
+    return json({ ok: false, error: String(e?.message || e) }, 500);
+  }
+}
+
 // ─────────────────── Scheduled (cron) ───────────────────
 async function runScheduledSweep(env) {
   const now = Date.now();
@@ -363,6 +386,7 @@ export default {
     if (url.pathname === '/unsubscribe' && req.method === 'POST') return handleUnsubscribe(req, env);
     if (url.pathname === '/heartbeat' && req.method === 'POST') return handleHeartbeat(req, env);
     if (url.pathname === '/status' && req.method === 'GET') return handleStatus(req, env);
+    if (url.pathname === '/test' && req.method === 'POST') return handleTest(req, env);
 
     return json({ error: 'not found' }, 404);
   },

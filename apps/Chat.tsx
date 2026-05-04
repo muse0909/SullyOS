@@ -7,7 +7,10 @@ import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
+import { isMcdConfigured } from '../utils/mcdMcpClient';
+import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
 import MessageItem from '../components/chat/MessageItem';
+import McdMiniApp from '../components/mcd/McdMiniApp';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
@@ -20,7 +23,8 @@ import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, theme: osTheme } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars } = useOS();
+    const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 记忆宫殿高水位（用于清空聊天时的安全检查）
     const getMemoryPalaceHWM = useCallback(async (charId: string): Promise<number> => {
@@ -59,6 +63,7 @@ const Chat: React.FC = () => {
     const [emojiImportText, setEmojiImportText] = useState('');
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
+    const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
     const [preserveContext, setPreserveContext] = useState(true);
     const [isVectorizing, setIsVectorizing] = useState(false);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
@@ -120,6 +125,9 @@ const Chat: React.FC = () => {
 
 
 
+    // 小程序快照 ref: MiniApp 状态变化时塞进来, useChatAI 在 build system prompt 时读取并注入
+    const mcdMiniAppRef = useRef<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>(undefined);
+
     // --- Initialize Hook ---
     const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
@@ -135,6 +143,7 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined,
         memoryPalaceConfig,
+        mcdMiniAppRef,
         updateCharacter,
     });
 
@@ -421,9 +430,10 @@ const Chat: React.FC = () => {
 
             // Use ref to always get the CURRENT char (avoids stale closure)
             const currentChar = charRef.current;
+            // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
+            // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = allMsgs
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
@@ -439,7 +449,6 @@ const Chat: React.FC = () => {
                 const currentChar = charRef.current;
                 const chatScopeMsgs = retryMsgs
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                    .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -469,6 +478,7 @@ const Chat: React.FC = () => {
             if (char) {
                 setSettingsContextLimit(char.contextLimit || 500);
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
+                setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
             }
             // Per-character translation toggle
@@ -786,8 +796,135 @@ const Chat: React.FC = () => {
             case 'proactive': setShowProactiveModal(true); break;
             case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
+            case 'mcd-not-configured':
+                addToast('请先到设置 → 麦当劳 启用并填入 MCP Token', 'info');
+                break;
+            case 'mcd-request':
+                setMcdAppOpen(true);
+                break;
+            case 'mcd-end':
+                handleSendText(MCD_DEACTIVATE_TRIGGER, 'text', { mcdDeactivate: true });
+                break;
+            case 'html-mode-toggle': {
+                if (!char) break;
+                const next = !((char as any).htmlModeEnabled);
+                updateCharacter(char.id, { htmlModeEnabled: next } as any);
+                addToast(next ? 'HTML 模式已开启' : 'HTML 模式已关闭', next ? 'success' : 'info');
+                break;
+            }
+            case 'html-mode-settings': {
+                // 长按 → 跳进聊天设置 modal 的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
+                if (!char) break;
+                if (!(char as any).htmlModeEnabled) {
+                    updateCharacter(char.id, { htmlModeEnabled: true } as any);
+                }
+                setModalType('chat-settings');
+                break;
+            }
         }
     };
+
+    // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
+    const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
+    const [mcdAppOpen, setMcdAppOpen] = useState(false);
+    // mcdMiniAppRef 声明在文件靠前 (传给 useChatAI), 这里仅占位
+    const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
+
+    // 用户在菜单卡里点"发送给角色"时, 把购物车作为 user 消息插入
+    const handleMcdSendCart = useCallback(async (items: import('../components/chat/McdCard').McdCartItem[]) => {
+        if (!char || !items.length) return;
+        const summary = items.map(i => `${i.name}×${i.qty}`).join('、');
+        const total = items.reduce((s, c) => {
+            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+            return s + (isFinite(p) ? p * c.qty : 0);
+        }, 0);
+        const totalStr = total > 0 ? ` 共¥${total.toFixed(2)}` : '';
+        const content = `想要下单：${summary}${totalStr}`;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'mcd_card',
+            content,
+            metadata: { mcdCardKind: 'cart', mcdCartItems: items },
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
+
+    // 用户在菜单卡某条单品上点 💭 → 立即把这条扔给角色让 ta 评价 (候选状态, 不进购物车)
+    const handleMcdCandidate = useCallback(async (item: import('../components/chat/McdCard').McdCartItem) => {
+        if (!char || !item) return;
+        const priceStr = typeof item.price === 'number' ? ` ¥${item.price}` : (typeof item.price === 'string' && item.price ? ` ¥${item.price}` : '');
+        const content = `「${item.name}」${priceStr}—— 这个怎么样？`;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'mcd_card',
+            content,
+            metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
+
+    // 小程序内输入 → 直接保存 user 消息 + 立即触发 AI (主聊天 handleSendText 不自动触发,
+    // 那是设计上的"手动 ⚡ 触发"流程, 但小程序里用户预期发完就有回复, 跳过那个步骤)。
+    // 走完整 pipeline: useChatAI 在 build prompt 时会读 mcdMiniAppRef 注入小程序状态。
+    const handleMcdMiniAppSend = useCallback(async (text: string) => {
+        if (!char || !text.trim() || isTyping) return;
+        const trimmed = text.trim();
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'text',
+            content: trimmed,
+            metadata: { fromMcdMiniApp: true },
+        } as any);
+        const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+        setMessages(recent);
+        triggerAI(recent);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [char, isTyping, triggerAI]);
+
+    // 小程序状态实时同步到 ref, 让下次 send 走主 pipeline 时能注入到 system prompt
+    const handleMcdMiniAppStateChange = useCallback((state: import('../utils/mcdToolBridge').McdMiniAppSnapshot) => {
+        mcdMiniAppRef.current = state;
+    }, []);
+
+    // 小程序里"敲定"购物车 → 把购物车转成 cart 卡 (复用现有渲染), 之后 Phase 2
+    // 会在这里挂 calculate-price + create-order。当前先让 char 看到购物车评论。
+    const handleMcdAppConfirm = useCallback(async (
+        cart: import('../components/mcd/McdMiniApp').CartLine[],
+        ctx: import('../components/mcd/McdMiniApp').OrderContext,
+    ) => {
+        if (!char || !cart.length) return;
+        const items: import('../components/chat/McdCard').McdCartItem[] = cart.map(l => ({
+            code: l.code,
+            name: l.name,
+            price: l.price,
+            qty: l.qty,
+        }));
+        const summary = items.map(i => `${i.name}×${i.qty}`).join('、');
+        const total = items.reduce((s, c) => {
+            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+            return s + (isFinite(p) ? p * c.qty : 0);
+        }, 0);
+        const totalStr = total > 0 ? ` 共¥${total.toFixed(2)}` : '';
+        const where = ctx.orderType === 2
+            ? `外送至 ${ctx.addressLabel || ctx.addressId}`
+            : `到店取餐 (${ctx.storeName || ctx.storeCode})`;
+        const content = `${where} · ${summary}${totalStr}`;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'mcd_card',
+            content,
+            metadata: {
+                mcdCardKind: 'cart',
+                mcdCartItems: items,
+                mcdOrderContext: ctx,
+            },
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
 
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
@@ -1011,10 +1148,11 @@ const Chat: React.FC = () => {
     };
 
     const saveSettings = () => {
-        updateCharacter(char.id, { 
+        updateCharacter(char.id, {
             contextLimit: settingsContextLimit,
-            hideSystemLogs: settingsHideSysLogs
-        });
+            hideSystemLogs: settingsHideSysLogs,
+            htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
+        } as any);
         setModalType('none');
         addToast('设置已保存', 'success');
     };
@@ -1471,13 +1609,14 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
+    // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
+    // 真正想从聊天记录里抹掉，应该走"删除"。
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
-        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
-        [messages, char?.id, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
+        [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
@@ -1730,6 +1869,10 @@ const Chat: React.FC = () => {
                 onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
                 xhsEnabled={!!char.xhsEnabled}
                 onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
+                htmlModeEnabled={!!(char as any).htmlModeEnabled}
+                onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
+                htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}
+                setHtmlModeCustomPrompt={setSettingsHtmlModeCustomPrompt}
                 chatVoiceEnabled={!!char.chatVoiceEnabled}
                 onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
                 chatVoiceLang={char.chatVoiceLang || ''}
@@ -1751,7 +1894,14 @@ const Chat: React.FC = () => {
                 apiPresets={apiPresets}
                 onAddApiPreset={addApiPreset}
                 onSaveEmotion={(config) => {
-                    updateCharacter(char.id, { emotionConfig: config });
+                    // API 同步到所有角色，enabled 仅写到当前角色
+                    syncEmotionApiToAllCharacters(config.api);
+                    updateCharacter(char.id, {
+                        emotionConfig: {
+                            enabled: config.enabled,
+                            ...(config.api && config.api.baseUrl ? { api: config.api } : {}),
+                        },
+                    });
                 }}
                 onClearBuffs={() => {
                     updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });
@@ -1957,15 +2107,22 @@ const Chat: React.FC = () => {
                             bubbleVariant={osTheme.chatBubbleStyle}
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
+                            onMcdSendCart={handleMcdSendCart}
+                            onMcdCandidate={handleMcdCandidate}
                         />
                     );
                 })}
                 
-                {(isTyping || recallStatus || searchStatus || diaryStatus) && !selectionMode && (
+                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={`${osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9'} ${osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-[10px]'} object-cover`} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
-                            {searchStatus ? (
+                            {isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
+                                <div className="flex items-center gap-2 text-xs text-teal-600 font-medium">
+                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    {char.name} 在给你写消息…
+                                </div>
+                            ) : searchStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     🔍 {searchStatus}
@@ -1989,6 +2146,20 @@ const Chat: React.FC = () => {
             </div>
 
             <div className="relative z-40">
+                {mcdActivated && (
+                    <div className="flex items-center justify-between px-4 py-1.5 bg-yellow-50 border-b border-yellow-200 text-xs">
+                        <div className="flex items-center gap-1.5 text-yellow-700 font-bold">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"/>
+                            🍔 麦请求进行中
+                        </div>
+                        <button
+                          onClick={() => handleSendText(MCD_DEACTIVATE_TRIGGER, 'text', { mcdDeactivate: true })}
+                          className="px-2.5 py-0.5 bg-yellow-200/80 text-yellow-800 rounded-full text-[11px] font-bold active:scale-95"
+                        >
+                          结束
+                        </button>
+                    </div>
+                )}
                 {replyTarget && (
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
                         <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content.length > 10 ? replyTarget.content.slice(0, 10) + '...' : replyTarget.content}</span></div>
@@ -2017,6 +2188,9 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    mcdConfigured={mcdConfiguredFlag}
+                    mcdActivated={mcdActivated}
+                    htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -2050,6 +2224,20 @@ const Chat: React.FC = () => {
             )}
 
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
+
+            {/* 🍔 麦当劳小程序 - MCP 数据流按钮驱动, 协同聊天走主 pipeline (完整人设/记忆/日程) */}
+            <McdMiniApp
+                open={mcdAppOpen}
+                onClose={() => setMcdAppOpen(false)}
+                char={char}
+                userProfile={userProfile}
+                messages={messages}
+                isTyping={isTyping}
+                onSendMessage={handleMcdMiniAppSend}
+                onStateChange={handleMcdMiniAppStateChange}
+                onConfirmOrder={handleMcdAppConfirm}
+            />
+
 
             {/* 🛟 人格抢救 Modal —— 把"情感型 0.3"默认值卡住的角色偷偷救活 */}
             <Modal

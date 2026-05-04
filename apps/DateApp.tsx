@@ -4,7 +4,9 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
 import { ContextBuilder } from '../utils/context';
-import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
+import type { PipelineResult } from '../utils/memoryPalace/pipeline';
+import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
@@ -12,7 +14,14 @@ import DateSettings from '../components/date/DateSettings';
 import { BookOpen } from '@phosphor-icons/react';
 
 const DateApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile } = useOS();
+    const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig } = useOS();
+
+    // 记忆宫殿（与聊天侧共用同一套上下文：同 charId、同高水位线）
+    // 见面流也需要在 AI 回复后跑一次缓冲区检查 + 自动归档，否则只有"读"没有"写"。
+    const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
+    const [memoryPalaceResult, setMemoryPalaceResult] = useState<PipelineResult | null>(null);
+    const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
+    memoryPalaceStatusRef.current = memoryPalaceStatus;
     
     // Modes: 'select' -> 'peek' -> 'session' | 'settings' | 'history'
     const [mode, setMode] = useState<'select' | 'peek' | 'session' | 'settings' | 'history'>('select');
@@ -206,7 +215,8 @@ const DateApp: React.FC = () => {
                         { role: "system", content: baseContext },
                         { role: "user", content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` }
                     ],
-                    temperature: 0.85
+                    temperature: apiConfig.temperature ?? 0.85,
+                    stream: apiConfig.stream ?? false,
                 })
             });
 
@@ -221,6 +231,68 @@ const DateApp: React.FC = () => {
             setPeekLoading(false);
         }
     };
+
+    // 与聊天侧 useChatAI 完全一致的 Memory Palace 后台流程：
+    // 触发缓冲区处理 + 自动归档（如开启） + 50 轮认知消化。
+    const runMemoryPalacePostHook = useCallback(async (charForHook: CharacterProfile) => {
+        if (!charForHook.memoryPalaceEnabled) return;
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
+        const mpLLM = (mpLLMConfigured?.baseUrl)
+            ? mpLLMConfigured
+            : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM.baseUrl) return;
+
+        const recentMsgs = await DB.getRecentMessagesByCharId(charForHook.id, 50);
+        try {
+            const pipelineResult = await processNewMessages(
+                recentMsgs,
+                charForHook.id,
+                charForHook.name,
+                mpEmb,
+                mpLLM,
+                userProfile?.name || '',
+                false,
+                (stage) => setMemoryPalaceStatus(stage),
+            );
+
+            if (pipelineResult && pipelineResult.stored > 0) {
+                setMemoryPalaceResult(pipelineResult);
+            }
+
+            if (pipelineResult?.autoArchive && (charForHook as any).autoArchiveEnabled) {
+                try {
+                    const mergedMemories = mergePalaceFragmentsIntoMemories(
+                        charForHook.memories || [],
+                        pipelineResult.autoArchive.fragments,
+                    );
+                    updateCharacter(charForHook.id, {
+                        memories: mergedMemories,
+                        hideBeforeMessageId: pipelineResult.autoArchive.hideBeforeMessageId,
+                    } as any);
+                } catch (e: any) {
+                    console.warn(`📚 [DateApp AutoArchive] 失败: ${e?.message || e}`);
+                }
+            }
+
+            // 50 轮自动认知消化（与聊天侧共享计数器，按 charId 持久化）
+            const shouldAutoDigest = incrementDigestRound(charForHook.id);
+            if (shouldAutoDigest) {
+                setMemoryPalaceStatus(`${charForHook.name}闭上眼睛，开始整理内心…`);
+                const persona = [charForHook.systemPrompt || '', charForHook.worldview || ''].filter(Boolean).join('\n');
+                await runCognitiveDigestion(charForHook.id, charForHook.name, persona, mpLLM, false, userProfile?.name, mpEmb);
+            }
+        } catch (e: any) {
+            console.error('❌ [DateApp MemoryPalace] 后台处理异常:', e?.message || e);
+            addToast('记忆整理失败', 'error');
+        } finally {
+            const current = memoryPalaceStatusRef.current;
+            if (current && current.includes('完成')) {
+                addToast(current, 'success');
+            }
+            setMemoryPalaceStatus('');
+        }
+    }, [memoryPalaceConfig, apiConfig, userProfile?.name, updateCharacter, addToast]);
 
     // --- Session API Logic ---
     const handleSendMessage = async (text: string): Promise<string> => {
@@ -303,7 +375,8 @@ const DateApp: React.FC = () => {
                     ...historyMsgs,
                     { role: 'user', content: `${text}\n\n(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写出场景的呼吸感，不要罗列动作。)` }
                 ],
-                temperature: 0.85
+                temperature: apiConfig.temperature ?? 0.85,
+                stream: apiConfig.stream ?? false,
             })
         });
 
@@ -317,6 +390,9 @@ const DateApp: React.FC = () => {
         // Refresh local state
         const freshMsgs = await DB.getMessagesByCharId(char.id, true);
         setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+
+        // Memory Palace 后台流程（不阻塞返回，与聊天侧一致）
+        runMemoryPalacePostHook(char);
 
         return content;
     };
@@ -371,7 +447,9 @@ const DateApp: React.FC = () => {
                     ...historyMsgs,
                     { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写，叙述行保持场景感。)` }
                 ],
-                temperature: 0.9 
+                // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
+                temperature: Math.max(apiConfig.temperature ?? 0.85, 0.9),
+                stream: apiConfig.stream ?? false,
             })
         });
 
@@ -384,6 +462,9 @@ const DateApp: React.FC = () => {
         // Sync
         const freshMsgs = await DB.getMessagesByCharId(char.id, true);
         setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+
+        // Memory Palace 后台流程（Reroll 也算一轮新输出）
+        runMemoryPalacePostHook(char);
 
         return content;
     };
@@ -663,7 +744,7 @@ const DateApp: React.FC = () => {
     if (mode === 'session') {
         return (
             <>
-                <DateSession 
+                <DateSession
                     char={char}
                     userProfile={userProfile}
                     messages={dateMessages}
@@ -677,7 +758,141 @@ const DateApp: React.FC = () => {
                     onDeleteMessages={handleDeleteMessages}
                     onSettings={() => {}} // Removed parent state change, DateSession handles it internally now
                 />
-                
+
+                {/* 记忆整理中 — 顶部浮动胶囊（与聊天侧外观一致） */}
+                {memoryPalaceStatus && (
+                    <div
+                        className="absolute top-[76px] left-1/2 z-[150] animate-fade-in"
+                        style={{ transform: 'translateX(-50%)', pointerEvents: 'none', willChange: 'transform, opacity' }}
+                    >
+                        <div
+                            className="flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 max-w-[18rem]"
+                            style={{
+                                background: 'rgba(255,255,255,0.88)',
+                                borderRadius: 999,
+                                border: '1px solid rgba(99,102,241,0.18)',
+                                boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                            }}
+                        >
+                            <span
+                                className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-slate-200 animate-spin"
+                                style={{ borderTopColor: '#6366f1', animationDuration: '0.9s' }}
+                            />
+                            <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                                {char.name}正在沉思
+                            </span>
+                            <span className="text-[10px] text-slate-400 truncate">{memoryPalaceStatus}</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* 记忆整理结果 — 弹窗 */}
+                {memoryPalaceResult && (
+                    <div
+                        className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
+                        style={{ pointerEvents: 'all', background: 'rgba(15,23,42,0.55)' }}
+                        onClick={() => setMemoryPalaceResult(null)}
+                    >
+                        <div
+                            className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
+                            style={{
+                                background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+                                borderRadius: 28,
+                                border: '1px solid rgba(148,163,184,0.18)',
+                                boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div
+                                className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
+                                style={{ background: 'linear-gradient(90deg, transparent, #6366f1, #a5b4fc, #6366f1, transparent)' }}
+                            />
+                            <div className="px-6 pt-7 pb-4 text-center">
+                                <div
+                                    className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
+                                        border: '1px solid rgba(99,102,241,0.15)',
+                                    }}
+                                >
+                                    <span style={{ fontSize: 26 }}>🗂️</span>
+                                </div>
+                                <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#6366f1' }}>Memory Palace</div>
+                                <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
+                                    {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
+                                </p>
+                                {memoryPalaceResult.batches.some(b => !b.ok) && (
+                                    <p className="text-[10px] text-red-500 mt-1">
+                                        {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `batch ${b.index} 失败`).join(', ')}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2 no-scrollbar">
+                                {memoryPalaceResult.memories.map((m, i) => {
+                                    const roomMeta: Record<string, { label: string; color: string }> = {
+                                        living_room: { label: '客厅', color: '#f59e0b' },
+                                        bedroom: { label: '卧室', color: '#8b5cf6' },
+                                        study: { label: '书房', color: '#0ea5e9' },
+                                        user_room: { label: '用户房间', color: '#ec4899' },
+                                        self_room: { label: '自我房间', color: '#10b981' },
+                                        attic: { label: '阁楼', color: '#6366f1' },
+                                        windowsill: { label: '窗台', color: '#14b8a6' },
+                                    };
+                                    const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
+                                    return (
+                                        <div
+                                            key={i}
+                                            className="p-3 rounded-2xl"
+                                            style={{
+                                                background: 'rgba(255,255,255,0.75)',
+                                                border: `1px solid ${meta.color}22`,
+                                                boxShadow: `0 2px 8px ${meta.color}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
+                                            }}
+                                        >
+                                            <div className="flex items-center gap-2 mb-1.5">
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                                                    style={{ background: `${meta.color}18`, color: meta.color }}
+                                                >
+                                                    {meta.label}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400">{m.mood}</span>
+                                                <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>{'★'.repeat(Math.min(m.importance, 5))}</span>
+                                            </div>
+                                            <p className="text-[12px] text-slate-700 leading-relaxed">{m.content}</p>
+                                            {m.tags.length > 0 && (
+                                                <div className="flex gap-1 mt-2 flex-wrap">
+                                                    {m.tags.map((t, j) => (
+                                                        <span key={j} className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                                            style={{ background: 'rgba(148,163,184,0.15)', color: '#64748b' }}
+                                                        >{t}</span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                {memoryPalaceResult.memories.length === 0 && (
+                                    <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
+                                )}
+                            </div>
+                            <div className="px-6 pb-6 pt-2">
+                                <button
+                                    onClick={() => setMemoryPalaceResult(null)}
+                                    className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                        boxShadow: '0 6px 18px -6px rgba(79,70,229,0.5)',
+                                    }}
+                                >
+                                    确认
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Global Message Edit Modal for Session Mode */}
                 <Modal isOpen={isEditModalOpen} title="编辑内容" onClose={() => setIsEditModalOpen(false)} footer={<><button onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}>
                     <textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" />

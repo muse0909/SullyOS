@@ -1,6 +1,6 @@
 
-import React, { useRef } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank } from '@phosphor-icons/react';
+import React, { useRef, useState } from 'react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -35,6 +35,11 @@ interface ChatInputAreaProps {
     canReroll: boolean;
     // Proactive messaging
     isProactiveActive?: boolean;
+    // 麦当劳 MCP
+    mcdConfigured?: boolean;   // 设置里 token 已填且启用
+    mcdActivated?: boolean;    // 当前会话已发"麦请求"
+    // HTML 模块模式
+    htmlModeEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -50,12 +55,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
+    mcdConfigured = false,
+    mcdActivated = false,
+    htmlModeEnabled = false,
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [actionsPage, setActionsPage] = useState<0 | 1>(0);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); 
     const isLongPressTriggered = useRef(false); // Track if long press action fired
@@ -381,9 +390,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </>
                     )}
 
-                    {/* Actions Panel */}
+                    {/* Actions Panel (paginated: page 0 = 内置功能, page 1 = 外部服务) */}
                     {showPanel === 'actions' && (
-                        <div className="p-6 grid grid-cols-4 gap-8 overflow-y-auto">
+                        <div className="overflow-y-auto">
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
                             <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
@@ -444,7 +454,62 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">日程</span>
                             </button>
 
-                         </div>
+                          </div>
+
+                          {/* Page 1: 外部服务 */}
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                            <button
+                              onClick={() => {
+                                if (!mcdConfigured) { onPanelAction('mcd-not-configured'); return; }
+                                onPanelAction(mcdActivated ? 'mcd-end' : 'mcd-request');
+                              }}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!mcdConfigured ? 'opacity-50' : ''}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  mcdActivated
+                                    ? (isDiscordStyle ? 'bg-yellow-500/20 text-yellow-300 border-yellow-400/40' : 'bg-yellow-100 text-yellow-700 border-yellow-300')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-yellow-300 border-yellow-400/20' : 'bg-yellow-50 text-yellow-600 border-yellow-100')
+                              }`}>
+                                  <ForkKnife className="w-6 h-6" weight="bold" />
+                                  {mcdActivated && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-yellow-300 border-slate-900' : 'bg-yellow-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{mcdActivated ? '结束麦请求' : '麦当劳'}</span>
+                            </button>
+
+                            {/* HTML 模块模式：tap = 切换开关 (注入提示词); 长按打开自定义提示词设置 */}
+                            <button
+                              onClick={() => onPanelAction('html-mode-toggle')}
+                              onContextMenu={(e) => { e.preventDefault(); onPanelAction('html-mode-settings'); }}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  htmlModeEnabled
+                                    ? (isDiscordStyle ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-400/40' : 'bg-fuchsia-100 text-fuchsia-600 border-fuchsia-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-fuchsia-300 border-fuchsia-400/20' : 'bg-fuchsia-50 text-fuchsia-500 border-fuchsia-100')
+                              }`}>
+                                  <Code className="w-6 h-6" weight="bold" />
+                                  {htmlModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
+                            </button>
+                          </div>
+
+                          {/* 翻页指示器 */}
+                          <div className="flex items-center justify-center gap-3 pb-3 -mt-2">
+                            <button
+                              type="button"
+                              aria-label="第 1 页"
+                              onClick={() => setActionsPage(0)}
+                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 0 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
+                            />
+                            <button
+                              type="button"
+                              aria-label="第 2 页"
+                              onClick={() => setActionsPage(1)}
+                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 1 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
+                            />
+                          </div>
+                        </div>
                      )}
                      {showPanel === 'chars' && (
                         <div className="p-5 space-y-6 overflow-y-auto no-scrollbar">

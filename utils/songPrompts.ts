@@ -48,6 +48,99 @@ export const COVER_STYLES: { id: string; label: string; gradient: string; text: 
     { id: 'forest', label: '松林', gradient: 'from-stone-200 via-emerald-50 to-stone-100', text: 'text-stone-700' },
 ];
 
+// --- Lyric Structure Templates ---
+// 给写歌 App 一个"按乐理来"的结构骨架，避免角色/用户瞎写。
+// 每段 section 有推荐的行数 + 每行字数范围。
+
+export interface LyricTemplateSection {
+    section: 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'bridge' | 'outro';
+    lines: number;        // 推荐行数
+    chars: string;        // 推荐每行字数（区间字符串如 "7-12"）
+}
+
+export interface LyricTemplate {
+    id: string;
+    label: string;
+    icon: string;
+    desc: string;        // 一句话描述
+    structure: LyricTemplateSection[];
+}
+
+export const LYRIC_TEMPLATES: LyricTemplate[] = [
+    {
+        id: 'free',
+        label: '自由',
+        icon: '✦',
+        desc: '不限结构，从空白开始',
+        structure: [],
+    },
+    {
+        id: 'pop-classic',
+        label: '流行经典',
+        icon: '◐',
+        desc: '主歌-副歌-主歌-副歌-桥段-副歌',
+        structure: [
+            { section: 'verse',  lines: 4, chars: '7-12' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'verse',  lines: 4, chars: '7-12' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'bridge', lines: 4, chars: '7-10' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+        ],
+    },
+    {
+        id: 'ballad',
+        label: '抒情慢板',
+        icon: '◑',
+        desc: '主歌长 / 副歌精，叙事抒情',
+        structure: [
+            { section: 'verse',  lines: 6, chars: '8-14' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'verse',  lines: 6, chars: '8-14' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'outro',  lines: 2, chars: '6-12' },
+        ],
+    },
+    {
+        id: 'aaba',
+        label: 'AABA 经典',
+        icon: '◒',
+        desc: '老派结构，A 段重复主题，B 段桥段',
+        structure: [
+            { section: 'verse',  lines: 4, chars: '8-12' },   // A1
+            { section: 'verse',  lines: 4, chars: '8-12' },   // A2
+            { section: 'bridge', lines: 4, chars: '7-10' },   // B
+            { section: 'verse',  lines: 4, chars: '8-12' },   // A3
+        ],
+    },
+    {
+        id: 'short-hook',
+        label: '副歌优先短曲',
+        icon: '◓',
+        desc: '副歌开头抓人，节奏紧凑',
+        structure: [
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'verse',  lines: 4, chars: '7-12' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+        ],
+    },
+    {
+        id: 'rap',
+        label: '说唱 / Hip-Hop',
+        icon: '⌗',
+        desc: 'Verse 长且押韵，Hook 简短洗脑',
+        structure: [
+            { section: 'verse',  lines: 8, chars: '12-18' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+            { section: 'verse',  lines: 8, chars: '12-18' },
+            { section: 'chorus', lines: 4, chars: '6-10' },
+        ],
+    },
+];
+
+export const getLyricTemplate = (id: string | undefined): LyricTemplate =>
+    LYRIC_TEMPLATES.find(t => t.id === id) || LYRIC_TEMPLATES[0];
+
 // --- Prompt Builder ---
 
 export const SongPrompts = {

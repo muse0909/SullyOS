@@ -15,7 +15,8 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -785,6 +786,7 @@ async function fetchFromAnyUpstream(upstreamPath, timeoutMs = 8000) {
   return { text: '', status: 502, upstream: '', error: errors.join(' | ') };
 }
 
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -825,6 +827,8 @@ export default {
       if (contentType) forwardHeaders['Content-Type'] = contentType;
       const depth = request.headers.get('X-WebDAV-Depth') || request.headers.get('Depth');
       if (depth) forwardHeaders['Depth'] = depth;
+      const range = request.headers.get('X-WebDAV-Range') || request.headers.get('Range');
+      if (range) forwardHeaders['Range'] = range;
       forwardHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
       forwardHeaders['Accept'] = '*/*';
       try {
@@ -842,12 +846,96 @@ export default {
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
+        // Only forward Content-Length for range responses (size is known and the
+        // chunk fully buffers). For full-file 200 streams, omit Content-Length
+        // and let chunked transfer-encoding handle it — otherwise a mid-stream
+        // disconnect surfaces as ERR_CONTENT_LENGTH_MISMATCH on the client.
+        if (upstream.status === 206) {
+          const rcl = upstream.headers.get('Content-Length');
+          if (rcl) respHeaders.set('Content-Length', rcl);
+        }
+        const rcr = upstream.headers.get('Content-Range');
+        if (rcr) respHeaders.set('Content-Range', rcr);
+        const rar = upstream.headers.get('Accept-Ranges');
+        if (rar) respHeaders.set('Accept-Ranges', rar);
         respHeaders.set('X-Upstream-Status', String(upstream.status));
         respHeaders.set('X-Upstream-Host', parsedTarget.host);
-        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host');
+        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host, Content-Length, Content-Range, Accept-Ranges');
         return new Response(upstream.body, {
           status: upstream.status,
           headers: respHeaders,
+        });
+      } catch (e) {
+        return jsonResponse({
+          error: `Proxy error: ${String(e && e.message || e)}`,
+          stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
+      }
+    }
+
+    // ========== GitHub 代理 ==========
+    // 给国内连不上 github.com 的用户兜底用。只放行 api.github.com 和
+    // uploads.github.com，方法用 X-GitHub-Method 头携带。
+    if (url.pathname === '/github') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+      }
+      let parsedGh;
+      try {
+        parsedGh = new URL(targetUrl);
+      } catch {
+        return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      const allowedHosts = new Set(['api.github.com', 'uploads.github.com']);
+      if (parsedGh.protocol !== 'https:' || !allowedHosts.has(parsedGh.hostname)) {
+        return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+      }
+      const ghMethod = (request.headers.get('X-GitHub-Method') || 'GET').toUpperCase();
+      const ghAllowed = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+      if (!ghAllowed.includes(ghMethod)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 400, origin });
+      }
+      const ghHeaders = {};
+      const ghAuth = request.headers.get('Authorization');
+      if (ghAuth) ghHeaders['Authorization'] = ghAuth;
+      const ghCt = request.headers.get('Content-Type');
+      if (ghCt) ghHeaders['Content-Type'] = ghCt;
+      const ghAccept = request.headers.get('Accept');
+      if (ghAccept) ghHeaders['Accept'] = ghAccept;
+      const ghApiVer = request.headers.get('X-GitHub-Api-Version');
+      if (ghApiVer) ghHeaders['X-GitHub-Api-Version'] = ghApiVer;
+      // GitHub 拒绝没有 UA 的请求
+      ghHeaders['User-Agent'] = 'sully-backup-proxy';
+      try {
+        let ghBody = null;
+        if (ghMethod !== 'GET' && ghMethod !== 'DELETE') {
+          ghBody = await request.arrayBuffer();
+          if (ghBody.byteLength === 0) ghBody = null;
+        }
+        const ghUpstream = await fetch(targetUrl, {
+          method: ghMethod,
+          headers: ghHeaders,
+          body: ghBody,
+          redirect: 'follow',
+        });
+        console.log('github', ghMethod, targetUrl, '→', ghUpstream.status);
+        const ghRespHeaders = new Headers(corsHeaders(origin));
+        const grct = ghUpstream.headers.get('Content-Type');
+        if (grct) ghRespHeaders.set('Content-Type', grct);
+        if (ghUpstream.status === 206) {
+          const grcl = ghUpstream.headers.get('Content-Length');
+          if (grcl) ghRespHeaders.set('Content-Length', grcl);
+        }
+        const grcr = ghUpstream.headers.get('Content-Range');
+        if (grcr) ghRespHeaders.set('Content-Range', grcr);
+        ghRespHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+        return new Response(ghUpstream.body, {
+          status: ghUpstream.status,
+          headers: ghRespHeaders,
         });
       } catch (e) {
         return jsonResponse({
@@ -1761,6 +1849,127 @@ export default {
       }
 
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
+    }
+
+    // ========== Replicate 代理 (写歌 App 用，给 ACE-Step 等模型走) ==========
+    // 前端把 Authorization: Bearer r8_xxx 透传过来，Worker 只做路由 + CORS + CDN 兜底。
+    //   POST /replicate/predictions          → 起任务 (透传 body 到 api.replicate.com)
+    //   GET  /replicate/predictions/:id      → 轮询状态
+    //   POST /replicate/predictions/:id/cancel → 取消任务
+    //   GET  /replicate/file?url=...         → 下载 replicate.delivery 上的产物 (国内常超时)
+    if (url.pathname.startsWith('/replicate/')) {
+      // 1) 文件代下载：解决 replicate.delivery / pbxt.replicate.delivery 的国内访问问题
+      if (url.pathname === '/replicate/file' && request.method === 'GET') {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+        }
+        let parsed;
+        try {
+          parsed = new URL(targetUrl);
+        } catch {
+          return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+        }
+        // 白名单：只放行 replicate 的产物 CDN
+        const allowed = (host) => host === 'replicate.delivery'
+          || host.endsWith('.replicate.delivery')
+          || host === 'pbxt.replicate.com'
+          || host.endsWith('.replicate.com');
+        if (parsed.protocol !== 'https:' || !allowed(parsed.hostname)) {
+          return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+        }
+        try {
+          const upstream = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 sully-replicate-proxy',
+              'Accept': '*/*',
+            },
+          });
+          const respHeaders = new Headers(corsHeaders(origin));
+          const ct = upstream.headers.get('Content-Type');
+          if (ct) respHeaders.set('Content-Type', ct);
+          const cl = upstream.headers.get('Content-Length');
+          if (cl) respHeaders.set('Content-Length', cl);
+          respHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
+          return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+        } catch (e) {
+          return jsonResponse({ error: 'Replicate CDN fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+        }
+      }
+
+      // 2) API 转发：除 /file 外的所有路径，剥掉 /replicate 前缀转给 api.replicate.com
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (Replicate token)' }, { status: 401, origin });
+      }
+      const apiPath = url.pathname.replace(/^\/replicate/, ''); // e.g. /predictions
+      const apiUrl = `https://api.replicate.com/v1${apiPath}${url.search || ''}`;
+      const allowedMethods = ['GET', 'POST', 'DELETE'];
+      if (!allowedMethods.includes(request.method)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      try {
+        const forwardHeaders = {
+          'Authorization': auth,
+          'Content-Type': request.headers.get('Content-Type') || 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'sully-replicate-proxy',
+        };
+        const init = { method: request.method, headers: forwardHeaders };
+        if (request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH') {
+          init.body = await request.text();
+        }
+        const upstream = await fetch(apiUrl, init);
+        const text = await upstream.text();
+        return new Response(text, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'application/json; charset=utf-8',
+            ...corsHeaders(origin),
+          },
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'Replicate upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // ========== 麦当劳 MCP 代理 (浏览器 CORS 兜底, 纯透传) ==========
+    // 前端 POST /mcp/mcd  + Authorization: Bearer <user_mcp_token>
+    // body 即 MCP JSON-RPC 报文 (initialize / tools/list / tools/call ...)
+    // Worker 不读不存 token, 只做 CORS + 转发 https://mcp.mcd.cn
+    if (url.pathname === '/mcp/mcd') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (McDonald\'s MCP token)' }, { status: 401, origin });
+      }
+      try {
+        const fwdHeaders = {
+          'Authorization': auth,
+          'Content-Type': request.headers.get('Content-Type') || 'application/json',
+          'Accept': request.headers.get('Accept') || 'application/json, text/event-stream',
+          'User-Agent': 'aetheros-mcp-proxy/1.0',
+        };
+        const sid = request.headers.get('Mcp-Session-Id') || request.headers.get('mcp-session-id');
+        if (sid) fwdHeaders['Mcp-Session-Id'] = sid;
+        const upstream = await fetch('https://mcp.mcd.cn', {
+          method: 'POST',
+          headers: fwdHeaders,
+          body: await request.text(),
+        });
+        const text = await upstream.text();
+        const respHeaders = new Headers(corsHeaders(origin));
+        const ct = upstream.headers.get('Content-Type');
+        if (ct) respHeaders.set('Content-Type', ct);
+        else respHeaders.set('Content-Type', 'application/json; charset=utf-8');
+        const upSid = upstream.headers.get('Mcp-Session-Id') || upstream.headers.get('mcp-session-id');
+        if (upSid) respHeaders.set('Mcp-Session-Id', upSid);
+        return new Response(text, { status: upstream.status, headers: respHeaders });
+      } catch (e) {
+        return jsonResponse({ error: 'McDonald MCP upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
     }
 
     // ========== 网易云音乐代理 (转发到 api-enhanced, 带边缘缓存 + 多上游容灾) ==========

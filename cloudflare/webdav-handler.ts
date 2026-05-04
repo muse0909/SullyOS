@@ -14,7 +14,7 @@
 export async function handleWebDAV(req: Request): Promise<Response> {
     const CORS: Record<string, string> = {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-WebDAV-Method, X-WebDAV-Depth, Depth',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, Depth, Range',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Max-Age': '86400',
     };
@@ -73,6 +73,8 @@ export async function handleWebDAV(req: Request): Promise<Response> {
     if (ct) fwd['Content-Type'] = ct;
     const depth = req.headers.get('X-WebDAV-Depth') || req.headers.get('Depth');
     if (depth) fwd['Depth'] = depth;
+    const range = req.headers.get('X-WebDAV-Range') || req.headers.get('Range');
+    if (range) fwd['Range'] = range;
 
     try {
         let body: ArrayBuffer | null = null;
@@ -90,10 +92,20 @@ export async function handleWebDAV(req: Request): Promise<Response> {
         const resHeaders = new Headers(CORS);
         const rct = resp.headers.get('Content-Type');
         if (rct) resHeaders.set('Content-Type', rct);
-        const rcl = resp.headers.get('Content-Length');
-        if (rcl) resHeaders.set('Content-Length', rcl);
+        // Only forward Content-Length on 206 — full-file streams must use
+        // chunked TE so a mid-stream disconnect doesn't trigger
+        // ERR_CONTENT_LENGTH_MISMATCH on the client.
+        if (resp.status === 206) {
+            const rcl = resp.headers.get('Content-Length');
+            if (rcl) resHeaders.set('Content-Length', rcl);
+        }
+        const rcr = resp.headers.get('Content-Range');
+        if (rcr) resHeaders.set('Content-Range', rcr);
+        const rar = resp.headers.get('Accept-Ranges');
+        if (rar) resHeaders.set('Accept-Ranges', rar);
+        resHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
 
-        return new Response(await resp.arrayBuffer(), {
+        return new Response(resp.body, {
             status: resp.status,
             headers: resHeaders,
         });

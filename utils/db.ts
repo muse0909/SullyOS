@@ -6,11 +6,11 @@ import {
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState
+    LifeSimState, HandbookEntry, Tracker, TrackerEntry
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 48; // Bumped: v48 one-time force-wipe 所有记忆宫殿存储（EventBox 重做，旧数据不兼容）
+const DB_VERSION = 50; // Bumped: v50 add 'trackers' + 'tracker_entries' stores (手账 tracker 引擎)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -42,6 +42,9 @@ const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
 const STORE_LIFE_SIM = 'life_sim';
 const STORE_DAILY_SCHEDULE = 'daily_schedule';
+const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry，id = 'YYYY-MM-DD'
+const STORE_TRACKERS = 'trackers';                // 手账打卡 tracker 定义
+const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
 
 export interface ScheduledMessage {
     id: string;
@@ -155,6 +158,14 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
       createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
+      createStore(STORE_HANDBOOK, { keyPath: 'id' });
+
+      createStore(STORE_TRACKERS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) {
+          const teStore = db.createObjectStore(STORE_TRACKER_ENTRIES, { keyPath: 'id' });
+          teStore.createIndex('trackerId', 'trackerId', { unique: false });
+          teStore.createIndex('date', 'date', { unique: false });
+      }
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -1095,6 +1106,105 @@ export const DB = {
       });
   },
 
+  // ─── Handbook (手账) ───
+  getHandbook: async (date: string): Promise<HandbookEntry | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_HANDBOOK)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.get(date);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getAllHandbooks: async (): Promise<HandbookEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_HANDBOOK)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveHandbook: async (entry: HandbookEntry): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).put(entry);
+  },
+
+  deleteHandbook: async (date: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).delete(date);
+  },
+
+  // ─── Trackers (手账打卡引擎) ───
+  getAllTrackers: async (): Promise<Tracker[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKERS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKERS, 'readonly');
+          const req = tx.objectStore(STORE_TRACKERS).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveTracker: async (tracker: Tracker): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKERS, 'readwrite');
+      tx.objectStore(STORE_TRACKERS).put(tracker);
+  },
+
+  deleteTracker: async (id: string): Promise<void> => {
+      const db = await openDB();
+      // 同时删掉该 tracker 的所有 entries
+      const tx = db.transaction([STORE_TRACKERS, STORE_TRACKER_ENTRIES], 'readwrite');
+      tx.objectStore(STORE_TRACKERS).delete(id);
+      const teStore = tx.objectStore(STORE_TRACKER_ENTRIES);
+      const idx = teStore.index('trackerId');
+      const req = idx.openCursor(IDBKeyRange.only(id));
+      req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) { cursor.delete(); cursor.continue(); }
+      };
+  },
+
+  getTrackerEntriesByTracker: async (trackerId: string): Promise<TrackerEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readonly');
+          const idx = tx.objectStore(STORE_TRACKER_ENTRIES).index('trackerId');
+          const req = idx.getAll(IDBKeyRange.only(trackerId));
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getTrackerEntry: async (trackerId: string, date: string): Promise<TrackerEntry | null> => {
+      // 复合查询:用 tracker 索引,客户端再过滤 date(简单且足够快)
+      const all = await DB.getTrackerEntriesByTracker(trackerId);
+      return all.find(e => e.date === date) || null;
+  },
+
+  saveTrackerEntry: async (entry: TrackerEntry): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).put(entry);
+  },
+
+  deleteTrackerEntry: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).delete(id);
+  },
+
   getAllCourses: async (): Promise<StudyCourse[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_COURSES)) return [];
@@ -1395,7 +1505,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1425,6 +1535,9 @@ export const DB = {
           getAllFromStore(STORE_GUIDEBOOK),
           getAllFromStore(STORE_SCHEDULED),
           getAllFromStore(STORE_LIFE_SIM),
+          getAllFromStore(STORE_HANDBOOK),
+          getAllFromStore(STORE_TRACKERS),
+          getAllFromStore(STORE_TRACKER_ENTRIES),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1447,7 +1560,10 @@ export const DB = {
           quizSessions: quizzes,
           guidebookSessions,
           scheduledMessages,
-          lifeSimState: lifeSimStates[0] || null
+          lifeSimState: lifeSimStates[0] || null,
+          handbooks,
+          trackers,
+          trackerEntries,
       };
   },
 
@@ -1466,6 +1582,9 @@ export const DB = {
           STORE_SCHEDULED,
           STORE_LIFE_SIM,
           STORE_DAILY_SCHEDULE,
+          STORE_HANDBOOK,
+          STORE_TRACKERS,
+          STORE_TRACKER_ENTRIES,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
           'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
@@ -1489,29 +1608,34 @@ export const DB = {
           items.forEach(item => store.put(item));
       };
 
+      const applyMediaToChar = (c: CharacterProfile, media: NonNullable<FullBackupData['mediaAssets']>[number]): CharacterProfile => {
+          return {
+              ...c,
+              avatar: media.avatar || c.avatar,
+              sprites: media.sprites || c.sprites,
+              dateSkinSets: media.dateSkinSets || c.dateSkinSets,
+              activeSkinSetId: media.activeSkinSetId || c.activeSkinSetId,
+              customDateSprites: media.customDateSprites || c.customDateSprites,
+              spriteConfig: media.spriteConfig || c.spriteConfig,
+              chatBackground: media.backgrounds?.chat || c.chatBackground,
+              dateBackground: media.backgrounds?.date || c.dateBackground,
+              roomConfig: c.roomConfig ? {
+                  ...c.roomConfig,
+                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
+                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
+                  items: c.roomConfig.items.map(item => {
+                      const img = media.roomItems?.[item.id];
+                      return img ? { ...item, image: img } : item;
+                  })
+              } : c.roomConfig
+          } as CharacterProfile;
+      };
+
       if (data.characters) {
           if (data.mediaAssets) {
               data.characters = data.characters.map(c => {
                   const media = data.mediaAssets?.find(m => m.charId === c.id);
-                  if (media) {
-                      return {
-                          ...c,
-                          avatar: media.avatar || c.avatar, 
-                          sprites: media.sprites || c.sprites,
-                          chatBackground: media.backgrounds?.chat || c.chatBackground,
-                          dateBackground: media.backgrounds?.date || c.dateBackground,
-                          roomConfig: c.roomConfig ? {
-                              ...c.roomConfig,
-                              wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                              floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                              items: c.roomConfig.items.map(item => {
-                                  const img = media.roomItems?.[item.id];
-                                  return img ? { ...item, image: img } : item;
-                              })
-                          } : c.roomConfig
-                      } as CharacterProfile;
-                  }
-                  return c;
+                  return media ? applyMediaToChar(c, media) : c;
               });
           }
           clearAndAdd(STORE_CHARACTERS, data.characters);
@@ -1523,25 +1647,7 @@ export const DB = {
               if (existingChars && existingChars.length > 0) {
                   const updatedChars = existingChars.map(c => {
                       const media = data.mediaAssets?.find(m => m.charId === c.id);
-                      if (media) {
-                          return {
-                              ...c,
-                              avatar: media.avatar || c.avatar, 
-                              sprites: media.sprites || c.sprites, 
-                              chatBackground: media.backgrounds?.chat || c.chatBackground,
-                              dateBackground: media.backgrounds?.date || c.dateBackground,
-                              roomConfig: c.roomConfig ? {
-                                  ...c.roomConfig,
-                                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                                  items: c.roomConfig.items.map(item => {
-                                      const img = media.roomItems?.[item.id];
-                                      return img ? { ...item, image: img } : item;
-                                  })
-                              } : c.roomConfig
-                          } as CharacterProfile;
-                      }
-                      return c;
+                      return media ? applyMediaToChar(c, media) : c;
                   });
                   updatedChars.forEach(c => charStore.put(c));
               }
@@ -1598,7 +1704,16 @@ export const DB = {
 
       // Memory Palace (记忆宫殿)
       if (data.memoryNodes) clearAndAdd('memory_nodes', data.memoryNodes);
-      if (data.memoryVectors) clearAndAdd('memory_vectors', data.memoryVectors);
+      if (data.memoryVectors) {
+          // 备份里的 vector 是 number[]（JSON 兼容形态）。直接还原写回 Uint8Array
+          // 把磁盘占用立刻降下来 — 不然要等下次读这个角色的向量时 lazy 迁移才生效。
+          const upgraded = data.memoryVectors.map((v: any) => {
+              if (!v || !v.vector || !Array.isArray(v.vector)) return v;
+              const f32 = new Float32Array(v.vector);
+              return { ...v, vector: new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength) };
+          });
+          clearAndAdd('memory_vectors', upgraded);
+      }
       if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
@@ -1607,6 +1722,13 @@ export const DB = {
 
       // 角色日程表（每日日程 + 意识流）
       if (data.dailySchedules) clearAndAdd(STORE_DAILY_SCHEDULE, data.dailySchedules);
+
+      // 手账（跨角色聚合留痕本）
+      if (data.handbooks) clearAndAdd(STORE_HANDBOOK, data.handbooks);
+
+      // 手账 Tracker（健康/生活打卡引擎）
+      if (data.trackers) clearAndAdd(STORE_TRACKERS, data.trackers);
+      if (data.trackerEntries) clearAndAdd(STORE_TRACKER_ENTRIES, data.trackerEntries);
 
       // Pixel Home（小屋像素界面）
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);

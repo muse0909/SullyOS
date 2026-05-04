@@ -7,7 +7,7 @@
  */
 
 import type { EmbeddingConfig, MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
-import { MemoryNodeDB, MemoryVectorDB } from './db';
+import { MemoryNodeDB, MemoryVectorDB, ensureFloat32 } from './db';
 import { getEmbeddings, cosineSimilarity } from './embedding';
 import { upsertVector as remoteUpsert } from './supabaseVector';
 
@@ -49,9 +49,11 @@ export async function vectorizeAndStore(
         const node = nodes[i];
         const vector = vectors[i];
 
-        // 去重检查
+        // 去重检查 — ensureFloat32 兼容三种存储形态（number[] / Float32Array
+        // / Uint8Array），同时保护 cosineSimilarity 不被 Uint8Array 误读字节当数。
+        const queryF32 = ensureFloat32(vector);
         const isDuplicate = !options.skipDedup && existingVectors.some(
-            ev => cosineSimilarity(vector, ev.vector) > DEDUP_THRESHOLD
+            ev => cosineSimilarity(queryF32, ensureFloat32(ev.vector)) > DEDUP_THRESHOLD
         );
 
         if (isDuplicate) {

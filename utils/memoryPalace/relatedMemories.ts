@@ -19,6 +19,7 @@ import type { EmbeddingConfig, RemoteVectorConfig } from './types';
 import type { RelatedMemoryRef } from './extraction';
 import { getEmbeddings } from './embedding';
 import { vectorSearch, isRemoteSearchBroken } from './vectorSearch';
+import { ensureFloat32 } from './db';
 
 /** 从 localStorage 读取远程向量配置，判断本次是走远程还是本地路径。
  *  关键：enabled=false 或未完成 initialized 时必须视为"没有远程配置"，
@@ -129,7 +130,9 @@ export async function fetchRelatedMemoriesForExtraction(
         function localScoreOne(qv: Float32Array): { node: any; similarity: number }[] {
             const scored: { memoryId: string; similarity: number }[] = [];
             for (const ev of localVectors!) {
-                const sim = cosineSimilarity(qv, ev.vector);
+                // ensureFloat32 兼容三种存储形态，防御式兜底；正常情况下
+                // ev.vector 出 DB 时已是 Float32Array，这一支几乎是 no-op。
+                const sim = cosineSimilarity(qv, ensureFloat32(ev.vector));
                 if (sim >= threshold) {
                     scored.push({ memoryId: ev.memoryId, similarity: sim });
                 }

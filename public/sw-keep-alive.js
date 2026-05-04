@@ -222,30 +222,40 @@ async function saveIncomingActiveMessage(payload) {
 
 // --- Proactive wake-up (main-thread runs AI locally) ---
 // When the Cloudflare Worker cron fires at a scheduled time, it sends a
-// tiny `{type:'proactive-wake', charId}` push.  We route that to any live
-// main-thread client via the existing `proactive-trigger` channel, which
-// the main thread already handles in utils/proactiveChat.ts — it runs the
-// usual runProactive() flow, calls the AI, and saves messages to DB.
+// tiny `{type:'proactive-wake', charId}` push.
 //
-// If there's no live client, we show a minimal empty notification and
-// immediately close it.  Browsers require *some* user-visible result for
-// every push, but the user explicitly doesn't want a wake-up notification
-// when there's nothing to click on — and with the Worker's 5-minute
-// heartbeat gating, this branch should almost never be taken.
+// Two branches:
+//  A) Live tab present → postMessage to main thread, which runs runProactive()
+//     locally (calls AI, saves messages).  No system notification — the user
+//     will see the message inside the app once generation finishes; the
+//     in-app "正在送达消息" indicator covers the wait.
+//  B) No live tab → spec-compliance silent notification.  We can't run the
+//     LLM here (the SW doesn't have the app's full context stack), and the
+//     user has explicitly said a "open the app to read" doorbell is more
+//     annoying than helpful.  So we satisfy the browser's "every push must
+//     show *something*" rule with an empty silent notification that's torn
+//     down immediately.  Catch-up runs naturally next time the user opens
+//     the app — `checkOverdueSchedules()` in proactiveChat.ts handles that.
 async function handleProactiveWake(payload) {
   var charId = payload && payload.charId;
   if (!charId) return;
+  var receivedAt = Date.now();
 
   var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   if (clients.length > 0) {
     for (var i = 0; i < clients.length; i++) {
       clients[i].postMessage({ type: 'proactive-trigger', charId: charId, source: 'push' });
+      clients[i].postMessage({ type: 'proactive-wake-received', charId: charId, t: receivedAt, hadLiveClient: true });
     }
     return;
   }
 
-  // No live tab — spec-compliant silent drop.
-  var tag = 'proactive-wake-drop-' + Date.now();
+  // No live tab — silent compliance notification, immediately dismissed so
+  // it doesn't show in any tray / panel.  Browsers (esp. Chrome) require
+  // some visible result per push or they revoke the subscription over time;
+  // an immediately-closed notification counts as "shown" without bothering
+  // the user.
+  var tag = 'proactive-wake-silent-' + charId;
   await self.registration.showNotification('', {
     body: '',
     silent: true,
@@ -263,11 +273,25 @@ self.addEventListener('push', function (event) {
       try { payload = { message: event.data.text() }; } catch (e2) { /* ignore */ }
     }
   }
+  console.log('[SW] push received', payload);
   if (!payload) return;
 
   // Branch A: proactive wake-up — main thread handles AI generation.
   if (payload.type === 'proactive-wake') {
     event.waitUntil(handleProactiveWake(payload));
+    return;
+  }
+
+  // Branch A2: developer-triggered test ping — show a visible notification
+  // confirming the round-trip works.  No app-level side effects.
+  if (payload.type === 'proactive-test') {
+    event.waitUntil(self.registration.showNotification('推送测试成功', {
+      body: '后端 → 浏览器这条链路是通的。',
+      icon: './icons/icon-192.png',
+      badge: './icons/icon-192.png',
+      tag: 'proactive-test',
+      data: { proactiveTest: true, t: Date.now() },
+    }));
     return;
   }
 
@@ -289,8 +313,9 @@ self.addEventListener('push', function (event) {
 });
 
 self.addEventListener('notificationclick', function (event) {
-  var payload = (event.notification.data && event.notification.data.payload) || event.notification.data || {};
-  var charId = (payload.metadata && payload.metadata.charId) || payload.charId || '';
+  var data = event.notification.data || {};
+  var payload = data.payload || data;
+  var charId = (payload.metadata && payload.metadata.charId) || payload.charId || data.charId || '';
   event.notification.close();
 
   event.waitUntil((async function () {

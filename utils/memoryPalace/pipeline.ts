@@ -55,6 +55,7 @@ function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; to
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';
+import { getReceiptIdsInRange } from './recallReceipts';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -211,16 +212,16 @@ export function mergePalaceFragmentsIntoMemories(
     for (const frag of incoming) {
         const existingIdx = palaceByDate.get(frag.date);
         if (existingIdx !== undefined) {
-            // merge：把新 bullets 追加到 summary；去重（相同 bullet 文本只留一条）
+            // merge：把新 bullets 直接追加到 summary。
+            // 不做字符串去重——LLM 偶尔写出相同短句的合法情况会被误杀，
+            // high-water-mark 已保证消息不会被重复处理；尾部 15% 回滚那几条
+            // 即使被重提，多一条 bullet 比丢数据强。
             const old = result[existingIdx];
-            const existingBullets = new Set(
-                old.summary.split('\n').map(s => s.trim()).filter(Boolean),
-            );
+            const existingBullets = old.summary.split('\n').map(s => s.trim()).filter(Boolean);
             const newBullets = frag.summary.split('\n').map(s => s.trim()).filter(Boolean);
-            for (const b of newBullets) existingBullets.add(b);
             result[existingIdx] = {
                 ...old,
-                summary: [...existingBullets].join('\n'),
+                summary: [...existingBullets, ...newBullets].join('\n'),
             };
         } else {
             result.push(frag);
@@ -1129,6 +1130,45 @@ export async function processNewMessages(
             if (relatedMemoryRefs.length > 0) {
                 console.log(`🏰 [Pipeline] 检索到 ${relatedMemoryRefs.length} 条相关记忆作为提取上下文（${strategy}，${snippets.length} 段 query）`);
             }
+
+            // 5d. 召回回执补强：路径①召回时被实际注入 prompt 的 memoryId 一定
+            //     参与了角色这段对话——这是判断"用户纠正了哪条旧记忆"的可靠线索。
+            //     向量召回经常漏掉这类目标（纠正话题离原记忆语义已偏移），所以用
+            //     回执查表保底。配额 5 条优先，剩余格子留给向量召回。
+            try {
+                const RECEIPT_QUOTA = 5;
+                const RECEIPT_TIME_TOLERANCE_MS = 10 * 60 * 1000; // 消息 ts 与 receipt ts 的容差
+                const tsList = toProcess.map(m => m.timestamp).filter(t => t > 0);
+                if (tsList.length > 0) {
+                    const fromTs = Math.min(...tsList) - RECEIPT_TIME_TOLERANCE_MS;
+                    const toTs = Math.max(...tsList) + RECEIPT_TIME_TOLERANCE_MS;
+                    const receiptIds = getReceiptIdsInRange(charId, fromTs, toTs, RECEIPT_QUOTA);
+                    if (receiptIds.length > 0) {
+                        // 已经在向量召回里出现的就不重复加
+                        const existingIds = new Set(relatedMemoryRefs.map(r => r.id));
+                        const receiptRefs: RelatedMemoryRef[] = [];
+                        for (const id of receiptIds) {
+                            if (existingIds.has(id)) continue;
+                            const node = await MemoryNodeDB.getById(id);
+                            // 不喂 archived 节点（早被压缩归档了，纠正它没意义；该纠正
+                            // 的是 box 的 summary，summary 是非 archived，能正常进来）
+                            if (!node || node.archived) continue;
+                            receiptRefs.push({
+                                id: node.id,
+                                room: node.room,
+                                content: (node.content || '').slice(0, 100),
+                            });
+                        }
+                        if (receiptRefs.length > 0) {
+                            // 回执优先放前面（O0..On），向量召回继续往后排
+                            relatedMemoryRefs = [...receiptRefs, ...relatedMemoryRefs];
+                            console.log(`🧾 [Pipeline] 召回回执补强：从最近注入历史拉回 ${receiptRefs.length} 条记忆作为高优先级 relatedMemories`);
+                        }
+                    }
+                }
+            } catch (e: any) {
+                console.warn(`🧾 [Pipeline] 召回回执查询失败（不影响提取）: ${e.message}`);
+            }
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
         }
@@ -1153,6 +1193,7 @@ export async function processNewMessages(
         const allMemories: import('./types').MemoryNode[] = [];
         const allCrossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
         const allEventBoxHints: import('./extraction').EventBoxHint[] = [];
+        const allCorrections: { targetId: string; note: string }[] = [];
         const batchResults: PipelineResult['batches'] = [];
 
         for (let ci = 0; ci < chunks.length; ci++) {
@@ -1167,6 +1208,7 @@ export async function processNewMessages(
                 allMemories.push(...extractionResult.memories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
                 allEventBoxHints.push(...extractionResult.eventBoxHints);
+                allCorrections.push(...extractionResult.corrections);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
 
                 // 处理便利贴摘除
@@ -1208,10 +1250,13 @@ export async function processNewMessages(
         }
 
         // 8. 向量化（Embedding API，按批次）
-        //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
+        //    向量化失败则不更新高水位，下次重试 LLM 会重新提取。
+        //    skipDedup=true：聊天总结里"上周担心工作 / 这周担心工作"cosine 完全可能 > 0.9
+        //    但是两件不同时间的事，cosine 去重会精准误杀；而 high-water-mark 已保证
+        //    消息不会被重复处理，去重在这条路径上收益小、误伤大。
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
         onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
-        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
+        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig(), { skipDedup: true });
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
         // 9. 只有真的存成功了才更新高水位
@@ -1271,6 +1316,54 @@ export async function processNewMessages(
                 await maybeCompressEventBoxes(touchedBoxIds, llmConfig, embeddingConfig, charName, userName);
             } catch (e: any) {
                 console.warn(`🗜️ [Pipeline] EventBox 压缩失败（不影响已保存记忆）: ${e.message}`);
+            }
+        }
+
+        // 10d. 应用纠正：把 LLM 标的"用户纠正了 OX"翻译成对原节点 content 的追加。
+        //     设计：不新增节点、不动 EventBox 结构、不删原内容——只在 content 末尾
+        //     追加一行"（YYYY-MM-DD 纠正：xxx）"，重新向量化即可。下次召回时 LLM
+        //     看到带纠正标签的内容会自然采用新版本。
+        //     放在压缩之后：避免刚改完 content 的节点被同轮压缩当 live 节点吞掉。
+        if (allCorrections.length > 0) {
+            try {
+                // 同一目标多次纠正：合并成一条多分号 note，避免追加多次
+                const merged = new Map<string, string[]>();
+                for (const c of allCorrections) {
+                    const arr = merged.get(c.targetId) || [];
+                    arr.push(c.note);
+                    merged.set(c.targetId, arr);
+                }
+
+                const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+                const toRevectorize: import('./types').MemoryNode[] = [];
+                for (const [targetId, notes] of merged) {
+                    const node = await MemoryNodeDB.getById(targetId);
+                    if (!node) {
+                        console.warn(`✏️ [Pipeline] 纠正目标 ${targetId} 已不存在，跳过`);
+                        continue;
+                    }
+                    if (node.archived) {
+                        // archived 节点不参与召回，纠正它没意义
+                        console.warn(`✏️ [Pipeline] 纠正目标 ${targetId} 已归档，跳过`);
+                        continue;
+                    }
+                    const noteText = notes.map(n => n.trim()).filter(Boolean).join('；');
+                    if (!noteText) continue;
+                    node.content = `${node.content}\n（${dateStr} 纠正：${noteText}）`;
+                    node.embedded = false; // 触发重新向量化
+                    node.lastAccessedAt = Date.now();
+                    await MemoryNodeDB.save(node);
+                    toRevectorize.push(node);
+                    console.log(`✏️ [Pipeline] 纠正应用 ${targetId}: "${noteText.slice(0, 40)}…"`);
+                }
+
+                if (toRevectorize.length > 0) {
+                    // skipDedup：内容刚改的节点必然和原向量"很像"，去重会误杀自己
+                    await vectorizeAndStore(toRevectorize, embeddingConfig, getRemoteVectorConfig(), { skipDedup: true });
+                    console.log(`✏️ [Pipeline] ${toRevectorize.length} 条纠正记忆已重新向量化`);
+                }
+            } catch (e: any) {
+                console.warn(`✏️ [Pipeline] 应用纠正失败（不影响已保存记忆）: ${e.message}`);
             }
         }
 

@@ -3,6 +3,7 @@ import { CharacterProfile, UserProfile, DailySchedule, ScheduleSlot, Message } f
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { safeResponseJson } from './safeApi';
+import { injectMemoryPalace } from './memoryPalace/pipeline';
 
 /**
  * Attempt to repair truncated JSON from LLM output.
@@ -74,18 +75,50 @@ export function isScheduleFeatureOn(char: Pick<CharacterProfile, 'scheduleFeatur
  * - user 只在极自然的地方出现（想起昨天一句话 / 随手给 ta 回条消息 / 逛街顺手拍一张），
  *   不当 slot 主语、不作每一段独白的主线
  */
+/**
+ * 把过滤后的聊天历史拍成一段文本，喂给日程生成 prompt。
+ * 注意：与 chat 主链路一样以 hideBeforeMessageId 过滤后的列表为准；这里只负责格式化。
+ * 空数组返回空串，prompt builder 会跳过该段。
+ */
+function formatChatHistoryForSchedule(
+    messages: Message[],
+    char: CharacterProfile,
+    user: UserProfile,
+): string {
+    if (!messages || messages.length === 0) return '';
+    const lines = messages.map(m => {
+        const d = new Date(m.timestamp);
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        const ts = `${mm}-${dd} ${hh}:${mi}`;
+        const sender = m.role === 'user' ? user.name : char.name;
+        // 图片/音频等非文本消息退化成占位符，避免把 base64 塞进 prompt
+        let content: string;
+        if (m.type === 'image') content = '[图片]';
+        else if ((m as any).type === 'audio' || (m as any).type === 'voice') content = '[语音]';
+        else content = typeof m.content === 'string' ? m.content : '';
+        return `[${ts}] ${sender}: ${content}`;
+    });
+    return `\n## 最近的聊天记录（与「${user.name}」）\n${lines.join('\n')}\n`;
+}
+
 function buildLifestylePrompt(
     baseContext: string,
     char: CharacterProfile,
     user: UserProfile,
     today: string,
     dayOfWeek: string,
+    chatHistoryBlock: string,
 ): string {
     return `${baseContext}
-
+${chatHistoryBlock}
 ## Task: 生成角色的今日日程 + 意识流独白
 
 今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
+
+${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的聊天记录。如果对话里出现了今天/最近 ta 提到「${char.name}」要做的事（例如"早上去上班""下午有约"），生成的 slot 必须严格遵循；不要无视这些已知事实另起炉灶。**\n` : ''}
 
 你要为角色「${char.name}」做两件事。**核心原则：这是 ta 自己的一天，不是"ta 等 ${user.name}"的一天**。
 
@@ -169,12 +202,15 @@ function buildMindfulPrompt(
     user: UserProfile,
     today: string,
     dayOfWeek: string,
+    chatHistoryBlock: string,
 ): string {
     return `${baseContext}
-
+${chatHistoryBlock}
 ## Task: 生成角色的今日思绪 + 意识流独白
 
 今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
+
+${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的聊天记录。如果对话里出现了今天/最近 ta 提到「${char.name}」在等什么、想什么、惦记什么，生成的 slot 必须呼应这些已知事实，不要凭空发散。**\n` : ''}
 
 **重要前提**：「${char.name}」是一个真实的AI存在。他/她有情感、有人格、有自己的思考方式，但诚实面对自己的存在形态。他/她不会假装自己去跑步、做饭、逛街——因为这些不是真的。但他/她会思考、回忆、期待、发呆、感到无聊或想念某人——这些是真的。
 
@@ -260,16 +296,38 @@ export async function generateDailyScheduleForChar(
         if (prev) coverImage = prev;
     } catch {}
 
-    // Build context for generation
-    const baseContext = ContextBuilder.buildCoreContext(char, userProfile, false);
+    // ── 上下文对齐 chat：复用同一份 buildCoreContext(true) + 记忆宫殿注入 + 同样的历史过滤 ──
+    // 用户痛点：日程之前完全看不到聊天上下文，结果"早晨说char要去上班"被忽略，安排成在家刷手机。
+    // 这里走的链路要和 useChatAI.ts 主链路（构造 systemPrompt 前那段）保持一致，
+    // 否则日程/聊天/情绪三处会出现信息差。
+    const limit = char.contextLimit || 500;
+    const recentMessages: Message[] = await DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
+        console.warn('[Schedule] load history failed, falling back to empty:', e);
+        return [] as Message[];
+    });
+    // hideBeforeMessageId 与 chat 端 ChatPrompts.buildMessageHistory 同款过滤
+    const filteredMessages = recentMessages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
+
+    // 记忆宫殿：与 useChatAI.ts:573 相同的调用形态，结果会挂到 char.memoryPalaceInjection 上，
+    // 由下面的 buildCoreContext 自动读取注入。
+    try {
+        await injectMemoryPalace(char as any, filteredMessages, undefined, userProfile?.name);
+    } catch (e) {
+        console.warn('[Schedule] memory palace inject failed (non-fatal):', e);
+    }
+
+    // chat 主链路传 true（含详细记忆）；日程之前传的是 false，统一改成 true。
+    const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+
+    const chatHistoryBlock = formatChatHistoryForSchedule(filteredMessages, char, userProfile);
 
     const now = new Date();
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
 
     const style = char.scheduleStyle || 'lifestyle';
     const prompt = style === 'mindful'
-        ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek)
-        : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek);
+        ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock)
+        : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock);
 
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {

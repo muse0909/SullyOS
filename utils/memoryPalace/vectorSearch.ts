@@ -11,7 +11,7 @@
  */
 
 import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
-import { MemoryNodeDB, MemoryVectorDB } from './db';
+import { MemoryNodeDB, MemoryVectorDB, ensureFloat32 } from './db';
 import { cosineSimilarity } from './embedding';
 import { searchVectors as remoteSearch } from './supabaseVector';
 
@@ -193,8 +193,8 @@ export async function vectorSearch(
 /** Worker 通信 — 支持并发多路复用（用 requestId 区分响应） */
 function runInWorker(
     w: Worker,
-    queryVector: number[] | Float32Array,
-    vectors: { memoryId: string; vector: number[] | Float32Array }[],
+    queryVector: number[] | Float32Array | Uint8Array,
+    vectors: { memoryId: string; vector: number[] | Float32Array | Uint8Array }[],
     threshold: number,
     topK: number,
     canTransferCandidates: boolean = true,
@@ -207,10 +207,13 @@ function runInWorker(
         // 标记为坏掉 —— 下一次 vectorSearch 在 getWorker() 处拿到 null，
         // 走主线程正确路径（无 transfer，无 neuter）。这样单次 worker 故障
         // 不会变成"永远静默少结果"的长期状态。
-        const qv = queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
+        // ensureFloat32 兼容三种存储形态（number[] / Float32Array / Uint8Array）。
+        // 即使上游 DB 改了存储格式也不会因为 `new Float32Array(uint8)` 把字节
+        // 当成 number 误读出 4× 长的错误向量。
+        const qv = ensureFloat32(queryVector);
         const fvs = vectors.map(v => ({
             memoryId: v.memoryId,
-            vector: v.vector instanceof Float32Array ? v.vector : new Float32Array(v.vector),
+            vector: ensureFloat32(v.vector),
         }));
 
         const requestId = nextWorkerRequestId++;
@@ -247,15 +250,16 @@ function runInWorker(
 
 /** 主线程回退计算 */
 function mainThreadSearch(
-    queryVector: number[] | Float32Array,
-    vectors: { memoryId: string; vector: number[] | Float32Array }[],
+    queryVector: number[] | Float32Array | Uint8Array,
+    vectors: { memoryId: string; vector: number[] | Float32Array | Uint8Array }[],
     threshold: number,
     topK: number,
 ): { memoryId: string; similarity: number }[] {
     const scored: { memoryId: string; similarity: number }[] = [];
 
+    const qv = ensureFloat32(queryVector);
     for (const vec of vectors) {
-        const sim = cosineSimilarity(queryVector, vec.vector);
+        const sim = cosineSimilarity(qv, ensureFloat32(vec.vector));
         if (sim >= threshold) {
             scored.push({ memoryId: vec.memoryId, similarity: sim });
         }

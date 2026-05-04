@@ -838,19 +838,28 @@ export const useChatAI = ({
                             console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
                         }
                         if (fname === 'propose_cart_items' && Array.isArray(args.items) && args.items.length) {
-                            // 第一步: 全局名字匹配自动修 code (char 经常把"板烧鸡腿堡"当 code 传)
+                            // 第一步: 菜单还没加载就直接拒, 不能让模型瞎编 code
+                            // 这是导致 calculate-price 返回空列表的根因之一: propose 在 pick 步骤被调用,
+                            // 此时 menuMeals 是空的, 旧版 menuKeys.length===0 会直接跳过校验, 烂 code 一路到 cart。
                             const menu = mcdMiniSnap?.menuMeals || {};
                             const menuKeys = Object.keys(menu);
+                            if (menuKeys.length === 0) {
+                                loopMessages.push({
+                                    role: 'tool',
+                                    tool_call_id: tc.id,
+                                    content: `菜单还没加载 (用户当前在选模式 / 选地址门店阶段, 还没进入菜单页)。请先用文字陪用户聊, 等用户在小程序里选完地址/门店、菜单加载出来后再调 propose_cart_items。所有 code 必须从加载后的"当前门店在售"清单里挑, 不能凭印象编。`,
+                                } as any);
+                                continue;
+                            }
+                            // 第二步: 全局名字匹配自动修 code (char 经常把"板烧鸡腿堡"当 code 传)
                             const { fixed, fixes } = autoFixProposalCodesByName(args.items, menu);
                             if (fixes.length) {
                                 console.log(`🍔 [MCD-MiniApp] propose 自动修 ${fixes.length} 个 code:`,
                                     fixes.map(f => `'${f.from}' → '${f.to}' (${f.name})`).join(', '));
                             }
                             args.items = fixed;
-                            // 第二步: 修完后还有非法的就退回 char 重提
-                            const invalidItems = menuKeys.length > 0
-                                ? args.items.filter((it: any) => !it?.code || !(menu as any)[it.code])
-                                : [];
+                            // 第三步: 修完后还有非法的就退回 char 重提 (严格模式: 任何不在 menu 字典里的 code 都拒)
+                            const invalidItems = args.items.filter((it: any) => !it?.code || !(menu as any)[it.code]);
                             if (invalidItems.length > 0) {
                                 const sample = menuKeys.slice(0, 20).map(k => `${k}=${(menu as any)[k]?.name || ''}`).join(', ');
                                 const bad = invalidItems.map((i: any) => `'${i.code}'(${i.name || '?'})`).join(', ');

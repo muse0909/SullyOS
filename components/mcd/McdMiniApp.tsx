@@ -1045,6 +1045,22 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
+    // 菜单加载/切换后, 把购物车里"当前菜单字典里没有的 code"清掉。
+    // 用户换了门店/取餐方式后, calculate-price 不会因为残留的旧店 code 一直空 list。
+    useEffect(() => {
+        const meals = menuData?.meals;
+        if (!meals || !Object.keys(meals).length) return;
+        setCart((prev: Map<string, CartLine>) => {
+            let dirty = false;
+            const next = new Map<string, CartLine>();
+            for (const [code, line] of prev) {
+                if (meals[code]) next.set(code, line);
+                else { dirty = true; console.warn(`🍔 [MCD-MiniApp] 购物车清掉新菜单里不存在的 code: ${code} (${line.name})`); }
+            }
+            return dirty ? next : prev;
+        });
+    }, [menuData]);
+
     // 每次状态变化推给父组件 → useChatAI 注入到 system prompt 末尾
     useEffect(() => {
         if (!onStateChange) return;
@@ -1098,23 +1114,31 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
     }, [messages]);
 
     // 提案卡片 + 加 / 全部加 按钮 → 往购物车里塞 (从菜单里拿真实价格)
+    // 严格模式: code 必须在当前门店菜单里存在, 否则拒绝加购 (calculate-price 也会拒)。
     // 客户端兜底再做一次名字匹配, 万一服务端 (useChatAI) 里那道修没生效也不至于把烂 code 塞进购物车。
     const handleAddFromProposal = (it: McdProposalItem) => {
         if (!it?.code && !it?.name) return;
-        let realCode: string | undefined = it.code;
-        let meal = realCode ? menuData?.meals?.[realCode] : undefined;
-        if (!meal && menuData?.meals) {
+        if (!menuData?.meals || !Object.keys(menuData.meals).length) {
+            console.warn('🍔 [MCD-MiniApp] 拒绝加购: 当前菜单还没加载, 不能从 proposal 加购');
+            return;
+        }
+        let realCode: string | undefined = menuData.meals[it.code || ''] ? it.code : undefined;
+        let meal = realCode ? menuData.meals[realCode] : undefined;
+        if (!meal) {
             // 服务端没修上 / propose 直接漏了 code 校准: 在这儿按 name 兜底
             const { fixed, fixes } = autoFixProposalCodesByName([it], menuData.meals);
-            if (fixes.length && fixed[0]?.code) {
+            if (fixes.length && fixed[0]?.code && menuData.meals[fixed[0].code]) {
                 realCode = fixed[0].code;
                 meal = menuData.meals[realCode];
                 console.log(`🍔 [MCD-MiniApp] 客户端兜底修 code: '${it.code}' → '${realCode}' (${fixes[0].name})`);
             }
         }
-        if (!realCode) return;
-        const price = meal?.currentPrice;
-        const name = meal?.name || it.name;
+        if (!realCode || !meal) {
+            console.warn(`🍔 [MCD-MiniApp] 拒绝加购: code='${it.code}' name='${it.name}' 在当前门店菜单里找不到匹配`);
+            return;
+        }
+        const price = meal.currentPrice;
+        const name = meal.name || it.name;
         for (let i = 0; i < (it.qty || 1); i++) {
             updateCart(realCode, 1, { name, price });
         }

@@ -223,7 +223,7 @@ export const MCD_PROPOSE_TOOL = {
     type: 'function' as const,
     function: {
         name: 'propose_cart_items',
-        description: '当你想给用户推荐 1~N 件商品加进购物车时调用这工具。用户会在小程序聊天里看到一张"char 想加这些"小卡片, 每项带"+ 加进购物车"按钮自己决定。这不是真下单, 只是把推荐推到 UI; 你调完工具还可以继续用文字解释或聊天。',
+        description: '当你想给用户推荐 1~N 件商品加进购物车时调用这工具。用户会在小程序聊天里看到一张"char 想加这些"小卡片, 每项带"+ 加进购物车"按钮自己决定。这不是真下单, 只是把推荐推到 UI; 你调完工具还可以继续用文字解释或聊天。\n\n**前置硬条件**: 必须等到 system prompt 里出现"当前门店在售 (前 N 项...)"清单后再调; 用户还在选模式 / 选地址门店阶段时, 菜单没加载, 任何 code 都是凭印象编的, 你的 propose 会被服务端直接拒, 反而拖慢节奏。这种时候用文字陪聊就好 ("等你选完店我帮你看")。',
         parameters: {
             type: 'object',
             properties: {
@@ -233,7 +233,7 @@ export const MCD_PROPOSE_TOOL = {
                     items: {
                         type: 'object',
                         properties: {
-                            code: { type: 'string', description: '商品 productCode, 必须是"当前门店在售"列表里的 code key (数字字符串如 "9900010341", "920215"), 绝对不能用商品名 (e.g. "板烧鸡腿堡" 是错的, 那是名字不是 code)。优先选名字含套餐/单人餐/双人餐/全家桶/三/四件套 这种打包好的, 比单点划算。' },
+                            code: { type: 'string', description: '商品 productCode, **必须**是当前 system prompt 里"当前门店在售"清单 = 号左边那串纯数字 (如 "9900010341", "920215")。**绝对不能**: ① 用商品名当 code (e.g. "板烧鸡腿堡" 是错的, 那是名字); ② 用其它门店 / 印象中的 code (上一笔订单 / 别店看到的, 这家不一定有, 算价会空); ③ 在菜单还没加载时硬编。优先选名字含套餐/单人餐/双人餐/全家桶/三/四件套 这种打包好的, 比单点划算。' },
                             name: { type: 'string', description: '商品名 (跟菜单一致)' },
                             qty: { type: 'integer', description: '推荐数量', minimum: 1, maximum: 10 },
                             reason: { type: 'string', description: '一句话说为什么推这个 (热量/搭配/划算/口味), 30 字内' }
@@ -334,7 +334,13 @@ export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName:
     }
     lines.push('');
 
-    if (snap.menuMeals && Object.keys(snap.menuMeals).length) {
+    const menuLoaded = !!(snap.menuMeals && Object.keys(snap.menuMeals).length);
+    if (!menuLoaded) {
+        lines.push(`# 当前菜单: ❌ 还没加载 (用户还在选模式 / 选地址门店阶段)`);
+        lines.push(`**这一阶段不要调 propose_cart_items**: 没有菜单字典, 你 propose 出去的任何 code 都会被服务端拒 (会回一条 tool error)。陪用户选地址 / 门店就好, 文字回应即可; 等小程序进入菜单页, system prompt 里出现"当前门店在售"清单后再说推荐。`);
+        lines.push('');
+    }
+    if (menuLoaded) {
         // 把套餐排前面 (人气热卖里的套餐 char 看着最先, 下意识更倾向推套餐)
         const COMBO_RE = /(套餐|单人餐|双人餐|全家桶|三件套|四件套|五件套|超值组合|节省组合)/;
         const allEntries = Object.entries(snap.menuMeals).filter(([, m]: any) => m?.name);

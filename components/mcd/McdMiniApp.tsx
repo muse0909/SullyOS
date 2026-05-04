@@ -1045,17 +1045,30 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
-    // 菜单加载/切换后, 把购物车里"当前菜单字典里没有的 code"清掉。
-    // 用户换了门店/取餐方式后, calculate-price 不会因为残留的旧店 code 一直空 list。
+    // 菜单加载/切换后, 把购物车里"当前不在售的 code"清掉:
+    // 1) 换了门店/取餐方式 → 旧店 code 残留 → calculate-price 一直空
+    // 2) 跨过 daypart (例如 5am 从夜宵 → 早餐) → 旧时段 code 不在新 categories[] 里 → 同样会被拒
+    // 用 categories[].meals[] 的 code 集合作为"当下可下单"权威集; 没有 categories 时回退到全量 meals 字典
     useEffect(() => {
         const meals = menuData?.meals;
         if (!meals || !Object.keys(meals).length) return;
+        let activeCodes: Set<string> | null = null;
+        if (Array.isArray(menuData?.categories) && menuData.categories.length) {
+            const s = new Set<string>();
+            for (const cat of menuData.categories) {
+                for (const m of (cat?.meals || [])) {
+                    if (m?.code) s.add(String(m.code));
+                }
+            }
+            if (s.size > 0) activeCodes = s;
+        }
         setCart((prev: Map<string, CartLine>) => {
             let dirty = false;
             const next = new Map<string, CartLine>();
             for (const [code, line] of prev) {
-                if (meals[code]) next.set(code, line);
-                else { dirty = true; console.warn(`🍔 [MCD-MiniApp] 购物车清掉新菜单里不存在的 code: ${code} (${line.name})`); }
+                const orderable = activeCodes ? activeCodes.has(code) : !!meals[code];
+                if (orderable) next.set(code, line);
+                else { dirty = true; console.warn(`🍔 [MCD-MiniApp] 购物车清掉当前不在售的 code: ${code} (${line.name})`); }
             }
             return dirty ? next : prev;
         });
@@ -1067,6 +1080,27 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
         const cartArr: Array<{ code: string; name: string; price?: any; qty: number }> = (Array.from(cart.values()) as CartLine[]).map((l: CartLine) => ({
             code: l.code, name: l.name, price: l.price, qty: l.qty,
         }));
+        // 只把"当前 daypart 真正在售"的 code 推给 AI 上下文。
+        // query-meals 的 data.meals 是跨 daypart 的扁平字典 (午餐 + 夜宵 + 麦满分早餐 全在里面),
+        // 但只有 categories[].meals[] 里出现过的 code 是当下时段实际可下单的。
+        // 不过滤 → AI 在凌晨 2 点会推"吉士汉堡中套餐"这种白天才有的, calculate-price 一定空。
+        const fullMeals = menuData?.meals;
+        let menuMealsForAI: typeof fullMeals = fullMeals;
+        if (fullMeals && Array.isArray(menuData?.categories) && menuData.categories.length) {
+            const activeCodes = new Set<string>();
+            for (const cat of menuData.categories) {
+                for (const m of (cat?.meals || [])) {
+                    if (m?.code) activeCodes.add(String(m.code));
+                }
+            }
+            if (activeCodes.size > 0) {
+                const filtered: Record<string, { name?: string; currentPrice?: string }> = {};
+                for (const code of activeCodes) {
+                    if (fullMeals[code]) filtered[code] = fullMeals[code];
+                }
+                menuMealsForAI = filtered;
+            }
+        }
         onStateChange({
             open,
             step,
@@ -1075,7 +1109,7 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
             storeName: ctx?.storeName,
             addressLabel: ctx?.addressLabel,
             cart: cartArr,
-            menuMeals: menuData?.meals,
+            menuMeals: menuMealsForAI,
             nutritionData,
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps

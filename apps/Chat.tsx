@@ -1014,7 +1014,13 @@ const Chat: React.FC = () => {
         if (!char) return;
         const nextEnabled = !isScheduleFeatureOn(char);
         const patch: any = { scheduleFeatureEnabled: nextEnabled };
-        if (!nextEnabled) {
+        if (nextEnabled) {
+            // 与 handleScheduleStyleChange 对齐：开日程 = 同步开情绪/意识流。
+            // 旧逻辑下，新角色的 emotionConfig 从未初始化（undefined），
+            // 仅切总开关而不点风格时，emotionConfig?.enabled 始终落 false，
+            // 副 API 闸门 (isScheduleFeatureOn && emotionConfig?.enabled) 永远过不去。
+            patch.emotionConfig = { ...(char.emotionConfig || {}), enabled: true };
+        } else {
             // 关闭时顺手把 buff 注入清空，避免上一轮残留继续注入
             patch.buffInjection = '';
             patch.activeBuffs = [];

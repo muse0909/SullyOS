@@ -1660,7 +1660,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
-  const addCharacter = async () => { const name = 'New Character'; const newChar: CharacterProfile = { id: `char-${Date.now()}`, name: name, avatar: generateAvatar(name), description: '点击编辑设定...', systemPrompt: '', memories: [], contextLimit: 500 }; setCharacters(prev => [...prev, newChar]); setActiveCharacterId(newChar.id); await DB.saveCharacter(newChar); };
+  const addCharacter = async () => {
+    const name = 'New Character';
+    // 默认开启 emotionConfig.enabled 与 memoryPalaceEnabled，让新角色与老角色行为对齐：
+    // - 情绪标签由 (isScheduleFeatureOn && emotionConfig.enabled) 双闸门控制；schedule
+    //   未开时不会触发副 API，所以这里默认 true 是安全的，仅是把"用户开日程后情绪自然
+    //   跟着启用"这条隐含约定显式落到默认值上。
+    // - memoryPalaceEnabled 真正的 gate 还要全局 embedding/lightLLM 配好，没配的话
+    //   pipeline 会自然 skip；老用户 (历史角色) 已有此字段，新角色补齐即可。
+    const newChar: CharacterProfile = {
+      id: `char-${Date.now()}`,
+      name,
+      avatar: generateAvatar(name),
+      description: '点击编辑设定...',
+      systemPrompt: '',
+      memories: [],
+      contextLimit: 500,
+      emotionConfig: { enabled: true },
+      memoryPalaceEnabled: true,
+    };
+    setCharacters(prev => [...prev, newChar]);
+    setActiveCharacterId(newChar.id);
+    await DB.saveCharacter(newChar);
+  };
   const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...updates }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
   

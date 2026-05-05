@@ -1283,7 +1283,14 @@ const Settings: React.FC = () => {
 
                 {ppDiag ? (
                     <div className="space-y-1.5 text-[11px]">
-                        <DiagRow label="浏览器支持" value={ppDiag.supported ? '是' : '否（Service Worker / PushManager 缺失）'} bad={!ppDiag.supported} />
+                        <DiagRow
+                            label="浏览器支持"
+                            value={
+                                ppDiag.capacitorNative ? '否（当前在 App 里运行）' :
+                                ppDiag.supported ? '是' : '否（浏览器缺少推送相关 API）'
+                            }
+                            bad={!ppDiag.supported || ppDiag.capacitorNative}
+                        />
                         <DiagRow
                             label="通知权限"
                             value={
@@ -1341,6 +1348,14 @@ const Settings: React.FC = () => {
                                 iOS 的 Web Push 必须先把网站"添加到主屏幕"启动后才能用。
                             </div>
                         )}
+                        {ppDiag.capacitorNative && (
+                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-700 leading-relaxed">
+                                你现在是在<b>打包好的 App</b>里运行（不是浏览器网页）。<br/>
+                                这个"Push 加速器"只对网页版生效——App 里没有网页推送通道，但<b>不影响你正常用</b>：
+                                主动消息会通过 App 的本地通知发出，App 在后台/锁屏也能收到。<br/>
+                                下面的"测试推送 / 重置订阅"按钮在 App 里点了也没用，可以直接忽略这个面板。
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <p className="text-[10px] text-slate-400">加载中…</p>
@@ -1348,16 +1363,16 @@ const Settings: React.FC = () => {
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
                     <button
-                        disabled={ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead}
+                        disabled={ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead || ppDiag?.capacitorNative}
                         onClick={() => void doSendTestPush()}
-                        className={`py-2 rounded-xl text-xs font-bold ${ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead ? 'bg-slate-200 text-slate-400' : 'bg-teal-500 text-white hover:bg-teal-600'}`}
+                        className={`py-2 rounded-xl text-xs font-bold ${ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead || ppDiag?.capacitorNative ? 'bg-slate-200 text-slate-400' : 'bg-teal-500 text-white hover:bg-teal-600'}`}
                     >
                         {ppTestBusy ? '测试中…' : '发一条测试推送'}
                     </button>
                     <button
-                        disabled={ppResetBusy || ppTestBusy}
+                        disabled={ppResetBusy || ppTestBusy || ppDiag?.capacitorNative}
                         onClick={() => void doResetSubscription()}
-                        className={`py-2 rounded-xl text-xs font-bold border ${ppResetBusy || ppTestBusy ? 'bg-slate-100 text-slate-400 border-slate-200' : ppDiag?.endpointDead ? 'bg-rose-500 text-white border-rose-500 hover:bg-rose-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                        className={`py-2 rounded-xl text-xs font-bold border ${ppResetBusy || ppTestBusy || ppDiag?.capacitorNative ? 'bg-slate-100 text-slate-400 border-slate-200' : ppDiag?.endpointDead ? 'bg-rose-500 text-white border-rose-500 hover:bg-rose-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
                     >
                         {ppResetBusy ? '重置中…' : '重置订阅'}
                     </button>

@@ -108,8 +108,42 @@ export function isDeadSubscriptionEndpoint(endpoint: string | null | undefined):
   return endpoint.includes('permanently-removed.invalid');
 }
 
-export async function getOrCreateSubscription(vapidPublicKey: string): Promise<SubscriptionInfo | null> {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+/**
+ * Translate the browser's raw subscribe() rejection into a Chinese,
+ * end-user-actionable hint.  The common cases on Android phones without
+ * Google Play Services (or in third-party Chromium-based browsers that
+ * advertise `PushManager` but route through FCM internally) are
+ * `AbortError` / generic network errors when the FCM endpoint cannot be
+ * reached.  We surface those distinctly so the user knows it's not a
+ * permission issue.
+ */
+function explainSubscribeError(e: any): string {
+  const name = e?.name || '';
+  const msg = e?.message || String(e || '未知错误');
+  if (name === 'NotAllowedError') {
+    return '浏览器拒绝创建订阅（NotAllowedError）——通常是站点权限被拦截或处于隐身模式';
+  }
+  if (name === 'NotSupportedError') {
+    return '当前浏览器不支持网页推送——常见于没装谷歌服务的国行安卓手机（小米/华为/OPPO/vivo 大多默认就没有），或者手机自带的精简浏览器。换 Chrome / Edge / Firefox 桌面版试试';
+  }
+  if (name === 'AbortError' || /push service|FCM|network/i.test(msg)) {
+    return '连不上推送服务器——这台设备的网页推送链路走不通。最常见两种情况：1) 国行安卓手机没装谷歌服务（小米/华为/OPPO/vivo 默认就没有），系统层面就推不了；2) 当前网络挡住了谷歌的推送服务器。建议：换台装了谷歌服务的设备，或者用电脑上的 Chrome / Edge / Firefox 试试';
+  }
+  if (name === 'InvalidStateError') {
+    return '订阅状态冲突（InvalidStateError）——可能旧订阅没清干净，再点一次"重置订阅"';
+  }
+  return `订阅创建失败（${name || 'Error'}：${msg}）`;
+}
+
+interface SubscribeAttempt {
+  sub: SubscriptionInfo | null;
+  reason?: string;
+}
+
+export async function getOrCreateSubscription(vapidPublicKey: string): Promise<SubscribeAttempt> {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { sub: null, reason: '当前浏览器不支持 Service Worker 或 Push API' };
+  }
 
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
@@ -140,9 +174,9 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
   if (!sub) {
     if (Notification.permission === 'default') {
       const perm = await Notification.requestPermission();
-      if (perm !== 'granted') return null;
+      if (perm !== 'granted') return { sub: null, reason: '通知权限未授予' };
     } else if (Notification.permission === 'denied') {
-      return null;
+      return { sub: null, reason: '通知权限已被拒绝（请到浏览器站点设置里手动开启）' };
     }
     try {
       sub = await reg.pushManager.subscribe({
@@ -151,7 +185,7 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
       });
     } catch (e) {
       console.warn('[ProactivePush] pushManager.subscribe failed', e);
-      return null;
+      return { sub: null, reason: explainSubscribeError(e) };
     }
   }
 
@@ -160,13 +194,13 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
   if (isDeadSubscriptionEndpoint(sub.endpoint)) {
     console.warn('[ProactivePush] subscribe() returned a dead sentinel endpoint; giving up');
     try { await sub.unsubscribe(); } catch { /* ignore */ }
-    return null;
+    return { sub: null, reason: '浏览器返回的订阅地址是 permanently-removed.invalid（zombie endpoint），无法投递' };
   }
 
   const p256dh = bytesToB64u(sub.getKey('p256dh'));
   const auth = bytesToB64u(sub.getKey('auth'));
-  if (!p256dh || !auth) return null;
-  return { endpoint: sub.endpoint, p256dh, auth };
+  if (!p256dh || !auth) return { sub: null, reason: '订阅缺少加密公钥（p256dh / auth）' };
+  return { sub: { endpoint: sub.endpoint, p256dh, auth } };
 }
 
 function buildHeaders(cfg: ProactivePushConfig): HeadersInit {
@@ -183,7 +217,7 @@ export async function registerScheduleOnWorker(charId: string, intervalMs: numbe
   const cfg = loadPushConfig();
   if (!isPushConfigReady(cfg)) return false;
 
-  const sub = await getOrCreateSubscription(cfg.vapidPublicKey);
+  const { sub } = await getOrCreateSubscription(cfg.vapidPublicKey);
   if (!sub) return false;
 
   try {
@@ -329,8 +363,8 @@ export async function ensureSubscribed(): Promise<SubscribeResult> {
     return { ok: false, reason: '通知权限已被拒绝（请到浏览器站点设置里手动开启）' };
   }
 
-  const sub = await getOrCreateSubscription(cfg.vapidPublicKey);
-  if (!sub) return { ok: false, reason: '订阅创建失败（可能 SW 未注册或浏览器拦截）' };
+  const { sub, reason: subReason } = await getOrCreateSubscription(cfg.vapidPublicKey);
+  if (!sub) return { ok: false, reason: subReason || '订阅创建失败（未知原因）' };
 
   // Register a sentinel row so /test can find the endpoint by URL.  We use a
   // very large intervalMs so the cron sweep never picks it up — this row is
@@ -456,6 +490,8 @@ export interface PushDiagnostics {
   lastWakeChar: string | null;
   /** True if we are inside an iOS Safari that is NOT a standalone PWA */
   iosNeedsPwa: boolean;
+  /** True if we are running inside a Capacitor native app (Android/iOS WebView) */
+  capacitorNative: boolean;
 }
 
 function detectChannelFromEndpoint(endpoint: string | null): string {
@@ -465,6 +501,23 @@ function detectChannelFromEndpoint(endpoint: string | null): string {
   if (/notify\.windows\.com|wns2/i.test(endpoint)) return 'Windows WNS (Edge)';
   if (/web\.push\.apple\.com/i.test(endpoint)) return 'Apple APNs (Safari / iOS PWA)';
   return '未识别厂商';
+}
+
+/**
+ * True when the page is running inside a Capacitor native shell
+ * (Android/iOS WebView), as opposed to a regular browser tab.  We probe
+ * the global rather than importing `@capacitor/core` so this util stays
+ * tree-shakable in the SW bundle.
+ */
+function detectCapacitorNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as any).Capacitor;
+  if (!cap) return false;
+  if (typeof cap.isNativePlatform === 'function') {
+    try { return !!cap.isNativePlatform(); } catch { /* ignore */ }
+  }
+  // Fallback for older Capacitor versions
+  return cap.platform === 'android' || cap.platform === 'ios';
 }
 
 function detectIosNeedsPwa(): boolean {
@@ -526,6 +579,7 @@ export async function getPushDiagnostics(): Promise<PushDiagnostics> {
     lastWakeAt,
     lastWakeChar,
     iosNeedsPwa: detectIosNeedsPwa(),
+    capacitorNative: detectCapacitorNative(),
   };
 }
 

@@ -10,7 +10,7 @@ import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife } from '@phosphor-icons/react';
-import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, type PushDiagnostics } from '../utils/proactivePushConfig';
+import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
@@ -118,6 +118,7 @@ const Settings: React.FC = () => {
   const [showPpConfirm, setShowPpConfirm] = useState(false);
   const [ppDiag, setPpDiag] = useState<PushDiagnostics | null>(null);
   const [ppTestBusy, setPpTestBusy] = useState(false);
+  const [ppResetBusy, setPpResetBusy] = useState(false);
 
   // 模型选择 Modal 的过滤 + 公共前缀（memo 掉，避免每次 Settings 重渲染都重算）
   const modelPickerView = useMemo(() => {
@@ -205,10 +206,26 @@ const Settings: React.FC = () => {
       const res = await sendTestPush();
       if (res.ok) {
           setPpStatus('测试推送已发出。如果 5 秒内系统通知里没出现"推送测试成功"，说明送达环节有问题——看下方诊断面板。');
+      } else if (res.deadSubscription) {
+          setPpStatus('订阅已被浏览器吊销（zombie endpoint）。请点下方"重置订阅"重建一次再测。');
       } else {
           setPpStatus(`测试失败：${res.reason || '未知错误'}${res.status ? `（HTTP ${res.status}）` : ''}`);
       }
       setPpTestBusy(false);
+      await refreshPpDiag();
+  };
+
+  const doResetSubscription = async () => {
+      if (ppResetBusy) return;
+      setPpResetBusy(true);
+      setPpStatus('正在重置订阅…');
+      const res = await resetSubscription();
+      if (res.ok) {
+          setPpStatus('订阅已重建。可以再点"发一条测试推送"试一下。');
+      } else {
+          setPpStatus(`重置失败：${res.reason || '未知错误'}`);
+      }
+      setPpResetBusy(false);
       await refreshPpDiag();
   };
 
@@ -1288,8 +1305,12 @@ const Settings: React.FC = () => {
                         />
                         <DiagRow
                             label="订阅"
-                            value={ppDiag.endpoint ? '已建立' : '不存在'}
-                            bad={!ppDiag.endpoint}
+                            value={
+                                !ppDiag.endpoint ? '不存在' :
+                                ppDiag.endpointDead ? '已失效（zombie endpoint）' :
+                                '已建立'
+                            }
+                            bad={!ppDiag.endpoint || ppDiag.endpointDead}
                         />
                         <DiagRow label="推送通道" value={ppDiag.channel} />
                         <DiagRow
@@ -1303,7 +1324,15 @@ const Settings: React.FC = () => {
                         {ppDiag.endpoint && (
                             <div className="pt-2 mt-2 border-t border-slate-200">
                                 <p className="text-[10px] text-slate-400 mb-1">订阅端点（前 60 字符）</p>
-                                <p className="text-[10px] font-mono text-slate-500 break-all leading-relaxed">{ppDiag.endpoint.slice(0, 60)}…</p>
+                                <p className={`text-[10px] font-mono break-all leading-relaxed ${ppDiag.endpointDead ? 'text-rose-600' : 'text-slate-500'}`}>{ppDiag.endpoint.slice(0, 60)}…</p>
+                            </div>
+                        )}
+                        {ppDiag.endpointDead && (
+                            <div className="mt-2 p-2 bg-rose-50 border border-rose-200 rounded-lg text-[10px] text-rose-700 leading-relaxed">
+                                订阅地址是 <code className="font-mono">permanently-removed.invalid</code>——浏览器已经把这个订阅吊销了
+                                （常见原因：长期不访问、通知权限切换过、浏览器清理过站点数据）。<br/>
+                                这个域名是 RFC 保留 TLD，全球永远不会解析；Worker 试图把 push 投递过去就会回 HTTP 530。<br/>
+                                点下方<b>"重置订阅"</b>会清掉这条死订阅并重建一个新的。
                             </div>
                         )}
                         {ppDiag.iosNeedsPwa && (
@@ -1317,15 +1346,25 @@ const Settings: React.FC = () => {
                     <p className="text-[10px] text-slate-400">加载中…</p>
                 )}
 
-                <button
-                    disabled={ppTestBusy || !ppDiag?.endpoint}
-                    onClick={() => void doSendTestPush()}
-                    className={`mt-4 w-full py-2 rounded-xl text-xs font-bold ${ppTestBusy || !ppDiag?.endpoint ? 'bg-slate-200 text-slate-400' : 'bg-teal-500 text-white hover:bg-teal-600'}`}
-                >
-                    {ppTestBusy ? '测试中…' : '发一条测试推送'}
-                </button>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                        disabled={ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead}
+                        onClick={() => void doSendTestPush()}
+                        className={`py-2 rounded-xl text-xs font-bold ${ppTestBusy || ppResetBusy || !ppDiag?.endpoint || ppDiag?.endpointDead ? 'bg-slate-200 text-slate-400' : 'bg-teal-500 text-white hover:bg-teal-600'}`}
+                    >
+                        {ppTestBusy ? '测试中…' : '发一条测试推送'}
+                    </button>
+                    <button
+                        disabled={ppResetBusy || ppTestBusy}
+                        onClick={() => void doResetSubscription()}
+                        className={`py-2 rounded-xl text-xs font-bold border ${ppResetBusy || ppTestBusy ? 'bg-slate-100 text-slate-400 border-slate-200' : ppDiag?.endpointDead ? 'bg-rose-500 text-white border-rose-500 hover:bg-rose-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                    >
+                        {ppResetBusy ? '重置中…' : '重置订阅'}
+                    </button>
+                </div>
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                    点这个按钮会让 Worker 立刻给你这台设备发一条 push。如果系统通知中心 5 秒内出现"推送测试成功"，说明从后端到浏览器这条链路是通的。如果一直没动静，问题在浏览器/系统的推送送达策略上。
+                    "测试推送"会让 Worker 立刻给你这台设备发一条 push，5 秒内系统通知里出现"推送测试成功"= 链路通。
+                    "重置订阅"会清掉本机的旧订阅 + 通知 Worker 删 D1 里的对应记录，重新走一遍权限/订阅流程；适合订阅失效或换浏览器后用。
                 </p>
             </div>
         </section>

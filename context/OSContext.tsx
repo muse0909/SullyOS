@@ -739,10 +739,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  if (loadedTheme.wallpaper.startsWith('data:')) {
                      loadedTheme.wallpaper = defaultTheme.wallpaper;
                  }
-                 // Reset large data URI if loaded from legacy storage, we fetch from DB below
-                 if (loadedTheme.launcherWidgetImage && loadedTheme.launcherWidgetImage.startsWith('data:')) {
-                     loadedTheme.launcherWidgetImage = undefined;
-                 }
+                 // Deprecated legacy fields are forcibly stripped — they never render again.
+                 loadedTheme.launcherWidgetImage = undefined;
                  // Reset font too if it's data URI
                  if (loadedTheme.customFont && loadedTheme.customFont.startsWith('data:')) {
                      loadedTheme.customFont = undefined;
@@ -774,15 +772,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     loadedTheme.wallpaper = assetMap['wallpaper'];
                 }
                 
+                // Deprecated legacy asset — purge silently so it can never be rendered again.
                 if (assetMap['launcherWidgetImage']) {
-                    loadedTheme.launcherWidgetImage = assetMap['launcherWidgetImage'];
+                    void DB.deleteAsset('launcherWidgetImage');
                 }
 
                 // If asset exists, it overrides LS (which is empty or old)
                 if (assetMap['custom_font_data']) {
                     loadedTheme.customFont = assetMap['custom_font_data'];
                 }
-                
+
+                const DEPRECATED_WIDGET_SLOTS = new Set(['bl', 'br']);
                 const loadedIcons: Record<string, string> = {};
                 const loadedWidgets: Record<string, string> = {};
                 Object.keys(assetMap).forEach(key => {
@@ -792,10 +792,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     }
                     if (key.startsWith('widget_')) {
                         const slot = key.replace('widget_', '');
+                        if (DEPRECATED_WIDGET_SLOTS.has(slot)) {
+                            void DB.deleteAsset(key);
+                            return;
+                        }
                         loadedWidgets[slot] = assetMap[key];
                     }
                 });
                 setCustomIcons(loadedIcons);
+                // Strip deprecated slots that may have been imported via beautification packs.
+                if (loadedTheme.launcherWidgets) {
+                    for (const slot of DEPRECATED_WIDGET_SLOTS) {
+                        delete loadedTheme.launcherWidgets[slot];
+                    }
+                }
                 if (Object.keys(loadedWidgets).length > 0) {
                     loadedTheme.launcherWidgets = { ...(loadedTheme.launcherWidgets || {}), ...loadedWidgets };
                 }
@@ -1422,7 +1432,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
-    const newTheme = { ...theme, ...updates };
+    // Legacy slots are banned — never let them enter state, regardless of caller intent.
+    const sanitizedWidgets = launcherWidgets !== undefined
+        ? Object.fromEntries(Object.entries(launcherWidgets).filter(([k]) => k !== 'bl' && k !== 'br'))
+        : undefined;
+    const sanitizedUpdates: Partial<OSTheme> = { ...updates, launcherWidgetImage: undefined };
+    if (sanitizedWidgets !== undefined) sanitizedUpdates.launcherWidgets = sanitizedWidgets;
+    const newTheme = { ...theme, ...sanitizedUpdates, launcherWidgetImage: undefined };
+    if (newTheme.launcherWidgets) {
+        const w = { ...newTheme.launcherWidgets };
+        delete w['bl'];
+        delete w['br'];
+        newTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
+    }
     setTheme(newTheme);
 
     // Persist large assets to IndexedDB
@@ -1434,25 +1456,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
-    if (launcherWidgetImage !== undefined) {
-        if (launcherWidgetImage && launcherWidgetImage.startsWith('data:')) {
-            await DB.saveAsset('launcherWidgetImage', launcherWidgetImage);
-        } else {
-            await DB.deleteAsset('launcherWidgetImage');
-        }
-    }
+    // Legacy single-image asset is permanently banned — always delete, never save.
+    await DB.deleteAsset('launcherWidgetImage');
 
     // Save widget images to IndexedDB (each slot is a separate asset)
     if (launcherWidgets !== undefined) {
-        const slots = ['tl', 'tr', 'wide', 'bl', 'br', 'dsq'];
+        const slots = ['tl', 'tr', 'wide', 'dsq'];
         for (const slot of slots) {
-            const val = launcherWidgets[slot];
+            const val = sanitizedWidgets?.[slot];
             if (val && val.startsWith('data:')) {
                 await DB.saveAsset(`widget_${slot}`, val);
             } else if (!val) {
                 await DB.deleteAsset(`widget_${slot}`);
             }
         }
+        // Always purge deprecated slot assets so old data can never resurface.
+        await DB.deleteAsset('widget_bl');
+        await DB.deleteAsset('widget_br');
     }
 
     // Save desktop decoration images to IndexedDB
@@ -1493,11 +1513,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     // Save lightweight settings to LocalStorage (strip data URIs)
     const lsTheme = { ...newTheme };
     if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
-    if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = '';
-    // Strip data URIs from widget slots for LS
+    // Banned legacy field — never persist.
+    lsTheme.launcherWidgetImage = undefined;
+    // Strip data URIs and deprecated slots from widgets for LS
     if (lsTheme.launcherWidgets) {
         const cleanWidgets: Record<string, string> = {};
         for (const [k, v] of Object.entries(lsTheme.launcherWidgets)) {
+            if (k === 'bl' || k === 'br') continue;
             cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
         }
         lsTheme.launcherWidgets = cleanWidgets;
@@ -1793,15 +1815,25 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const applyAppearancePreset = async (id: string) => {
       const preset = appearancePresets.find(p => p.id === id);
       if (!preset) return;
+      // Strip banned legacy widget data from preset before applying — old beautification packs
+      // may still carry launcherWidgetImage / bl / br, and they must never reach the UI.
+      const sanitizedPresetTheme: any = { ...preset.theme, launcherWidgetImage: undefined };
+      if (sanitizedPresetTheme.launcherWidgets) {
+          const w = { ...sanitizedPresetTheme.launcherWidgets } as Record<string, string>;
+          delete w['bl'];
+          delete w['br'];
+          sanitizedPresetTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
+      }
       // Apply theme
-      setTheme(preset.theme);
+      setTheme(sanitizedPresetTheme);
       // 写 LS 前必须剥 data URI，否则 base64 壁纸会撑爆 5MB quota
-      const lsTheme: any = { ...preset.theme };
+      const lsTheme: any = { ...sanitizedPresetTheme };
       if (lsTheme.wallpaper && typeof lsTheme.wallpaper === 'string' && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
-      if (lsTheme.launcherWidgetImage && typeof lsTheme.launcherWidgetImage === 'string' && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = '';
+      lsTheme.launcherWidgetImage = undefined;
       if (lsTheme.launcherWidgets) {
           const cleanWidgets: Record<string, string> = {};
           for (const [k, v] of Object.entries(lsTheme.launcherWidgets as Record<string, string>)) {
+              if (k === 'bl' || k === 'br') continue;
               cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
           }
           lsTheme.launcherWidgets = cleanWidgets;

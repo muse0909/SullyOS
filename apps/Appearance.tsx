@@ -943,28 +943,6 @@ const Appearance: React.FC = () => {
                             );
                         })()}
                     </div>
-                    {/* Legacy bl/br cleanup for old users */}
-                    {((theme.launcherWidgets || {})['bl'] || (theme.launcherWidgets || {})['br'] || theme.launcherWidgetImage) && (
-                        <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
-                            <div className="flex items-center gap-2 mb-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-amber-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
-                                <span className="text-[10px] font-bold text-amber-600">检测到旧版小组件数据</span>
-                            </div>
-                            <p className="text-[10px] text-amber-500 mb-2">旧版底部小组件已升级为自由装饰系统，点击清除旧数据释放空间。</p>
-                            <button onClick={() => {
-                                const current = { ...(theme.launcherWidgets || {}) };
-                                delete current['bl'];
-                                delete current['br'];
-                                updateTheme({
-                                    launcherWidgets: Object.keys(current).length > 0 ? current : undefined,
-                                    launcherWidgetImage: undefined
-                                });
-                                addToast('旧版数据已清除', 'success');
-                            }} className="w-full py-1.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded-lg active:scale-95 transition-transform">
-                                清除旧版小组件数据
-                            </button>
-                        </div>
-                    )}
                 </section>
 
                 {/* Desktop Decoration DIY Section */}

@@ -582,7 +582,6 @@ const Launcher: React.FC = () => {
                           {idx === 2 && (() => {
                             const raw = theme.launcherWidgets || {};
                             const w = { ...raw };
-                            if (!w['wide'] && theme.launcherWidgetImage) w['wide'] = theme.launcherWidgetImage;
                             const hasAny = w['tl'] || w['tr'] || w['wide'];
                             const hasTopRow = w['tl'] || w['tr'];
                             return (

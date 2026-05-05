@@ -72,8 +72,8 @@ export interface OSTheme {
   wallpaper: string;
   darkMode: boolean;
   contentColor?: string;
-  launcherWidgetImage?: string; // kept for backward compat, migrated to launcherWidgets['wide']
-  launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide'
+  launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
+  launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide' | 'dsq' (legacy 'bl' / 'br' are banned)
   desktopDecorations?: DesktopDecoration[];
   customFont?: string;
   hideStatusBar?: boolean;

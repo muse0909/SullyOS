@@ -1342,6 +1342,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
     const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
     const finalModel = useVision ? api.visionModel : api.model;
+    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
+    // --- 调试监控：发图时如果还是走聊天通道，它会弹窗提醒 ---
+    if (isVision && !useVision) {
+      alert(`侦测到图片，但跳转失败！原因：${!api.visionApiKey ? '识图Key为空 ' : ''}${!api.visionBaseUrl ? '识图URL为空' : ''}`);
+    }
+
 
     // 3. 构造消息列表
     let finalMessages = [];

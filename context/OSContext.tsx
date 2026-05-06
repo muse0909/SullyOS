@@ -1353,8 +1353,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     let finalMessages = [];
     if (isVision) {
       // 识图时：发给识图模型，加入指令，保留图片
-      finalMessages = [
-        { role: 'system', content: '【视觉分析指令】用户发送了图片。请你作为视觉专家，详细描述图片内容，包括具体的细节、氛围、文字以及特征，请尽可能详尽地回答。' },
+            finalMessages = [
+        { 
+          role: 'system', 
+          content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
+1. 【整体概览】：用一句话描述图片的主题和构图。
+2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
+3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
+4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
+5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
+请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。` 
+        },
         ...fullMessages
       ];
     } else {
@@ -1378,7 +1388,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       body: JSON.stringify({ 
         model: finalModel, 
         messages: finalMessages, // 核心：使用处理后的消息
-        temperature: 0.8, 
+        temperature: 0.4, 
         stream: false 
       })
     });

@@ -242,6 +242,7 @@ const Settings: React.FC = () => {
   
   const [statusMsg, setStatusMsg] = useState('');
   const [testingApi, setTestingApi] = useState(false);
+  const [visionStatusMsg, setVisionStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -299,16 +300,17 @@ const Settings: React.FC = () => {
     setTimeout(() => setStatusMsg(''), 2000);
   };
 
-      const handleSaveVisionApi = () => {
+     const handleSaveVisionApi = () => {
     updateApiConfig({
-      ...apiConfig, // 这一行很重要，保证不改动其他已有的设置
+      ...apiConfig,
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
     });
-    setStatusMsg('识图配置已保存');
-    setTimeout(() => setStatusMsg(''), 2000);
+    setVisionStatusMsg('识图配置已保存'); 
+    setTimeout(() => setVisionStatusMsg(''), 2000); 
   };
+
 
   const handleSaveOtherApis = () => {
     updateApiConfig({
@@ -1088,11 +1090,11 @@ const Settings: React.FC = () => {
                     <input type="text" value={localVisionModel} onChange={(e) => setLocalVisionModel(e.target.value)} placeholder="例如: gemini-1.5-flash" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                 </div>
                 
-                  <button 
-    onClick={handleSaveVisionApi}  
-    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2"
+                 <button 
+    onClick={handleSaveVisionApi}
+    className="..."
 >
-    {statusMsg || '保存识图配置'}
+    {visionStatusMsg || '保存识图配置'}  {/* <--- 确保这里用的是新名字 */}
 </button>
 
                 <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>

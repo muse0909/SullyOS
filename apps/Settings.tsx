@@ -34,6 +34,9 @@ const Settings: React.FC = () => {
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
+  const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
+  const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
+  const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
   const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85

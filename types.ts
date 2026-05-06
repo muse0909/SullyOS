@@ -145,6 +145,9 @@ export interface APIConfig {
   // Replicate token (r8_xxx) for ACE-Step song generation in 写歌 App.
   aceStepApiKey?: string;
   model: string;
+  visionBaseUrl?: string;
+  visionApiKey?: string;
+  visionModel?: string;
   // Per-API streaming toggle. Some endpoints only support stream:true.
   // Missing → false (默认非流式).
   stream?: boolean;

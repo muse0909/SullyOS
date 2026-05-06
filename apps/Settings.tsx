@@ -1089,7 +1089,7 @@ const Settings: React.FC = () => {
                 </div>
                 
                                 <button 
-                    onClick={handleSaveApi} 
+                    onClick={handleSaveVisionApi} 
                     className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2"
                 >
                     {statusMsg || '保存识图配置'}

@@ -1330,13 +1330,54 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-              // 4. API call
-              const baseUrl = api.baseUrl.replace(/\/+$/, '');
-              const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` };
-              const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                  method: 'POST', headers,
-                  body: JSON.stringify({ model: api.model, messages: fullMessages, temperature: 0.85, stream: false })
-              });
+                  // --- 识图补丁开始 ---
+    // 1. 侦测当前是否包含图片
+    const isVision = fullMessages.some(m => {
+      const contentString = JSON.stringify(m.content);
+      return contentString.includes('image_url') || contentString.includes('base64');
+    });
+
+    // 2. 确定本次请求的配置（优先使用你填写的独立识图配置）
+    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
+    const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
+    const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
+    const finalModel = useVision ? api.visionModel : api.model;
+
+    // 3. 构造最终发送的消息列表
+    let finalMessages = [];
+    if (isVision) {
+      // 【情况 A：识图任务】加入详细描述指令
+      finalMessages = [
+        { role: 'system', content: '【视觉分析指令】用户发送了图片。请你作为视觉专家，详细描述图片内容，包括具体的细节、氛围、文字以及特征，请尽可能详尽地回答。' },
+        ...fullMessages
+      ];
+    } else {
+      // 【情况 B：普通聊天】清洗历史记录中的图片数据，防止 GLM 等模型报错
+      finalMessages = fullMessages.map(m => {
+        if (Array.isArray(m.content)) {
+          const textParts = m.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+          return { ...m, content: textParts ? `[图片] ${textParts}` : '[图片]' };
+        }
+        return m;
+      });
+    }
+
+    // 4. 正式发送请求
+    const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${finalApiKey}` 
+      },
+      body: JSON.stringify({ 
+        model: finalModel, 
+        messages: finalMessages, 
+        temperature: 0.8, 
+        stream: false 
+      })
+    });
+    // --- 识图补丁结束 ---
+
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

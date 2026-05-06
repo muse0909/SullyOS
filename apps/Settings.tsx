@@ -291,6 +291,9 @@ const Settings: React.FC = () => {
       apiKey: localKey,
       baseUrl: localUrl,
       model: localModel,
+      visionBaseUrl: localVisionUrl,
+      visionApiKey: localVisionKey,
+      visionModel: localVisionModel,
       stream: localStream,
       temperature: localTemperature,
     });

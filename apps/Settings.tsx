@@ -286,18 +286,27 @@ const Settings: React.FC = () => {
       addToast('预设已保存', 'success');
   };
 
-  const handleSaveApi = () => {
+    const handleSaveApi = () => {
     updateApiConfig({
+      ...apiConfig, // 加上这一行：保护识图等其他设置不被覆盖
       apiKey: localKey,
       baseUrl: localUrl,
       model: localModel,
-      visionBaseUrl: localVisionUrl,
-      visionApiKey: localVisionKey,
-      visionModel: localVisionModel,
       stream: localStream,
       temperature: localTemperature,
     });
     setStatusMsg('配置已保存');
+    setTimeout(() => setStatusMsg(''), 2000);
+  };
+
+      const handleSaveVisionApi = () => {
+    updateApiConfig({
+      ...apiConfig, // 这一行很重要，保证不改动其他已有的设置
+      visionBaseUrl: localVisionUrl,
+      visionApiKey: localVisionKey,
+      visionModel: localVisionModel,
+    });
+    setStatusMsg('识图配置已保存');
     setTimeout(() => setStatusMsg(''), 2000);
   };
 

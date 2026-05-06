@@ -1337,17 +1337,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return contentString.includes('image_url') || contentString.includes('base64');
     });
 
-    // 2. 确定配置
-    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
+        // 2. 确定本次请求的配置
+    const useVision = isVision && !!api.visionApiKey && !!api.visionBaseUrl; // 确保这里只定义一次
+
+    // --- 调试监控：如果跳转失败，它会弹窗告诉你原因 ---
+    if (isVision && !useVision) {
+      alert(`侦测到图片，但跳转失败！\nKey是否存在: ${!!api.visionApiKey}\nURL是否存在: ${!!api.visionBaseUrl}`);
+    }
+
     const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
     const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
     const finalModel = useVision ? api.visionModel : api.model;
-    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
-    // --- 调试监控：发图时如果还是走聊天通道，它会弹窗提醒 ---
-    if (isVision && !useVision) {
-      alert(`侦测到图片，但跳转失败！原因：${!api.visionApiKey ? '识图Key为空 ' : ''}${!api.visionBaseUrl ? '识图URL为空' : ''}`);
-    }
-
 
     // 3. 构造消息列表
     let finalMessages = [];

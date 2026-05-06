@@ -1048,6 +1048,41 @@ const Settings: React.FC = () => {
             </div>
         </section>
 
+                  {/* 识图专用 API 区域 - 独立补丁 */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+            <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-blue-100/50 rounded-xl text-blue-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    </svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">
+                当检测到图片时，系统将自动切换到此通道。支持 Gemini / GPT-4o / Claude 3.5 等。
+            </p>
+
+            <div className="space-y-4">
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型 URL</label>
+                    <input type="text" value={localVisionUrl} onChange={(e) => setLocalVisionUrl(e.target.value)} placeholder="例如: https://api.openai.com/v1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型 Key</label>
+                    <input type="password" value={localVisionKey} onChange={(e) => setLocalVisionKey(e.target.value)} placeholder="填入该地址对应的 API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型名字 (Model)</label>
+                    <input type="text" value={localVisionModel} onChange={(e) => setLocalVisionModel(e.target.value)} placeholder="例如: gemini-1.5-flash" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+                
+                <p className="text-[10px] text-center text-slate-300 italic">提示：修改后请点击上方的「保存配置」按钮生效</p>
+            </div>
+        </section>
+
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">

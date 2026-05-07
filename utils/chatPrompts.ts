@@ -712,18 +712,18 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 
                 if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
-                              if (m.type === 'image') {
+              if (m.type === 'image') {
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
                      let textPart = hasImageData
                          ? `${timeStr} [User sent an image]`
                          : `${timeStr} [User sent an image, but the image data is no longer available]`;
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                     
-                     // 始终返回纯文本，不把图片数据塞进 messages
-                     return { role: m.role, content: textPart };
+                     if (!hasImageData) {
+                         return { role: m.role, content: textPart };
+                     }
+                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }
 
-                
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
                 if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 

@@ -1330,71 +1330,131 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-            // --- 识图补丁（完整修复版：含历史清洗逻辑） ---
-    // 1. 侦测当前是否包含图片
-    const isVision = fullMessages.some(m => {
-      const contentString = JSON.stringify(m.content);
-      return contentString.includes('image_url') || contentString.includes('base64');
-    });
+             // --- 【图片/聊天分流修复版：防 GLM 400 + 当前消息识图 + 深度识图指令】 ---
 
-        // 2. 确定本次请求的配置
-    const useVision = isVision && !!api.visionApiKey && !!api.visionBaseUrl; // 确保这里只定义一次
+    // 把复杂 content 转成纯文字
+    const normalizeText = (content: any) => {
+      if (typeof content === 'string') return content;
 
-    // --- 调试监控：如果跳转失败，它会弹窗告诉你原因 ---
-    if (isVision && !useVision) {
-      alert(`侦测到图片，但跳转失败！\nKey是否存在: ${!!api.visionApiKey}\nURL是否存在: ${!!api.visionBaseUrl}`);
-    }
+      if (Array.isArray(content)) {
+        return content
+          .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+          .map((part: any) => part.text)
+          .join('\n')
+          .trim();
+      }
 
-    const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
-    const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
-    const finalModel = useVision ? api.visionModel : api.model;
+      return '';
+    };
+
+    // 只检查“当前最新一条用户消息”，不要扫描全部历史
+    const lastUserMessage = [...fullMessages]
+      .reverse()
+      .find((m: any) => m.role === 'user');
+
+    const isVision = !!lastUserMessage && (
+      typeof lastUserMessage.content === 'string'
+        ? (
+            lastUserMessage.content.includes('data:image') ||
+            lastUserMessage.content.includes('image_url') ||
+            lastUserMessage.content.includes('base64')
+          )
+        : Array.isArray(lastUserMessage.content) &&
+          lastUserMessage.content.some((part: any) => {
+            return (
+              part?.type === 'image_url' ||
+              part?.type === 'image' ||
+              !!part?.image_url ||
+              !!part?.image
+            );
+          })
+    );
+
+    // 只有“当前这次发了图”并且“配置了识图 API”，才走识图模型
+    const useVision = isVision && !!api.visionApiKey && !!api.visionBaseUrl && !!api.visionModel;
+
+    const finalBaseUrl = useVision
+      ? api.visionBaseUrl.replace(/\/+$/, '')
+      : api.baseUrl.replace(/\/+$/, '');
+
+    const finalApiKey = useVision
+      ? api.visionApiKey
+      : (api.apiKey || 'sk-none');
+
+    const finalModel = useVision
+      ? api.visionModel
+      : api.model;
 
     // 3. 构造消息列表
-    let finalMessages = [];
-    if (isVision) {
-      // 识图时：发给识图模型，加入指令，保留图片
-            finalMessages = [
-        { 
-          role: 'system', 
+    let finalMessages: any[] = [];
+
+    if (useVision) {
+      // 识图时：发给识图模型，加入详细指令，保留图片
+      finalMessages = [
+        {
+          role: 'system',
           content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
 请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
+
 1. 【整体概览】：用一句话描述图片的主题和构图。
-2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
-3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
-4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
+2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
+3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节，例如光影、纹理、微小物件、空间关系、遮挡关系。
+4. 【文字提取】：如果图片中有任何文字，包括招牌、手写字、标签、屏幕文字、包装文字，请完整准确地提取出来。
 5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
-请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。` 
+
+请注意：
+- 不要敷衍，尽可能多地输出细节。
+- 如果你不确定某个细节，请描述它的可见特征，而不是强行猜测。
+- 如果图片中存在人物，请描述可见的服饰、姿态、动作、表情和场景关系。
+- 如果图片像截图，请优先识别界面结构、按钮、文字、状态提示和可能的问题。`
         },
         ...fullMessages
       ];
     } else {
-      // 聊天时：发给普通模型，清洗历史记录，防止 400 错误
-      finalMessages = fullMessages.map(m => {
-        if (Array.isArray(m.content)) {
-          const textParts = m.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
-          return { ...m, content: textParts ? `[图片] ${textParts}` : '[图片]' };
-        }
-        return m;
-      });
+      // 聊天时：发给普通 GLM 模型
+      // 关键：清洗所有历史图片内容，防止 GLM 收到 image_url/base64 后报 400
+      finalMessages = fullMessages
+        .map((m: any) => {
+          // 普通字符串消息直接保留
+          if (typeof m.content === 'string') {
+            return m;
+          }
+
+          // 多模态数组消息：只保留文字，彻底删除图片块
+          if (Array.isArray(m.content)) {
+            const text = normalizeText(m.content);
+
+            return {
+              ...m,
+              content: text || '[用户曾发送过一张图片，但当前普通聊天模型无法直接读取图片内容。]'
+            };
+          }
+
+          return {
+            ...m,
+            content: ''
+          };
+        })
+        .filter((m: any) => {
+          return m && typeof m.content === 'string' && m.content.trim() !== '';
+        });
     }
 
-    // 4. 正式发送请求
     const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${finalApiKey}` 
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${finalApiKey}`
       },
-      body: JSON.stringify({ 
-        model: finalModel, 
-        messages: finalMessages, // 核心：使用处理后的消息
-        temperature: 0.4, 
-        stream: false 
+      body: JSON.stringify({
+        model: finalModel,
+        messages: finalMessages,
+        temperature: 0.5,
+        stream: false
       })
     });
-    // --- 补丁结束 ---
 
-
+    // --- 【图片/聊天分流修复版结束】 ---
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

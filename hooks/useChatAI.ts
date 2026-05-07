@@ -704,14 +704,24 @@ export const useChatAI = ({
             const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
+        
             const cleanedApiMessages = apiMessages.map((msg: any) => {
-                if (typeof msg.content !== 'string') return msg;
-                let c = msg.content;
-                // Strip old %%BILINGUAL%% format
-                if (c.toLowerCase().includes('%%bilingual%%')) {
-                    const idx = c.toLowerCase().indexOf('%%bilingual%%');
-                    c = c.substring(0, idx).trim();
-                }
+            // 如果 content 是数组（包含图片），提取纯文字部分，丢弃图片数据
+            if (Array.isArray(msg.content)) {
+                const textParts = msg.content
+                    .filter((c: any) => c.type === 'text')
+                    .map((c: any) => c.text)
+                    .join('\n');
+                return { role: msg.role, content: textParts || '[图片]' };
+            }
+            if (typeof msg.content !== 'string') return msg;
+            let c = msg.content;
+            // Strip old %%BILINGUAL%% format
+            if (c.toLowerCase().includes('%%bilingual%%')) {
+                const idx = c.toLowerCase().indexOf('%%bilingual%%');
+                c = c.substring(0, idx).trim();
+            }
+
                 // Strip new XML tag format: keep only <原文> content
                 if (c.includes('<翻译>')) {
                     c = c.replace(/<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g, '$1').trim();

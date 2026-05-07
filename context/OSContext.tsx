@@ -1343,14 +1343,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const finalModel = useVision ? api.visionModel : api.model;
 
     // 3. 构造最终发送的消息列表
-    let finalMessages = [];
+let finalMessages = [];
 
-    if (isVision) {
-      // 【情况 A：识图任务】使用独立识图模型，并加入详细描述指令
-      finalMessages = [
-        { 
-          role: 'system', 
-           content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+// 关键改动：这里判断的是 useVision（是否真的在调用识图接口），而不是 isVision（是否有图片）
+if (useVision) {
+  // 【情况 A：真正调用识图模型时（如 Gemini）】发送带图片的完整消息
+  finalMessages = [
+    { 
+      role: 'system', 
+     content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
 请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
 1. 【整体概览】：用一句话描述图片的主题和构图。
 2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
@@ -1359,21 +1360,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
 请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。`
         },
-        ...fullMessages
-      ];
-    } else {
-      // 【情况 B：普通聊天】使用通用聊天模型，清洗掉历史记录里的图片数据防止报错
-      finalMessages = fullMessages.map(m => {
-        if (Array.isArray(m.content)) {
-          const textParts = m.content
-            .filter(c => c.type === 'text')
-            .map(c => c.text)
-            .join('\n');
-          return { ...m, content: textParts ? `[图片] ${textParts}` : '[图片]' };
-        }
-        return m;
-      });
+    ...fullMessages
+  ];
+} else {
+  // 【情况 B：调用普通聊天模型时（如 DeepSeek/GLM）】
+  // 无论历史记录里有没有图片，全部清洗成纯文字，确保不报错
+  finalMessages = fullMessages.map(m => {
+    // 如果 content 是数组（通常包含图片），则只提取文字部分
+    if (Array.isArray(m.content)) {
+      const textParts = m.content
+        .filter(c => c.type === 'text')
+        .map(c => c.text)
+        .join('\n');
+      return { ...m, content: textParts ? `[图片内容] ${textParts}` : '[图片]' };
     }
+    // 如果 content 已经是字符串，但里面可能藏着 base64（某些特殊的实现）
+    if (typeof m.content === 'string' && m.content.includes('data:image')) {
+        return { ...m, content: '[图片]' };
+    }
+    return m;
+  });
+}
+
 
     // 4. 正式发送请求
     const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {

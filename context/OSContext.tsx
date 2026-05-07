@@ -1330,10 +1330,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-                    // 1. 侦测当前是否包含图片
+                       // 1. 侦测当前是否包含图片
     const isVision = fullMessages.some(m => {
-      const contentString = JSON.stringify(m.content);
-      return contentString.includes('image_url') || contentString.includes('base64');
+      if (Array.isArray(m.content)) {
+        return m.content.some((c: any) => c.type === 'image_url');
+      }
+      return false;
     });
 
     // 2. 确定本次请求的配置（优先使用你填写的独立识图配置）
@@ -1342,11 +1344,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
     const finalModel = useVision ? api.visionModel : api.model;
 
-        // 3. 构造最终发送的消息列表
+    // 3. 构造最终发送的消息列表
     let finalMessages = [];
 
     if (useVision) {
-      // 【情况 A：识图任务】使用独立识图模型（Gemini），保持原样（包含图片数据）
+      // 【情况 A：识图任务】使用独立识图模型（如 Gemini），保留图片数据
       finalMessages = [
         { 
           role: 'system', 
@@ -1362,52 +1364,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         ...fullMessages
       ];
     } else {
-      // 【情况 B：普通聊天】强制把所有内容转为纯字符串，彻底抹除图片痕迹
+      // 【情况 B：普通聊天】强制清洗所有图片数据，确保 DeepSeek/GLM 不报错
       finalMessages = fullMessages.map(m => {
-        let cleanContent = '';
-
-        if (typeof m.content === 'string') {
-          // 如果已经是字符串，直接用
-          cleanContent = m.content;
-        } else if (Array.isArray(m.content)) {
-          // 如果是数组，只把里面的 text 提取出来拼在一起
-          cleanContent = m.content
-            .filter(c => c.type === 'text')
-            .map(c => c.text)
+        // 如果 content 是数组（包含图片），只提取文字部分
+        if (Array.isArray(m.content)) {
+          const textParts = m.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
             .join('\n');
-        } else {
-          // 如果是其他奇奇怪怪的对象格式，强行转成字符串，如果转不了就给个空
-          cleanContent = String(m.content || '');
+          return { role: m.role, content: textParts || '[图片]' };
         }
-
-        // 最后一道防线：如果字符串里还藏着 base64 图片，直接替换掉
-        if (cleanContent.includes('data:image') || cleanContent.includes('base64')) {
-          cleanContent = '[图片内容]';
+        // 如果 content 是字符串但包含 base64 图片数据，替换掉
+        if (typeof m.content === 'string' && (m.content.includes('data:image') || m.content.includes('base64,'))) {
+          return { role: m.role, content: '[图片]' };
         }
-
-        return {
-          role: m.role,
-          content: cleanContent || '[消息]' // 确保 content 绝对是一个字符串
-        };
+        return m;
       });
     }
-
-
-    // 4. 正式发送请求
-    const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${finalApiKey}` 
-      },
-      body: JSON.stringify({ 
-        model: finalModel, 
-        messages: finalMessages, 
-        temperature: 0.8, 
-        stream: false 
-      })
-    });
-
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

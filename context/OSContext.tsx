@@ -1330,48 +1330,27 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-                 // --- 【暮色 OS 强力分流补丁 V3：彻底解决 400 + 识图不触发】 ---
+                    // 1. 侦测当前是否包含图片
+    const isVision = fullMessages.some(m => {
+      const contentString = JSON.stringify(m.content);
+      return contentString.includes('image_url') || contentString.includes('base64');
+    });
 
-    // 1. 强力清洗：确保任何内容都变成纯字符串，不给 GLM 报错的机会
-    const cleanToPureString = (content: any) => {
-      if (typeof content === 'string') {
-        // 如果字符串里包含 base64 这种超长图片数据，直接切断
-        if (content.length > 1000 || content.includes('data:image')) {
-          return '[图片数据]';
-        }
-        return content;
-      }
-      if (Array.isArray(content)) {
-        return content
-          .filter((p: any) => p.type === 'text')
-          .map((p: any) => p.text)
-          .join('\n');
-      }
-      return '[内容]';
-    };
-
-    // 2. 判定当前最新一条消息是不是图片
-    const lastMsg = fullMessages[fullMessages.length - 1];
-    const lastMsgContent = JSON.stringify(lastMsg?.content || '');
-    
-    // 只要最新消息里包含 image 或 base64，就判定为识图请求
-    const isCurrentRequestVision = lastMsgContent.includes('image') || lastMsgContent.includes('data:image');
-
-    // 3. 只有“当前是图”且“配置齐全”才走视觉模型
-    const useVision = isCurrentRequestVision && !!api.visionApiKey && !!api.visionBaseUrl;
-
+    // 2. 确定本次请求的配置（优先使用你填写的独立识图配置）
+    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
     const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
     const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
     const finalModel = useVision ? api.visionModel : api.model;
 
-    let finalMessages: any[] = [];
+    // 3. 构造最终发送的消息列表
+    let finalMessages = [];
 
-    if (useVision) {
-      // 【识图模式】：加入深度指令，保留原始图片数据
+    if (isVision) {
+      // 【情况 A：识图任务】使用独立识图模型，并加入详细描述指令
       finalMessages = [
-        {
-          role: 'system',
-          content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+        { 
+          role: 'system', 
+           content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
 请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
 1. 【整体概览】：用一句话描述图片的主题和构图。
 2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
@@ -1383,30 +1362,34 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         ...fullMessages
       ];
     } else {
-      // 【普通聊天模式】：强制把所有历史消息的 content 变成纯字符串
-      // 这样 GLM 永远不会看到多模态数组，永远不会报 400
-      finalMessages = fullMessages.map((m: any) => ({
-        ...m,
-        content: cleanToPureString(m.content)
-      }));
+      // 【情况 B：普通聊天】使用通用聊天模型，清洗掉历史记录里的图片数据防止报错
+      finalMessages = fullMessages.map(m => {
+        if (Array.isArray(m.content)) {
+          const textParts = m.content
+            .filter(c => c.type === 'text')
+            .map(c => c.text)
+            .join('\n');
+          return { ...m, content: textParts ? `[图片] ${textParts}` : '[图片]' };
+        }
+        return m;
+      });
     }
 
-    // 4. 正式请求
+    // 4. 正式发送请求
     const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${finalApiKey}`
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${finalApiKey}` 
       },
-      body: JSON.stringify({
-        model: finalModel,
-        messages: finalMessages,
-        temperature: 0.5,
-        stream: false
+      body: JSON.stringify({ 
+        model: finalModel, 
+        messages: finalMessages, 
+        temperature: 0.8, 
+        stream: false 
       })
     });
 
-    // --- 【补丁 V3 结束】 ---
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

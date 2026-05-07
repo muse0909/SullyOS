@@ -797,6 +797,61 @@ export const useChatAI = ({
             // 温度 / 流式：优先读 effectiveApi（用户在设置里保存的值或预设值），
             // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
             // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
+            // --- 【识图补丁】检测原始消息中是否有图片，先用 Gemini 识图 ---
+        const hasImage = apiMessages.some((msg: any) => 
+          Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
+        );
+        
+        if (hasImage && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
+          try {
+            // 找到最后一条包含图片的消息
+            const lastImageMsg = [...apiMessages].reverse().find((msg: any) => 
+              Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
+            );
+            
+            if (lastImageMsg) {
+              const visionMessages = [
+                { role: 'system', content: '你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+                                            请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
+                                            1. 【整体概览】：用一句话描述图片的主题和构图。
+                                            2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
+                                            3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
+                                            4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
+                                            5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
+                                            请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。' },
+                { role: 'user', content: lastImageMsg.content }
+              ];
+              
+              const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
+              const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.visionApiKey}` },
+                body: JSON.stringify({ model: effectiveApi.visionModel || 'gemini-1.5-flash', messages: visionMessages, temperature: 0.3, stream: false })
+              });
+              
+              const visionDesc = visionData?.choices?.[0]?.message?.content;
+              if (visionDesc) {
+                // 把识图结果注入到 fullMessages 最后一条用户消息中
+                const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
+                if (lastUserIdx >= 0) {
+                  const original = typeof fullMessages[lastUserIdx].content === 'string' ? fullMessages[lastUserIdx].content : '[图片]';
+                  fullMessages[lastUserIdx] = { role: 'user', content: `${original}\n\n[图片识别结果]: ${visionDesc}` };
+                }
+                console.log('🔍 识图成功，描述已注入');
+              }
+            }
+                    } catch (e) {
+            console.warn('识图失败:', e);
+            // 把失败信息也注入，让 char 知道有图但识别失败
+            const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
+            if (lastUserIdx >= 0) {
+              const original = typeof fullMessages[lastUserIdx].content === 'string' ? fullMessages[lastUserIdx].content : '[图片]';
+              fullMessages[lastUserIdx] = { role: 'user', content: `${original}\n\n用户发送了一张图片，但识图服务暂时不可用，请告知用户没看到图片]` };
+            }
+          }
+
+        // --- 【识图补丁结束】 ---
+
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;

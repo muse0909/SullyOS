@@ -1330,47 +1330,44 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-              // --- 【强力分流补丁：彻底解决 GLM 400 + 深度识图指令】 ---
+                 // --- 【暮色 OS 强力分流补丁 V3：彻底解决 400 + 识图不触发】 ---
 
-    // 1. 彻底清洗函数：把任何格式的消息都变成纯文字字符串
-    const forceCleanToText = (content: any) => {
-      if (typeof content === 'string') return content;
+    // 1. 强力清洗：确保任何内容都变成纯字符串，不给 GLM 报错的机会
+    const cleanToPureString = (content: any) => {
+      if (typeof content === 'string') {
+        // 如果字符串里包含 base64 这种超长图片数据，直接切断
+        if (content.length > 1000 || content.includes('data:image')) {
+          return '[图片数据]';
+        }
+        return content;
+      }
       if (Array.isArray(content)) {
         return content
           .filter((p: any) => p.type === 'text')
           .map((p: any) => p.text)
           .join('\n');
       }
-      if (typeof content === 'object' && content !== null) {
-        return content.text || '';
-      }
-      return '';
+      return '[内容]';
     };
 
-    // 2. 侦测当前是否有图片 (通过检查整个 fullMessages 的字符串内容)
-    const currentHistoryStr = JSON.stringify(fullMessages);
-    const hasImage = currentHistoryStr.includes('image_url') || currentHistoryStr.includes('data:image');
+    // 2. 判定当前最新一条消息是不是图片
+    const lastMsg = fullMessages[fullMessages.length - 1];
+    const lastMsgContent = JSON.stringify(lastMsg?.content || '');
+    
+    // 只要最新消息里包含 image 或 base64，就判定为识图请求
+    const isCurrentRequestVision = lastMsgContent.includes('image') || lastMsgContent.includes('data:image');
 
-    // 3. 只有“有图”且“配置了识图 API”才走视觉模型
-    const useVision = hasImage && !!api.visionApiKey && !!api.visionBaseUrl && !!api.visionModel;
+    // 3. 只有“当前是图”且“配置齐全”才走视觉模型
+    const useVision = isCurrentRequestVision && !!api.visionApiKey && !!api.visionBaseUrl;
 
-    const finalBaseUrl = useVision
-      ? api.visionBaseUrl.replace(/\/+$/, '')
-      : api.baseUrl.replace(/\/+$/, '');
+    const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
+    const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
+    const finalModel = useVision ? api.visionModel : api.model;
 
-    const finalApiKey = useVision
-      ? api.visionApiKey
-      : (api.apiKey || 'sk-none');
-
-    const finalModel = useVision
-      ? api.visionModel
-      : api.model;
-
-    // 4. 构造最终发送给 AI 的消息列表
     let finalMessages: any[] = [];
 
     if (useVision) {
-      // 【识图模式】：使用你要求的深度指令 + 原始消息（带图片）
+      // 【识图模式】：加入深度指令，保留原始图片数据
       finalMessages = [
         {
           role: 'system',
@@ -1386,15 +1383,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         ...fullMessages
       ];
     } else {
-      // 
-      // 
+      // 【普通聊天模式】：强制把所有历史消息的 content 变成纯字符串
+      // 这样 GLM 永远不会看到多模态数组，永远不会报 400
       finalMessages = fullMessages.map((m: any) => ({
         ...m,
-        content: forceCleanToText(m.content) || '[图片内容]'
-      })).filter((m: any) => m.content !== '');
+        content: cleanToPureString(m.content)
+      }));
     }
 
-    // 5. 正式发起请求 
+    // 4. 正式请求
     const data = await safeFetchJson(`${finalBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -1409,8 +1406,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       })
     });
 
-    // --- 【强力分流补丁结束】 ---
-
+    // --- 【补丁 V3 结束】 ---
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

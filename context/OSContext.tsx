@@ -1330,58 +1330,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-                       // 1. 侦测当前是否包含图片
-    const isVision = fullMessages.some(m => {
-      if (Array.isArray(m.content)) {
-        return m.content.some((c: any) => c.type === 'image_url');
-      }
-      return false;
-    });
-
-    // 2. 确定本次请求的配置（优先使用你填写的独立识图配置）
-    const useVision = isVision && api.visionApiKey && api.visionBaseUrl;
-    const finalBaseUrl = useVision ? api.visionBaseUrl.replace(/\/+$/, '') : api.baseUrl.replace(/\/+$/, '');
-    const finalApiKey = useVision ? api.visionApiKey : (api.apiKey || 'sk-none');
-    const finalModel = useVision ? api.visionModel : api.model;
-
-    // 3. 构造最终发送的消息列表
-    let finalMessages = [];
-
-    if (useVision) {
-      // 【情况 A：识图任务】使用独立识图模型（如 Gemini），保留图片数据
-      finalMessages = [
-        { 
-          role: 'system', 
-          content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
-请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
-1. 【整体概览】：用一句话描述图片的主题和构图。
-2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
-3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
-4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
-5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
-请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。`
-        },
-        ...fullMessages
-      ];
-    } else {
-      // 【情况 B：普通聊天】强制清洗所有图片数据，确保 DeepSeek/GLM 不报错
-      finalMessages = fullMessages.map(m => {
-        // 如果 content 是数组（包含图片），只提取文字部分
-        if (Array.isArray(m.content)) {
-          const textParts = m.content
-            .filter((c: any) => c.type === 'text')
-            .map((c: any) => c.text)
-            .join('\n');
-          return { role: m.role, content: textParts || '[图片]' };
-        }
-        // 如果 content 是字符串但包含 base64 图片数据，替换掉
-        if (typeof m.content === 'string' && (m.content.includes('data:image') || m.content.includes('base64,'))) {
-          return { role: m.role, content: '[图片]' };
-        }
-        return m;
-      });
-    }
-
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
               aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');

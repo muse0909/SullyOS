@@ -52,10 +52,9 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
       
       {!hideLabel && (
         <span
-            className={`${size === 'sm' ? 'text-[8.5px] tracking-wider' : 'text-[10px] tracking-widest'} font-bold uppercase opacity-80 text-shadow-md transition-opacity max-w-full truncate ${variant === 'dock' ? 'hidden' : 'block'}`}
-                style={{ 
+            style={{ 
     color: contentColor,
-    textShadow: '0 0 8px rgba(0,0,0,0.5), 0 0 16px rgba(0,0,0,0.25), 0 0 8px rgba(255,255,255,0.3), 0 0 16px rgba(255,255,255,0.15)' 
+    textShadow: '0 0 5px rgba(255,255,255,0.5), 0 0 10px rgba(255,255,255,0.3), 0 0 20px rgba(255,255,255,0.15)' 
 }}
         >
           {app.name}

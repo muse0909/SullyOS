@@ -54,7 +54,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
         <span
             style={{ 
     color: contentColor,
-    textShadow: '0 0 5px rgba(255,255,255,0.5), 0 0 10px rgba(255,255,255,0.3), 0 0 20px rgba(255,255,255,0.15)' 
+    textShadow: '0 0 10px rgba(255,255,255,0.5), 0 0 20px rgba(255,255,255,0.3), 0 0 40px rgba(255,255,255,0.15)' 
 }}
         >
           {app.name}

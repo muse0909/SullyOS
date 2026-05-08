@@ -91,7 +91,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.XhsStock, name: '小红书图库', icon: 'XhsStock', color: 'red' },          // 原时光契约位置
   { id: AppID.XhsFreeRoam, name: '自由活动', icon: 'XhsFreeRoam', color: 'rose' },     // 原世界书位置
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
-  { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },                // 原相册位置
+  { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },                  // 原小红书图库位置
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },                       // 原气泡工坊位置
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' },                     // 原外观位置
@@ -100,4 +100,5 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
 ];
 
-export const DOCK_APPS = [AppID.Call, AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];
+export const DOCK_APPS = [AppID.Call, AppID.Chat, AppID.GroupChat, AppID.Settings];
+

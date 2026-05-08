@@ -666,7 +666,7 @@ const Launcher: React.FC = () => {
 
       {/* Floating Dock - Updated Margin and Safe Area handling */}
       <div
-           className="mt-auto flex justify-center w-full px-4 relative z-30"
+           className="mt-auto flex justify-center w-full px-2 relative z-30"
            style={{ paddingBottom: launcherBottomInset }}
       >
           <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-3 py-3 flex gap-2 items-center mx-auto justify-center transform-gpu">

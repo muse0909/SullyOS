@@ -664,24 +664,25 @@ const Launcher: React.FC = () => {
           ))}
       </div>
 
-      {/* Floating Dock - Updated Margin and Safe Area handling */}
-      <div
-           className="mt-auto flex justify-center w-full px-2 relative z-30"
-           style={{ paddingBottom: launcherBottomInset }}
-      >
-          <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-3 py-3 flex gap-2 items-center mx-auto justify-center transform-gpu">
-               {dockAppsConfig.map(app => (
-                   <div key={app.id} className="relative">
-                        <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />
-                        {app.id === 'chat' && totalUnread > 0 && (
-                            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">
-                                {totalUnread > 9 ? '9+' : totalUnread}
-                            </div>
-                        )}
-                   </div>
-               ))}
-           </div>
-      </div>
+     {/* Floating Dock */}
+<div
+    className="mt-auto flex justify-center w-full px-2 relative z-30"
+    style={{ paddingBottom: launcherBottomInset }}
+>
+    <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-5 py-3 inline-flex gap-4 items-center transform-gpu">
+        {dockAppsConfig.map(app => (
+            <div key={app.id} className="relative">
+                 <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />
+                 {app.id === 'chat' && totalUnread > 0 && (
+                     <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">
+                         {totalUnread > 9 ? '9+' : totalUnread}
+                     </div>
+                 )}
+            </div>
+        ))}
+    </div>
+</div>
+
 
       <ScheduleFullscreenViewer
           open={scheduleViewerOpen}

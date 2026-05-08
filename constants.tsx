@@ -76,33 +76,28 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
   { id: AppID.Call, name: '电话', icon: 'Call', color: 'emerald' },
   { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' },
-  { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },
+  { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },         // 原电话位置
+  { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },            // 原小小窝位置
   { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' },
-  // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
-  { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
-  { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
-  { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
-  // { id: AppID.Handbook, name: '手账', icon: 'Handbook', color: 'fuchsia' }, // Hidden temporarily, pending update
-  { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
-  { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
+  { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },     // 原档案位置
+  { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },           // 原存钱罐位置
+  { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },                     // 原交换日记位置
+  { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },               // 原自习室位置
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
-  { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },
+  { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },            // 原笔友会位置
   { id: AppID.Songwriting, name: '写歌', icon: 'Songwriting', color: 'fuchsia' },
   { id: AppID.Music, name: '音乐', icon: 'Music', color: 'rose' },
-  { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
-  { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },
+  { id: AppID.XhsStock, name: '小红书图库', icon: 'XhsStock', color: 'red' },          // 原时光契约位置
+  { id: AppID.XhsFreeRoam, name: '自由活动', icon: 'XhsFreeRoam', color: 'rose' },     // 原世界书位置
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
-  { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
-  { id: AppID.XhsFreeRoam, name: '自由活动', icon: 'XhsFreeRoam', color: 'rose' },
-  { id: AppID.XhsStock, name: '小红书图库', icon: 'XhsStock', color: 'red' },
-  { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },
-  { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
-  { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
+  { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },                // 原相册位置
+  { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },                  // 原小红书图库位置
+  { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },                       // 原气泡工坊位置
+  { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' },                     // 原外观位置
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
-  // { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' }, // Hidden temporarily
 ];
 
-export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];
+export const DOCK_APPS = [AppID.Call, AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

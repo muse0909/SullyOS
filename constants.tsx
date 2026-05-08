@@ -98,6 +98,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
+  { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
 ];
 
 export const DOCK_APPS = [AppID.Call, AppID.Chat, AppID.GroupChat, AppID.Settings];

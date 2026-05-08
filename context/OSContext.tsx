@@ -1330,6 +1330,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
+            
+              // 4. Send request to AI
+              const reqBody = {
+                  model: api.model,
+                  messages: fullMessages,
+                  temperature: 0.8,
+                  max_tokens: 500,
+              };
+
+              const response = await fetch(`${api.baseUrl}/chat/completions`, {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${api.apiKey}`,
+                  },
+                  body: JSON.stringify(reqBody),
+              });
+
+              const data = await response.json();
+
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
               aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');

@@ -669,7 +669,7 @@ const Launcher: React.FC = () => {
            className="mt-auto flex justify-center w-full px-4 relative z-30"
            style={{ paddingBottom: launcherBottomInset }}
       >
-           <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu">
+          <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-3 py-3 flex gap-2 items-center mx-auto justify-center transform-gpu">
                {dockAppsConfig.map(app => (
                    <div key={app.id} className="relative">
                         <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />

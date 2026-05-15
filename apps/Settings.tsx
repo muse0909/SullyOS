@@ -1111,6 +1111,45 @@ const handleSaveImageApi = () => {
     {visionStatusMsg || '保存识图配置'}
 </button>
 
+                {/* 生图专用 API 区域 */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+            <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+                    </svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">
+                AI 需要画图时将调用此通道。支持 GPT Image / DALL·E 3 等图像生成模型。
+            </p>
+
+            <div className="space-y-4">
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型 URL</label>
+                    <input type="text" value={localImageUrl} onChange={(e) => setLocalImageUrl(e.target.value)} placeholder="例如: https://api.openai.com/v1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型 Key</label>
+                    <input type="password" value={localImageKey} onChange={(e) => setLocalImageKey(e.target.value)} placeholder="填入该地址对应的 API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型名字 (Model)</label>
+                    <input type="text" value={localImageModel} onChange={(e) => setLocalImageModel(e.target.value)} placeholder="例如: gpt-image-1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+                
+                <button 
+                    onClick={handleSaveImageApi}
+                    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-2"
+                >
+                    {imageStatusMsg || '保存生图配置'}
+                </button>
+            </div>
+        </section>
+
                 <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
 
             </div>

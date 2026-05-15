@@ -1063,7 +1063,8 @@ if (toolsList.length > 0) {
                         body: JSON.stringify(followBody),
                     });
                     updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
-
+             }
+            }
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({

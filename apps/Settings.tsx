@@ -1110,8 +1110,12 @@ const handleSaveImageApi = () => {
 >
     {visionStatusMsg || '保存识图配置'}
 </button>
+                <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
 
-                {/* 生图专用 API 区域 */}
+            </div>
+        </section>
+
+          {/* 生图专用 API 区域 */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center gap-2 mb-4">
                 <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
@@ -1147,11 +1151,6 @@ const handleSaveImageApi = () => {
                 >
                     {imageStatusMsg || '保存生图配置'}
                 </button>
-            </div>
-        </section>
-
-                <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
-
             </div>
         </section>
 

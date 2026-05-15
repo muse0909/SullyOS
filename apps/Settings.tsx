@@ -246,6 +246,7 @@ const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === tru
   const [statusMsg, setStatusMsg] = useState('');
   const [testingApi, setTestingApi] = useState(false);
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
+  const [imageStatusMsg, setImageStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -314,6 +315,16 @@ const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === tru
     setTimeout(() => setVisionStatusMsg(''), 2000); 
   };
 
+const handleSaveImageApi = () => {
+    updateApiConfig({
+      ...apiConfig,
+      imageBaseUrl: localImageUrl,
+      imageApiKey: localImageKey,
+      imageModel: localImageModel,
+    });
+    setImageStatusMsg('生图配置已保存');
+    setTimeout(() => setImageStatusMsg(''), 2000);
+  };
 
   const handleSaveOtherApis = () => {
     updateApiConfig({

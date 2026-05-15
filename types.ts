@@ -148,6 +148,9 @@ export interface APIConfig {
   visionBaseUrl?: string;
   visionApiKey?: string;
   visionModel?: string;
+  imageBaseUrl?: string;
+  imageApiKey?: string;
+  imageModel?: string;
   // Per-API streaming toggle. Some endpoints only support stream:true.
   // Missing → false (默认非流式).
   stream?: boolean;

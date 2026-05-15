@@ -1026,7 +1026,7 @@ if (toolsList.length > 0) {
                                     model: apiConfig.imageModel,
                                     prompt: imgPrompt,
                                     n: 1,
-                                    size: '1024x1024',
+                                    size: '1024x1536',
                                 }),
                             });
                             const imgData = await imgResponse.json();

@@ -1050,15 +1050,10 @@ if (toolsList.length > 0) {
                         }
                     }
 
-                    // 让模型继续生成文字回复（不带 tools）
+                                       // 让模型继续生成文字回复（简化方式，避免 tool 格式兼容问题）
                     const followMessages = [...fullMessages, {
                         role: 'assistant',
-                        content: data.choices[0].message.content || '',
-                        tool_calls: toolCalls,
-                    }, {
-                        role: 'tool',
-                        tool_call_id: imgCall.id,
-                        content: imgPrompt ? '图片已生成并发送给用户。' : '生图失败。',
+                        content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
                     }];
                     const followBody = { ...baseReqBody, messages: followMessages };
                     delete followBody.tools;
@@ -1068,8 +1063,7 @@ if (toolsList.length > 0) {
                         body: JSON.stringify(followBody),
                     });
                     updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
-                }
-            }
+
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({

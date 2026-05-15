@@ -22,6 +22,24 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
+// —— 生图工具定义 ——
+const IMAGE_GENERATION_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_image',
+    description: 'Generate an image based on a text prompt. Use this when the user asks you to draw/paint/generate an image, or when you want to share a visual (like a selfie, a scene, a photo you took, etc).',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'A detailed English prompt describing the image to generate. Be specific about style, composition, colors, and details.',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
+};
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -858,10 +876,19 @@ export const useChatAI = ({
             }
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
-            if (mcdMiniOpen) {
-                baseReqBody.tools = [MCD_PROPOSE_TOOL];
-                baseReqBody.tool_choice = 'auto';
-            }
+            // 组装 tools 列表
+const toolsList: any[] = [];
+if (mcdMiniOpen) {
+    toolsList.push(MCD_PROPOSE_TOOL);
+}
+if (apiConfig.imageBaseUrl && apiConfig.imageApiKey && apiConfig.imageModel) {
+    toolsList.push(IMAGE_GENERATION_TOOL);
+}
+if (toolsList.length > 0) {
+    baseReqBody.tools = toolsList;
+    baseReqBody.tool_choice = 'auto';
+}
+
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
                 body: JSON.stringify(baseReqBody)

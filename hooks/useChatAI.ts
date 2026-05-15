@@ -999,6 +999,78 @@ if (toolsList.length > 0) {
                 }
             }
 
+                      // 3.5 生图工具 generate_image 处理
+            if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+                const toolCalls = data.choices[0].message.tool_calls;
+                const imgCall = toolCalls.find((tc: any) => tc.function?.name === 'generate_image');
+                if (imgCall && apiConfig.imageBaseUrl && apiConfig.imageApiKey && apiConfig.imageModel) {
+                    let imgPrompt = '';
+                    try {
+                        const raw = imgCall.function?.arguments ?? imgCall.arguments;
+                        const args = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+                        imgPrompt = args.prompt || '';
+                    } catch (e) {
+                        console.warn('🎨 [ImageGen] prompt 解析失败:', e);
+                    }
+
+                    if (imgPrompt) {
+                        console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
+                        try {
+                            const imgResponse = await fetch(`${apiConfig.imageBaseUrl}/images/generations`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiConfig.imageApiKey}`,
+                                },
+                                body: JSON.stringify({
+                                    model: apiConfig.imageModel,
+                                    prompt: imgPrompt,
+                                    n: 1,
+                                    size: '1024x1024',
+                                }),
+                            });
+                            const imgData = await imgResponse.json();
+                            const imageUrl = imgData.data?.[0]?.url || '';
+
+                            if (imageUrl) {
+                                // 保存图片消息
+                                await DB.saveMessage({
+                                    charId: char.id,
+                                    role: 'assistant',
+                                    type: 'image',
+                                    content: imageUrl,
+                                });
+                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                                console.log('🎨 [ImageGen] 生图成功');
+                            } else {
+                                console.warn('🎨 [ImageGen] 生图返回为空:', imgData);
+                            }
+                        } catch (imgErr) {
+                            console.error('🎨 [ImageGen] 生图请求失败:', imgErr);
+                        }
+                    }
+
+                    // 让模型继续生成文字回复（不带 tools）
+                    const followMessages = [...fullMessages, {
+                        role: 'assistant',
+                        content: data.choices[0].message.content || '',
+                        tool_calls: toolCalls,
+                    }, {
+                        role: 'tool',
+                        tool_call_id: imgCall.id,
+                        content: imgPrompt ? '图片已生成并发送给用户。' : '生图失败。',
+                    }];
+                    const followBody = { ...baseReqBody, messages: followMessages };
+                    delete followBody.tools;
+                    delete followBody.tool_choice;
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(followBody),
+                    });
+                    updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
+                }
+            }
+
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({
                 finish_reason: data.choices?.[0]?.finish_reason,

@@ -815,15 +815,16 @@ export const useChatAI = ({
             // 温度 / 流式：优先读 effectiveApi（用户在设置里保存的值或预设值），
             // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
             // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
+          
                     // --- 【识图补丁】检测原始消息中是否有图片，先用 Gemini 识图 ---
-        const hasImage = apiMessages.some((msg: any) =>
-          Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
+                const hasImage = apiMessages.some((msg: any) =>
+          msg.role === 'user' && Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
         );
 
         if (hasImage && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
           try {
-            const lastImageMsg = [...apiMessages].reverse().find((msg: any) =>
-              Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
+           const lastImageMsg = [...apiMessages].reverse().find((msg: any) =>
+              msg.role === 'user' && Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
             );
 
             if (lastImageMsg) {

@@ -1403,7 +1403,7 @@ ${recentGroupMsgs}
                              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${preserveContext ? 'bg-violet-500 border-violet-500' : 'bg-slate-100 border-slate-300'}`}>
                                  {preserveContext && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
                              </div>
-                             <span className="text-xs text-slate-600">清空时保留最后10条记录 (维持语境)</span>
+                             <span className="text-xs text-slate-600">清空时保留最后200条记录 (维持语境)</span>
                         </div>
 
                         <div className="flex gap-2">

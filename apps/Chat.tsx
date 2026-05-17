@@ -1514,6 +1514,32 @@ const Chat: React.FC = () => {
         addToast('已复制到剪贴板', 'success');
     };
 
+           const handleSaveImageMessage = async () => {
+        if (!selectedMessage?.content) return;
+
+        try {
+            const res = await fetch(selectedMessage.content);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `image_${Date.now()}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            URL.revokeObjectURL(url);
+            addToast('图片已开始保存', 'success');
+        } catch (e) {
+            window.open(selectedMessage.content, '_blank');
+            addToast('已打开原图，请长按保存', 'info');
+        }
+
+        setModalType('none');
+        setSelectedMessage(null);
+    };
+
     const handleDeleteEmoji = async () => {
         if (!selectedEmoji) return;
         await DB.deleteEmoji(selectedEmoji.name);

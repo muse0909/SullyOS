@@ -1428,6 +1428,12 @@ ${recentGroupMsgs}
                             复制文字
                         </button>
                     )}
+                                        {selectedMessage?.type === 'image' && (
+                        <button onClick={handleSaveImageMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            保存图片
+                        </button>
+                    )}
+
                     {selectedMessage?.type === 'text' && (
                         <button onClick={handleStartEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             修改内容

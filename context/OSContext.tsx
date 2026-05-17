@@ -9,6 +9,7 @@ import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../uti
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -1392,24 +1393,134 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
 
               aiContent = normalizeProactiveAiContent(aiContent);
+
+              const savedPreviewChunks: string[] = [];
+              const baseTimestamp = Date.now();
+              let offset = 0;
+              // 思考链只挂到本回合首条 assistant 消息上,避免每个气泡重复
+              const consumeThinkingMeta = (): { thinkingChain: string } | undefined => {
+                  if (!pendingThinkingChain) return undefined;
+                  const meta = { thinkingChain: pendingThinkingChain };
+                  pendingThinkingChain = null;
+                  return meta;
+              };
+
+              // HTML 卡片：在 sanitize 之前抽出 [html]...[/html] 块,与 useChatAI 保持一致。
+              // 没这一步主动消息会把整段 [html] 当纯文本落库,前端只能渲染成乱码。
+              if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
+                  const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
+                  for (const blk of blocks) {
+                      try {
+                          const meta = consumeThinkingMeta();
+                          await DB.saveMessage({
+                              charId,
+                              role: 'assistant',
+                              type: 'html_card',
+                              content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
+                              timestamp: baseTimestamp + offset,
+                              metadata: {
+                                  htmlSource: blk.html,
+                                  htmlTextPreview: blk.textPreview,
+                                  ...(meta || {}),
+                              },
+                          } as any);
+                          if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
+                          offset += 1;
+                      } catch (e) {
+                          console.error('[Proactive/HTML] 落库 html_card 失败', e);
+                      }
+                  }
+                  aiContent = cleanedContent;
+              }
+
               aiContent = ChatParser.sanitize(aiContent);
 
               if (aiContent) {
-                  const responseParts = ChatParser.splitResponse(aiContent);
-                  const savedPreviewChunks: string[] = [];
-                  const baseTimestamp = Date.now();
-                  let offset = 0;
-                  // 思考链只挂到本回合首条 assistant 消息上,避免每个气泡重复
-                  const consumeThinkingMeta = (): { thinkingChain: string } | undefined => {
-                      if (!pendingThinkingChain) return undefined;
-                      const meta = { thinkingChain: pendingThinkingChain };
-                      pendingThinkingChain = null;
-                      return meta;
-                  };
+                  // 双语翻译:沿用 useChatAI 的 <翻译><原文>..</原文><译文>..</译文></翻译> 协议,
+                  // 把每对原文/译文落成一条 text 消息,内容用 `\n%%BILINGUAL%%\n` 串联供渲染端识别。
+                  const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
 
-                  for (const part of responseParts) {
-                      if (part.type === 'emoji') {
-                          const foundEmoji = emojis.find(e => e.name === part.content);
+                  if (hasTranslationTags) {
+                      // 表情独立抽出,放在文本之后发送
+                      const bilingualEmojis: string[] = [];
+                      let bEm;
+                      const bEmojiPat = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+                      while ((bEm = bEmojiPat.exec(aiContent)) !== null) {
+                          const name = bEm[1].trim();
+                          if (!bilingualEmojis.includes(name)) bilingualEmojis.push(name);
+                      }
+                      aiContent = aiContent.replace(/\[\[SEND_EMOJI:\s*.*?\]\]/g, '').trim();
+
+                      const tagPattern = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>([\s\S]*?)<\/译文>\s*<\/翻译>/g;
+                      let lastIndex = 0;
+                      let tagMatch;
+                      while ((tagMatch = tagPattern.exec(aiContent)) !== null) {
+                          const textBefore = aiContent.slice(lastIndex, tagMatch.index).trim();
+                          if (textBefore) {
+                              const cleaned = ChatParser.sanitize(textBefore);
+                              if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
+                                  for (const chunk of ChatParser.chunkText(cleaned)) {
+                                      if (!chunk) continue;
+                                      const meta = consumeThinkingMeta();
+                                      await DB.saveMessage({
+                                          charId,
+                                          role: 'assistant',
+                                          type: 'text',
+                                          content: chunk,
+                                          timestamp: baseTimestamp + offset,
+                                          ...(meta ? { metadata: meta } : {}),
+                                      });
+                                      savedPreviewChunks.push(chunk);
+                                      offset += 1;
+                                  }
+                              }
+                          }
+
+                          const originalText = ChatParser.sanitize(tagMatch[1].trim());
+                          const translatedText = ChatParser.sanitize(tagMatch[2].trim());
+                          if (originalText || translatedText) {
+                              const biContent = originalText && translatedText
+                                  ? `${originalText}\n%%BILINGUAL%%\n${translatedText}`
+                                  : (originalText || translatedText);
+                              const meta = consumeThinkingMeta();
+                              await DB.saveMessage({
+                                  charId,
+                                  role: 'assistant',
+                                  type: 'text',
+                                  content: biContent,
+                                  timestamp: baseTimestamp + offset,
+                                  ...(meta ? { metadata: meta } : {}),
+                              });
+                              savedPreviewChunks.push(originalText || translatedText);
+                              offset += 1;
+                          }
+
+                          lastIndex = tagMatch.index + tagMatch[0].length;
+                      }
+
+                      const textAfter = aiContent.slice(lastIndex).trim();
+                      if (textAfter) {
+                          const cleaned = ChatParser.sanitize(textAfter.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim());
+                          if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
+                              for (const chunk of ChatParser.chunkText(cleaned)) {
+                                  if (!chunk) continue;
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'text',
+                                      content: chunk,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                                  savedPreviewChunks.push(chunk);
+                                  offset += 1;
+                              }
+                          }
+                      }
+
+                      for (const emojiName of bilingualEmojis) {
+                          const foundEmoji = emojis.find(e => e.name === emojiName);
                           if (foundEmoji?.url) {
                               const meta = consumeThinkingMeta();
                               await DB.saveMessage({
@@ -1420,42 +1531,64 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   timestamp: baseTimestamp + offset,
                                   ...(meta ? { metadata: meta } : {}),
                               });
-                          } else {
-                              const fallbackText = `发送了表情包：${part.content}`;
+                              offset += 1;
+                          }
+                      }
+                  } else {
+                      const responseParts = ChatParser.splitResponse(aiContent);
+
+                      for (const part of responseParts) {
+                          if (part.type === 'emoji') {
+                              const foundEmoji = emojis.find(e => e.name === part.content);
+                              if (foundEmoji?.url) {
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'emoji',
+                                      content: foundEmoji.url,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                              } else {
+                                  const fallbackText = `发送了表情包：${part.content}`;
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'text',
+                                      content: fallbackText,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                                  savedPreviewChunks.push(fallbackText);
+                              }
+                              offset += 1;
+                              continue;
+                          }
+
+                          const textChunks = ChatParser.chunkText(part.content)
+                              .map(chunk => ChatParser.sanitize(chunk))
+                              .filter(chunk => ChatParser.hasDisplayContent(chunk));
+
+                          for (const chunk of textChunks) {
                               const meta = consumeThinkingMeta();
                               await DB.saveMessage({
                                   charId,
                                   role: 'assistant',
                                   type: 'text',
-                                  content: fallbackText,
+                                  content: chunk,
                                   timestamp: baseTimestamp + offset,
                                   ...(meta ? { metadata: meta } : {}),
                               });
-                              savedPreviewChunks.push(fallbackText);
+                              savedPreviewChunks.push(chunk);
+                              offset += 1;
                           }
-                          offset += 1;
-                          continue;
-                      }
-
-                      const textChunks = ChatParser.chunkText(part.content)
-                          .map(chunk => ChatParser.sanitize(chunk))
-                          .filter(chunk => ChatParser.hasDisplayContent(chunk));
-
-                      for (const chunk of textChunks) {
-                          const meta = consumeThinkingMeta();
-                          await DB.saveMessage({
-                              charId,
-                              role: 'assistant',
-                              type: 'text',
-                              content: chunk,
-                              timestamp: baseTimestamp + offset,
-                              ...(meta ? { metadata: meta } : {}),
-                          });
-                          savedPreviewChunks.push(chunk);
-                          offset += 1;
                       }
                   }
+              }
 
+              if (offset > 0) {
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120) || `${char.name} sent a proactive message`;
 

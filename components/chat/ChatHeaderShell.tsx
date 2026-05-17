@@ -378,9 +378,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                                        <div className="absolute right-0 bottom-2">
                         <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1-1.06 1.06c-5.27-5.27-13.823-5.27-19.093 0a.75.75 0 0 1-1.06-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1-1.062 1.06 8.25 8.25 0 0 0-12.727 0 .75.75 0 0 1-1.06-1.06Zm3.182 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1-1.06 1.06 4.5 4.5 0 0 0-6.366 0 .75.75 0 0 1-1.06-1.06ZM12 18a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-1.5 0v-.008A.75.75 0 0 1 12 18Z" clipRule="evenodd" />
+                                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                <rect x="3" y="16" width="4" height="5" rx="1" />
+                                <rect x="10" y="10" width="4" height="11" rx="1" />
+                                <rect x="17" y="4" width="4" height="17" rx="1" />
                             </svg>
+
                         </button>
                         {showApiPanel && (
                             <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
@@ -411,8 +414,10 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                                         <div className="relative ml-auto">
                         <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1-1.06 1.06c-5.27-5.27-13.823-5.27-19.093 0a.75.75 0 0 1-1.06-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1-1.062 1.06 8.25 8.25 0 0 0-12.727 0 .75.75 0 0 1-1.06-1.06Zm3.182 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1-1.06 1.06 4.5 4.5 0 0 0-6.366 0 .75.75 0 0 1-1.06-1.06ZM12 18a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-1.5 0v-.008A.75.75 0 0 1 12 18Z" clipRule="evenodd" />
+                                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                <rect x="3" y="16" width="4" height="5" rx="1" />
+                                <rect x="10" y="10" width="4" height="11" rx="1" />
+                                <rect x="17" y="4" width="4" height="17" rx="1" />
                             </svg>
                         </button>
                         {showApiPanel && (

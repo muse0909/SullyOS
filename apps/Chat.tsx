@@ -2195,7 +2195,7 @@ const Chat: React.FC = () => {
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
-                onTriggerAI={triggerAI}
+                                onTriggerAI={() => triggerAI(messages)}
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
                     selectedCount={selectedMsgIds.size}

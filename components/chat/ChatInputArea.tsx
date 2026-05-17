@@ -254,11 +254,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                       : inputStyle === 'pixel'
                         ? 'bg-[#f8f0e0] border-2 border-[#8f674a] rounded-[4px]'
                         : 'bg-slate-100 rounded-[24px]';
-    const sendButtonClass =
+        const sendButtonClass =
         sendButtonStyle === 'pill'
             ? isPixelStyle
-                ? 'h-11 min-w-[72px] shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]'
-                : 'h-11 min-w-[72px] shrink-0 rounded-full bg-primary px-4 text-[11px] font-bold text-white shadow-lg'
+                ? 'h-11 min-w-[72px] shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed] flex items-center justify-center'
+                : 'h-11 min-w-[72px] shrink-0 rounded-full bg-primary px-4 text-[11px] font-bold text-white shadow-lg flex items-center justify-center'
             : sendButtonStyle === 'minimal'
               ? isPixelStyle
                 ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
@@ -268,6 +268,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               : isPixelStyle
                 ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
                 : 'w-11 h-11 shrink-0 rounded-full bg-primary text-white flex items-center justify-center transition-all shadow-lg';
+
     const panelClass = isPixelStyle
         ? 'bg-[#f8f0e0] border-t-2 border-[#8f674a]'
         : isDiscordStyle

@@ -247,16 +247,19 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
 
                     <div className="relative ml-auto">
     <button
-        onClick={() => {
+                onClick={(e) => {
+            e.stopPropagation();
             const el = document.getElementById('api-preset-panel');
             if (el) el.classList.toggle('hidden');
         }}
+
         className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-full"
         title="切换API预设"
     >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-            <path fillRule="evenodd" d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567L9.05 4.889c-.02.12-.115.26-.297.348a7.493 7.493 0 0 0-.986.57c-.166.115-.334.126-.45.083L6.3 5.508a1.875 1.875 0 0 0-2.282.819l-.922 1.597a1.875 1.875 0 0 0 .432 2.385l.84.692c.095.078.17.229.154.43a7.598 7.598 0 0 0 0 1.139c.015.2-.059.352-.153.43l-.841.692a1.875 1.875 0 0 0-.432 2.385l.922 1.597a1.875 1.875 0 0 0 2.282.818l1.019-.382c.115-.043.283-.031.45.082.312.214.641.405.985.57.182.088.277.228.297.35l.178 1.071c.151.904.933 1.567 1.85 1.567h1.844c.916 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.349.344-.165.673-.356.985-.57.167-.114.335-.125.45-.082l1.02.382a1.875 1.875 0 0 0 2.28-.819l.923-1.597a1.875 1.875 0 0 0-.432-2.385l-.84-.692c-.095-.078-.17-.229-.154-.43a7.614 7.614 0 0 0 0-1.139c-.016-.2.059-.352.153-.43l.84-.692c.708-.582.891-1.59.433-2.385l-.922-1.597a1.875 1.875 0 0 0-2.282-.818l-1.02.382c-.114.043-.282.031-.449-.083a7.49 7.49 0 0 0-.985-.57c-.183-.087-.277-.227-.297-.348l-.179-1.072a1.875 1.875 0 0 0-1.85-1.567h-1.843ZM12 15.75a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Z" clipRule="evenodd" />
+               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1-1.06 1.06c-5.27-5.27-13.823-5.27-19.093 0a.75.75 0 0 1-1.06-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1-1.062 1.06 8.25 8.25 0 0 0-12.727 0 .75.75 0 0 1-1.06-1.06Zm3.182 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1-1.06 1.06 4.5 4.5 0 0 0-6.366 0 .75.75 0 0 1-1.06-1.06ZM12 18a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-1.5 0v-.008A.75.75 0 0 1 12 18Z" clipRule="evenodd" />
         </svg>
+
     </button>
     <div id="api-preset-panel" className="hidden absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>

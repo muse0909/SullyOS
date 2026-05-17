@@ -13,6 +13,7 @@ interface ChatInputAreaProps {
     showPanel: 'none' | 'actions' | 'emojis' | 'chars';
     setShowPanel: (v: 'none' | 'actions' | 'emojis' | 'chars') => void;
     onSend: () => void;
+        onTriggerAI: () => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
     selectedCount: number;
@@ -48,7 +49,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, selectedCount,
+            showPanel, setShowPanel, onSend, onTriggerAI, onDeleteSelected, onForwardSelected, selectedCount,
     emojis, characters, activeCharacterId, onCharSelect,
     customThemes, onUpdateTheme, onRemoveTheme, activeThemeId,
     onPanelAction, onImageSelect, isSummarizing,
@@ -356,13 +357,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>
-                    <button 
-                        onClick={onSend} 
-                        disabled={!input.trim()} 
-                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
-                    >
-                        {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
-                    </button>
+                                    <button
+                    onClick={onTriggerAI}
+                    className={sendButtonClass}
+                    title="发送请求给AI"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                        <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .913-.143Z" clipRule="evenodd" />
+                    </svg>
+                </button>
                 </div>
             )}
 

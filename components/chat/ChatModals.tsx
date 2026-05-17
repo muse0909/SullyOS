@@ -171,6 +171,31 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         setModalType('none');
     };
 
+        const handleSaveImageMessage = async () => {
+        if (!selectedMessage?.content) return;
+
+        const imgUrl = selectedMessage.content;
+
+        try {
+            const res = await fetch(imgUrl);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `image_${Date.now()}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            URL.revokeObjectURL(url);
+        } catch {
+            window.open(imgUrl, '_blank');
+        }
+
+        setModalType('none');
+    };
+
     return (
         <>
             <Modal 

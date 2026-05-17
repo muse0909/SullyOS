@@ -1953,6 +1953,13 @@ const Chat: React.FC = () => {
                 headerDensity={osTheme.chatHeaderDensity}
                 statusStyle={osTheme.chatStatusStyle}
                 chromeStyle={osTheme.chatChromeStyle}
+                                 apiPresets={apiPresets}
+                currentApiName={apiConfig.model}
+                onSwitchPreset={(preset) => {
+                    updateApiConfig({ baseUrl: preset.config.baseUrl, apiKey: preset.config.apiKey, model: preset.config.model });
+                    addToast(`已切换: ${preset.name}`, 'info');
+                }}
+
              />
 
             {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}

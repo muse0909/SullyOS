@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft, Lightning } from '@phosphor-icons/react';
+import { CaretLeft } from '@phosphor-icons/react';
 import { CharacterBuff, CharacterProfile } from '../../types';
 
 interface TokenBreakdown {
@@ -25,6 +25,9 @@ interface ChatHeaderShellProps {
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
     onTriggerAI: () => void;
+    apiPresets?: { id: string; name: string; config: any }[];
+    currentApiName?: string;
+    onSwitchPreset?: (preset: any) => void;
     onShowCharsPanel: () => void;
     onDeleteBuff?: (buffId: string) => void;
     headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
@@ -63,6 +66,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     tokenBreakdown,
     onClose,
     onTriggerAI,
+        apiPresets = [],
+    currentApiName = '',
+    onSwitchPreset,
     onShowCharsPanel,
     onDeleteBuff,
     headerStyle = 'default',
@@ -82,6 +88,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const buffPreviewRef = useRef<HTMLDivElement>(null);
     const measureChipRefs = useRef<Array<HTMLSpanElement | null>>([]);
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [showApiPanel, setShowApiPanel] = useState(false);
 
     const visibleBuffs = buffs.slice(0, collapsedVisibleCount);
     const hiddenBuffCount = Math.max(0, buffs.length - collapsedVisibleCount);
@@ -369,9 +376,28 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title="触发 AI">
-                        <Lightning className="w-5 h-5" weight="bold" />
-                    </button>
+                                       <div className="absolute right-0 bottom-2">
+                        <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1-1.06 1.06c-5.27-5.27-13.823-5.27-19.093 0a.75.75 0 0 1-1.06-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1-1.062 1.06 8.25 8.25 0 0 0-12.727 0 .75.75 0 0 1-1.06-1.06Zm3.182 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1-1.06 1.06 4.5 4.5 0 0 0-6.366 0 .75.75 0 0 1-1.06-1.06ZM12 18a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-1.5 0v-.008A.75.75 0 0 1 12 18Z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                        {showApiPanel && (
+                            <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
+                                {apiPresets.length === 0 ? (
+                                    <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
+                                ) : (
+                                    apiPresets.map(preset => (
+                                        <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+                                            {preset.name}
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                 </div>
             ) : (
                 <div className="flex items-center gap-3 w-full">
@@ -383,9 +409,28 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderStandardInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`p-2 ml-auto ${actionButtonClass}`} title="触发 AI">
-                        <Lightning className="w-5 h-5" weight="bold" />
-                    </button>
+                                        <div className="relative ml-auto">
+                        <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1-1.06 1.06c-5.27-5.27-13.823-5.27-19.093 0a.75.75 0 0 1-1.06-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1-1.062 1.06 8.25 8.25 0 0 0-12.727 0 .75.75 0 0 1-1.06-1.06Zm3.182 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1-1.06 1.06 4.5 4.5 0 0 0-6.366 0 .75.75 0 0 1-1.06-1.06ZM12 18a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-1.5 0v-.008A.75.75 0 0 1 12 18Z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                        {showApiPanel && (
+                            <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
+                                {apiPresets.length === 0 ? (
+                                    <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
+                                ) : (
+                                    apiPresets.map(preset => (
+                                        <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+                                            {preset.name}
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                 </div>
             )}
 

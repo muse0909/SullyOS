@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft, Lightning } from '@phosphor-icons/react';
+import { CaretLeft } from '@phosphor-icons/react';
 import { CharacterProfile, CharacterBuff } from '../../types';
 
 interface TokenBreakdown {

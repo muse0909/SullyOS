@@ -556,12 +556,13 @@ const MessageItem = React.memo(({
                     )}
                 </div>
 
-                {/* User Avatar - Absolute Positioned */}
+                                {/* User Avatar - Absolute Positioned */}
                 {isUser && (
-                    <div className="absolute right-3 bottom-[1.25rem] z-0">
+                    <div className="absolute right-3 top-0 z-0">
                         {renderAvatar(userAvatar)}
                     </div>
                 )}
+
             </div>
     );
 

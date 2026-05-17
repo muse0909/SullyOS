@@ -1122,15 +1122,45 @@ const MessageItem = React.memo(({
         );
     }
 
-    if (m.type === 'image') {
+        if (m.type === 'image') {
         return commonLayout(
-            <div className="relative group">
+            <div className="relative group"
+                onContextMenu={(e) => e.preventDefault()}
+            >
                 {m.content ? (
-             <img src={m.content} className="max-w-[300px] rounded-2xl shadow-sm border border-black/5" alt="Generated" loading="lazy" decoding="async" />
+                    <img
+                        src={m.content}
+                        className="max-w-[300px] rounded-2xl shadow-sm border border-black/5 select-none"
+                        alt="Generated"
+                        loading="lazy"
+                        decoding="async"
+                        onClick={() => window.open(m.content, '_blank')}
+                        onTouchStart={(e) => {
+                            const target = e.currentTarget;
+                            const timer = setTimeout(async () => {
+                                try {
+                                    const res = await fetch(m.content);
+                                    const blob = await res.blob();
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `image_${Date.now()}.png`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                } catch {
+                                    window.open(m.content, '_blank');
+                                }
+                            }, 600);
+                            const clear = () => { clearTimeout(timer); target.removeEventListener('touchend', clear); target.removeEventListener('touchmove', clear); };
+                            target.addEventListener('touchend', clear, { once: true });
+                            target.addEventListener('touchmove', clear, { once: true });
+                        }}
+                    />
                 ) : (
                     <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
                 )}
             </div>
+
         );
     }
 

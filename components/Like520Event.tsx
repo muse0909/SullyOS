@@ -199,21 +199,6 @@ const LIKE520_CSS = `
 .l520-corner svg { width: 100%; height: 100%; }
 
 .l520-ornaments { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
-.l520-petal {
-  position: absolute;
-  width: 10px; height: 14px;
-  background: var(--rose-grad);
-  border-radius: 100% 0 100% 0;
-  opacity: 0.35;
-  filter: blur(0.3px);
-  animation: l520-petalFall linear infinite;
-}
-@keyframes l520-petalFall {
-  0%   { transform: translateY(-40px) rotate(0deg); opacity: 0; }
-  10%  { opacity: 0.4; }
-  90%  { opacity: 0.3; }
-  100% { transform: translateY(800px) rotate(720deg); opacity: 0; }
-}
 .l520-sparkle {
   position: absolute;
   width: 5px; height: 5px;
@@ -538,7 +523,7 @@ const LIKE520_CSS = `
   background: linear-gradient(180deg, rgba(255,248,236,0.96), rgba(245,234,212,0.96));
   border: 1px solid var(--gold-light);
   border-radius: 4px;
-  padding: 14px 16px 14px 58px;
+  padding: 18px 16px 14px;
   min-height: 70px;
   color: var(--ink);
   box-shadow: 0 6px 18px rgba(122,46,58,0.18), inset 0 1px 0 rgba(255,255,255,0.8);
@@ -549,7 +534,7 @@ const LIKE520_CSS = `
   letter-spacing: 0.5px;
   z-index: 3;
 }
-.l520-dialog.tall { padding: 16px 16px 18px 58px; min-height: 110px; }
+.l520-dialog.tall { padding: 22px 16px 18px; min-height: 110px; }
 .l520-dialog.clickable { cursor: pointer; }
 .l520-dialog.clickable:active { opacity: 0.9; }
 .l520-dialog::before, .l520-dialog::after,
@@ -565,10 +550,10 @@ const LIKE520_CSS = `
 .l520-dialog .corner-tr { bottom: 4px; left: 4px; border-right: none; border-top: none; }
 .l520-dialog .speaker {
   position: absolute;
-  top: -9px; left: 50px;
+  top: -9px; left: 14px;
   background: var(--burgundy-grad);
   color: #fff8ec;
-  padding: 2px 12px;
+  padding: 2px 14px;
   font-size: 10.5px;
   font-family: 'Noto Serif SC', serif;
   font-weight: 500;
@@ -578,27 +563,6 @@ const LIKE520_CSS = `
   box-shadow: 0 2px 4px rgba(122,46,58,0.3);
   border: 0.5px solid var(--gold);
 }
-.l520-dialog .avatar-mini {
-  position: absolute;
-  left: 6px; top: 50%;
-  transform: translateY(-50%);
-  width: 42px; height: 42px;
-  border-radius: 50%;
-  background: var(--gold-grad);
-  padding: 2px;
-  overflow: hidden;
-  box-shadow: 0 4px 8px rgba(139,105,20,0.3), inset 0 1px 0 rgba(255,255,255,0.5);
-}
-.l520-dialog .avatar-mini-inner {
-  width: 100%; height: 100%;
-  border-radius: 50%;
-  background: var(--cream);
-  overflow: hidden;
-  position: relative;
-  display: grid; place-items: center;
-  font-size: 18px;
-}
-.l520-dialog .avatar-mini img { width: 100%; height: 100%; object-fit: cover; }
 .l520-dialog .pageinfo {
   position: absolute;
   top: -9px; right: 14px;
@@ -636,8 +600,8 @@ const LIKE520_CSS = `
 .l520-actions {
   position: relative; z-index: 3;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
   padding: 10px 18px 16px;
   flex-shrink: 0;
 }
@@ -918,18 +882,6 @@ const Like520StyleTag: React.FC = () => (
 
 const AmbientLayer: React.FC = () => (
     <div className="l520-ornaments">
-        {[...Array(8)].map((_, i) => (
-            <span
-                key={`p${i}`}
-                className="l520-petal"
-                style={{
-                    left: `${5 + Math.random() * 90}%`,
-                    top: '-20px',
-                    animationDuration: `${10 + Math.random() * 8}s`,
-                    animationDelay: `${Math.random() * 10}s`,
-                }}
-            />
-        ))}
         {[...Array(10)].map((_, i) => (
             <span
                 key={`s${i}`}
@@ -963,7 +915,6 @@ const CornerOrnaments: React.FC = () => (
 
 const OrnateDialog: React.FC<{
     charName: string;
-    charAvatar?: string;
     text?: string;
     children?: React.ReactNode;
     onAdvance?: () => void;
@@ -971,7 +922,7 @@ const OrnateDialog: React.FC<{
     arrowText?: string;
     pageInfo?: string;
     tall?: boolean;
-}> = ({ charName, charAvatar, text, children, onAdvance, showArrow, arrowText = '— next —', pageInfo, tall }) => (
+}> = ({ charName, text, children, onAdvance, showArrow, arrowText = '— next —', pageInfo, tall }) => (
     <div
         className={`l520-dialog ${tall ? 'tall' : ''} ${onAdvance ? 'clickable' : ''}`}
         onClick={onAdvance}
@@ -979,13 +930,6 @@ const OrnateDialog: React.FC<{
         <span className="corner-tl" />
         <span className="corner-tr" />
         <div className="speaker">{charName}</div>
-        <div className="avatar-mini">
-            <div className="avatar-mini-inner">
-                {charAvatar?.startsWith('http') || charAvatar?.startsWith('data:')
-                    ? <img src={charAvatar} alt={charName} />
-                    : <span>{charAvatar || '🌸'}</span>}
-            </div>
-        </div>
         {pageInfo && <div className="pageinfo">{pageInfo}</div>}
         {children}
         {text !== undefined && <div className="body-text">{text}</div>}
@@ -1322,7 +1266,6 @@ const Y520Scene: React.FC<Y520SceneProps> = ({ callA, charName, charAvatar, char
             <div style={{ position: 'relative', zIndex: 3, paddingTop: 4 }}>
                 <OrnateDialog
                     charName={nameTag}
-                    charAvatar={charAvatar}
                     onAdvance={!isChoiceStage && queue.length > 0 ? advance : undefined}
                     showArrow={!isChoiceStage && queue.length > 0}
                     arrowText={stage === 'self_reveal_hint' && !hasMoreLines ? '— continue —' : '— next —'}
@@ -1362,14 +1305,6 @@ const Y520Scene: React.FC<Y520SceneProps> = ({ callA, charName, charAvatar, char
                     <svg viewBox="0 0 24 24"><path d="M3 8 L21 8 L21 20 L3 20 Z M3 8 L12 4 L21 8 M12 4 L12 20 M8 14 L16 14" /></svg>
                     <span>礼&nbsp;匣</span>
                     {remainingAnchors > 0 && <span className="badge">{remainingAnchors}</span>}
-                </button>
-                <button
-                    className={`l520-act ${isChoiceStage ? 'pulse primary' : ''}`}
-                    disabled={!isChoiceStage}
-                    onClick={() => { /* 选项已自动浮出，按钮仅作视觉提示 */ }}
-                >
-                    <svg viewBox="0 0 24 24"><path d="M5 4 L19 4 L19 20 L5 20 Z M9 8 L15 8 M9 12 L15 12 M9 16 L13 16" /></svg>
-                    <span>抉&nbsp;择</span>
                 </button>
             </div>
 
@@ -1458,7 +1393,6 @@ const LineQueueView: React.FC<{
             <div style={{ position: 'relative', zIndex: 3, paddingBottom: 24 }}>
                 <OrnateDialog
                     charName={charName}
-                    charAvatar={charAvatar}
                     onAdvance={() => { if (isLast) onComplete(); else setIdx(i => i + 1); }}
                     showArrow
                     arrowText={isLast ? '— continue —' : '— next —'}
@@ -1547,7 +1481,6 @@ const UncoveredLineView: React.FC<{
             <div style={{ position: 'relative', zIndex: 3, paddingBottom: 18 }}>
                 <OrnateDialog
                     charName={charName}
-                    charAvatar={charAvatar}
                     onAdvance={() => { if (isLast) onComplete(); else setIdx(i => i + 1); }}
                     showArrow
                     arrowText={isLast ? '— continue —' : '— next —'}

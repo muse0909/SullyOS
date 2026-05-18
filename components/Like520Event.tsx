@@ -1124,9 +1124,11 @@ interface Y520SceneProps {
     charChibiUrl: string;
     onTucaoSelected: (key: Like520TucaoKey) => void;
     onComplete: () => void;
+    /** 回放模式：传入则自动用这个吐槽选项，跳过 tucao_choose 阶段 */
+    initialChosenTucao?: Like520TucaoKey;
 }
 
-const Y520Scene: React.FC<Y520SceneProps> = ({ callA, charName, charAvatar, charChibiUrl, onTucaoSelected, onComplete }) => {
+const Y520Scene: React.FC<Y520SceneProps> = ({ callA, charName, charAvatar, charChibiUrl, onTucaoSelected, onComplete, initialChosenTucao }) => {
     const [stage, setStage] = useState<Y520Stage>('opening');
     const [queue, setQueue] = useState<string[]>(callA.opening);
     const [lineIdx, setLineIdx] = useState(0);
@@ -1210,7 +1212,14 @@ const Y520Scene: React.FC<Y520SceneProps> = ({ callA, charName, charAvatar, char
             return;
         }
         if (stage === 'opening') {
-            setStage('tucao_choose'); setQueue([]); setLineIdx(0);
+            // 回放模式：吐槽选项已经选好了，直接跳到 tucao_reply 用之前的回应
+            if (initialChosenTucao) {
+                setQueue(callA.tucao_responses[initialChosenTucao]);
+                setLineIdx(0);
+                setStage('tucao_reply');
+            } else {
+                setStage('tucao_choose'); setQueue([]); setLineIdx(0);
+            }
         } else if (stage === 'tucao_reply') {
             setStage('free'); setQueue([]); setLineIdx(0);
         } else if (stage === 'anchor_playing') {
@@ -2144,15 +2153,31 @@ interface SessionProps {
     onClose: () => void;
 }
 
+type SessionMode = 'fresh' | 'replay' | 'skip-to-letter';
+
 export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
     const { characters, userProfile, apiConfig, updateCharacter, addToast } = useOS();
     const char = characters.find(c => c.id === charId);
 
+    // 已有完成记录？拿出来判断要不要弹回放选择卡
+    const existingRecord = char?.specialMomentRecords?.[LIKE520_RECORD_KEY];
+    const existingData = existingRecord?.customData as {
+        callA: Like520CallAResult;
+        callB: Like520CallBResult;
+        chosenTucao: Like520TucaoKey;
+        charChibi: { dataUrl: string; state?: any };
+        userChibi: { dataUrl: string; state?: any };
+    } | undefined;
+    const hasExisting = !!(existingData && existingData.callA && existingData.callB);
+
+    // 没有记录 → 直接 fresh；有记录 → 等用户在选择卡上选模式
+    const [sessionMode, setSessionMode] = useState<SessionMode | null>(hasExisting ? null : 'fresh');
+
     const [phase, setPhase] = useState<Phase>('intro');
     const [errorMsg, setErrorMsg] = useState<string>('');
 
-    // BGM：根据当前 phase 切换 4 组 BGM。intro 阶段不启动（等用户点击进入再开始，避开 autoplay policy）
-    const bgmActive = phase !== 'intro' && phase !== 'error';
+    // BGM：根据当前 phase 切换 4 组 BGM。intro / 选择卡 阶段不启动（等用户点击进入再开始，避开 autoplay policy）
+    const bgmActive = sessionMode !== null && phase !== 'intro' && phase !== 'error';
     const bgmGroup = phaseToBGMGroup(phase);
     const bgm = useLike520BGM(bgmActive, bgmGroup);
 
@@ -2162,9 +2187,37 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
     const [callB, setCallB] = useState<Like520CallBResult | null>(null);
     const [chosenTucao, setChosenTucao] = useState<Like520TucaoKey | null>(null);
 
-    // 启动 Call A：char 捏脸开始时
+    // 启动 Call A / B 标记
     const callAStartedRef = useRef(false);
     const callBStartedRef = useRef(false);
+
+    // sessionMode 决定后：如果是 replay / skip-to-letter，预填全部 state，跳过 LLM 调用
+    useEffect(() => {
+        if (!sessionMode || !existingData) return;
+        if (sessionMode === 'fresh') return;
+
+        const rebuildChibi = (saved: { dataUrl: string; state?: any }): ChibiResult => ({
+            dataUrl: saved.dataUrl,
+            frameDataUrl: saved.dataUrl,
+            transparentDataUrl: saved.dataUrl,
+            state: saved.state,
+        });
+
+        setCallA(existingData.callA);
+        setCallB(existingData.callB);
+        setChosenTucao(existingData.chosenTucao);
+        setCharChibi(rebuildChibi(existingData.charChibi));
+        setUserChibi(rebuildChibi(existingData.userChibi));
+        callAStartedRef.current = true;
+        callBStartedRef.current = true;
+
+        if (sessionMode === 'skip-to-letter') {
+            setPhase('letter');
+        } else {
+            // replay：从 yangcheng 开始（跳过 intro / char_creator / loading_a）
+            setPhase('yangcheng');
+        }
+    }, [sessionMode, existingData]);
 
     const startCallA = useCallback(async () => {
         if (callAStartedRef.current || !char || !apiConfig) return;
@@ -2253,15 +2306,29 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
         try {
             localStorage.setItem(LIKE520_COMPLETED_KEY, '1');
         } catch { /* ignore */ }
-        // 写一条 chat 消息留痕
+        // 写一条 chat 消息留痕：用"做了个梦"的框架把信包起来
         try {
+            const userName = userProfile.name || '你';
+            const recap = [
+                `今天你做了一个梦——`,
+                `梦里你和 ${char.name} 都变成了小小的，挤在一个暖洋洋的下午里，待了好久好久。`,
+                ``,
+                `醒来时，${char.name} 给你写了一封信，是这样的——`,
+                ``,
+                callB.letter,
+            ].join('\n');
             await DB.saveMessage({
                 charId: char.id,
                 role: 'assistant',
                 type: 'text',
-                content: callB.letter,
+                content: recap,
                 timestamp: Date.now(),
-                metadata: { source: 'like520_event', like520Event: true },
+                metadata: {
+                    source: 'like520_event',
+                    like520Event: true,
+                    like520Title: callA.ending.title,
+                    like520UserName: userName,
+                },
             });
         } catch (e) {
             console.warn('[520] save chat message failed', e);
@@ -2291,6 +2358,71 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
 
     // === Phase 渲染 ===
     const background = 'linear-gradient(180deg, #FFF1E6 0%, #FFE4EC 100%)';
+
+    // 有完成记录但用户还没在选择卡上选模式：先弹回放选择卡
+    if (hasExisting && sessionMode === null) {
+        const pickMode = (mode: SessionMode) => {
+            if (mode === 'fresh') {
+                // 重来：清掉记录
+                const prev = char.specialMomentRecords || {};
+                const updated = { ...prev };
+                delete updated[LIKE520_RECORD_KEY];
+                updateCharacter(char.id, { specialMomentRecords: updated });
+                try { localStorage.removeItem(LIKE520_COMPLETED_KEY); } catch { /* ignore */ }
+            }
+            setSessionMode(mode);
+        };
+        return (
+            <div className="fixed inset-0 z-[9997]">
+                <div className="l520-root">
+                    <Like520StyleTag />
+                    <CornerOrnaments />
+                    <AmbientLayer />
+                    <div className="l520-mask">
+                        <div className="l520-choice-card">
+                            <span className="cc-tl" />
+                            <span className="cc-tr" />
+                            <div className="l520-choice-head">
+                                <div className="ornament">❦ ⸙ ❦</div>
+                                <h3>这个下午已经度过过</h3>
+                                <div className="sub">— Your Treasured Moment —</div>
+                            </div>
+                            <button className="l520-choice-row" onClick={() => pickMode('replay')}>
+                                <span className="num">I</span>
+                                <span className="text">重 看 — 把那个下午再过一遍</span>
+                            </button>
+                            <button className="l520-choice-row" onClick={() => pickMode('skip-to-letter')}>
+                                <span className="num">II</span>
+                                <span className="text">看 信 — 直接打开 ta 写的信</span>
+                            </button>
+                            <button className="l520-choice-row" onClick={() => pickMode('fresh')}>
+                                <span className="num">III</span>
+                                <span className="text">重 来 — 清掉记录，重新做一次</span>
+                            </button>
+                            <button
+                                onClick={onClose}
+                                style={{
+                                    display: 'block',
+                                    margin: '14px auto 0',
+                                    padding: '6px 16px',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'var(--ink-soft)',
+                                    fontSize: 11,
+                                    fontFamily: "'Cormorant Garamond', serif",
+                                    fontStyle: 'italic',
+                                    letterSpacing: 2,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                — 关 闭 —
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <BGMContext.Provider value={bgm}>
@@ -2338,7 +2470,15 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
                     charAvatar={char.avatar}
                     charChibiUrl={charChibi.transparentDataUrl}
                     onTucaoSelected={(k) => setChosenTucao(k)}
-                    onComplete={() => setPhase('user_creator')}
+                    onComplete={() => {
+                        // replay 模式下已经有 userChibi，直接跳过 user_creator 进 uncovered_line
+                        if (sessionMode === 'replay' && userChibi) {
+                            setPhase('uncovered_line');
+                        } else {
+                            setPhase('user_creator');
+                        }
+                    }}
+                    initialChosenTucao={sessionMode === 'replay' ? chosenTucao ?? undefined : undefined}
                 />
             )}
 

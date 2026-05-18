@@ -998,6 +998,17 @@ ${isInitialGeneration ? `
                                <div className="flex-1 space-y-3">
                                    <input value={formData.name} onChange={(e) => handleChange('name', e.target.value)} className="w-full bg-transparent py-1 text-xl font-medium text-slate-800 border-b border-slate-200" placeholder="名称" />
                                    <input value={formData.description} onChange={(e) => handleChange('description', e.target.value)} className="w-full bg-transparent py-1 text-sm text-slate-500 border-b border-slate-200" placeholder="描述" />
+                                   {/* 头像 URL 入口: 与左侧上传文件平级, 输入即覆盖 char.avatar.
+                                       https URL 头像会作为 Instant Push 通知图标传到 worker;
+                                       本地上传 (data URL) 仅本地显示, 不进 push payload (>2KB / data:
+                                       会被 amsg-instant 0.6+ 拒). */}
+                                   <input
+                                       type="url"
+                                       value={/^https?:\/\//i.test(formData.avatar || '') ? formData.avatar : ''}
+                                       onChange={(e) => handleChange('avatar', e.target.value)}
+                                       placeholder="或粘贴图片 URL"
+                                       className="w-full bg-transparent py-1 text-xs text-slate-400 border-b border-slate-200 placeholder:text-slate-300"
+                                   />
                                </div>
                            </div>
                            

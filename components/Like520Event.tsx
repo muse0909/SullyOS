@@ -1299,13 +1299,15 @@ const WishPaperOverlay: React.FC<{
 
 const EyesOpeningOverlay: React.FC<{ onDone: () => void }> = ({ onDone }) => {
     const [phase, setPhase] = useState<0 | 1 | 2 | 3>(0); // 0:全黑 1:微微一缝 2:渐开 3:淡出
+    const onDoneRef = useRef(onDone);
+    onDoneRef.current = onDone;
     useEffect(() => {
         const t1 = setTimeout(() => setPhase(1), 500);
         const t2 = setTimeout(() => setPhase(2), 1600);
         const t3 = setTimeout(() => setPhase(3), 3000);
-        const t4 = setTimeout(() => onDone(), 3900);
+        const t4 = setTimeout(() => onDoneRef.current(), 3900);
         return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); };
-    }, [onDone]);
+    }, []);
 
     return (
         <div
@@ -1381,13 +1383,18 @@ const EyesClosingOverlay: React.FC<{ onDone: () => void }> = ({ onDone }) => {
     // 2: 眼睑几乎合上
     // 3: 全黑 → onDone
     const [phase, setPhase] = useState<0 | 1 | 2 | 3>(0);
+    // 用 ref 锁住 onDone —— 父组件 inline arrow 会让 onDone 每次 render 变身份，
+    // 如果直接放进 [onDone] dep，父任意 re-render 都会把 setTimeout 链清光重启，
+    // 动画就永远走不到 3200ms 那一步（卡在半路）。
+    const onDoneRef = useRef(onDone);
+    onDoneRef.current = onDone;
     useEffect(() => {
         const t1 = setTimeout(() => setPhase(1), 80);
         const t2 = setTimeout(() => setPhase(2), 1300);
         const t3 = setTimeout(() => setPhase(3), 2400);
-        const t4 = setTimeout(() => onDone(), 3200);
+        const t4 = setTimeout(() => onDoneRef.current(), 3200);
         return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); };
-    }, [onDone]);
+    }, []);
 
     return (
         <div

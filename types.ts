@@ -218,6 +218,36 @@ export interface ActiveMsg2InboxMessage {
   receivedAt: number;
 }
 
+// Phase 2 Round 1 — Instant Push agentic loop session state, written client-side
+// before /instant and consumed by /continue. See plans/instant-push-agentic-loop-phase2.md
+export interface InstantPushOutboundSession {
+  sessionId: string;
+  charId: string;
+  /** Conversation messages snapshot at /instant call time — fed to /continue as agentic-loop history. */
+  messages: any[];
+  /** API credentials needed to resume via /continue when worker calls back. */
+  apiCredentials: { baseUrl: string; apiKey: string; model: string };
+  createdAt: number;
+}
+
+// Phase 2 Round 2 — SW will populate these stores; Round 1 just defines schema (empty).
+export interface InstantPushPendingToolCall {
+  sessionId: string;
+  charId: string;
+  /** OpenAI-shape tool_calls from worker LLM emit, ready to dispatch via agenticTools. */
+  toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** Pre-tool-call LLM text output, used to prefix assistant-side content if needed. */
+  llmOutputText: string;
+  createdAt: number;
+}
+
+export interface InstantPushReasoningBufferEntry {
+  sessionId: string;
+  charId: string;
+  reasoningContent: string;
+  receivedAt: number;
+}
+
 export interface ApiPreset {
   id: string;
   name: string;

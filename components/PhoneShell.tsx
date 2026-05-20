@@ -426,7 +426,7 @@ const PhoneShell: React.FC = () => {
          }}
        />
        
-       <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
+      <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher || activeApp === AppID.Chat || activeApp === AppID.GroupChat ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
        
        {/* 
           CRITICAL FIX: 
@@ -464,7 +464,7 @@ const PhoneShell: React.FC = () => {
           )}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}
-          <GlobalMiniPlayer />
+          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer />}
 
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">

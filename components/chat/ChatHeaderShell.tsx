@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
+import ChatMusicPlayer from './ChatMusicPlayer';
 import { CharacterBuff, CharacterProfile } from '../../types';
 
 interface TokenBreakdown {
@@ -206,7 +207,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         : chromeStyle === 'floating'
                           ? 'bg-white/85 backdrop-blur-xl border-b border-white/70 shadow-sm'
                           : 'bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm';
-    const headerDensityClass = headerDensity === 'compact' ? 'h-20 px-4 pb-3' : headerDensity === 'airy' ? 'h-28 px-6 pb-5' : 'h-24 px-5 pb-4';
+    const headerDensityClass = headerDensity === 'compact' ? 'h-16 px-4' : headerDensity === 'airy' ? 'h-24 px-6 pb-5' : 'h-[72px] px-3';
     const primaryTextClass = isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
     const secondaryTextClass = isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
     const iconButtonClass = isDarkHeader
@@ -312,49 +313,43 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     ) : null;
 
     const renderCenteredInfo = () => (
-        <div className="flex w-full min-w-0 max-w-full flex-col items-center text-center">
-            <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
-            <div className={`mt-1 font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
-            {onlineStatusNode && (
-                <div className="mt-1 flex items-center justify-center gap-2 flex-wrap">
+        <div className="flex items-center gap-3 w-full min-w-0">
+            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
                     {onlineStatusNode}
+                    {lastTokenUsage ? (
+                        <div className="ml-2 text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
+                            {lastTokenUsage}
+                        </div>
+                    ) : null}
                 </div>
-            )}
-            {buffs.length > 0 && (
-                <div className="mt-1 min-h-[18px] w-full">
-                    {renderBuffRow(true)}
-                </div>
-            )}
+                <div className="mt-1 text-xs text-slate-500 truncate">{renderBuffRow(false) || ''}</div>
+            </div>
         </div>
     );
 
     const renderStandardInfo = () => (
         <>
-            <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
-            <div className="flex-1 min-w-0 flex flex-col items-start text-left">
-                <div className={`font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
-                <div className="flex items-center gap-2 flex-wrap">
+            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
                     {onlineStatusNode}
-                    {lastTokenUsage && (
-                        <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100 text-slate-400 border-slate-200'}`} title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : ''}>
+                    {lastTokenUsage ? (
+                        <div className="ml-2 text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
                             {lastTokenUsage}
                         </div>
-                    )}
-                    {isEmotionEvaluating && (
-                        <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50 text-violet-500 border-violet-200'}`}>
-                            情绪分析中
-                        </div>
-                    )}
+                    ) : null}
                 </div>
-                <div className="mt-1 h-[18px] w-full">
-                    {renderBuffRow(false)}
-                </div>
+                <div className="mt-1 text-xs text-slate-500 truncate">{renderBuffRow(false) || ''}</div>
             </div>
         </>
     );
 
     return (
-        <div className={`${headerDensityClass} flex items-end shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
+        <div className={`${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>
@@ -362,43 +357,43 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className="w-10" />
                 </div>
             ) : useCenteredLayout ? (
-                <div className="relative w-full min-h-[56px] flex items-end justify-center">
-                    <button onClick={onClose} className={`absolute left-0 bottom-2 p-2 ${iconButtonClass}`}>
+                <div className="relative w-full flex items-center justify-center">
+                    <button onClick={onClose} className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 ${iconButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
-                    {floatingStatusNodes}
-
                     <div
                         onClick={onShowCharsPanel}
-                        className="flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-end justify-center"
+                        className="flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-center justify-center"
                     >
                         {renderCenteredInfo()}
                     </div>
 
-                                       <div className="absolute right-0 bottom-2">
-                        <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <rect x="3" y="16" width="4" height="5" rx="1" />
-                                <rect x="10" y="10" width="4" height="11" rx="1" />
-                                <rect x="17" y="4" width="4" height="17" rx="1" />
-                            </svg>
-
-                        </button>
-                        {showApiPanel && (
-                            <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
-                                {apiPresets.length === 0 ? (
-                                    <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
-                                ) : (
-                                    apiPresets.map(preset => (
-                                        <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
-                                            {preset.name}
-                                        </button>
-                                    ))
-                                )}
-                            </div>
-                        )}
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                        <ChatMusicPlayer />
+                        <div>
+                            <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                                    <rect x="3" y="16" width="4" height="5" rx="1" />
+                                    <rect x="10" y="10" width="4" height="11" rx="1" />
+                                    <rect x="17" y="4" width="4" height="17" rx="1" />
+                                </svg>
+                            </button>
+                            {showApiPanel && (
+                                <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
+                                    {apiPresets.length === 0 ? (
+                                        <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
+                                    ) : (
+                                        apiPresets.map(preset => (
+                                            <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+                                                {preset.name}
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                 </div>
@@ -412,9 +407,10 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderStandardInfo()}
                     </div>
 
-                                        <div className="relative ml-auto">
+                    <div className="relative ml-auto flex items-center gap-2">
+                        <ChatMusicPlayer />
                         <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                                 <rect x="3" y="16" width="4" height="5" rx="1" />
                                 <rect x="10" y="10" width="4" height="11" rx="1" />
                                 <rect x="17" y="4" width="4" height="17" rx="1" />

@@ -10,11 +10,16 @@
  *     看到 directives 非空时只重放、不再扫原文.
  *   - 其他 (结构型 + 纯文本) → finish, 原文给客户端 13 步管线消化.
  *
+ * 同时返回 sanitizedBody / sanitizedPrefix — push notification.body 终态文本.
+ * 跟 message 原文不重叠时由 onLLMOutput 条件塞进 payload.notification.body.
+ *
  * 故意没有任何 sullyOS 业务执行逻辑 — 这层只做"看见什么标签 → 出什么 decision".
  * tool 实际跑在 utils/agenticTools.ts (客户端), directive 实际重放在 utils/directiveReplayer.ts.
  *
  * 把分类逻辑放独立文件方便单测 (不需要起整个 cf adapter).
  */
+
+import { sanitizeForNotification } from '../../../utils/sanitize';
 
 export type ToolCall = {
   id: string;
@@ -40,12 +45,23 @@ export type ClassificationResult =
       kind: 'tool-request';
       /** 用户可见的前置 narration (剥掉了数据标签); 可能为空串 */
       prefix: string;
+      /**
+       * sanitizeForNotification(prefix). 给 push notification.body 用 — 业务标签 /
+       * markdown / 时间戳 leak 都剥光. 跟 prefix 字节相同时 onLLMOutput 不重复塞,
+       * 节省 payload size.
+       */
+      sanitizedPrefix: string;
       toolCalls: ToolCall[];
     }
   | {
       kind: 'finish';
       /** 剥光数据标签 + 副作用标签后的纯文本; 给客户端管线消化 */
       cleanedText: string;
+      /**
+       * sanitizeForNotification(cleanedText). 给 push notification.body 用. 见
+       * sanitizedPrefix 注释 — 同样的"跟 cleanedText 相同则不塞"逻辑.
+       */
+      sanitizedBody: string;
       directives: Directive[];
     };
 
@@ -225,7 +241,8 @@ export function classifyLLMOutput(text: string): ClassificationResult {
     let prefix = text;
     for (const spec of DATA_TAGS) prefix = prefix.replace(spec.re, '');
     prefix = prefix.trim();
-    return { kind: 'tool-request', prefix, toolCalls };
+    const sanitizedPrefix = sanitizeForNotification(prefix);
+    return { kind: 'tool-request', prefix, sanitizedPrefix, toolCalls };
   }
 
   // 2. 没数据标签 → 扫副作用标签, 凑成 directives.
@@ -243,6 +260,7 @@ export function classifyLLMOutput(text: string): ClassificationResult {
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, '');
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, '');
   cleanedText = cleanedText.trim();
+  const sanitizedBody = sanitizeForNotification(cleanedText);
 
-  return { kind: 'finish', cleanedText, directives };
+  return { kind: 'finish', cleanedText, sanitizedBody, directives };
 }

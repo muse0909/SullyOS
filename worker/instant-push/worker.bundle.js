@@ -1856,6 +1856,56 @@ function sanitizeTable(value) {
   return value;
 }
 
+// utils/sanitize.ts
+var stripLiteralBackslashN = (t) => t.replace(/\\n/g, "\n");
+var stripSourceTags = (t) => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, "\n");
+var stripTimestamps = (t) => t.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*/g, "").replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*/gm, "").replace(/（[上下]午\d{1,2}[：:]\d{2}）/g, "").replace(/\(\d{1,2}:\d{2}\s*[AP]M\)/gi, "");
+var stripChineseDate = (t) => t.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, "");
+var stripRoleNamePrefix = (t) => t.replace(/^[\w一-龥]+:\s*/, "");
+var stripBusinessTagsForBubble = (t) => t.replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION)[:\s][\s\S]*?\]\]/g, "").replace(/\[schedule_message[^\]]*\]/g, "");
+var stripBusinessTagsForNotification = (t) => stripBusinessTagsForBubble(t).replace(/\[\[(?:READ_NOTE|XHS_[A-Z_]+)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[XHS_[A-Z_]+\]\]/g, "");
+var stripQuotes = (t) => t.replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, "").replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, "").replace(/\[回复\s*[""“][^""”]*?[""”](?:\.{0,3})\]\s*[：:]?\s*/g, "");
+var stripMarkdownHeaders = (t) => t.replace(/^#{1,6}\s+/gm, "");
+var stripMarkdownBold = (t) => t.replace(/\*{2,}/g, "");
+var stripMarkdownDividers = (t) => t.replace(/^\s*---\s*$/gm, "").replace(/^\s*[-*+]\s*$/gm, "");
+var stripBackticks = (t) => t.replace(/`(\[\[[\s\S]*?\]\])`/g, "$1").replace(/``+/g, "").replace(/(^|\s)`(\s|$)/gm, "$1$2");
+var stripLegacyTrans = (t) => t.replace(/%%TRANS%%[\s\S]*/gi, "");
+var collapseWhitespace = (t) => t.replace(/\n{3,}/g, "\n\n").trim();
+var stripThinkBlocks = (t) => t.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, "").replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, "");
+var stripInnerState = (t) => t.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, "");
+var replaceMarkdownLinks = (t) => t.replace(/\[([^\]]+)\]\([^)]+\)/g, "[\u94FE\u63A5\uFF1A$1]");
+var replaceSendEmoji = (t) => t.replace(/\[\[SEND_EMOJI:\s*(.+?)\]\]/g, "[\u8868\u60C5\uFF1A$1]");
+var replaceEmojiReverseTag = (t) => t.replace(/\[(?:你|User|用户|System|[\w一-龥]+)\s*发送了表情包[:：]\s*(.*?)\]/g, "[\u8868\u60C5\uFF1A$1]");
+var replaceHtmlBlocks = (t) => t.replace(/\[html\][\s\S]*?\[\/html\]/gi, "[HTML \u5361\u7247]");
+var extractTranslationOriginal = (t) => t.replace(
+  /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g,
+  "$1"
+);
+function sanitizeForNotification(text) {
+  let result = text;
+  result = stripLiteralBackslashN(result);
+  result = stripThinkBlocks(result);
+  result = replaceHtmlBlocks(result);
+  result = replaceEmojiReverseTag(result);
+  result = replaceSendEmoji(result);
+  result = extractTranslationOriginal(result);
+  result = stripTimestamps(result);
+  result = stripChineseDate(result);
+  result = stripRoleNamePrefix(result);
+  result = stripSourceTags(result);
+  result = stripInnerState(result);
+  result = stripBusinessTagsForNotification(result);
+  result = stripQuotes(result);
+  result = replaceMarkdownLinks(result);
+  result = stripMarkdownHeaders(result);
+  result = stripMarkdownBold(result);
+  result = stripMarkdownDividers(result);
+  result = stripBackticks(result);
+  result = stripLegacyTrans(result);
+  result = collapseWhitespace(result);
+  return result;
+}
+
 // worker/instant-push/src/classifier.ts
 var DATA_TAGS = [
   // [[RECALL: 2024-05]] / [[RECALL: 2024年5]]
@@ -2002,7 +2052,8 @@ function classifyLLMOutput(text) {
     let prefix = text;
     for (const spec of DATA_TAGS) prefix = prefix.replace(spec.re, "");
     prefix = prefix.trim();
-    return { kind: "tool-request", prefix, toolCalls };
+    const sanitizedPrefix = sanitizeForNotification(prefix);
+    return { kind: "tool-request", prefix, sanitizedPrefix, toolCalls };
   }
   const directives = [];
   for (const spec of SIDE_EFFECT_TAGS) {
@@ -2016,7 +2067,8 @@ function classifyLLMOutput(text) {
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   cleanedText = cleanedText.trim();
-  return { kind: "finish", cleanedText, directives };
+  const sanitizedBody = sanitizeForNotification(cleanedText);
+  return { kind: "finish", cleanedText, sanitizedBody, directives };
 }
 
 // worker/instant-push/src/index.ts
@@ -2070,10 +2122,12 @@ async function onLLMOutput(ctx) {
     contactName,
     avatarUrl
   };
+  const trimmedContactName = (contactName || "").trim();
+  const notificationBase = { title: `\u6765\u81EA ${trimmedContactName || "\u4E3B\u52A8\u6D88\u606F"}` };
   if (result.kind === "tool-request") {
-    return {
-      decision: "tool-request",
-      pushPayload: buildToolRequestPush({
+    const notification2 = result.sanitizedPrefix !== result.prefix ? { ...notificationBase, body: result.sanitizedPrefix || "\u200B" } : notificationBase;
+    const pushPayload2 = {
+      ...buildToolRequestPush({
         ...baseCommon,
         toolCalls: result.toolCalls,
         // prefix 进 message 字段; SW tool_request 路由会把它写 inbox 让前置 narration 立刻显示.
@@ -2084,12 +2138,18 @@ async function onLLMOutput(ctx) {
           // 客户端续跑时把 iteration + 1 重新发给 worker (见 amsg-instant /continue 契约).
           iteration
         }
-      })
+      }),
+      notification: notification2,
+      // 0.8.0-next.2 splitPattern 默认 ON (按句切); 显式 null 保单 push,
+      // SullyOS 客户端 applyAssistantPostProcessing Step 13 在端上分句.
+      splitPattern: null
     };
+    warnIfPayloadLarge(pushPayload2);
+    return { decision: "tool-request", pushPayload: pushPayload2 };
   }
-  return {
-    decision: "finish",
-    pushPayload: buildContentPush({
+  const notification = result.sanitizedBody !== result.cleanedText ? { ...notificationBase, body: result.sanitizedBody || "\u200B" } : notificationBase;
+  const pushPayload = {
+    ...buildContentPush({
       ...baseCommon,
       message: result.cleanedText,
       // 1 索引 + 1 总数: SullyOS 客户端不依赖 worker 端分句, 而是由 applyAssistantPostProcessing
@@ -2103,8 +2163,21 @@ async function onLLMOutput(ctx) {
         directives: result.directives,
         iteration
       }
-    })
+    }),
+    notification,
+    splitPattern: null
   };
+  warnIfPayloadLarge(pushPayload);
+  return { decision: "finish", pushPayload };
+}
+function warnIfPayloadLarge(payload) {
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+    if (bytes > 2300) {
+      console.warn("[instant-push] payload close to limit", { bytes });
+    }
+  } catch {
+  }
 }
 export {
   src_default as default

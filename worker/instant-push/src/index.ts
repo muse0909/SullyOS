@@ -122,10 +122,22 @@ async function onLLMOutput(ctx: any) {
     avatarUrl,
   };
 
+  // notification.title 永远塞 — amsg-sw createNotificationFromPayload 没 title 时
+  // 会 fallback 到字面字符串 "New notification", 体验差. 用 `来自 X` 跟客户端
+  // saveContentToInbox 的 charName 一致. trim 兜底 contactName 全空白的边界情况.
+  const trimmedContactName = (contactName || '').trim();
+  const notificationBase = { title: `来自 ${trimmedContactName || '主动消息'}` };
+
   if (result.kind === 'tool-request') {
-    return {
-      decision: 'tool-request' as const,
-      pushPayload: buildToolRequestPush({
+    // notification.body 条件塞: sanitize 真改了字符才塞, 没改则 amsg-sw fallback
+    // 到 payload.message — payload size 不翻倍. sanitize 把 body 净化成空串时
+    // (e.g. 只有 <think>) 用 zero-width-space 占位, 防 amsg-sw 的 `||` 短路
+    // 把 raw payload.message 漏到 OS banner.
+    const notification = result.sanitizedPrefix !== result.prefix
+      ? { ...notificationBase, body: result.sanitizedPrefix || '​' }
+      : notificationBase;
+    const pushPayload = {
+      ...buildToolRequestPush({
         ...baseCommon,
         toolCalls: result.toolCalls,
         // prefix 进 message 字段; SW tool_request 路由会把它写 inbox 让前置 narration 立刻显示.
@@ -137,13 +149,21 @@ async function onLLMOutput(ctx: any) {
           iteration,
         },
       }),
+      notification,
+      // 0.8.0-next.2 splitPattern 默认 ON (按句切); 显式 null 保单 push,
+      // SullyOS 客户端 applyAssistantPostProcessing Step 13 在端上分句.
+      splitPattern: null,
     };
+    warnIfPayloadLarge(pushPayload);
+    return { decision: 'tool-request' as const, pushPayload };
   }
 
-  // result.kind === 'finish'
-  return {
-    decision: 'finish' as const,
-    pushPayload: buildContentPush({
+  // result.kind === 'finish' — 同 tool-request 分支的 sanitize 空串 → ZWSP 占位逻辑
+  const notification = result.sanitizedBody !== result.cleanedText
+    ? { ...notificationBase, body: result.sanitizedBody || '​' }
+    : notificationBase;
+  const pushPayload = {
+    ...buildContentPush({
       ...baseCommon,
       message: result.cleanedText,
       // 1 索引 + 1 总数: SullyOS 客户端不依赖 worker 端分句, 而是由 applyAssistantPostProcessing
@@ -158,5 +178,26 @@ async function onLLMOutput(ctx: any) {
         iteration,
       },
     }),
+    notification,
+    splitPattern: null,
   };
+  warnIfPayloadLarge(pushPayload);
+  return { decision: 'finish' as const, pushPayload };
+}
+
+/**
+ * 早警告水位 — amsg-instant next.2 默认 maxInlineBytes=2600, 超了就 500
+ * PAYLOAD_TOO_LARGE. 2300 留 ~300B margin 给 amsg-instant wrapping 字段
+ * (kind/messageKind/_blob envelope 等). 只 log 不阻塞, 真撞限的话 amsg
+ * 自己会兜底.
+ */
+function warnIfPayloadLarge(payload: unknown): void {
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+    if (bytes > 2300) {
+      console.warn('[instant-push] payload close to limit', { bytes });
+    }
+  } catch {
+    // JSON.stringify 抛 (循环引用?) 时不阻塞主流程
+  }
 }

@@ -36,8 +36,14 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
   const [copyStatus, setCopyStatus] = useState('');
   const [gitUrlStatus, setGitUrlStatus] = useState('');
 
-  const INSTANT_PUSH_GIT_URL =
-    'https://github.com/qegj567-cloud/SullyOS/tree/master/worker/instant-push';
+  // vite.config.ts 注入 __BUILD_BRANCH__ — release 分支 (master / main) 或非 git
+  // 环境 (unknown) 走 master, 其他分支 (feature/* 等) 用当前分支, 方便 PR 前在
+  // 自己 fork / 分支上测部署. 注意: 分支必须已推到远端 GitHub, CF clone 才能拉到.
+  const INSTANT_PUSH_GIT_URL = (() => {
+    const branch = (typeof __BUILD_BRANCH__ !== 'undefined' && __BUILD_BRANCH__) || 'master';
+    const ref = branch === 'master' || branch === 'main' || branch === 'unknown' ? 'master' : branch;
+    return `https://github.com/qegj567-cloud/SullyOS/tree/${ref}/worker/instant-push`;
+  })();
 
   useEffect(() => {
     if (!open) return;
@@ -255,6 +261,16 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
               ↗ CF Dashboard
             </button>
           </div>
+          {/* 非 release 分支显示当前分支提示, 让用户意识到 Git URL 指向非 master */}
+          {typeof __BUILD_BRANCH__ !== 'undefined'
+            && __BUILD_BRANCH__
+            && __BUILD_BRANCH__ !== 'master'
+            && __BUILD_BRANCH__ !== 'main'
+            && __BUILD_BRANCH__ !== 'unknown' && (
+            <p className="text-[10px] text-amber-600 leading-tight pt-1">
+              Git URL 指向当前分支 <code className="font-mono">{__BUILD_BRANCH__}</code> — 确保已推到远端 GitHub, 否则 CF 拉不到.
+            </p>
+          )}
 
           <div className="flex items-center justify-end pt-1">
             <button

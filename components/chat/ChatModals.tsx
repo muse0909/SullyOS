@@ -687,7 +687,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
-                    {/* 总开关：关闭时不调副 API、不生成日程、不注入情绪 buff */}
+                    {/* 总开关：关闭时不生成日程、不注入情绪 buff */}
                     {onToggleScheduleFeature && (
                         <div className="mb-4 bg-slate-50 border border-slate-200 rounded-2xl p-3">
                             <div className="flex items-center justify-between">
@@ -695,8 +695,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     <p className="text-xs font-bold text-slate-700">日程与情绪 Buff</p>
                                     <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
                                         {isScheduleFeatureEnabled
-                                            ? '已开启：会调用副 API 生成今日日程，并在对话中评估情绪 buff。'
-                                            : '已关闭：不调副 API，不生成日程，不注入情绪 buff。'}
+                                            ? '已开启：会生成今日日程，并在对话中评估情绪 buff。'
+                                            : '已关闭：不生成日程，不注入情绪 buff。'}
                                     </p>
                                 </div>
                                 <button

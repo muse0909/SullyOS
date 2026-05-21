@@ -254,7 +254,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             onMouseDown={(e) => { if (e.button === 0) handleLongPressStart(buff); }}
                             onMouseUp={handleLongPressEnd}
                             onMouseLeave={handleLongPressEnd}
-                            className="shrink-0 max-w-[8.75rem] truncate text-[9px] leading-none px-2 py-1 rounded-full font-bold border cursor-pointer transition-colors select-none"
+                            className="shrink-0 max-w-[8.75rem] truncate text-[10px] leading-none px-2 py-1 rounded-full font-bold border cursor-pointer transition-colors select-none"
                             style={{ color: buff.color || '#db2777', borderColor: `${buff.color || '#db2777'}60`, background: `${buff.color || '#db2777'}30` }}
                             title={buff.label}
                         >

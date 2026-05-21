@@ -766,6 +766,15 @@ export const useChatAI = ({
                 }
             }
 
+            // 【改动 1】注入情绪输出要求到 system prompt
+            if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                const scheduleStyle = char.scheduleStyle || 'lifestyle';
+                const mindfulRule = scheduleStyle === 'mindful'
+                    ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
+                    : '你是生活系角色，innerState 的重心是你自己的生活和感受，不必每次都以用户为中心。';
+                systemPrompt += `\n\n[情绪输出要求]\n每次回复结束后，在正文末尾附加一个情绪块，格式如下：\n<emotion>{"label":"...","description":"...","emoji":"...","intensity":2,"innerState":"..."}</emotion>\n\n字段要求：\n- label：2-6个字的中文情绪标签，例如"甜蜜的期待"\n- description：20-50字，第一人称，给用户看的心声摘要\n- emoji：一个表情符号\n- intensity：1到3的整数（1=轻微，2=中等，3=强烈）\n- innerState：50-100字，第一人称内心独白，不显示给用户，${mindfulRule}\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 如果情绪没有明显变化，可以省略整个 <emotion> 块\n- 正文和 <emotion> 块之间不要有多余说明`;
+            }
+
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
 
             // Debug: Log context composition
@@ -782,10 +791,8 @@ export const useChatAI = ({
                 fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
             }
 
-            // 3. Fire-and-forget emotion evaluation in parallel with main API call
-            //    直接复用已 build 好的 systemPrompt 和 cleanedApiMessages，确保情绪评估和主 API 看到的上下文完全一致
-            //    情绪评估同时产出 innerState（意识流独白），注入下一轮 system prompt
-            //    未单独配置情绪 API 时，自动回退到主 apiConfig
+            // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成
+            /* ── 副 API 情绪评估已停用 ───
             if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
                 const lightLLM = memoryPalaceConfig?.lightLLM;
                 const emotionApi = (char.emotionConfig.api?.baseUrl)
@@ -802,6 +809,7 @@ export const useChatAI = ({
                         setEmotionStatus('');
                     });
             }
+            */
 
             // 发送前汇总计时
             const perfPreApi = Math.round(performance.now() - perfSendT0);
@@ -1087,6 +1095,46 @@ if (toolsList.length > 0) {
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
             aiContent = normalizeAiContent(aiContent);
+
+            // 【改动 2】主 API 返回后解析内联情绪块
+            if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                const emotionMatch = aiContent.match(/<emotion>([\s\S]*?)<\/emotion>/);
+                if (emotionMatch) {
+                    try {
+                        let rawJson = emotionMatch[1].trim();
+                        rawJson = rawJson.replace(/\n/g, '\\n').replace(/\r/g, '');
+                        const emotionData = JSON.parse(rawJson);
+                        if (emotionData.label && typeof emotionData.label === 'string') {
+                            const newBuff: CharacterBuff = {
+                                id: `buff_inline_${Date.now()}`,
+                                name: `inline_${Date.now()}`,
+                                label: emotionData.label.trim(),
+                                description: typeof emotionData.description === 'string' ? emotionData.description.trim() : '',
+                                emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
+                                intensity: ([1, 2, 3].includes(Number(emotionData.intensity)) ? Number(emotionData.intensity) : 2) as 1 | 2 | 3,
+                                color: '#8b5cf6',
+                            };
+                            const updatedChar: CharacterProfile = {
+                                ...char,
+                                activeBuffs: [newBuff],
+                                buffInjection: newBuff.description || '',
+                            };
+                            DB.saveCharacter(updatedChar).catch(e => console.warn('🎭 [InlineEmotion] 保存失败:', e));
+                            window.dispatchEvent(new CustomEvent('emotion-updated', {
+                                detail: { charId: char.id, buffs: [newBuff] }
+                            }));
+                            console.log('🎭 [InlineEmotion] 解析成功:', newBuff.label);
+                            if (typeof emotionData.innerState === 'string' && emotionData.innerState.trim()) {
+                                setEvolvedNarrative(emotionData.innerState.trim());
+                                console.log('🌊 [InnerState]', char.name, ':', emotionData.innerState.trim().slice(0, 50));
+                            }
+                        }
+                    } catch (e: any) {
+                        console.warn('🎭 [InlineEmotion] 解析失败，跳过本轮情绪更新:', e.message);
+                    }
+                    aiContent = aiContent.replace(/<emotion>[\s\S]*?<\/emotion>/g, '').trim();
+                }
+            }
 
             // 5. Handle Recall (Loop if needed)
             const recallMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);

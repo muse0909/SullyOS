@@ -1052,20 +1052,27 @@ if (toolsList.length > 0) {
                     }
 
                                        // 让模型继续生成文字回复（简化方式，避免 tool 格式兼容问题）
-                    const followMessages = [...fullMessages, {
-                        role: 'assistant',
-                        content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
-                    }];
+                                   const followMessages = [...fullMessages, 
+                        {
+                            role: 'assistant',
+                            content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
+                        },
+                        {
+                            role: 'user',
+                content: `[图片已生成，请根据刚才的情境继续回复]`,
+                        }
+                ];
                     const followBody = { ...baseReqBody, messages: followMessages };
                     delete followBody.tools;
-                    delete followBody.tool_choice;
+                delete followBody.tool_choice;
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
+                method: 'POST', headers,
                         body: JSON.stringify(followBody),
                     });
                     updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
              }
             }
+
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({

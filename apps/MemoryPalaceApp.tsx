@@ -917,10 +917,12 @@ export default function MemoryPalaceApp() {
 
     // 切换"记忆宫殿"总开关（picker 卡片上）
     const handleTogglePalaceFromPicker = (charId: string, on: boolean) => {
-        updateCharacter(charId, { memoryPalaceEnabled: on } as any);
-        if (!on) {
-            // 关闭 palace 必然连带关闭全自动记忆
-            updateCharacter(charId, { autoArchiveEnabled: false } as any);
+        if (on) {
+            updateCharacter(charId, { memoryPalaceEnabled: true } as any);
+        } else {
+            // 关闭 palace 必然连带关闭全自动记忆；同时清空残留的向量召回注入，
+            // 否则旧的 memoryPalaceInjection 会被 saveCharacter 持久化并继续注入 prompt。
+            updateCharacter(charId, { memoryPalaceEnabled: false, autoArchiveEnabled: false, memoryPalaceInjection: undefined } as any);
         }
     };
 

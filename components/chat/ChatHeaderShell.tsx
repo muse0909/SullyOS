@@ -320,12 +320,28 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
                     {onlineStatusNode}
                     {lastTokenUsage ? (
-                        <div className="ml-2 text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
+                        <div className="ml-auto text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
                             {lastTokenUsage}
                         </div>
                     ) : null}
                 </div>
-                <div className="mt-1 text-xs text-slate-500 truncate">{renderBuffRow(false) || ''}</div>
+                <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
+                    {buffs.length > 0 ? (
+                        <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                            {renderBuffRow(false)}
+                        </div>
+                    ) : null}
+                    {isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
+                            情绪分析中
+                        </div>
+                    )}
+                    {isMemoryPalaceProcessing && !isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
+                            {memoryPalaceStatusText || '记忆整理中'}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -338,12 +354,28 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
                     {onlineStatusNode}
                     {lastTokenUsage ? (
-                        <div className="ml-2 text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
+                        <div className="ml-auto text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
                             {lastTokenUsage}
                         </div>
                     ) : null}
                 </div>
-                <div className="mt-1 text-xs text-slate-500 truncate">{renderBuffRow(false) || ''}</div>
+                <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
+                    {buffs.length > 0 ? (
+                        <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                            {renderBuffRow(false)}
+                        </div>
+                    ) : null}
+                    {isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
+                            情绪分析中
+                        </div>
+                    )}
+                    {isMemoryPalaceProcessing && !isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
+                            {memoryPalaceStatusText || '记忆整理中'}
+                        </div>
+                    )}
+                </div>
             </div>
         </>
     );

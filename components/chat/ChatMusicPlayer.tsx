@@ -4,21 +4,42 @@
  * 不显示歌曲名、歌手名等文字
  * 驱动来自全局 MusicContext
  */
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
 import { AppID } from '../../types';
 
-const ChatMusicPlayer: React.FC = () => {
+  const ChatMusicPlayer: React.FC = () => {
   const { openApp } = useOS();
   const { current, playing, togglePlay, prevSong, nextSong } = useMusic();
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pauseStartTimeRef = useRef<number | null>(null);
+  const [elapsedPauseTime, setElapsedPauseTime] = useState(0);
 
-  // 只有当有歌曲时才显示
-  // 只有当正在播放音乐时才显示
-if (!current || !playing) return null;
+  // 显示条件：正在播放 或 暂停不到 10 分钟（600 秒）
+if (!current || (!playing && elapsedPauseTime >= 600)) return null;
 
+      // 追踪暂停时间：暂停不到 10 分钟时仍显示迷你播放器
+  useEffect(() => {
+    if (playing) {
+      // 恢复播放，清除暂停计时
+      pauseStartTimeRef.current = null;
+      setElapsedPauseTime(0);
+    } else if (current) {
+      // 暂停状态：记录暂停开始时间
+      if (!pauseStartTimeRef.current) {
+        pauseStartTimeRef.current = Date.now();
+      }
+      // 定期更新暂停持续时间
+      const timer = setInterval(() => {
+        const duration = (Date.now() - (pauseStartTimeRef.current || Date.now())) / 1000;
+        setElapsedPauseTime(duration);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [playing, current]);
+    
   const handleLongPressStart = () => {
     longPressTimerRef.current = setTimeout(() => {
       openApp(AppID.Music);

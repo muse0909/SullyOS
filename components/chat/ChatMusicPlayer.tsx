@@ -16,7 +16,8 @@ const ChatMusicPlayer: React.FC = () => {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 只有当有歌曲时才显示
-  if (!current) return null;
+  // 只有当正在播放音乐时才显示
+if (!current || !playing) return null;
 
   const handleLongPressStart = () => {
     longPressTimerRef.current = setTimeout(() => {

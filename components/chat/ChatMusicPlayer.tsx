@@ -4,7 +4,7 @@
  * 不显示歌曲名、歌手名等文字
  * 驱动来自全局 MusicContext
  */
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef } from 'react';
 import { Play, Pause, SkipBack, SkipForward } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
@@ -14,32 +14,7 @@ import { AppID } from '../../types';
   const { openApp } = useOS();
   const { current, playing, togglePlay, prevSong, nextSong } = useMusic();
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pauseStartTimeRef = useRef<number | null>(null);
-  const [elapsedPauseTime, setElapsedPauseTime] = useState(0);
 
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const HIDE_DELAY = 10 * 60 * 1000; // 10分钟，改成 1 * 60 * 1000 就是1分钟
-
-useEffect(() => {
-  if (!isPlaying) {
-    // 暂停 → 启动计时
-    hideTimerRef.current = setTimeout(() => {
-      setVisible(false); // 你现有的隐藏状态变量名替换这里
-    }, HIDE_DELAY);
-  } else {
-    // 播放 → 取消计时，确保显示
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-    setVisible(true);
-  }
-  return () => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-  };
-}, [isPlaying]);
-
-    
   const handleLongPressStart = () => {
     longPressTimerRef.current = setTimeout(() => {
       openApp(AppID.Music);

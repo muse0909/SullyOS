@@ -14,6 +14,8 @@ import { AppID } from '../../types';
   const { openApp } = useOS();
   const { current, playing, togglePlay, prevSong, nextSong } = useMusic();
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      if (!playing) return null;
+
 
   const handleLongPressStart = () => {
     longPressTimerRef.current = setTimeout(() => {

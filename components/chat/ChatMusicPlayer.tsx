@@ -17,28 +17,28 @@ import { AppID } from '../../types';
   const pauseStartTimeRef = useRef<number | null>(null);
   const [elapsedPauseTime, setElapsedPauseTime] = useState(0);
 
-  // 显示条件：正在播放 或 暂停不到 10 分钟（600 秒）
-if (!current || (!playing && elapsedPauseTime >= 600)) return null;
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const HIDE_DELAY = 10 * 60 * 1000; // 10分钟，改成 1 * 60 * 1000 就是1分钟
 
-      // 追踪暂停时间：暂停不到 10 分钟时仍显示迷你播放器
-  useEffect(() => {
-    if (playing) {
-      // 恢复播放，清除暂停计时
-      pauseStartTimeRef.current = null;
-      setElapsedPauseTime(0);
-    } else if (current) {
-      // 暂停状态：记录暂停开始时间
-      if (!pauseStartTimeRef.current) {
-        pauseStartTimeRef.current = Date.now();
-      }
-      // 定期更新暂停持续时间
-      const timer = setInterval(() => {
-        const duration = (Date.now() - (pauseStartTimeRef.current || Date.now())) / 1000;
-        setElapsedPauseTime(duration);
-      }, 1000);
-      return () => clearInterval(timer);
+useEffect(() => {
+  if (!isPlaying) {
+    // 暂停 → 启动计时
+    hideTimerRef.current = setTimeout(() => {
+      setVisible(false); // 你现有的隐藏状态变量名替换这里
+    }, HIDE_DELAY);
+  } else {
+    // 播放 → 取消计时，确保显示
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
     }
-  }, [playing, current]);
+    setVisible(true);
+  }
+  return () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  };
+}, [isPlaying]);
+
     
   const handleLongPressStart = () => {
     longPressTimerRef.current = setTimeout(() => {

@@ -23,11 +23,49 @@ import { loadInstantConfig, isInstantConfigReady, getOrCreateInstantSubscription
 import { pushXhsCaches, pushLastXhsNotesRef } from './activeMsgRuntime';
 import type { APIConfig, RealtimeConfig, UserProfile, InstantPushPendingToolCall } from '../types';
 
+type InstantToolStatusPhase = 'running' | 'continuing' | 'done' | 'failed';
+
+function getToolStatusLabel(toolCalls: InstantPushPendingToolCall['toolCalls']): string {
+  const names = toolCalls.map((call) => call.function.name);
+  if (names.some((name) => name.startsWith('xhs_'))) return '读取小红书';
+  if (names.some((name) => name === 'notion_read_diary' || name === 'read_note')) return '读取 Notion';
+  if (names.some((name) => name === 'feishu_read_diary')) return '读取飞书';
+  if (names.some((name) => name === 'web_search')) return '搜索网页';
+  if (names.some((name) => name === 'recall')) return '读取记忆';
+  return '调用工具';
+}
+
+function emitToolStatus(
+  charId: string,
+  phase: InstantToolStatusPhase,
+  text: string,
+  sessionId?: string,
+): void {
+  const detail = { charId, phase, text, sessionId, updatedAt: Date.now() };
+  try {
+    localStorage.setItem(`instant_tool_status_${charId}`, JSON.stringify(detail));
+  } catch { /* ignore */ }
+  try {
+    window.dispatchEvent(new CustomEvent('instant-tool-status', {
+      detail,
+    }));
+  } catch { /* ignore */ }
+}
+
 /** 跑一轮 ToolRequest → POST /continue. 失败时返回 false (上层决定要不要 toast). */
 async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<boolean> {
+  const toolLabel = getToolStatusLabel(item.toolCalls);
+  emitToolStatus(
+    item.charId,
+    'running',
+    `正在${toolLabel}，请先停留在此页，完成后会自动继续回复。`,
+    item.sessionId,
+  );
+
   const session = await ActiveMsgStore.getOutboundSession(item.sessionId);
   if (!session) {
     console.warn('[instant-tool-runner] outbound session not found, skipping', item.sessionId);
+    emitToolStatus(item.charId, 'failed', `${toolLabel}中断了，请重新触发这次回复。`, item.sessionId);
     return false;
   }
 
@@ -35,6 +73,7 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
   const char = characters.find((c) => c.id === item.charId);
   if (!char) {
     console.warn('[instant-tool-runner] character not found', item.charId);
+    emitToolStatus(item.charId, 'failed', `${toolLabel}中断了，请重新触发这次回复。`, item.sessionId);
     return false;
   }
 
@@ -57,6 +96,7 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
     lastXhsNotesRef: pushLastXhsNotesRef,
     onProgress: (_channel, text) => {
       console.log('[instant-tool-runner:progress]', text);
+      emitToolStatus(item.charId, 'running', `${text}，请先停留在此页。`, item.sessionId);
     },
   };
 
@@ -92,11 +132,13 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
   const cfg = loadInstantConfig();
   if (!isInstantConfigReady(cfg)) {
     console.warn('[instant-tool-runner] instant config not ready, cannot continue');
+    emitToolStatus(item.charId, 'failed', `${toolLabel}完成了，但 Instant Push 配置不可用，没法继续回复。`, item.sessionId);
     return false;
   }
   const { sub } = await getOrCreateInstantSubscription();
   if (!sub) {
     console.warn('[instant-tool-runner] no push subscription, cannot continue');
+    emitToolStatus(item.charId, 'failed', `${toolLabel}完成了，但推送订阅不可用，没法继续回复。`, item.sessionId);
     return false;
   }
 
@@ -132,6 +174,7 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
   });
 
   try {
+    emitToolStatus(item.charId, 'continuing', `${toolLabel}完成了，正在让角色继续回复。`, item.sessionId);
     // keepalive 64KiB 上限按 UTF-8 字节算, 用 body.length (UTF-16 单元) 会让带
     // 中文 tool 结果 (小红书 / 飞书读日记) 的 /continue 在边界 case 误放行, 浏览器拒发,
     // fetch 抛 TypeError: Failed to fetch. byteLengthOf 跟 instantPushClient 守卫同一份.
@@ -139,19 +182,23 @@ async function runOnePendingToolCall(item: InstantPushPendingToolCall): Promise<
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       console.error('[instant-tool-runner] /continue HTTP failed', res.status, text);
+      emitToolStatus(item.charId, 'failed', `${toolLabel}完成了，但续写请求失败了。`, item.sessionId);
       return false;
     }
     let parsed: any;
     try { parsed = text ? JSON.parse(text) : null; } catch { /* ignore */ }
     if (parsed && parsed.success === false) {
       console.error('[instant-tool-runner] /continue worker rejected', parsed.error);
+      emitToolStatus(item.charId, 'failed', `${toolLabel}完成了，但 worker 拒绝了续写请求。`, item.sessionId);
       return false;
     }
     // status === 'loop_exceeded' 也是 HTTP 200 + success:true (见 amsg-instant 错误码表),
     // 我们不在这里弹错; SW 会单独收到 error push, ActiveMsgRuntime 处理.
+    emitToolStatus(item.charId, 'done', `${toolLabel}完成了，正在等角色的回复推回来。`, item.sessionId);
     return true;
   } catch (e) {
     console.error('[instant-tool-runner] /continue fetch threw', e);
+    emitToolStatus(item.charId, 'failed', `${toolLabel}完成了，但续写请求没有发出去。`, item.sessionId);
     return false;
   }
 }

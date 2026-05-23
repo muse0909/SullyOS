@@ -14,7 +14,7 @@
 
 import { createCloudflareWorker } from '@rei-standard/amsg-instant/adapters/cloudflare';
 import { createD1BlobStore } from '@rei-standard/amsg-instant/blob/d1';
-import { sendWebPush } from '@rei-standard/amsg-instant';
+import { sendPushWithMaybeBlob } from '@rei-standard/amsg-instant';
 import {
   buildContentPush,
   buildToolRequestPush,
@@ -47,14 +47,16 @@ type D1Database = {
   };
 };
 
-const cfWorker = createCloudflareWorker((env: Env) => {
-  const blobStore = env.DB
+function createBlobStore(env: Env) {
+  return env.DB
     ? {
         adapter: createD1BlobStore(env.DB, { table: 'amsg_transient_blobs' }),
         // 用默认 2600 B / 60 s; 见 amsg-instant README §BlobStore.
       }
     : undefined;
+}
 
+const cfWorker = createCloudflareWorker((env: Env) => {
   return {
     vapid: {
       email: env.VAPID_EMAIL || 'mailto:noreply@example.com',
@@ -62,7 +64,7 @@ const cfWorker = createCloudflareWorker((env: Env) => {
       privateKey: env.VAPID_PRIVATE_KEY,
     },
     clientToken: env.AMSG_CLIENT_TOKEN,
-    blobStore,
+    blobStore: createBlobStore(env),
     maxLoopIterations: 10,
     onLLMOutput,
     onEvent: (e: { type: string; [k: string]: unknown }) => {
@@ -89,7 +91,7 @@ const cfWorker = createCloudflareWorker((env: Env) => {
  *
  * 失败全吞 (情绪评估失败不该影响主回复); emotion_update 不带 notification, SW 静默入 inbox.
  */
-async function runEmotionEval(body: any, env: Env): Promise<void> {
+async function runEmotionEval(body: any, env: Env, requestUrl?: string): Promise<void> {
   const ee = body?.emotionEval;
   const sub = body?.pushSubscription;
   if (!ee?.prompt || !ee?.api?.baseUrl || !ee?.api?.apiKey || !ee?.api?.model) return;
@@ -169,16 +171,21 @@ async function runEmotionEval(body: any, env: Env): Promise<void> {
       metadata: { charId, emotionRaw: raw },
     };
 
-    // ttl / fetch 在运行时可选 (JSDoc 标了默认值), 但 .d.ts 把它们当必填 → as any 绕过.
-    await sendWebPush({
-      subscription: sub,
-      payload: JSON.stringify(pushObj),
+    // Reuse amsg's BlobStore path so large emotionRaw payloads do not exceed Web Push limits.
+    await sendPushWithMaybeBlob(pushObj, { pushSubscription: sub }, {
       vapid: {
         email: env.VAPID_EMAIL || 'mailto:noreply@example.com',
         publicKey: env.VAPID_PUBLIC_KEY,
         privateKey: env.VAPID_PRIVATE_KEY,
       },
-    } as any);
+      blobStore: createBlobStore(env),
+      requestUrl,
+      onEvent: (e: { type: string; [k: string]: unknown }) => {
+        if (e.type === 'payload_too_large' || e.type === 'blob_put_failed' || e.type === 'blob_orphaned') {
+          console.error('[emotion-eval] push delivery event', e);
+        }
+      },
+    } as any, body?.sessionId || '');
   } catch (e) {
     console.error('[emotion-eval] failed', e);
   }
@@ -203,7 +210,7 @@ export default {
     // 所以与主回复**并行**跑, 而不是 await cfWorker.fetch (流式输出 + 推送 + 收尾可能拖 ~30s)
     // 完成后才启动 —— 砍掉情绪评估的启动延迟, 让 buff / "情绪分析中" 徽章尽快结算.
     if (body?.emotionEval) {
-      ctx.waitUntil(runEmotionEval(body, env));
+      ctx.waitUntil(runEmotionEval(body, env, request.url));
     }
     return await (cfWorker as any).fetch(request, env, ctx);
   },

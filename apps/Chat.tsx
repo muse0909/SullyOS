@@ -23,6 +23,13 @@ import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { isInstantConfigReady, loadInstantConfig } from '../utils/instantPushClient';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
+type InstantToolUiStatus = {
+    charId: string;
+    phase: 'running' | 'continuing' | 'done' | 'failed';
+    text: string;
+    sessionId?: string;
+    updatedAt?: number;
+};
 
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars } = useOS();
@@ -39,6 +46,7 @@ const Chat: React.FC = () => {
     // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = 已 POST 发出 (keepalive,
     // 杀 PWA 也安全) = 可安全离开. true 从触发置起, onInstantPosted (= fetch dispatch) 置回 false。
     const [instantSendingActive, setInstantSendingActive] = useState(false);
+    const [instantToolStatus, setInstantToolStatus] = useState<InstantToolUiStatus | null>(null);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
@@ -534,8 +542,54 @@ const Chat: React.FC = () => {
             setShowingTargetIds(new Set());
             setWindowedFocusMsgId(null);
             setFlashMsgId(null);
+            try {
+                const rawToolStatus = localStorage.getItem(`instant_tool_status_${activeCharacterId}`);
+                const parsed = rawToolStatus ? JSON.parse(rawToolStatus) as InstantToolUiStatus : null;
+                const fresh = parsed?.updatedAt && Date.now() - parsed.updatedAt < 2 * 60_000;
+                setInstantToolStatus(fresh && parsed.phase !== 'done' ? parsed : null);
+            } catch {
+                setInstantToolStatus(null);
+            }
         }
     }, [activeCharacterId, reloadMessages]);
+
+    useEffect(() => {
+        let clearTimer: ReturnType<typeof setTimeout> | null = null;
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<InstantToolUiStatus>).detail;
+            if (!detail?.charId || detail.charId !== activeCharIdRef.current) return;
+
+            setInstantToolStatus(detail);
+            if (clearTimer) {
+                clearTimeout(clearTimer);
+                clearTimer = null;
+            }
+            if (detail.phase === 'done' || detail.phase === 'failed') {
+                clearTimer = setTimeout(() => {
+                    setInstantToolStatus((prev) => (
+                        prev?.sessionId && detail.sessionId && prev.sessionId !== detail.sessionId ? prev : null
+                    ));
+                    clearTimer = null;
+                }, detail.phase === 'failed' ? 8000 : 5000);
+            }
+        };
+        const receivedHandler = (e: Event) => {
+            const detail = (e as CustomEvent<{ charId?: string }>).detail;
+            if (detail?.charId && detail.charId !== activeCharIdRef.current) return;
+            try {
+                const charId = detail?.charId || activeCharIdRef.current;
+                if (charId) localStorage.removeItem(`instant_tool_status_${charId}`);
+            } catch { /* ignore */ }
+            setInstantToolStatus(null);
+        };
+        window.addEventListener('instant-tool-status', handler);
+        window.addEventListener('active-msg-received', receivedHandler);
+        return () => {
+            window.removeEventListener('instant-tool-status', handler);
+            window.removeEventListener('active-msg-received', receivedHandler);
+            if (clearTimer) clearTimeout(clearTimer);
+        };
+    }, []);
 
     // Auto-generate daily schedule (fire-and-forget on chat load)
     // 总开关关闭时完全跳过：不查询 DB、不调用副 API、不跑兜底
@@ -2359,13 +2413,35 @@ const Chat: React.FC = () => {
                     CDN 没生成 (一换就消失), 原版色 slate-400/70 又太淡看不见. 解法: 自己写 inline @keyframes
                     (不依赖 CDN) 还原脉冲, 用实色 slate-400 (峰值满不透明) 保证看得见, 尺寸回到原版 w-1. */}
                 {instantSendingActive && !selectionMode && (
-                    <div className="flex justify-end px-3 mb-4">
+                    <div className="flex justify-end px-3 -mt-1 -mb-4">
                         <style>{`@keyframes chatPendingDot{0%,80%,100%{opacity:.35;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}`}</style>
                         <span className="inline-flex items-center gap-[3px] mr-12 select-none pointer-events-none" role="status" aria-label="发送准备中">
                             <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite' }} />
                             <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.2s' }} />
                             <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.4s' }} />
                         </span>
+                    </div>
+                )}
+
+                {instantToolStatus && !selectionMode && (
+                    <div className="flex items-end gap-3 px-3 mb-4 animate-fade-in">
+                        <img src={char.avatar} className={`${osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9'} ${osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-[10px]'} object-cover`} />
+                        <div className={`max-w-[78%] px-4 py-3 rounded-2xl shadow-sm border ${
+                            instantToolStatus.phase === 'failed'
+                                ? 'bg-rose-50 border-rose-100 text-rose-700'
+                                : 'bg-white/95 border-white/70 text-slate-600'
+                        }`}>
+                            <div className="flex items-center gap-2 text-xs font-semibold leading-relaxed">
+                                {instantToolStatus.phase === 'failed' ? (
+                                    <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
+                                ) : instantToolStatus.phase === 'done' ? (
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                                ) : (
+                                    <svg className="animate-spin h-3 w-3 shrink-0 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                )}
+                                <span>{instantToolStatus.text}</span>
+                            </div>
+                        </div>
                     </div>
                 )}
 

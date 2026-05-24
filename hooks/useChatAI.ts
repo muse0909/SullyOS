@@ -2899,41 +2899,6 @@ if (toolsList.length > 0) {
 
     const isProactiveActive = char ? ProactiveChat.isActiveFor(char.id) : false;
 
-    const transcribeWithVolink = useCallback(async (
-    audioBlob: Blob,
-    config: APIConfig,
-  ): Promise<string> => {
-    const apiKey = config.volinkApiKey;
-    if (!apiKey) throw new Error('Volink API key not configured');
-
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve((reader.result as string).split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(audioBlob);
-    });
-
-    const resp = await fetch('/api/volink/stt', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        apiKey,
-        audioBase64: base64,
-        mimeType:    audioBlob.type || 'audio/webm',
-        model:       (config as any).volinkModel    || 'FunAudioLLM/SenseVoiceSmall',
-        language:    (config as any).volinkLanguage || 'auto',
-      }),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`Volink STT failed: ${resp.status} ${errText}`);
-    }
-
-    const data = await resp.json();
-    return data.text ?? '';
-  }, []);
-
     return {
         isTyping,
         recallStatus,
@@ -2955,6 +2920,5 @@ if (toolsList.length > 0) {
         isProactiveActive,
         lastSystemPrompt,
         evolvedNarrative,
-        transcribeWithVolink,
     };
 };

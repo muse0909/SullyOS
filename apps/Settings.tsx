@@ -44,6 +44,13 @@ const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === tru
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
+    const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'volink'>(apiConfig.ttsProvider || 'minimax');
+const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.volinkTtsBaseUrl || '');
+const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
+const [localVolinkTtsVoice, setLocalVolinkTtsVoice] = useState(apiConfig.volinkTtsVoice || '');
+const [localVolinkTtsModel, setLocalVolinkTtsModel] = useState(apiConfig.volinkTtsModel || '');
+const [tsStatusMsg, setTtsStatusMsg] = useState('');
+    
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(

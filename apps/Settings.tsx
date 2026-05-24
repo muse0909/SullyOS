@@ -355,17 +355,7 @@ const handleSaveTts = () => {
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
 
-    const handleSaveTts = () => {
-  updateApiConfig({
-    ttsProvider: localTtsProvider,
-    volinkTtsBaseUrl: localVolinkTtsBaseUrl,
-    volinkTtsApiKey: localVolinkTtsApiKey,
-    volinkTtsVoice: localVolinkTtsVoice,
-    volinkTtsModel: localVolinkTtsModel,
-  });
-  setTtsStatusMsg('已保存');
-  setTimeout(() => setTtsStatusMsg(''), 2000);
-};
+
 
   const fetchModels = async () => {
     if (!localUrl) { setStatusMsg('请先填写 URL'); return; }

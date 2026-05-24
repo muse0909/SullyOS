@@ -207,7 +207,7 @@ async function synthesizeSpeechVolink(
   char: CharacterProfile,
   apiConfig: APIConfig,
 ): Promise<TtsResult> {
-  const baseUrl = (apiConfig.volinkTtsBaseUrl || 'https://api.volink.ai').replace(/\/$/, '');
+  const baseUrl = (apiConfig.volinkTtsBaseUrl || 'https://api.volink.ai').replace(/\/$/, '').v1$/, '');
   const apiKey = apiConfig.volinkTtsApiKey;
   if (!apiKey) throw new Error('缺少 Volink TTS API Key');
 

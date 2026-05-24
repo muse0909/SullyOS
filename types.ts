@@ -156,6 +156,11 @@ export interface APIConfig {
   stream?: boolean;
   // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
   temperature?: number;
+  ttsProvider?: 'minimax' | 'volink';
+volinkTtsBaseUrl?: string;
+volinkTtsApiKey?: string;
+volinkTtsVoice?: string;   // 全局默认声音ID（角色没配时用这个）
+volinkTtsModel?: string;
 }
 
 export type ActiveMsg2DbDriver = 'pg' | 'neon';
@@ -910,6 +915,7 @@ export interface CharacterProfile {
       provider?: 'minimax' | 'custom';
       voiceId?: string;
       voiceName?: string;
+    volinkVoiceId?: string;    // 每个角色单独的 Volink 声音ID
       source?: 'system' | 'voice_cloning' | 'voice_generation' | 'custom';
       model?: string;
       notes?: string;

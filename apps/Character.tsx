@@ -1097,6 +1097,24 @@ ${isInitialGeneration ? `
                                )}
                            </div>
 
+                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
+    <div className="flex items-center justify-between">
+        <label className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
+            <SpeakerHigh size={12} /> Volink 音色设定
+        </label>
+    </div>
+    <p className="text-[11px] text-slate-500">如果用 Volink 作为 TTS 服务商，请在这里填入 Volink 提供的声音 ID。优先级高于全局默认。</p>
+    <input
+        value={formData.voiceProfile?.volinkVoiceId || ''}
+        onChange={(e) => handleChange('voiceProfile', {
+            ...(formData.voiceProfile || { provider: 'minimax', voiceId: '', voiceName: '', source: 'custom', model: 'speech-2.8-hd', notes: '' }),
+            volinkVoiceId: e.target.value,
+        })}
+        className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
+        placeholder="Volink voice_id（从 Volink 账户复制）"
+    />
+</div>
+
                            {/* Worldbook Section */}
                            <div>
                                <div className="flex justify-between items-center mb-2 px-1">

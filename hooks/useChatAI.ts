@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect, MutableRefObject } from 'react';
+import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';

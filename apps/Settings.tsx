@@ -261,6 +261,11 @@ const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === tru
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
+      setLocalTtsProvider(apiConfig.ttsProvider || 'minimax');
+setLocalVolinkTtsBaseUrl(apiConfig.volinkTtsBaseUrl || '');
+setLocalVolinkTtsApiKey(apiConfig.volinkTtsApiKey || '');
+setLocalVolinkTtsVoice(apiConfig.volinkTtsVoice || '');
+setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
@@ -325,6 +330,19 @@ const handleSaveImageApi = () => {
     setImageStatusMsg('生图配置已保存');
     setTimeout(() => setImageStatusMsg(''), 2000);
   };
+    
+const handleSaveTts = () => {
+  updateApiConfig({
+    ...apiConfig,
+    ttsProvider: localTtsProvider,
+    volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+    volinkTtsApiKey: localVolinkTtsApiKey,
+    volinkTtsVoice: localVolinkTtsVoice,
+    volinkTtsModel: localVolinkTtsModel,
+  });
+  setTtsStatusMsg('已保存');
+  setTimeout(() => setTtsStatusMsg(''), 2000);
+};
 
   const handleSaveOtherApis = () => {
     updateApiConfig({
@@ -336,6 +354,18 @@ const handleSaveImageApi = () => {
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
+
+    const handleSaveTts = () => {
+  updateApiConfig({
+    ttsProvider: localTtsProvider,
+    volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+    volinkTtsApiKey: localVolinkTtsApiKey,
+    volinkTtsVoice: localVolinkTtsVoice,
+    volinkTtsModel: localVolinkTtsModel,
+  });
+  setTtsStatusMsg('已保存');
+  setTimeout(() => setTtsStatusMsg(''), 2000);
+};
 
   const fetchModels = async () => {
     if (!localUrl) { setStatusMsg('请先填写 URL'); return; }
@@ -1154,6 +1184,80 @@ const handleSaveImageApi = () => {
             </div>
         </section>
 
+{/* 语音 TTS */}
+<section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
+  <div className="flex items-center gap-2 mb-4">
+    <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
+      </svg>
+    </div>
+    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">语音 TTS</h2>
+  </div>
+  <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">
+    AI 回复自动转语音。选择服务商后填写对应配置，角色页可单独设置声音 ID。
+  </p>
+  <div className="space-y-4">
+    <div className="group">
+      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">TTS 服务商</label>
+      <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
+        <button type="button" onClick={() => setLocalTtsProvider('minimax')}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localTtsProvider === 'minimax' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>
+          MiniMax
+        </button>
+        <button type="button" onClick={() => setLocalTtsProvider('volink')}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${localTtsProvider === 'volink' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>
+          Volink
+        </button>
+      </div>
+    </div>
+
+    {localTtsProvider === 'minimax' && (
+      <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          使用下方「其他 API」里的 MiniMax Key / Group ID / 服务器配置。角色声音 ID 在角色编辑页设置。
+        </p>
+      </div>
+    )}
+
+    {localTtsProvider === 'volink' && (
+      <>
+        <div className="group">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Volink Base URL</label>
+          <input type="text" value={localVolinkTtsBaseUrl} onChange={(e) => setLocalVolinkTtsBaseUrl(e.target.value)}
+            placeholder="https://api.volink.ai（留空用默认）"
+            className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+        </div>
+        <div className="group">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Volink API Key</label>
+          <input type="password" value={localVolinkTtsApiKey} onChange={(e) => setLocalVolinkTtsApiKey(e.target.value)}
+            placeholder="Volink API Key"
+            className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+        </div>
+        <div className="group">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">默认声音 ID</label>
+          <input type="text" value={localVolinkTtsVoice} onChange={(e) => setLocalVolinkTtsVoice(e.target.value)}
+            placeholder="从 Volink 账户复制声音 ID"
+            className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+          <p className="text-[11px] text-slate-400 mt-1 pl-1">角色单独设置了声音 ID 时优先用角色的，否则用这里的默认值。</p>
+        </div>
+        <div className="group">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">模型 (可选)</label>
+          <input type="text" value={localVolinkTtsModel} onChange={(e) => setLocalVolinkTtsModel(e.target.value)}
+            placeholder="tts-1（留空用默认）"
+            className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+          <p className="text-[11px] text-slate-400 mt-1 pl-1">例如 tts-1、tts-1-hd、gpt-4o-mini-tts，具体看 Volink 账户支持的模型。</p>
+        </div>
+      </>
+    )}
+  </div>
+  <button onClick={handleSaveTts}
+    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-4">
+    {ttsStatusMsg || '保存语音配置'}
+  </button>
+</section>
+
+          
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">

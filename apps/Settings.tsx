@@ -49,7 +49,7 @@ const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.vol
 const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
 const [localVolinkTtsVoice, setLocalVolinkTtsVoice] = useState(apiConfig.volinkTtsVoice || '');
 const [localVolinkTtsModel, setLocalVolinkTtsModel] = useState(apiConfig.volinkTtsModel || '');
-const [tsStatusMsg, setTtsStatusMsg] = useState('');
+const [ttsStatusMsg, setTtsStatusMsg] = useState('');
     
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');

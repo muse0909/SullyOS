@@ -217,19 +217,18 @@ async function synthesizeSpeechVolink(
   const cleanedText = cleanTextForTts(text);
   if (!cleanedText) throw new Error('TS 文本为空');
 
-  const response = await fetch(`${baseUrl}/v1/audio/speech`, {
+    const response = await fetch(`/api/volink/ts`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: apiConfig.volinkTtsModel || 'tts-1',
-      input: cleanedText,
+      apiKey,
+      baseUrl,
+      text: cleanedText,
       voice,
-      response_format: 'mp3',
+      model: apiConfig.volinkTtsModel || 'ts-1',
     }),
   });
+
 
   if (!response.ok) {
     if (response.status === 402) throw new Error('Volink TTS 积分不足 (402)');
@@ -249,7 +248,7 @@ export async function synthesizeSpeechDetailed(
   options?: { languageBost?: string; groupId?: string }
 ): Promise<TtsResult> {
   // Volink 分支 — OpenAI 兼容协议，直接返回二进制音频
-  if (apiConfig.tsProvider === 'volink') {
+  if (apiConfig.ttsProvider === 'volink') {
     return synthesizeSpeechVolink(text, char, apiConfig);
   }
 

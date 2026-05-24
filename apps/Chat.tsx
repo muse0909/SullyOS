@@ -329,8 +329,8 @@ const Chat: React.FC = () => {
             chatAudioRef.current.onended = () => setPlayingMsgId(null);
             chatAudioRef.current.play().catch(() => {});
             setPlayingMsgId(msg.id);
-        } catch (err: any) {
-            addToast(`语音生成失败: ${err?.message || '未知错误'}`, 'error');
+        } catch (err: any) {  
+            addToast(`语音生成失败: ${err?.message || '未知错误'}`, 'error', 8000);
         } finally {
             setVoiceLoading(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
         }

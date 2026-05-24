@@ -217,18 +217,19 @@ async function synthesizeSpeechVolink(
   const cleanedText = cleanTextForTts(text);
   if (!cleanedText) throw new Error('TS 文本为空');
 
-    const response = await fetch(`/api/volink/ts`, {
+      const response = await fetch(`${baseUrl}/v1/audio/speech`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      apiKey,
-      baseUrl,
-      text: cleanedText,
+      model: apiConfig.volinkTtsModel || 'tts-1',
+      input: cleanedText,
       voice,
-      model: apiConfig.volinkTtsModel || 'ts-1',
+      response_format: 'mp3',
     }),
   });
-
 
   if (!response.ok) {
     if (response.status === 402) throw new Error('Volink TTS 积分不足 (402)');

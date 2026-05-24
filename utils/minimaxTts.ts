@@ -201,18 +201,65 @@ export interface TtsResult {
  * Prefer this variant when you need to persist audio to storage — the blob can be
  * written to IndexedDB so the audio survives page/component reloads.
  */
+/** Call Volink TS (OpenAI-compatible /v1/audio/speech) */
+async function synthesizeSpeechVolink(
+  text: string,
+  char: CharacterProfile,
+  apiConfig: APIConfig,
+): Promise<TtsResult> {
+  const baseUrl = (apiConfig.volinkTtsBaseUrl || 'https://api.volink.ai').replace(/\/$/, '');
+  const apiKey = apiConfig.volinkTtsApiKey;
+  if (!apiKey) throw new Error('缺少 Volink TTS API Key');
+
+  const voice = char.voiceProfile?.volinkVoiceId || apiConfig.volinkTtsVoice;
+  if (!voice) throw new Error('未配置 Volink 声音 ID（请在角色设置或全局设置中填写）');
+
+  const cleanedText = cleanTextForTts(text);
+  if (!cleanedText) throw new Error('TS 文本为空');
+
+  const response = await fetch(`${baseUrl}/v1/audio/speech`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: apiConfig.volinkTtsModel || 'tts-1',
+      input: cleanedText,
+      voice,
+      response_format: 'mp3',
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 402) throw new Error('Volink TTS 积分不足 (402)');
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Volink TTS 失败 (HTTP ${response.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const blob = await response.blob();
+  if (!blob.size) throw new Error('Volink TTS 返回空音频');
+  return { url: URL.createObjectURL(blob), blob };
+}
+
 export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string }
+  options?: { languageBost?: string; groupId?: string }
 ): Promise<TtsResult> {
+  // Volink 分支 — OpenAI 兼容协议，直接返回二进制音频
+  if (apiConfig.tsProvider === 'volink') {
+    return synthesizeSpeechVolink(text, char, apiConfig);
+  }
+
   const apiKey = resolveMiniMaxApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 MiniMax API Key');
   const vp = char.voiceProfile;
   if (!vp?.voiceId && (!vp?.timberWeights || vp.timberWeights.length === 0)) {
     throw new Error('角色未配置语音');
   }
+
 
   // Insert natural pauses at punctuation marks
   const processedText = insertSpeechBreaks(text);

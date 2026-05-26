@@ -445,7 +445,6 @@ const PhoneShell: React.FC = () => {
   className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none flex flex-col"
   style={{ 
       paddingTop: activeApp !== AppID.Launcher ? 'env(safe-area-inset-top)' : 0,
-      paddingBottom: activeApp !== AppID.Launcher ? 'env(safe-area-inset-bottom)' : 0
   }}
 > 
           {/* App Container */}

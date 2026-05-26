@@ -1,7 +1,4 @@
 /**
- * ⚠️ 改完后必须跑 `pnpm build:workers` 重生 worker.bundle.js 并一起 commit.
- *    详见 ./index.ts 顶部 deploy 说明 + CI check-worker-bundle workflow.
- *
  * SullyOS-specific business-tag classifier for the amsg-instant 0.8 agentic loop.
  *
  * Scans `ctx.llmOutputText` and decides:

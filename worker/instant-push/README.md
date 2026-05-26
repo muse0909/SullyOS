@@ -10,12 +10,10 @@
 
 | 文件 | 说明 |
 |------|------|
-| `worker.bundle.js` | **实际部署的产物**（`wrangler.toml` 里 `main` 指向它）。esbuild 把所有外部依赖（含仓库根的 `utils/sanitize`）全部 inline 进来，自包含。`scripts/build-workers.mjs` 自动维护 |
-| `src/index.ts` / `src/classifier.ts` | Worker 源码。只在仓库内开发/构建用；CF 不直接跑它 |
+| `src/index.ts` | Worker 源码入口（极薄封装） |
 | `wrangler.toml` | CF Worker 部署配置 |
 | `package.json` | 子目录依赖声明 —— CF Workers Builds 用它跑 `npm install + wrangler deploy` |
-
-> 维护者注意：改完 `src/` 必须跑 `pnpm build:workers` 把 `worker.bundle.js` 一起 commit，否则部署用的还是旧 bundle。CI 会校验，详见仓库根 `CLAUDE.md`。
+| `worker.bundle.js` | 已打包好的 Worker，**仅备用方案**：复制到 CF 控制台直接部署 |
 
 ---
 
@@ -31,7 +29,7 @@
 
 ## 阶段 2：在 Cloudflare 部署 Worker
 
-### 主方案：用 Git URL 克隆（推荐，自动跟最新）
+### 主方案：用 Git URL 克隆（推荐）
 
 1. 访问 [dash.cloudflare.com](https://dash.cloudflare.com/) → Workers & Pages → Create → Worker
 2. 选择 **Clone a public repository via Git URL**
@@ -40,25 +38,21 @@
    https://github.com/qegj567-cloud/SullyOS/tree/master/worker/instant-push
    ```
    （URL 末尾的 `worker/instant-push` 子目录路径必须保留，CF 才知道用哪一份 wrangler.toml）
-4. 弹出的配置页保持默认即可：Build command 留空，Deploy command 用默认的 `npx wrangler deploy`，Builds for non-production branches 勾不勾都行。点 **Deploy**。
-5. 部署成功后记录 Worker 地址：`https://instant-push.<你的账号>.workers.dev`
-6. 之后只要上游仓库 push 新版，CF Workers Builds 会自动重新部署，**不用再手动同步**
+4. CF 会自动 `npm install` + `wrangler deploy`，部署成功后记录 Worker 地址：
+   `https://instant-push.<你的账号>.workers.dev`
+5. 之后只要上游仓库 push 新版，CF Workers Builds 会自动重新部署，**不用再手动同步**
 
-> 为什么这条路能成：`wrangler.toml` 里 `main` 指向**预先打好的 `worker.bundle.js`**（仓库里跟着源码一起 commit 的）。CF 拿到子目录后只需要 `wrangler deploy` 把这份 bundle 上传，**不跑 esbuild**，自然也不会因为源码里的跨目录 import (`../../../utils/sanitize`) 而部署失败。
->
-> 历史坑：早期 `main` 指向 `src/index.ts`，CF Builds 会跑 esbuild，碰到跨目录 import 直接 `Could not resolve` 部署 fail。现在已固定走 bundle，自动部署对用户透明。
-
-### 备用方案：手动复制 `worker.bundle.js`
+### 备用方案：复制 `worker.bundle.js`
 
 CF 后台连不上 GitHub、或者你 fork 了私有副本不想接 OAuth 时用这条路：
 
-1. 同样在 CF 后台 Create → Worker，**Start with Hello World** 模板，给 Worker 起名（如 `instant-push`），点 Deploy 先建一个空 Worker
+1. 同样在 CF 后台 Create → Worker，给 Worker 起名（如 `instant-push`），点 Deploy 先建一个空 Worker
 2. 进入 Worker 详情页 → **Edit code**（在线编辑器）
 3. 把 `worker/instant-push/worker.bundle.js` 的全部内容粘贴进去，覆盖原有代码
 4. 点 **Deploy** 完成部署
 5. 同样记录 Worker 地址
 
-> ⚠️ 备用方案部署的是 commit 时的 bundle 快照，要拿最新代码就得重新粘贴一次。主方案会自动跟最新。
+> ⚠️ 备用方案部署的是 commit 时的 bundle 快照，要拿最新代码就得重新粘贴一次。主方案才会自动跟最新。
 
 ---
 
@@ -132,5 +126,4 @@ CF 后台 → Workers & Pages → 找到该 Worker → Settings → Delete。
 你自己在前端配置的 Chat API（apiKey）—— Worker 用你传进来的 key 和 apiUrl 调 LLM，Worker 本身不持有任何 key。
 
 **Q：CF 的 Git 克隆构建失败、提示找不到依赖？**
-- 先检查 Git URL 末尾是否带上了 `tree/master/worker/instant-push` 子目录路径。
-- 如果报 `Could not resolve "../../../utils/sanitize"` 之类**跨目录 import** 找不到：那是你 fork 的仓库里 `wrangler.toml` 的 `main` 还指向 `src/index.ts` 的老配置。把它改成 `main = "worker.bundle.js"` 并把仓库根的 `pnpm build:workers` 产物一起 commit 上去即可（上游仓库已经是这样配的）。
+检查 Git URL 末尾是否带上了 `tree/master/worker/instant-push` 子目录路径。CF 必须看到子目录里的 `package.json` 和 `wrangler.toml` 才能构建。

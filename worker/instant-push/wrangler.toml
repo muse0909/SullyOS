@@ -1,11 +1,5 @@
 name = "instant-push"
-# 部署用预先打好的 bundle, 不让 CF Builds 跑 esbuild —— 因为 src/ 里的源码会
-# import 仓库根的 ../../../utils/sanitize, 而 CF Builds 用 Git URL 子路径
-# (tree/master/worker/instant-push) 拉代码时只能看到这个子目录, esbuild 解析
-# 不到外层 utils → "Could not resolve" 直接 fail. bundle 是 esbuild 把外部依赖
-# 全部 inline 后的产物, 自包含, 上传即用. 维护者改完 src/ 记得跑
-# `pnpm build:workers` 把 bundle 一起更新再 commit.
-main = "worker.bundle.js"
+main = "src/index.ts"
 compatibility_date = "2026-01-01"
 # amsg-instant 0.3.0+ uses only Web Crypto; no compatibility_flags needed.
 # Secrets — set via Dashboard 或 wrangler secret put NAME

@@ -1,11 +1,4 @@
 /**
- * ⚠️ 改完这个文件 (或同目录的 classifier.ts) 必须跑 `pnpm build:workers` 重生
- *    worker/instant-push/worker.bundle.js, 把 bundle 一起 commit. 否则 Cloudflare
- *    用 Git URL 子路径 (tree/master/worker/instant-push) 部署时跑 esbuild 会因为
- *    `../../../utils/sanitize` 这种跨子目录 import 报 "Could not resolve" 部署失败.
- *    deploy 实际上传的是 wrangler.toml main 指向的 bundle, 不是这份 src/ 源码.
- *    CI 会校验 bundle 跟源码同步 (.github/workflows/check-worker-bundle.yml).
- *
  * SullyOS Instant Push — Cloudflare Worker entry.
  *
  * Phase 2 Round 2 (这次):

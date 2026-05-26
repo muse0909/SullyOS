@@ -11,8 +11,11 @@ import {
   normalizeWorkerUrl,
 } from '../../utils/instantPushClient';
 import { isPushVapidReady } from '../../utils/pushVapid';
-import { markWorkerBuildSeen } from '../WorkerUpdateReminderEvent';
-import { InstantPushConfig } from '../../types';
+import {
+  markWorkerBuildSeen,
+} from '../WorkerUpdateReminderEvent';
+import { FAQ_TARGET_SECTION_KEY, CHANGELOG_2026_05_25 } from '../UpdateNotificationEvent';
+import { InstantPushConfig, AppID } from '../../types';
 
 interface InstantPushSettingsModalProps {
   open: boolean;
@@ -26,7 +29,7 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
   onClose,
   onOpenVapid,
 }) => {
-  const { apiConfig, addToast } = useOS();
+  const { apiConfig, addToast, openApp } = useOS();
 
   const [workerUrl, setWorkerUrl] = useState('');
   const [clientToken, setClientToken] = useState('');
@@ -124,6 +127,14 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
       setCopyStatus('');
       addToast(`复制失败：${err?.message ?? '未知错误'}`, 'error');
     }
+  };
+
+  const handleOpenTutorial = () => {
+    try {
+      sessionStorage.setItem(FAQ_TARGET_SECTION_KEY, CHANGELOG_2026_05_25);
+    } catch { /* ignore */ }
+    openApp(AppID.FAQ);
+    onClose();
   };
 
   const handleOpenCF = () => {
@@ -399,6 +410,14 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
             <code className="font-mono"> worker.bundle.js </code>全部内容粘贴覆盖，再 Deploy；
             VAPID 公钥/私钥到「推送凭据 (VAPID)」面板复制 env 清单，粘进 Worker 的 Variables。
           </p>
+
+          <button
+            type="button"
+            onClick={handleOpenTutorial}
+            className="w-full py-2 rounded-xl text-[11px] font-bold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100"
+          >
+            不会配？看视频教程 →
+          </button>
 
           <div className="grid grid-cols-2 gap-2">
             <button

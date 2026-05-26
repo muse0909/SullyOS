@@ -416,7 +416,6 @@ const PhoneShell: React.FC = () => {
   className="relative w-full h-full overflow-hidden bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200 text-slate-900 font-sans select-none overscroll-none"
   style={{
     paddingTop: 'env(safe-area-inset-top)',
-    paddingBottom: 'env(safe-area-inset-bottom)',
     boxSizing: 'border-box',
   }}
 >

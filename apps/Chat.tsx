@@ -1587,6 +1587,27 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
+       const handleCopySelected = async () => {
+    if (selectedMsgIds.size === 0) return;
+    const selectedMsgs = messages.filter(m => selectedMsgIds.has(m.id!));
+    const textContent = selectedMsgs
+        .map(m => {
+            if (m.type === 'text') return m.content;
+            if (m.type === 'image') return '[图片]';
+            if (m.type === 'audio') return '[语音]';
+            return '';
+        })
+        .filter(Boolean)
+        .join('\n\n');
+    
+    try {
+        await navigator.clipboard.writeText(textContent);
+        addToast(`已复制 ${selectedMsgIds.size} 条消息`, 'success');
+    } catch (err) {
+        addToast('复制失败', 'error');
+    }
+};
+
     // --- Forward Chat Records ---
     const [showForwardModal, setShowForwardModal] = useState(false);
 
@@ -2226,6 +2247,7 @@ const Chat: React.FC = () => {
 
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
+                       onCopySelected={handleCopySelected}
                     selectedCount={selectedMsgIds.size}
                     emojis={filteredEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}

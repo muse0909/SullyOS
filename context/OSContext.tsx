@@ -13,6 +13,8 @@ import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+import { ActiveMsgRuntime } from '../utils/activeMsgRuntime';
+
 
 const normalizeProactiveAiContent = (raw: string): string => {
   let cleaned = raw;
@@ -1171,12 +1173,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       const onVisible = () => {
-          if (document.visibilityState !== 'visible') return;
-          if (awayActiveMsgCount > 0) {
-              addToast(`你离开期间收到 ${awayActiveMsgCount} 条主动消息 2.0`, 'success');
-              awayActiveMsgCount = 0;
-          }
-      };
+    if (document.visibilityState !== 'visible') return;
+    void ActiveMsgRuntime.init();
+    if (awayActiveMsgCount > 0) {
+        addToast(`你离开期间收到 ${awayActiveMsgCount} 条主动消息 2.0`, 'success');
+        awayActiveMsgCount = 0;
+    }
+};
 
       window.addEventListener('active-msg-received', handler);
       window.addEventListener('active-msg-open', openHandler);

@@ -2222,7 +2222,7 @@ const Chat: React.FC = () => {
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
-                     onTriggerAI={() => { if (input.trim()) { handleSend(); setTimeout(() => triggerAI(messages), 100); } else { triggerAI(messages); } }}
+                    onTriggerAI={() => { if (input.trim()) { handleSendText().then(() => triggerAI(messages)); } else { triggerAI(messages); } }}
 
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}

@@ -16,6 +16,7 @@ import { Capacitor } from '@capacitor/core';
 import { ActiveMsgRuntime } from '../utils/activeMsgRuntime';
 
 
+
 const normalizeProactiveAiContent = (raw: string): string => {
   let cleaned = raw;
   cleaned = cleaned.replace(/\[(?:(?:你|User|用户|System)\s*)?发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');

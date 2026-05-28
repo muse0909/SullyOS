@@ -845,7 +845,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     }
                 }
                 else if (m.type === 'emoji') {
-                     const stickerName = emojis.find(e => e.url === m.content)?.name || '无效表情';
+                     const stickerName = emojis.find(e => e.url === m.content)?.name || '未知表情';
                      content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
                 }
                 else if ((m.type as string) === 'chat_forward') {

@@ -1088,30 +1088,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              if (isVisible) {
-                  addToast(`${charName} 主动发来了消息`, 'success');
-              } else {
-                  awayProactiveCount += 1;
-              }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
+const isVisible = document.visibilityState === 'visible';
+const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
 
-              // Web Notification
-              if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
-                  const char = characters.find(c => c.id === charId);
-                  try {
-                      const notif = new Notification(charName, {
-                          body: preview,
-                          icon: char?.avatar,
-                          silent: false
-                      });
-                      notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
-                  } catch (e) { /* notification failed */ }
-              }
-          }
+if (!isChattingWithThisChar) {
+    if (isVisible) {
+        addToast(`${charName} 主动发来了消息`, 'success');
+    } else {
+        awayProactiveCount += 1;
+    }
+    setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+}
+
+// 通知逻辑移到外面，不管在不在聊天页面都弹
+if (!isVisible || !isChattingWithThisChar) {
+    void sendProactiveNativeNotification(charId, charName, preview);
+
+    if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
+        const char = characters.find(c => c.id === charId);
+        try {
+            const notif = new Notification(charName, {
+                body: preview,
+                icon: char?.avatar,
+                silent: false
+            });
+            notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
+        } catch (e) { /* notification failed */ }
+    }
+}
+
       };
 
       const onVisible = () => {
@@ -1136,34 +1141,39 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {
-          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
-          setLastMsgTimestamp(Date.now());
+    const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+    setLastMsgTimestamp(Date.now());
 
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              if (isVisible) {
-                  addToast(`${charName} 发来了一条主动消息 2.0`, 'success');
-              } else {
-                  awayActiveMsgCount += 1;
-              }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
+    const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+    const isVisible = document.visibilityState === 'visible';
+    const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
 
-              if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
-                  const char = characters.find(c => c.id === charId);
-                  try {
-                      const notif = new Notification(charName, {
-                          body: preview,
-                          icon: char?.avatar,
-                          silent: false
-                      });
-                      notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
-                  } catch (e) { /* notification failed */ }
-              }
-          }
-      };
+    if (!isChattingWithThisChar) {
+        if (isVisible) {
+            addToast(`${charName} 发来了一条主动消息 2.0`, 'success');
+        } else {
+            awayActiveMsgCount += 1;
+        }
+        setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+    }
+
+    if (!isVisible || !isChattingWithThisChar) {
+        void sendProactiveNativeNotification(charId, charName, preview);
+
+        if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
+            const char = characters.find(c => c.id === charId);
+            try {
+                const notif = new Notification(charName, {
+                    body: preview,
+                    icon: char?.avatar,
+                    silent: false
+                });
+                notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
+            } catch (e) { /* notification failed */ }
+        }
+    }
+};
+
 
       const openHandler = (e: Event) => {
           const { charId } = (e as CustomEvent).detail as { charId?: string };

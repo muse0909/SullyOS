@@ -670,11 +670,13 @@ export const DB = {
 
   initializeEmojiData: async (): Promise<void> => {
       const cats = await DB.getEmojiCategories();
-      if (!cats.some(c => c.id === 'default')) {
+      // 巧妙利用 UI 强制保留 default 分类的特性：
+      // 只要初始化过一次，cats.length 至少为 1（必然包含 default）。
+      // 只有全量清空的首次安装，cats.length 才为 0。这样无需 localStorage 即可避免内置分类无限复活。
+      if (cats.length === 0) {
           await DB.saveEmojiCategory({ id: 'default', name: '默认', isSystem: true });
-      }
-      if (!cats.some(c => c.id === SULLY_CATEGORY_ID)) {
-          await DB.saveEmojiCategory({ id: SULLY_CATEGORY_ID, name: 'Sully 专属', isSystem: true });
+          // 去掉 isSystem 标记，允许用户在 UI 里直接删除此分类
+          await DB.saveEmojiCategory({ id: SULLY_CATEGORY_ID, name: 'Sully 专属', isSystem: false });
           const db = await openDB();
           const tx = db.transaction(STORE_EMOJIS, 'readwrite');
           const store = tx.objectStore(STORE_EMOJIS);

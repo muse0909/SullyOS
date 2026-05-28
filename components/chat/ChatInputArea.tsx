@@ -16,6 +16,8 @@ interface ChatInputAreaProps {
     onSend: () => void;
         onTriggerAI: () => void;
     onDeleteSelected: () => void;
+   onCopySelected?: () => void;
+
     onForwardSelected?: () => void;
     selectedCount: number;
     emojis: Emoji[];

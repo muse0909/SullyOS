@@ -1,6 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Copy } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -313,26 +314,51 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     return (
         <div className={`${shellClass} shrink-0 z-40 relative`} style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
             {selectionMode ? (
-                <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
-                    {onForwardSelected && (
-                        <button
-                            onClick={onForwardSelected}
-                            disabled={selectedCount === 0}
-                            className={`flex-1 py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${selectedCount === 0 ? 'bg-slate-200 text-slate-400 shadow-none' : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-blue-200'}`}
-                        >
-                            <ShareNetwork className="w-5 h-5" weight="bold" />
-                            转发 ({selectedCount})
-                        </button>
-                    )}
-                    <button
-                        onClick={onDeleteSelected}
-                        className={`${onForwardSelected ? 'flex-1' : 'w-full'} py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2`}
-                    >
-                        <Trash className="w-5 h-5" weight="bold" />
-                        删除 ({selectedCount})
-                    </button>
-                </div>
-            ) : (
+    <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
+        <button
+            onClick={async () => {
+                if (selectedCount === 0) return;
+                const selectedMsgs = messages.filter(m => selectedMsgIds.has(m.id!));
+                const textContent = selectedMsgs.map(m => {
+                    if (m.type === 'text') return m.content;
+                    if (m.type === 'image') return '[图片]';
+                    if (m.type === 'audio') return '[语音]';
+                    return '';
+                }).filter(Boolean).join('\n\n');
+                
+                try {
+                    await navigator.clipboard.writeText(textContent);
+                    addToast(`已复制 ${selectedCount} 条消息`, 'success');
+                } catch (err) {
+                    addToast('复制失败', 'error');
+                }
+            }}
+            disabled={selectedCount === 0}
+            className={`flex-1 py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${selectedCount === 0 ? 'bg-slate-200 text-slate-400 shadow-none' : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-green-200'}`}
+        >
+            <Copy className="w-5 h-5" weight="bold" />
+            复制 ({selectedCount})
+        </button>
+        {onForwardSelected && (
+            <button
+                onClick={onForwardSelected}
+                disabled={selectedCount === 0}
+                className={`flex-1 py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${selectedCount === 0 ? 'bg-slate-200 text-slate-400 shadow-none' : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-blue-200'}`}
+            >
+                <ShareNetwork className="w-5 h-5" weight="bold" />
+                转发 ({selectedCount})
+            </button>
+        )}
+        <button
+            onClick={onDeleteSelected}
+            className={`flex-1 py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2`}
+        >
+            <Trash className="w-5 h-5" weight="bold" />
+            删除 ({selectedCount})
+        </button>
+    </div>
+) : (
+
                 <div className="p-3 px-4 flex gap-3 items-end">
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />

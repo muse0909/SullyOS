@@ -52,7 +52,8 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-            showPanel, setShowPanel, onSend, onTriggerAI, onDeleteSelected, onForwardSelected, selectedCount,
+            showPanel, setShowPanel, onSend, onTriggerAI, onDeleteSelected, onForwardSelected, onCopySelected, selectedCount,
+
     emojis, characters, activeCharacterId, onCharSelect,
     customThemes, onUpdateTheme, onRemoveTheme, activeThemeId,
     onPanelAction, onImageSelect, isSummarizing,

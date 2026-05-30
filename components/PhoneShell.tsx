@@ -472,8 +472,8 @@ const PhoneShell: React.FC = () => {
           )}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}
-          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer /><ApiQuickFloat />}
-
+          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer />}
+    <ApiQuickFloat />
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
               {toasts.map(toast => (

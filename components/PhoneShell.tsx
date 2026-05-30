@@ -47,6 +47,8 @@ import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
+import ApiQuickFloat from './os/ApiQuickFloat';
+
 
 /*
 // Internal Error Boundary Component
@@ -470,7 +472,7 @@ const PhoneShell: React.FC = () => {
           )}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}
-          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer />}
+          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer /><ApiQuickFloat />}
 
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">

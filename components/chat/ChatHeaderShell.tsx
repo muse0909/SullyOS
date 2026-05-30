@@ -322,7 +322,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             className={`text-[11px] font-mono ${secondaryTextClass} opacity-85 ml-1 truncate`}
                             title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}
                         >
-                            · {lastTokenUsage}
+                             {lastTokenUsage}
                         </span>
                     ) : null}
                 </div>

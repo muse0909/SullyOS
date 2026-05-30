@@ -4,7 +4,7 @@ import { Gear, X, ArrowsClockwise } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 
 const POS_KEY = 'sullyos_api_quickfloat_pos_v1';
-const BALL_SIZE = 48;
+const BALL_SIZE = 40;
 
 const ApiQuickFloat: React.FC = () => {
   const {
@@ -158,10 +158,11 @@ const ApiQuickFloat: React.FC = () => {
           touchAction: 'none',
           cursor: dragging ? 'grabbing' : 'grab',
         }}
-        className="z-[100] rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-300/40 flex items-center justify-center text-white active:scale-95 transition-transform select-none"
+      className="z-[100] rounded-full bg-white/90 backdrop-blur-md shadow-lg shadow-slate-300/50 border border-slate-200/60 flex items-center justify-center text-slate-600 active:scale-95 transition-transform select-none"
+
         title="API 快捷设置（可拖动）"
       >
-        <Gear size={22} weight="bold" />
+        <Gear size={18} weight="bold" />
         <div className="absolute -bottom-1 -right-1 bg-white text-[8px] text-slate-700 font-bold px-1 py-0.5 rounded-full border border-slate-200 shadow-sm pointer-events-none max-w-[80px] truncate">
           {activePreset?.name || (apiConfig.model || 'API').slice(0, 10)}
         </div>

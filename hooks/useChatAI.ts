@@ -2847,7 +2847,8 @@ if (toolsList.length > 0) {
                         }
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
-                        if (shouldAutoDigest) {
+                      if (shouldAutoDigest && (char as any).digestionEnabled !== false) {
+
                             console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
                             setMemoryPalaceStatus(`${charName}闭上眼睛，开始整理内心…`);
                             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');

@@ -323,8 +323,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </span>
                 ) : null}
             </div>
-
-                </div>
+            
                 <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
                     {buffs.length > 0 ? (
                         <div className="flex items-center gap-0.5 min-w-0 flex-1">
@@ -360,7 +359,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 ) : null}
             </div>
 
-                </div>
+            
                 <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
                     {buffs.length > 0 ? (
                         <div className="flex items-center gap-0.5 min-w-0 flex-1">

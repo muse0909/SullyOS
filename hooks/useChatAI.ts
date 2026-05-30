@@ -11,7 +11,8 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { useMusic } from '../context/MusicContext';
-import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
+
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
@@ -2815,9 +2816,11 @@ if (toolsList.length > 0) {
 
                 // 缓冲区处理（LLM提取 + Embedding向量化）
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
-                        setMemoryPalaceStatus(stage);
+                 const extractForce = incrementExtractRound(char.id);
+                   processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', extractForce, (stage) => {
+                    setMemoryPalaceStatus(stage);
                     })
+
                     .then(async (pipelineResult) => {
                         // 显示结果让用户看到
                         if (pipelineResult && pipelineResult.stored > 0) {

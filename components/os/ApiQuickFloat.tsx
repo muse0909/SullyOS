@@ -162,7 +162,7 @@ const ApiQuickFloat: React.FC = () => {
 
         title="API 快捷设置（可拖动）"
       >
-        <Gear size={18} weight="bold" />
+        <Gear size={20} weight="bold" />
         <div className="absolute -bottom-1 -right-1 bg-white text-[8px] text-slate-700 font-bold px-1 py-0.5 rounded-full border border-slate-200 shadow-sm pointer-events-none max-w-[80px] truncate">
           {activePreset?.name || (apiConfig.model || 'API').slice(0, 10)}
         </div>

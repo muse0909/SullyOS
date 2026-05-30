@@ -977,6 +977,23 @@ export function getMemoryPalaceHighWaterMark(charId: string): number {
     return getLastProcessedId(charId);
 }
 
+// ─── 提取轮数计数（按轮触发，区别于认知消化的 50 轮） ─────────
+/** 每聊够 N 轮（1轮=用户发+AI回复）强制触发一次记忆提取，避免气泡多就被算成多条 */
+const AUTO_EXTRACT_ROUNDS = 50;
+const EXTRACT_ROUND_KEY = (charId: string) => `mp_extractRounds_${charId}`;
+
+/** 累加一轮，达到阈值返回 true（同时清零计数），调用方可据此把 force=true 传给 processNewMessages */
+export function incrementExtractRound(charId: string): boolean {
+  let current = 0;
+  try { current = parseInt(localStorage.getItem(EXTRACT_ROUND_KEY(charId) || '0', 10) + 1; } catch { current = 1; }
+  if (current >= AUTO_EXTRACT_ROUNDS) {
+    try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), '0'); } catch {}
+    return true;
+  }
+  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current)); } catch {}
+  return false;
+}
+
 // ─── 缓冲区配置 ─────────────────────────────────────
 
 /** 热区大小：最近 N 条消息始终留在聊天上下文，不处理 */

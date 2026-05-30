@@ -3088,37 +3088,58 @@ create table if not exists memory_vectors (
                     </button>
                 </div>
 
-                {/* 认知消化（手动触发/测试） */}
-                <div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <RoomIcon room="attic" size={14} style={{ color: ROOM_COLORS.attic }} />
-                        <span>认知消化</span>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
-                        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
-                        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
-                    </div>
+                {/* 认知消化（开关 + 手动触发/测试） */}
+<div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
+    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RoomIcon room="attic" size={14} style={{ color: ROOM_COLORS.attic }} />
+            <span>认知消化</span>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500, color: '#374151' }}>
+            <span>{(char as any).digestionEnabled !== false ? '已开启' : '已关闭'}</span>
+            <input
+                type="checkbox"
+                checked={(char as any).digestionEnabled !== false}
+                onChange={async (e) => {
+                    const next = e.target.checked;
+                    try {
+                        await DB.saveCharacter({ ...char, digestionEnabled: next } as any);
+                        window.dispatchEvent(new CustomEvent('character-updated', { detail: { charId: char.id } }));
+                    } catch (err) {
+                        console.warn('保存消化开关失败:', err);
+                    }
+                }}
+                style={{ cursor: 'pointer' }}
+            />
+        </label>
+    </div>
+    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
+        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
+        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
+        关闭后不再自动消化，但手动触发仍然可用。
+    </div>
 
-                    {digestResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
-                            <StatusMessage msg={digestResult} />
-                        </div>
-                    )}
+    {digestResult && (
+        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
+            <StatusMessage msg={digestResult} />
+        </div>
+    )}
 
-                    <button
-                        onClick={handleDigest}
-                        disabled={digesting}
-                        style={{
-                            width: '100%', padding: '10px 0', borderRadius: 12,
-                            border: 'none', fontWeight: 700, fontSize: 13,
-                            color: 'white',
-                            background: digesting ? '#d4d4d4' : '#16a34a',
-                            cursor: digesting ? 'not-allowed' : 'pointer',
-                        }}
-                    >
-                        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
-                    </button>
-                </div>
+    <button
+        onClick={handleDigest}
+        disabled={digesting}
+        style={{
+            width: '100%', padding: '10px 0', borderRadius: 12,
+            border: 'none', fontWeight: 700, fontSize: 13,
+            color: 'white',
+            background: digesting ? '#d4d4d4' : '#16a34a',
+            cursor: digesting ? 'not-allowed' : 'pointer',
+        }}
+    >
+        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
+    </button>
+</div>
+
                 </>)}
 
                 {/* 危险区：一键清空 */}

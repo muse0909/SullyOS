@@ -1043,6 +1043,9 @@ export interface PipelineResult {
      * caller 看到这个字段就应当提示"聊天还不够，继续聊"，而不是报"LLM 提取失败"。
      */
     skipReason?: 'lock' | 'hot_zone' | 'threshold';
+      /** 真触发了提取但 0 条入库的具体原因，供 caller 给用户明确反馈 */
+  emptyReason?: 'no_extract' | 'all_dedup' | 'vectorize_fail';
+
 }
 
 /** 构造一个"软跳过"结果，统一 caller 的分支处理 */
@@ -1254,7 +1257,8 @@ export async function processNewMessages(
 
         if (memories.length === 0) {
             console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
-            return { stored: 0, skipped: 0, memories: [], batches: batchResults };
+               return { stored: 0, skipped: vectorResult.skipped, memories: [], batches: batchResults, emptyReason: vectorResult.skipped > 0 ? 'all_dedup' : 'vectorize_fail' };
+
         }
 
         console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);

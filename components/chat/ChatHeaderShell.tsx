@@ -89,8 +89,6 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const buffPreviewRef = useRef<HTMLDivElement>(null);
     const measureChipRefs = useRef<Array<HTMLSpanElement | null>>([]);
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [showApiPanel, setShowApiPanel] = useState(false);
-
     const visibleBuffs = buffs.slice(0, collapsedVisibleCount);
     const hiddenBuffCount = Math.max(0, buffs.length - collapsedVisibleCount);
 
@@ -404,27 +402,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                         <ChatMusicPlayer />
                         <div>
-                            <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                    <rect x="3" y="16" width="4" height="5" rx="1" />
-                                    <rect x="10" y="10" width="4" height="11" rx="1" />
-                                    <rect x="17" y="4" width="4" height="17" rx="1" />
-                                </svg>
-                            </button>
-                            {showApiPanel && (
-                                <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
-                                    {apiPresets.length === 0 ? (
-                                        <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
-                                    ) : (
-                                        apiPresets.map(preset => (
-                                            <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
-                                                {preset.name}
-                                            </button>
-                                        ))
-                                    )}
-                                </div>
-                            )}
+                            
+                            
                         </div>
                     </div>
 
@@ -441,27 +420,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div className="relative ml-auto flex items-center gap-2">
                         <ChatMusicPlayer />
-                        <button onClick={(e) => { e.stopPropagation(); setShowApiPanel(prev => !prev); }} className={`p-2 ${actionButtonClass}`} title="切换API预设">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                                <rect x="3" y="16" width="4" height="5" rx="1" />
-                                <rect x="10" y="10" width="4" height="11" rx="1" />
-                                <rect x="17" y="4" width="4" height="17" rx="1" />
-                            </svg>
-                        </button>
-                        {showApiPanel && (
-                            <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
-                                {apiPresets.length === 0 ? (
-                                    <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
-                                ) : (
-                                    apiPresets.map(preset => (
-                                        <button key={preset.id} onClick={() => { onSwitchPreset?.(preset); setShowApiPanel(false); }} className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-colors ${preset.name === currentApiName ? 'bg-emerald-50 text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
-                                            {preset.name}
-                                        </button>
-                                    ))
-                                )}
-                            </div>
-                        )}
+                        
                     </div>
 
                 </div>

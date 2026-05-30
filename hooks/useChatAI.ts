@@ -2822,10 +2822,20 @@ if (toolsList.length > 0) {
                     })
 
                     .then(async (pipelineResult) => {
-                        // 显示结果让用户看到
-                        if (pipelineResult && pipelineResult.stored > 0) {
-                            setMemoryPalaceResult(pipelineResult);
-                        }
+  // 显示结果让用户看到 + 区分"没产出"的原因
+  if (pipelineResult && pipelineResult.stored > 0) {
+    setMemoryPalaceResult(pipelineResult);
+  } else if (pipelineResult && !pipelineResult.skipReason) {
+    // 真触发了提取但0 条入库，给明确原因（skipReason 存在=没到触发条件，保持安静）
+    const reasonText: Record<string, string> = {
+      no_extract: '这段对话没有需要特别记住的内容',
+      all_dedup: '提取的内容和已有记忆重复了，已跳过',
+      vectorize_fail: '记忆向量化失败，下次会重试',
+    };
+    const msg = reasonText[(pipelineResult as any).emptyReason] || '';
+    if (msg) addToast(msg, 'info');
+  }
+
 
                         // 自动归档：把 palace 提取出的记忆按日期合成 YAML bullets 追加到
                         // char.memories，同时推 hideBeforeMessageId 自动隐藏已总结的聊天

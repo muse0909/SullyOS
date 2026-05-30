@@ -310,18 +310,20 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         </div>
     ) : null;
 
-    const renderCenteredInfo = () => (
-        <div className="flex items-center gap-3 w-full min-w-0">
-            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-                <div className="flex items-center gap-2 min-w-0">
-                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
-                    {onlineStatusNode}
-                    {lastTokenUsage ? (
-                        <div className="ml-auto text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
-                            {lastTokenUsage}
-                        </div>
-                    ) : null}
+        const renderCenteredInfo = () => (
+        <div className="flex flex-col items-center justify-center min-w-0">
+            <div className="flex items-center gap-1.5 justify-center">
+                <span className={`font-bold text-sm truncate max-w-[12rem] ${primaryTextClass}`}>
+                    {activeCharacter.name}
+                </span>
+                {onlineStatusNode}
+                {lastTokenUsage ? (
+                    <span className={`text-[10px] ${secondaryTextClass} opacity-80 ml-1`}>
+                        ({lastTokenUsage})
+                    </span>
+                ) : null}
+            </div>
+
                 </div>
                 <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
                     {buffs.length > 0 ? (
@@ -344,18 +346,20 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         </div>
     );
 
-    const renderStandardInfo = () => (
-        <>
-            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-                <div className="flex items-center gap-2 min-w-0">
-                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
-                    {onlineStatusNode}
-                    {lastTokenUsage ? (
-                        <div className="ml-auto text-[11px] font-mono text-slate-400 truncate" title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}>
-                            {lastTokenUsage}
-                        </div>
-                    ) : null}
+        const renderStandardInfo = () => (
+        <div className="flex flex-col items-start min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+                <span className={`font-bold text-sm truncate max-w-[12rem] ${primaryTextClass}`}>
+                    {activeCharacter.name}
+                </span>
+                {onlineStatusNode}
+                {lastTokenUsage ? (
+                    <span className={`text-[10px] ${secondaryTextClass} opacity-80 ml-1`}>
+                        ({lastTokenUsage})
+                    </span>
+                ) : null}
+            </div>
+
                 </div>
                 <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
                     {buffs.length > 0 ? (

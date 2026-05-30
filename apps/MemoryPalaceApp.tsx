@@ -3140,6 +3140,34 @@ create table if not exists memory_vectors (
     </button>
 </div>
 
+                    
+    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
+        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
+        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
+        关闭后不再自动消化，但手动触发仍然可用。
+    </div>
+
+    {digestResult && (
+        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
+            <StatusMessage msg={digestResult} />
+        </div>
+    )}
+
+    <button
+        onClick={handleDigest}
+        disabled={digesting}
+        style={{
+            width: '100%', padding: '10px 0', borderRadius: 12,
+            border: 'none', fontWeight: 700, fontSize: 13,
+            color: 'white',
+            background: digesting ? '#d4d4d4' : '#16a34a',
+            cursor: digesting ? 'not-allowed' : 'pointer',
+        }}
+    >
+        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
+    </button>
+</div>
+
                 </>)}
 
                 {/* 危险区：一键清空 */}

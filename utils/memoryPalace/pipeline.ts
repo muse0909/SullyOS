@@ -985,14 +985,19 @@ const EXTRACT_ROUND_KEY = (charId: string) => `mp_extractRounds_${charId}`;
 /** 累加一轮，达到阈值返回 true（同时清零计数），调用方可据此把 force=true 传给 processNewMessages */
 export function incrementExtractRound(charId: string): boolean {
   let current = 0;
-  try { current = parseInt(localStorage.getItem(EXTRACT_ROUND_KEY(charId) || '0', 10) + 1; } catch { current = 1; }
+  try {
+    current = parseInt(localStorage.getItem(EXTRACT_ROUND_KEY(charId)) || '0', 10) + 1;
+  } catch {
+    current = 1;
+  }
   if (current >= AUTO_EXTRACT_ROUNDS) {
     try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), '0'); } catch {}
     return true;
   }
-  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current)); } catch {}
+  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current); } catch {}
   return false;
 }
+
 
 // ─── 缓冲区配置 ─────────────────────────────────────
 

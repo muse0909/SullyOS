@@ -310,73 +310,80 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         </div>
     ) : null;
 
-            const renderCenteredInfo = () => (
-        <div className="flex flex-col items-center justify-center min-w-0">
-            <div className="flex items-center gap-1.5 justify-center">
-                <span className={`font-bold text-sm truncate max-w-[12rem] ${primaryTextClass}`}>
-                    {activeCharacter.name}
-                </span>
-                {onlineStatusNode}
-                {lastTokenUsage ? (
-                    <span className={`text-[10px] ${secondaryTextClass} opacity-80 ml-1`}>
-                        ({lastTokenUsage})
-                    </span>
-                ) : null}
-            </div>
-            
-            <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
-                {buffs.length > 0 ? (
-                    <div className="flex items-center gap-0.5 min-w-0 flex-1">
-                        {renderBuffRow(false)}
-                    </div>
-                ) : null}
-                {isEmotionEvaluating && (
-                    <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
-                        情绪分析中
-                    </div>
-                )}
-                {isMemoryPalaceProcessing && !isEmotionEvaluating && (
-                    <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
-                        {memoryPalaceStatusText || '记忆整理中'}
-                    </div>
-                )}
+                const renderCenteredInfo = () => (
+        <div className="flex items-center gap-3 w-full min-w-0">
+            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
+                    {onlineStatusNode}
+                    {lastTokenUsage ? (
+                        <span 
+                            className={`text-[11px] font-mono ${secondaryTextClass} opacity-85 ml-1 truncate`}
+                            title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}
+                        >
+                            · {lastTokenUsage}
+                        </span>
+                    ) : null}
+                </div>
+                <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
+                    {buffs.length > 0 ? (
+                        <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                            {renderBuffRow(false)}
+                        </div>
+                    ) : null}
+                    {isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
+                            情绪分析中
+                        </div>
+                    )}
+                    {isMemoryPalaceProcessing && !isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
+                            {memoryPalaceStatusText || '记忆整理中'}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
 
     const renderStandardInfo = () => (
-        <div className="flex flex-col items-start min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-                <span className={`font-bold text-sm truncate max-w-[12rem] ${primaryTextClass}`}>
-                    {activeCharacter.name}
-                </span>
-                {onlineStatusNode}
-                {lastTokenUsage ? (
-                    <span className={`text-[10px] ${secondaryTextClass} opacity-80 ml-1`}>
-                        ({lastTokenUsage})
-                    </span>
-                ) : null}
+        <>
+            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-2 min-w-0">
+                    <div className={`font-semibold text-sm truncate ${primaryTextClass}`}>{activeCharacter.name}</div>
+                    {onlineStatusNode}
+                    {lastTokenUsage ? (
+                        <span 
+                            className={`text-[11px] font-mono ${secondaryTextClass} opacity-85 ml-1 truncate`}
+                            title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion}` : ''}
+                        >
+                            · {lastTokenUsage}
+                        </span>
+                    ) : null}
+                </div>
+                <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
+                    {buffs.length > 0 ? (
+                        <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                            {renderBuffRow(false)}
+                        </div>
+                    ) : null}
+                    {isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
+                            情绪分析中
+                        </div>
+                    )}
+                    {isMemoryPalaceProcessing && !isEmotionEvaluating && (
+                        <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
+                            {memoryPalaceStatusText || '记忆整理中'}
+                        </div>
+                    )}
+                </div>
             </div>
-            
-            <div className="mt-1 min-h-[16px] flex items-center gap-1.5 text-xs truncate">
-                {buffs.length > 0 ? (
-                    <div className="flex items-center gap-0.5 min-w-0 flex-1">
-                        {renderBuffRow(false)}
-                    </div>
-                ) : null}
-                {isEmotionEvaluating && (
-                    <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
-                        情绪分析中
-                    </div>
-                )}
-                {isMemoryPalaceProcessing && !isEmotionEvaluating && (
-                    <div className={`inline-block shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
-                        {memoryPalaceStatusText || '记忆整理中'}
-                    </div>
-                )}
-            </div>
-        </div>
+        </>
     );
+
 
 
     return (

@@ -994,7 +994,7 @@ export function incrementExtractRound(charId: string): boolean {
     try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), '0'); } catch {}
     return true;
   }
-  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current); } catch {}
+  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current)); } catch {}
   return false;
 }
 

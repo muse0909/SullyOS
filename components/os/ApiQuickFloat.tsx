@@ -68,16 +68,23 @@ const ApiQuickFloat: React.FC = () => {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
-    if (!dragging) return;
-    setDragging(false);
-    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-    if (dragRef.current.moved) {
-      try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch {}
-    } else {
-      // 没拖只是点了一下 → 打开面板
-      setShowPanel(true);
-    }
-  };
+  if (!dragging) return;
+  setDragging(false);
+  try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+  if (dragRef.current.moved) {
+    try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch {}
+  }
+};
+
+const onClick = (e: React.MouseEvent) => {
+  e.stopPropagation();
+  if (dragRef.current.moved) {
+    dragRef.current.moved = false;
+    return;
+  }
+  setShowPanel(true);
+};
+
 
   // 刷新模型列表
   const fetchModels = async () => {
@@ -132,12 +139,7 @@ const ApiQuickFloat: React.FC = () => {
     return q ? availableModels.filter(m => m.toLowerCase().includes(q)) : availableModels;
   }, [modelFilter, availableModels]);
 
-  // 当前激活的预设名（用于悬浮球小角标）
-  const activePreset = apiPresets.find(p =>
-    p.config.baseUrl === apiConfig.baseUrl &&
-    p.config.apiKey === apiConfig.apiKey &&
-    p.config.model === apiConfig.model
-  );
+
 
   if (isLocked || !isDataLoaded) return null;
 
@@ -149,6 +151,7 @@ const ApiQuickFloat: React.FC = () => {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onClick={onClick}
         style={{
           position: 'fixed',
           left: pos.x,
@@ -163,9 +166,7 @@ const ApiQuickFloat: React.FC = () => {
         title="API 快捷设置（可拖动）"
       >
         <Gear size={20} weight="bold" />
-        <div className="absolute -bottom-1 -right-1 bg-white text-[8px] text-slate-700 font-bold px-1 py-0.5 rounded-full border border-slate-200 shadow-sm pointer-events-none max-w-[80px] truncate">
-          {activePreset?.name || (apiConfig.model || 'API').slice(0, 10)}
-        </div>
+        
       </div>
 
       {/* 半屏 Modal */}

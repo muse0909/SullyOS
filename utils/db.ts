@@ -436,7 +436,7 @@ export const DB = {
         req.onsuccess = () => {
             const data = req.result;
             if (data) {
-                data.metadata = { ..(data.metadata || {}), ...patch };
+                data.metadata = { ...(data.metadata || {}), ...patch };
                 store.put(data);
                 resolve();
             } else {

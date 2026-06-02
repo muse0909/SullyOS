@@ -38,6 +38,17 @@ export async function getEmbeddings(texts: string[], config: EmbeddingConfig): P
 }
 
 /**
+ * 该模型是否支持自定义 `dimensions` 参数。
+ *
+ * 硅基流动文档明确：`dimensions` 仅 Qwen/Qwen3-Embedding 系列支持。
+ * bge 系列（bge-m3、bge-large 等）输出维度固定，传入 `dimensions` 会被
+ * 服务端拒绝（2026-06 起返回 500）。这里只给支持的模型带上该参数。
+ */
+function modelSupportsDimensions(model: string): boolean {
+    return /qwen3?-?embedding/i.test(model);
+}
+
+/**
  * 实际调用 Embedding API
  */
 async function callEmbeddingAPI(
@@ -48,12 +59,15 @@ async function callEmbeddingAPI(
     baseUrl = baseUrl.replace('ai.siliconflow.cn', 'api.siliconflow.cn');
     const url = `${baseUrl}/embeddings`;
 
-    const body = {
+    const body: Record<string, unknown> = {
         model: config.model,
         input,
-        dimensions: config.dimensions,
         encoding_format: 'float',
     };
+    // 仅在模型支持时才发送 dimensions，否则 bge 等固定维度模型会报 500
+    if (modelSupportsDimensions(config.model) && config.dimensions) {
+        body.dimensions = config.dimensions;
+    }
 
     try {
         const response = await fetch(url, {

@@ -825,12 +825,26 @@ export const useChatAI = ({
             // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
             // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
           
-                    // --- 【识图补丁 v2】只检测最新一条用户消息，避免重复触发 ---
+                   // --- 【识图补丁 v2】只检测最新一条用户消息，避免重复触发 ---
 const lastUserApiMsg = [...apiMessages].reverse().find((msg: any) => msg.role === 'user');
 const lastUserRawMsg = historySlice[historySlice.length - 1];
-const hasImageInLatest = lastUserApiMsg && Array.isArray(lastUserApiMsg.content)
-    & lastUserApiMsg.content.some((c: any) => c.type === 'image_url');
 
+// 兼容 base64 和 imgbb URL 两种格式
+const getLatestImageUrl = (): string | null => {
+    if (lastUserApiMsg && Array.isArray(lastUserApiMsg.content)) {
+        const imgPart = lastUserApiMsg.content.find((c: any) => c.type === 'image_url');
+        if (imgPart) return imgPart.image_url?.url || null;
+    }
+    const rawContent = lastUserRawMsg?.content;
+    if (typeof rawContent === 'string') {
+        if (rawContent.startsWith('data:image')) return rawContent;
+        if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|bmp)/i.test(rawContent)) return rawContent;
+        if (rawContent.includes('ibb.co')) return rawContent;
+    }
+    return null;
+};
+const latestImageUrl = getLatestImageUrl();
+const hasImageInLatest = !!latestImageUrl;
 
 // 如果最新消息的描述已经存在，跳过识图（避免重复调用）
 const alreadyDescribed = lastUserRawMsg?.metadata?.imageDesc;
@@ -849,7 +863,10 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
 5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
 请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。`
             },
-            { role: 'user', content: lastUserApiMsg.content }
+            {
+                role: 'user',
+                content: [{ type: 'image_url', image_url: { url: latestImageUrl! } }]
+            }
         ];
         const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
         const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
@@ -874,7 +891,7 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
                 ? fullMessages[lastUserIdx].content
                     : '[图片]';
                 fullMessages[lastUserIdx] = {
-                    role: 'user',
+                role: 'user',
                     content: `${original}\n\n[图片识别结果]: ${visionDesc}`
                 };
             }

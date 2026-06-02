@@ -829,7 +829,8 @@ export const useChatAI = ({
 const lastUserApiMsg = [...apiMessages].reverse().find((msg: any) => msg.role === 'user');
 const lastUserRawMsg = historySlice[historySlice.length - 1];
 const hasImageInLatest = lastUserApiMsg && Array.isArray(lastUserApiMsg.content)
-    && lastUserApiMsg.content.some((: any) => c.type === 'image_url');
+    & lastUserApiMsg.content.some((c: any) => c.type === 'image_url');
+
 
 // 如果最新消息的描述已经存在，跳过识图（避免重复调用）
 const alreadyDescribed = lastUserRawMsg?.metadata?.imageDesc;

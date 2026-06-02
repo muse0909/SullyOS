@@ -781,14 +781,42 @@ const Chat: React.FC = () => {
     };
 
     const handleImageSelect = async (file: File) => {
-        try {
-            const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
-            setShowPanel('none');
-            await handleSendText(base64, 'image');
-        } catch (err: any) {
-            addToast(err.message || '图片处理失败', 'error');
+    try {
+        const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+        setShowPanel('none');
+
+        const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
+        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
+
+        if (imgbbKey) {
+            try {
+                const formData = new FormData();
+                formData.append('image', base64.includes(',') ? base64.split(',')[1] : base64);
+                const res = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbKey}`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const json = await res.json();
+                if (json?.data?.url) {
+                    // 上传成功，发真实 URL
+                    await handleSendText(json.data.url, 'image');
+                    return;
+                }
+                // 有 key 但上传失败（key 无效 / imgbb 故障）
+                addToast('图床上传失败，图片已替换为占位图', 'error');
+            } catch {
+                // 网络异常
+                addToast('图床上传失败，图片已替换为占位图', 'error');
+            }
         }
-    };
+
+        // 没配 key 或上传失败 → 静默替换占位图
+        await handleSendText(PLACEHOLDER, 'image');
+    } catch (err: any) {
+        addToast(err.message || '图片处理失败', 'error');
+    }
+};
+
 
     const handlePanelAction = (type: string, payload?: any) => {
         switch (type) {

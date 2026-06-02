@@ -780,12 +780,12 @@ const Chat: React.FC = () => {
         triggerAI(newHistory);
     };
 
-    const handleImageSelect = async (file: File) => {
+   const handleImageSelect = async (file: File) => {
     try {
         const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
         setShowPanel('none');
 
-        const PLACEHOLDER ='https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
+        const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
         const imgbbKey = (apiConfig as any)?.imgbbApiKey;
 
         if (imgbbKey) {
@@ -798,11 +798,9 @@ const Chat: React.FC = () => {
                 });
                 const json = await res.json();
                 if (json?.data?.url) {
-                    // 上传成功
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                // 有 key 但上传失败→ 提示 + 占位图
                 addToast('图床上传失败，图片已替换为占位图', 'error');
                 await handleSendText(PLACEHOLDER, 'image');
             } catch {
@@ -812,14 +810,32 @@ const Chat: React.FC = () => {
             return;
         }
 
-        // 没配 key → 正常发 base64，和原来一样
+        // 没配 key：把所有旧的 base64 图片立刻替换成占位图（state + DB同步）
+        const isBase64Img = (c: unknown): c is string =>
+            typeof c === 'string' && c.startsWith('data:image');
+
+        // ① 更新 React state，界面立刻变
+        setMessages((prev: Message[]) =>
+            prev.map(msg =>
+                msg.role === 'user' && isBase64Img(msg.content)
+                    ? { ...msg, content: PLACEHOLDER }
+                    : msg
+            )
+        );
+
+        // ② 写回 DB 持久化
+        const stale = messages.filter(
+            (msg: Message) => msg.role === 'user' && isBase64Img(msg.content)
+        );
+        await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
+
+        // ③ 发当前图（base64），这一轮 AI 能识图
         await handleSendText(base64, 'image');
+
     } catch (err: any) {
         addToast(err.message || '图片处理失败', 'error');
     }
 };
-
-
 
     const handlePanelAction = (type: string, payload?: any) => {
         switch (type) {

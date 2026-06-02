@@ -1536,13 +1536,21 @@ const Chat: React.FC = () => {
     };
 
     const confirmEditMessage = async () => {
-        if (!selectedMessage) return;
+    if (!selectedMessage) {
+        addToast('没有选中消息', 'error');
+        return;
+    }
+    try {
         await DB.updateMessage(selectedMessage.id, editContent);
-        setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
-        setModalType('none');
-        setSelectedMessage(null);
-        addToast('消息已修改', 'success');
-    };
+    } catch (e) {
+        console.warn('DB 更新失败，仅更新内存:', e);
+    }
+    setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+    setModalType('none');
+    setSelectedMessage(null);
+    addToast('消息已修改', 'success');
+};
+
 
     const handleReplyMessage = () => {
         if (!selectedMessage) return;

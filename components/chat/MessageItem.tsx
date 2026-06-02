@@ -1178,10 +1178,21 @@ const MessageItem = React.memo(({
                     onClick={() => setLightboxUrl(null)}
                 >
                     <img
-                        src={lightboxUrl}
-                        className="max-w-full max-h-full object-contain"
-                        onClick={(e) => e.stopPropagation()}
-                    />
+    src={lightboxUrl}
+    className="max-w-full max-h-full object-contain"
+    onClick={(e) => e.stopPropagation()}
+    onError={(e) => {
+        const img = e.currentTarget;
+        const retried = Number(img.dataset.retry || 0);
+        if (retried < 3) {
+            img.dataset.retry = String(retried + 1);
+            setTimeout() => {
+                img.src = (lightboxUrl || '') + ((lightboxUrl || '').includes('?') ? '&' : '?') + 't=' + Date.now();
+            }, 1500);
+        }
+    }}
+/>
+
                     <button
                         className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl leading-none p-2"
                         onClick={() => setLightboxUrl(null)}

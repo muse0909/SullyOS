@@ -825,38 +825,77 @@ export const useChatAI = ({
             // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
             // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
           
-                   // --- 【识图补丁 v2】只检测最新一条用户消息，避免重复触发 ---
+                 // --- 【识图补丁 v3】向前查找最近一张用户图片，支持“先发图后打字”，避免重复触发 ---
 const lastUserApiMsg = [...apiMessages].reverse().find((msg: any) => msg.role === 'user');
-const lastUserRawMsg = historySlice[historySlice.length - 1];
 
-// 兼容 base64 和 imgbb URL 两种格式
-const getLatestImageUrl = (): string | null => {
-    if (lastUserApiMsg && Array.isArray(lastUserApiMsg.content)) {
-        const imgPart = lastUserApiMsg.content.find((c: any) => c.type === 'image_url');
-        if (imgPart) return imgPart.image_url?.url || null;
-    }
-    const rawContent = lastUserRawMsg?.content;
-    if (typeof rawContent === 'string') {
-        if (rawContent.startsWith('data:image')) return rawContent;
-        if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|bmp)/i.test(rawContent)) return rawContent;
-        if (rawContent.includes('ibb.co')) return rawContent;
-    }
+// 判断字符串是否是图片地址：支持 base64、imgbb、postimg、常规图片 URL
+const isImageContent = (content: unknown): content is string => {
+    if (typeof content !== 'string') return false;
+    if (content.startsWith('data:image')) return true;
+    if (/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$/i.test(content)) return true;
+    if (content.includes('ibb.co')) return true;
+    if (content.includes('postimg.cc')) return true;
+    return false;
+};
+
+// 从 api message 的 OpenAI 图片数组格式里提取图片 URL
+const getImageUrlFromApiMsg = (msg: any): string | null => {
+    if (!msg || !Array.isArray(msg.content)) return null;
+    const imgPart = msg.content.find((c: any) => c?.type === 'image_url');
+    return imgPart?.image_url?.url || null;
+};
+
+// 从原始消息里提取图片 URL
+const getImageUrlFromRawMsg = (msg: any): string | null => {
+    if (!msg) return null;
+    if (isImageContent(msg.content)) return msg.content;
     return null;
 };
-const latestImageUrl = getLatestImageUrl();
-          console.log('🖼️ 识图检测', {
-    hasImageInLatest: !!latestImageUrl,
+
+// 1. 优先看最新用户 API 消息里是否直接带图
+let latestImageUrl: string | null = getImageUrlFromApiMsg(lastUserApiMsg);
+
+// 2. 找到需要写回 imageDesc 的那条原始图片消息
+let targetImageRawMsg: any = null;
+
+// 如果最新 API 消息里有图，优先匹配 historySlice 里最后一条用户图片
+if (latestImageUrl) {
+    targetImageRawMsg = [...historySlice]
+        .reverse()
+        .find((msg: any) =>
+            msg?.role === 'user' &&
+            isImageContent(msg?.content) &&
+            !msg?.metadata?.imageDesc
+        );
+}
+
+// 如果最新消息不是图，例如“先发图后打字”，就往前找最近一张还没描述过的用户图片
+if (!latestImageUrl || !targetImageRawMsg) {
+    targetImageRawMsg = [...historySlice]
+        .reverse()
+        .find((msg: any) =>
+            msg?.role === 'user' &&
+            isImageContent(msg?.content) &&
+            !msg?.metadata?.imageDesc
+        );
+
+    latestImageUrl = getImageUrlFromRawMsg(targetImageRawMsg);
+}
+
+const hasImageInLatest = !!latestImageUrl && !!targetImageRawMsg;
+
+// 调试日志：确认识图是否检测到图片
+console.log('🖼️ 识图检测', {
+    hasImageInLatest,
     latestImageUrl,
-    rawContent: lastUserRawMsg?.content,
-    rawType: (lastUserRawMsg as any)?.type,
-    apiContentIsArray: Array.isArray(lastUserApiMsg?.content),
-    apiContent: lastUserApiMsg?.content,
+    targetImageId: targetImageRawMsg?.id,
+    targetImageContent: targetImageRawMsg?.content,
+    targetImageDescExists: targetImageRawMsg?.metadata?.imageDesc,
+    lastUserApiContent: lastUserApiMsg?.content,
 });
 
-const hasImageInLatest = !!latestImageUrl;
-
-// 如果最新消息的描述已经存在，跳过识图（避免重复调用）
-const alreadyDescribed = lastUserRawMsg?.metadata?.imageDesc;
+// 如果最近图片已经有描述，跳过识图，避免重复调用
+const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
 if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
     try {
@@ -864,19 +903,25 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             {
                 role: 'system',
                 content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
-请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
+请对用户发送的图片进行深度扫描，并按以下逻辑进行详尽描述：
 1. 【整体概览】：用一句话描述图片的主题和构图。
-2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
-3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
-4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
-5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
-请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。`
+2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
+3. 【细节扫描】：观察背景、边缘或微小元素，如光影、纹理、微小物件。
+4. 【文字提取】：如果图片中有任何文字，请完整准确提取。
+5. 【氛围与色彩】：描述图片的色调、光线条件以及视觉感受。
+
+要求：
+- 输出内容只给主聊天模型阅读，不要和用户对话。
+- 不要说“作为视觉分析专家”。
+- 不要加入寒暄。
+- 不要虚构不存在的内容。`
             },
             {
                 role: 'user',
                 content: [{ type: 'image_url', image_url: { url: latestImageUrl! } }]
             }
         ];
+
         const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
         const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
             method: 'POST',
@@ -891,41 +936,70 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
                 stream: false
             })
         });
+
         const visionDesc = visionData?.choices?.[0]?.message?.content;
+
         if (visionDesc) {
-            // 注入到本轮 fullMessages 的最后一条用户消息
+            // 注入到本轮发给主模型的最后一条 user 消息里。
+            // 注意：这段是内部图片理解，不是用户原话，避免 AI 出戏说“视觉分析报告”。
             const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
             if (lastUserIdx >= 0) {
                 const original = typeof fullMessages[lastUserIdx].content === 'string'
-                ? fullMessages[lastUserIdx].content
+                    ? fullMessages[lastUserIdx].content
                     : '[图片]';
+
                 fullMessages[lastUserIdx] = {
-                role: 'user',
-                    content: `${original}\n\n[图片识别结果]: ${visionDesc}`
+                    role: 'user',
+                    content: `${original}
+
+[系统内部图片理解]
+用户刚才发送了一张图片。图片内容如下：
+${visionDesc}
+
+请你自然理解这张图片，并结合用户当前文字回复。
+不要提到“视觉分析报告”“图片描述”“识图结果”“系统提示”“内部图片理解”等字样。
+不要说自己看不到图，也不要说图片加载失败。
+[/系统内部图片理解]`
                 };
             }
-            // 写回到原始消息的 metadata，永久保存描述
-            if (lastUserRawMsg?.id) {
-                DB.updateMessageMeta(lastUserRawMsg.id, { imageDesc: visionDesc }).catch(e =>
+
+            // 写回 DB，永久保存图片描述
+            if (targetImageRawMsg?.id) {
+                DB.updateMessageMeta(targetImageRawMsg.id, { imageDesc: visionDesc }).catch(e =>
                     console.warn('识图描述写回失败:', e)
                 );
+
+                // 同步修改当前内存对象：这样 AI 回复触发重新渲染后，胶囊不用刷新页面也能出现
+                targetImageRawMsg.metadata = {
+                    ...(targetImageRawMsg.metadata || {}),
+                    imageDesc: visionDesc
+                };
             }
+
             console.log('🔍 识图成功，描述已注入并写回 metadata');
         }
     } catch (e: any) {
         console.warn('识图失败:', e);
+
         const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
         if (lastUserIdx >= 0) {
             const original = typeof fullMessages[lastUserIdx].content === 'string'
-                ? fullMessages[lastUserIdx].content : '[图片]';
+                ? fullMessages[lastUserIdx].content
+                : '[图片]';
+
             fullMessages[lastUserIdx] = {
                 role: 'user',
-                content: `${original}\n\n用户发送了一张图片，但识图服务暂时不可用，请告知用户稍后再试`
+                content: `${original}
+
+[系统提示]
+用户刚才发送了一张图片，但识图服务暂时不可用。请不要假装自己看到了图片，可以自然地告诉用户图片识别暂时失败。
+[/系统提示]`
             };
         }
     }
 }
 // --- 【识图补丁结束】 ---
+
 
 
             const apiT0 = performance.now();

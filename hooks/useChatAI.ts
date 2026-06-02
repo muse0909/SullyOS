@@ -825,50 +825,81 @@ export const useChatAI = ({
             // 缺省时回退到主 apiConfig，再回退默认值（temp=0.85, stream=false）。
             // safeResponseJson 已能透明拼接 SSE 响应，所以打开 stream 后无需改下游。
           
-                    // --- 【识图补丁】检测原始消息中是否有图片，先用 Gemini 识图 ---
-                const hasImage = apiMessages.some((msg: any) =>
-          msg.role === 'user' && Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
-        );
+                    // --- 【识图补丁 v2】只检测最新一条用户消息，避免重复触发 ---
+const lastUserApiMsg = [...apiMessages].reverse().find((msg: any) => msg.role === 'user');
+const lastUserRawMsg = historySlice[historySlice.length - 1];
+const hasImageInLatest = lastUserApiMsg && Array.isArray(lastUserApiMsg.content)
+    && lastUserApiMsg.content.some((: any) => c.type === 'image_url');
 
-        if (hasImage && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
-          try {
-           const lastImageMsg = [...apiMessages].reverse().find((msg: any) =>
-              msg.role === 'user' && Array.isArray(msg.content) && msg.content.some((c: any) => c.type === 'image_url')
-            );
+// 如果最新消息的描述已经存在，跳过识图（避免重复调用）
+const alreadyDescribed = lastUserRawMsg?.metadata?.imageDesc;
 
-            if (lastImageMsg) {
-              const visionMessages = [
-                { role: 'system', content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。\n请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：\n1. 【整体概览】：用一句话描述图片的主题和构图。\n2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。\n3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。\n4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。\n5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。\n请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。` },
-                { role: 'user', content: lastImageMsg.content }
-              ];
-
-              const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
-              const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.visionApiKey}` },
-                body: JSON.stringify({ model: effectiveApi.visionModel || 'gemini-1.5-flash', messages: visionMessages, temperature: 0.3, stream: false })
-              });
-
-              const visionDesc = visionData?.choices?.[0]?.message?.content;
-              if (visionDesc) {
-                const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
-                if (lastUserIdx >= 0) {
-                  const original = typeof fullMessages[lastUserIdx].content === 'string' ? fullMessages[lastUserIdx].content : '[图片]';
-                  fullMessages[lastUserIdx] = { role: 'user', content: `${original}\n\n[图片识别结果]: ${visionDesc}` };
-                }
-                console.log('🔍 识图成功，描述已注入');
-              }
-            }
-          } catch (e: any) {
-            console.warn('识图失败:', e);
+if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
+    try {
+        const visionMessages = [
+            {
+                role: 'system',
+                content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+请对用户发送的图片进行深度扫描，并按以下逻辑进行极其详尽的描述：
+1. 【整体概览】：用一句话描述图片的主题和构图。
+2. 【核心主体】：详细描述图像中心或最重要的物体/人物（包括形状、材质、颜色、状态）。
+3. 【细节扫描】：观察背景、边缘或微小的元素，不放过任何细节（如光影、纹理、微小物件）。
+4. 【文字提取】：如果图片中有任何文字（包括招牌、手写字、标签、屏幕文字），请完整准确地提取出来。
+5. 【氛围与色彩】：描述图片的色调、光线条件以及给人的视觉感受。
+请注意：不要敷衍，尽可能多地输出细节。如果你不确定某个细节，请描述它的特征而不是猜测。`
+            },
+            { role: 'user', content: lastUserApiMsg.content }
+        ];
+        const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
+        const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${effectiveApi.visionApiKey}`
+            },
+            body: JSON.stringify({
+                model: effectiveApi.visionModel || 'gemini-1.5-flash',
+                messages: visionMessages,
+                temperature: 0.3,
+                stream: false
+            })
+        });
+        const visionDesc = visionData?.choices?.[0]?.message?.content;
+        if (visionDesc) {
+            // 注入到本轮 fullMessages 的最后一条用户消息
             const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
             if (lastUserIdx >= 0) {
-              const original = typeof fullMessages[lastUserIdx].content === 'string' ? fullMessages[lastUserIdx].content : '[图片]';
-              fullMessages[lastUserIdx] = { role: 'user', content: `${original}\n\n用户发送了一张图片，但识图服务暂时不可用，请告知用户稍后再试` };
+                const original = typeof fullMessages[lastUserIdx].content === 'string'
+                ? fullMessages[lastUserIdx].content
+                    : '[图片]';
+                fullMessages[lastUserIdx] = {
+                    role: 'user',
+                    content: `${original}\n\n[图片识别结果]: ${visionDesc}`
+                };
             }
-          }
+            // 写回到原始消息的 metadata，永久保存描述
+            if (lastUserRawMsg?.id) {
+                DB.updateMessageMeta(lastUserRawMsg.id, { imageDesc: visionDesc }).catch(e =>
+                    console.warn('识图描述写回失败:', e)
+                );
+            }
+            console.log('🔍 识图成功，描述已注入并写回 metadata');
         }
-        // --- 【识图补丁结束】 ---
+    } catch (e: any) {
+        console.warn('识图失败:', e);
+        const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
+        if (lastUserIdx >= 0) {
+            const original = typeof fullMessages[lastUserIdx].content === 'string'
+                ? fullMessages[lastUserIdx].content : '[图片]';
+            fullMessages[lastUserIdx] = {
+                role: 'user',
+                content: `${original}\n\n用户发送了一张图片，但识图服务暂时不可用，请告知用户稍后再试`
+            };
+        }
+    }
+}
+// --- 【识图补丁结束】 ---
+
 
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;

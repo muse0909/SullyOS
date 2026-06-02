@@ -148,6 +148,8 @@ export interface APIConfig {
   visionBaseUrl?: string;
   visionApiKey?: string;
   visionModel?: string;
+  imgbbApiKey?: string;       // imgbb 图床 API Key，用于发送图片自动转URL
+
   imageBaseUrl?: string;
   imageApiKey?: string;
   imageModel?: string;

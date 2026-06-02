@@ -712,15 +712,23 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 
                 if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
-             if (m.type === 'image') {
+            if (m.type === 'image') {
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
-                     let textPart = hasImageData
-                         ? `${timeStr} [User sent an image]`
-                         : `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     const imageDesc: string | undefined = (m as any).metadata?.imageDesc;
+                     let textPart: string;
+                     if (imageDesc) {
+                         textPart = `${timeStr} [用户发送了一张图片]\n[图片描述]: ${imageDesc}`;
+                     } else if (hasImageData) {
+                         textPart = `${timeStr} [User sent an image]`;
+                     } else {
+                         textPart = `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     }
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                     if (!hasImageData) {
+                     // 有描述、无图片数据、或不是最新消息：直接用文字，不传图片数据（关键的省内存逻辑）
+                     if (imageDesc || !hasImageData || index !== historySlice.length - 1) {
                          return { role: m.role, content: textPart };
                      }
+
 
                      return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }

@@ -1131,22 +1131,24 @@ const MessageItem = React.memo(({
            if (m.type === 'image') {
     const imageDesc: string | undefined = m.metadata?.imageDesc;
     return commonLayout(
-        <div className="relative">
+        <div className="relative group">
             {m.content ? (
                 <>
                     <img
                         src={m.content}
-                        className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border border-black/5 cursor-pointer active:opacity-80 transition-opacity`}
-                        alt="image"
+                        className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border-black/5 cursor-pointer active:opacity-80 transition-opacity`}
+                        alt="Generated"
                         loading="lazy"
                         decoding="async"
                         onClick={(e) => { e.stopPropagation(); setLightboxUrl(m.content); }}
                     />
-                {imageDesc && (
+                    {/* 查看描述胶囊 */}
+                    {imageDesc && (
                         <button
-                onClick={(e) => { e.stopPropagation(); setShowImageDesc(true); }}
-                            className="mt-1.5 px-3 py-1 rounded-full bg-white border border-black text-black text-[11px] font-medium shadow-sm active:scale-95 transition-transform select-none block"
+                            onClick={(e) => { e.stopPropagation(); setShowImageDesc(true); }}
+                            className="mt-1.5 flex items-center gap-1 px-3 py-1 rounded-full bg-white border-black/20 text-black text-[11px] font-medium shadow-sm active:scale-95 transition-transform select-none"
                         >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20" fill="currentColor" className="w-3 h-3 opacity-60"><path d="M10 12.5a2.5 2.5 0 1 0-5 2.5 2.5 0 0 0 5Z"/><path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 0-1.186A10.004 10.004 0 0 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" clipRule="evenodd"/></svg>
                             查看描述
                         </button>
                     )}
@@ -1154,6 +1156,7 @@ const MessageItem = React.memo(({
             ) : (
                 <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
             )}
+            {/* Lightbox 全屏放大 */}
             {lightboxUrl && typeof document !== 'undefined' && createPortal(
                 <div
                     className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center"
@@ -1167,10 +1170,11 @@ const MessageItem = React.memo(({
                     <button
                         className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl leading-none p-2"
                         onClick={() => setLightboxUrl(null)}
-                    >✕</button>
+                >✕</button>
                 </div>,
                 document.body
             )}
+            {/* 描述弹窗 */}
             {showImageDesc && imageDesc && typeof document !== 'undefined' && createPortal(
                 <div
                     className="fixed inset-0 bg-black/50 z-[200] flex items-end justify-center"
@@ -1184,8 +1188,8 @@ const MessageItem = React.memo(({
                             <span className="text-sm font-bold text-slate-700">图片描述</span>
                 <button onClick={() => setShowImageDesc(false)} className="text-slate-400 text-lg leading-none">✕</button>
                         </div>
-                        <p className="text-[14px] text-slate-600 leading-relaxed whitespace-pre-wrap">{imageDesc}</p>
-                    </div>
+                <p className="text-[14px] text-slate-600 leading-relaxed whitespace-pre-wrap">{imageDesc}</p>
+                </div>
                 </div>,
                 document.body
             )}

@@ -712,36 +712,15 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 
                 if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
-              if (m.type === 'image') {
-    const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
-    const imageDesc: string | undefined = m.metadata?.imageDesc;
-    let textPart: string;
-    if (imageDesc) {
-        // 有识图描述：直接用文字，不传图片数据给主模型（节省 token + 内存）
-        textPart = `${timeStr} [用户发送了一张图片]\n[图片描述]: ${imageDesc}`;
-    } else if (hasImageData) {
-        textPart = `${timeStr} [User sent an image]`;
-    } else {
-        textPart = `${timeStr} [User sent an image, but the image data is no longer available]`;
-    }
-    
-    if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') {
-        textPart += `\n\n${timeGapHint}`;
-    }
-    
-    // 只有最新一条用户图片消息且没有描述时才附带图片数据（用于即时识图）
-    if (!imageDesc && hasImageData && index === historySlice.length - 1) {
-        return {
-            role: m.role,
-            content: [
-                { type: "text", text: textPart },
-                { type: "image_url", image_url: { url: m.content } }
-            ]
-        };
-    }
-    // 其余情况全部用纯文字
-    return { role: m.role, content: textPart };
-}
+             if (m.type === 'image') {
+                     const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
+                     let textPart = hasImageData
+                         ? `${timeStr} [User sent an image]`
+                         : `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
+                     if (!hasImageData) {
+                         return { role: m.role, content: textPart };
+                     }
 
                      return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }

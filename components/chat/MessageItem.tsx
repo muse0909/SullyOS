@@ -5,6 +5,8 @@ import React, { useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
+import { createPortal } from 'react-dom';
+
 
 // --- Forward Card with expand/collapse ---
 const ForwardCard: React.FC<{
@@ -253,6 +255,9 @@ const MessageItem = React.memo(({
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
     const [showVoiceText, setShowVoiceText] = useState(false);
+    const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+    const [showImageDesc, setShowImageDesc] = useState(false);
+
 
     const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
         // Record initial position
@@ -1123,25 +1128,71 @@ const MessageItem = React.memo(({
         );
     }
 
-            if (m.type === 'image') {
-        return commonLayout(
-            <div className="relative group">
-                {m.content ? (
-             <img
-    src={m.content}
-    className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border border-black/5`}
-    alt="Generated"
-    loading="lazy"
-    decoding="async"
-/>
-                ) : (
-                    <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
-                )}
-            </div>
+           if (m.type === 'image') {
+    const imageDesc: string | undefined = m.metadata?.imageDesc;
+    return commonLayout(
+        <div className="relative">
+            {m.content ? (
+                <>
+                    <img
+                        src={m.content}
+                        className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border border-black/5 cursor-pointer active:opacity-80 transition-opacity`}
+                        alt="image"
+                        loading="lazy"
+                        decoding="async"
+                        onClick={(e) => { e.stopPropagation(); setLightboxUrl(m.content); }}
+                    />
+                {imageDesc && (
+                        <button
+                onClick={(e) => { e.stopPropagation(); setShowImageDesc(true); }
+                            className="mt-1.5 px-3 py-1 rounded-full bg-white border border-black text-black text-[11px] font-medium shadow-sm active:scale-95 transition-transform select-none block"
+                        >
+                            查看描述
+                        </button>
+                    )}
+                </>
+            ) : (
+                <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
+            )}
+            {lightboxUrl && typeof document !== 'undefined' && createPortal(
+                <div
+                    className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center"
+                    onClick={() => setLightboxUrl(null)}
+                >
+                    <img
+                        src={lightboxUrl}
+                        className="max-w-full max-h-full object-contain"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                        className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl leading-none p-2"
+                        onClick={() => setLightboxUrl(null)}
+                    >✕</button>
+                </div>,
+                document.body
+            )}
+            {showImageDesc && imageDesc && typeof document !== 'undefined' && createPortal(
+                <div
+                    className="fixed inset-0 bg-black/50 z-[200] flex items-end justify-center"
+                    onClick={() => setShowImageDesc(false)}
+                >
+                    <div
+                        className="w-full max-w-lg bg-white rounded-t-3xl p-6 pb-8 max-h-[70vh] overflow-y-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="text-sm font-bold text-slate-700">图片描述</span>
+                <button onClick={() => setShowImageDesc(false)} className="text-slate-400 text-lg leading-none">✕</button>
+                        </div>
+                        <p className="text-[14px] text-slate-600 leading-relaxed whitespace-pre-wrap">{imageDesc}</p>
+                    </div>
+                </div>,
+                document.body
+            )}
+        </div>
+    );
+}
 
-
-        );
-    }
 
     // --- Dynamic Style Generation for Bubble ---
     const radius = styleConfig.borderRadius;

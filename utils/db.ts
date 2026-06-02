@@ -427,17 +427,16 @@ export const DB = {
     });
   },
 
-  updateMessage: async (id: number, content: string): Promise<void> => {
+  updateMessageMeta: async (id: number, patch: Record<string, any>): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
     const store = transaction.objectStore(STORE_MESSAGES);
-    
     return new Promise((resolve, reject) => {
         const req = store.get(id);
         req.onsuccess = () => {
-            const data = req.result as Message;
+            const data = req.result;
             if (data) {
-                data.content = content;
+                data.metadata = { ..(data.metadata || {}), ...patch };
                 store.put(data);
                 resolve();
             } else {
@@ -446,7 +445,7 @@ export const DB = {
         };
         req.onerror = () => reject(req.error);
     });
-  },
+},
 
   deleteMessage: async (id: number): Promise<void> => {
     const db = await openDB();

@@ -785,7 +785,7 @@ const Chat: React.FC = () => {
         const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
         setShowPanel('none');
 
-        const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
+        const PLACEHOLDER ='https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
         const imgbbKey = (apiConfig as any)?.imgbbApiKey;
 
         if (imgbbKey) {
@@ -798,24 +798,27 @@ const Chat: React.FC = () => {
                 });
                 const json = await res.json();
                 if (json?.data?.url) {
-                    // 上传成功，发真实 URL
+                    // 上传成功
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                // 有 key 但上传失败（key 无效 / imgbb 故障）
+                // 有 key 但上传失败→ 提示 + 占位图
                 addToast('图床上传失败，图片已替换为占位图', 'error');
+                await handleSendText(PLACEHOLDER, 'image');
             } catch {
-                // 网络异常
                 addToast('图床上传失败，图片已替换为占位图', 'error');
+                await handleSendText(PLACEHOLDER, 'image');
             }
+            return;
         }
 
-        // 没配 key 或上传失败 → 静默替换占位图
-        await handleSendText(PLACEHOLDER, 'image');
+        // 没配 key → 正常发 base64，和原来一样
+        await handleSendText(base64, 'image');
     } catch (err: any) {
         addToast(err.message || '图片处理失败', 'error');
     }
 };
+
 
 
     const handlePanelAction = (type: string, payload?: any) => {

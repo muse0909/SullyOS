@@ -844,6 +844,15 @@ const getLatestImageUrl = (): string | null => {
     return null;
 };
 const latestImageUrl = getLatestImageUrl();
+          console.log('🖼️ 识图检测', {
+    hasImageInLatest: !!latestImageUrl,
+    latestImageUrl,
+    rawContent: lastUserRawMsg?.content,
+    rawType: (lastUserRawMsg as any)?.type,
+    apiContentIsArray: Array.isArray(lastUserApiMsg?.content),
+    apiContent: lastUserApiMsg?.content,
+});
+
 const hasImageInLatest = !!latestImageUrl;
 
 // 如果最新消息的描述已经存在，跳过识图（避免重复调用）

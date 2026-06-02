@@ -1134,8 +1134,9 @@ const handleSaveTts = () => {
     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">图床 imgbb API Key</label>
     <input
         type="password"
-        value={(localApiConfig as any).imgbbApiKey || ''}
-        onChange={(e) => setLocalApiConfig((prev: any) => ({ ...prev, imgbbApiKey: e.target.value }))}
+        value={(apiConfig as any)?.imgbbApiKey || ''}
+onChange={(e) => updateApiConfig({ ...apiConfig, imgbbApiKey: e.target.value })}
+
         placeholder="imgbb.com 注册后免费获取"
         className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border-slate-200"
     />

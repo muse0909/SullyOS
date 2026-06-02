@@ -1130,7 +1130,18 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型名字 (Model)</label>
                     <input type="text" value={localVisionModel} onChange={(e) => setLocalVisionModel(e.target.value)} placeholder="例如: gemini-1.5-flash" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                 </div>
-                
+                <div className="group">
+    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">图床 imgbb API Key</label>
+    <input
+        type="password"
+        value={(localApiConfig as any).imgbbApiKey || ''}
+        onChange={(e) => setLocalApiConfig((prev: any) => ({ ...prev, imgbbApiKey: e.target.value }))}
+        placeholder="imgbb.com 注册后免费获取"
+        className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border-slate-200"
+    />
+    <p className="text-[10px] text-slate-300 mt-1 pl-1">配置后发图自动上传图床转 URL，解决卡顿</p>
+</div>
+
                 <button 
     onClick={handleSaveVisionApi}
     className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2"

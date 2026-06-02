@@ -1186,7 +1186,7 @@ const MessageItem = React.memo(({
         const retried = Number(img.dataset.retry || 0);
         if (retried < 3) {
             img.dataset.retry = String(retried + 1);
-            setTimeout() => {
+            setTimeout(() => {
                 img.src = (lightboxUrl || '') + ((lightboxUrl || '').includes('?') ? '&' : '?') + 't=' + Date.now();
             }, 1500);
         }

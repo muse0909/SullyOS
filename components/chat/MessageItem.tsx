@@ -1135,13 +1135,24 @@ const MessageItem = React.memo(({
             {m.content ? (
                 <>
                     <img
-                        src={m.content}
-                        className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border-black/5 cursor-pointer active:opacity-80 transition-opacity`}
-                        alt="Generated"
-                        loading="lazy"
-                        decoding="async"
-                        onClick={(e) => { e.stopPropagation(); setLightboxUrl(m.content); }}
-                    />
+    src={m.content}
+    className={`${isUser ? 'max-w-[180px]' : 'max-w-[220px]'} rounded-2xl shadow-sm border-black/5 cursor-pointer active:opacity-80 transition-opacity`}
+    alt="Generated"
+    loading="lazy"
+    decoding="async"
+    onClick={(e) => { e.stopPropagation(); setLightboxUrl(m.content); }}
+    onError={(e) => {
+        const img = e.currentTarget;
+        const retried = Number(img.dataset.retry || 0);
+        if (retried < 3) {
+            img.dataset.retry = String(retried + 1);
+            setTimeout(() => {
+                img.src = m.content + (m.content.includes('?') ? '&' : '?') + 't=' + Date.now();
+            }, 1500);
+        }
+    }}
+/>
+
                     {/* 查看描述胶囊 */}
                     {imageDesc && (
                         <button

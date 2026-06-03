@@ -7,7 +7,7 @@
  * 我们解析出 0..n 条批注 + 一句活动播报，落库并注入 vr_card。
  */
 
-import { VRWorldNovel, VRNovelAnnotation } from '../../types';
+import { VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, CharPlaylistSong } from '../../types';
 import { VRRoomDef } from './constants';
 import { ReadingWindow, groupAnnotationsBySeg } from './novel';
 
@@ -30,6 +30,28 @@ export function buildVRSystemAddendum(room: VRRoomDef, charName: string): string
         `- 别把感想拐回到现实里的某个人（尤其别动不动提到用户/对方）。就盯着文本本身做反应。`,
         `- 你的批注会暴露你是个什么样的人——你的三观、你的审美、你在意什么、你看不起什么、你被什么击中。让它们真实，哪怕偏激。`,
         ``,
+        ...roomStanceLines(room.id, charName),
+        ``,
+        `完成后严格按下面的格式输出，不要有格式之外的多余文字。`,
+    ].join('\n');
+}
+
+/** 不同房间的"活动姿态"提示。 */
+function roomStanceLines(roomId: string, charName: string): string[] {
+    if (roomId === 'music') {
+        return [
+            `每个人听歌的反应天差地别。按"${charName}这个人"会怎么待在听歌房来写，比如（不限于）：`,
+            `· 锐评：吐槽或夸正在放的这首——曲风、编曲、歌手、歌名，合不合你口味，土还是高级；`,
+            `· 上头：被某句副歌击中，单曲循环上瘾，跟着哼/跟着唱；`,
+            `· 肢体：跟着节奏蹦、转圈、甩头，或幽幽站在角落盯着别人跳（这可是 VR，放得开）；`,
+            `· 记录：掏出设备给在场的某人/给屏幕外的人录一段ta听歌的样子；`,
+            `· 不屑/无感：这首踩雷，皱眉、想换歌、或干脆走神放空；`,
+            `· 抢麦：迫不及待想把自己歌单里那首塞进队列，让大家听听什么叫好品味。`,
+            `你的反应会暴露你的审美和性格，真实一点，别面面俱到。`,
+        ];
+    }
+    // library 默认
+    return [
         `每个人读书的方式天差地别。按"${charName}这个人"会怎么读来写，比如（不限于）：`,
         `· 彻底代入：把自己当成主角或某个角色，替ta着急、替ta爽、替ta不甘；`,
         `· 冷眼剖析：拆作者的写法、动机、伏笔，挑逻辑漏洞，或反过来拍案叫绝；`,
@@ -38,9 +60,83 @@ export function buildVRSystemAddendum(room: VRRoomDef, charName: string): string
         `· 走神犯困：有的段落无聊到看不下去，那就如实摆烂、跳读、吐槽节奏拖沓；`,
         `· 被某一句话突然击中，停在那里反复咀嚼。`,
         `不要从头到尾一个姿态——真实的人读一长段，情绪是有起伏的。`,
-        ``,
-        `完成后严格按下面的格式输出，不要有格式之外的多余文字。`,
-    ].join('\n');
+    ];
+}
+
+// ============ 听歌房 ============
+
+export const MUSIC_OUTPUT_FORMAT = [
+    `【输出格式】`,
+    `<彼方>`,
+    `<点歌 序号="N"/>（从下面"你的歌单"里挑第 N 首放进队列。没有歌单、或这次不想点，就省略这行）`,
+    `<乐评>对当前正在放的那首歌的真实评价——结合歌名/歌手/你的品味，毒舌或真诚都行（房间里没在放歌就省略这一项）</乐评>`,
+    `<行为>你此刻在做什么，一句话：盯着谁跳、跟着节奏蹦、给谁录一段、跟着唱、靠在角落放空…按你的人设</行为>`,
+    `<动态>一句第三人称活动播报，像游戏成就。例：在听歌房循环了三遍副歌，跟着蹦到出汗。</动态>`,
+    `</彼方>`,
+    ``,
+    `规则：`,
+    `- <行为> 和 <动态> 必写；<乐评> 仅当有歌在放时写；<点歌> 仅当你有歌单且想点时写。`,
+    `- "序号"必须是"你的歌单"里真实出现的编号。`,
+    `- 别客套别面面俱到，把你的审美和此刻的状态写出来。`,
+].join('\n');
+
+/**
+ * 听歌房现场：在场的人 + 正在放的歌 + 队列 + 你自己可点的歌单。作为一条 user turn 发出。
+ */
+export function buildMusicRoomTurn(
+    state: VRMusicRoomState | null,
+    occupantNames: string[],
+    pickable: CharPlaylistSong[],
+    selfName: string,
+): string {
+    const lines: string[] = [];
+    const others = occupantNames.filter(n => n !== selfName);
+    lines.push(others.length > 0
+        ? `你戴上耳机走进听歌房，里面还有：${others.join('、')}。大家在各自的节奏里晃。`
+        : `你戴上耳机走进听歌房，此刻只有你一个人。`);
+
+    const np = state?.nowPlaying;
+    if (np) {
+        lines.push(`现在正放着——《${np.song.name}》 ${np.song.artists}${np.song.album ? `（专辑《${np.song.album}》）` : ''}，是 ${np.charName} 点的${np.vibe ? `，ta说"${np.vibe}"` : ''}。`);
+    } else {
+        lines.push(`房间里还没有人放歌，很安静。`);
+    }
+
+    if (state?.queue && state.queue.length > 0) {
+        const upcoming = state.queue.slice(0, 5).map(q => `《${q.song.name}》(${q.charName}点的)`).join('、');
+        lines.push(`队列里排着：${upcoming}${state.queue.length > 5 ? ' …' : ''}。`);
+    }
+
+    lines.push('');
+    if (pickable.length > 0) {
+        lines.push(`你的歌单（想放就用 <点歌 序号="N"/> 选一首排进队列）：`);
+        pickable.forEach((s, i) => lines.push(`${i}. 《${s.name}》 ${s.artists}`));
+    } else {
+        lines.push(`（你还没有自己的音乐人格/歌单，这次没法点歌，就听着、看着、随便晃晃吧。）`);
+    }
+    lines.push('');
+    lines.push(MUSIC_OUTPUT_FORMAT);
+    return lines.join('\n');
+}
+
+export interface ParsedMusicOutput {
+    pickIdx?: number;
+    review?: string;
+    behavior?: string;
+    activity: string;
+}
+
+export function parseMusicOutput(raw: string): ParsedMusicOutput {
+    const out: ParsedMusicOutput = { activity: '' };
+    const pick = raw.match(/<点歌[^>]*序号[^\d]{0,4}(\d+)/);
+    if (pick) out.pickIdx = parseInt(pick[1], 10);
+    const rev = raw.match(/<乐评>([\s\S]*?)<\/乐评>/);
+    if (rev && rev[1].trim()) out.review = rev[1].trim();
+    const beh = raw.match(/<行为>([\s\S]*?)<\/行为>/);
+    if (beh && beh[1].trim()) out.behavior = beh[1].trim();
+    const act = raw.match(/<动态>([\s\S]*?)<\/动态>/);
+    if (act) out.activity = act[1].trim();
+    return out;
 }
 
 /** 图书馆房间的输出格式说明。 */

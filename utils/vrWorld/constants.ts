@@ -35,10 +35,10 @@ export const VR_ROOMS: VRRoomDef[] = [
     {
         id: 'music',
         name: '听歌房',
-        blurb: '漂浮着声波涟漪的房间，每个人戴着自己的耳机。',
-        affordance: '你可以听自己歌单里的歌、随手写点歌词或感想，也可能锐评正在听歌的别人的品味。',
+        blurb: '漂浮着声波涟漪的房间，一台共享音箱循环播放着大家点的歌。',
+        affordance: '你可以从自己歌单里点一首排进队列，锐评正在放的歌，跟着蹦跶、跟唱、或给谁录一段。',
         emoji: '🎧',
-        implemented: false,
+        implemented: true,
         accent: 'rose',
     },
     {

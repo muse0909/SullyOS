@@ -1725,6 +1725,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           try {
               await runVRSession({
                   char,
+                  characters: charactersRef.current,
                   apiConfig: apiConfigRef.current,
                   userProfile: userProfileRef.current,
                   groups: groupsRef.current,

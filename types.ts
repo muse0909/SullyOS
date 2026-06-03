@@ -702,6 +702,35 @@ export interface VRCardMeta {
     segRange?: [number, number];
     /** 本次写下的批注摘要（保留正文，原文省略） */
     annotationExcerpts?: string[];
+    // --- 听歌房专用 ---
+    /** 本次评/听的当前歌（名 - 歌手） */
+    songLabel?: string;
+    /** 本次点/排进队列的自己的歌 */
+    queuedLabel?: string;
+    /** 此刻的行为描述（盯着跳/跟唱/给user录…） */
+    behavior?: string;
+}
+
+/** 听歌房队列项。 */
+export interface VRMusicQueueItem {
+    song: CharPlaylistSong;
+    charId: string;
+    charName: string;
+}
+
+/** 听歌房共享状态（单例，所有角色共用一个循环队列）。 */
+export interface VRMusicRoomState {
+    id: string; // 'state' 单例
+    nowPlaying?: {
+        song: CharPlaylistSong;
+        charId: string;
+        charName: string;
+        /** 选曲心境/理由 */
+        vibe?: string;
+        since: number;
+    };
+    queue: VRMusicQueueItem[];
+    updatedAt: number;
 }
 
 /**
@@ -1835,6 +1864,7 @@ export interface FullBackupData {
     vrNovels?: VRWorldNovel[];          // 虚拟世界「彼方」全局小说库
     vrAnnotations?: VRNovelAnnotation[]; // 虚拟世界小说批注
     customCreatorParts?: CustomCreatorPart[]; // 捏脸系统自定义部件
+    vrMusicRoom?: VRMusicRoomState;            // 听歌房共享状态
     songs?: SongSheet[]; // Songwriting app data
     
     // Bank Data

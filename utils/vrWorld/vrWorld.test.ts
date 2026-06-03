@@ -1,7 +1,33 @@
 import { describe, it, expect } from 'vitest';
 import { chunkNovelText, chunkNovelTextAsync, getReadingWindow, buildNovel } from './novel';
-import { parseVROutput } from './prompts';
+import { parseVROutput, parseMusicOutput } from './prompts';
 import { decodeBytes } from './decodeText';
+
+describe('parseMusicOutput', () => {
+    it('parses pick / review / behavior / activity', () => {
+        const raw = [
+            '<彼方>',
+            '<点歌 序号="3"/>',
+            '<乐评>前奏一出我就跪了，但副歌太水。</乐评>',
+            '<行为>跟着鼓点甩头，顺手给屏幕外录了一段。</行为>',
+            '<动态>在听歌房单曲循环到上头。</动态>',
+            '</彼方>',
+        ].join('\n');
+        const out = parseMusicOutput(raw);
+        expect(out.pickIdx).toBe(3);
+        expect(out.review).toContain('副歌');
+        expect(out.behavior).toContain('甩头');
+        expect(out.activity).toContain('上头');
+    });
+
+    it('tolerates missing pick/review (only behavior+activity)', () => {
+        const out = parseMusicOutput('<行为>靠在角落放空</行为><动态>没什么想点的</动态>');
+        expect(out.pickIdx).toBeUndefined();
+        expect(out.review).toBeUndefined();
+        expect(out.behavior).toBe('靠在角落放空');
+        expect(out.activity).toBe('没什么想点的');
+    });
+});
 
 describe('decodeBytes', () => {
     it('decodes UTF-8 Chinese', () => {

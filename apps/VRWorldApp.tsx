@@ -3,15 +3,16 @@ import { useOS } from '../context/OSContext';
 import {
     ArrowLeft, Plus, Trash, BookOpen, Planet, Clock, Play, CaretRight, X,
     UploadSimple, PencilSimple, FlipHorizontal, CaretLeft, Sparkle,
-    CircleNotch, TextAa, Palette,
+    CircleNotch, TextAa, Palette, Pause, MusicNotes, Queue,
 } from '@phosphor-icons/react';
 import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
+import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeTextFile } from '../utils/vrWorld/decodeText';
-import type { CharacterProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId } from '../types';
+import type { CharacterProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong } from '../types';
 
 // ============ chibi 形象解析（vrState.chibi → 立绘 → 头像） ============
 interface ChibiDisplay { img: string; scale: number; offsetY: number; flip: boolean; isFallback: boolean; }
@@ -268,7 +269,7 @@ const RoomBackground: React.FC<{ roomId: VRRoomId; className?: string }> = ({ ro
 };
 
 // ============ chibi 小人渲染 ============
-const Chibi: React.FC<{ char: CharacterProfile; bubble?: string; onTap?: () => void; size?: number }> = ({ char, bubble, onTap, size = 96 }) => {
+const Chibi: React.FC<{ char: CharacterProfile; bubble?: string; onTap?: () => void; size?: number; dance?: boolean }> = ({ char, bubble, onTap, size = 96, dance }) => {
     const c = getChibi(char);
     return (
         <div className="absolute flex flex-col items-center" style={{ transform: 'translate(-50%, -100%)' }} onClick={onTap}>
@@ -278,7 +279,7 @@ const Chibi: React.FC<{ char: CharacterProfile; bubble?: string; onTap?: () => v
                     <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white/95 rotate-45" />
                 </div>
             )}
-            <div className="relative" style={{ animation: 'vrfloat 3.2s ease-in-out infinite', animationDelay: `${(char.id.charCodeAt(0) % 10) * 0.2}s` }}>
+            <div className="relative" style={{ animation: `${dance ? 'vrdance 0.9s' : 'vrfloat 3.2s'} ease-in-out infinite`, animationDelay: `${(char.id.charCodeAt(0) % 10) * 0.15}s` }}>
                 {c.img ? (
                     <img src={c.img} alt={char.name}
                         style={{ height: size * c.scale, transform: `scaleX(${c.flip ? -1 : 1}) translateY(${c.offsetY}px)`, filter: 'drop-shadow(0 4px 6px rgba(0,0,0,.5))' }}
@@ -378,13 +379,36 @@ const WorldView: React.FC<{
 );
 
 // ============ 房间场景（全屏） ============
+const toSong = (s: CharPlaylistSong): Song => ({ id: s.id, name: s.name, artists: s.artists, album: s.album, albumPic: s.albumPic, duration: s.duration, fee: s.fee ?? 0 });
+
 const RoomScene: React.FC<{
     roomId: VRRoomId; occupants: CharacterProfile[];
     latestByChar: Record<string, FeedItem>; onClose: () => void;
 }> = ({ roomId, occupants, latestByChar, onClose }) => {
     const room = getRoom(roomId);
     const slots = ROOM_SLOTS[roomId];
+    const isMusic = roomId === 'music';
     const [detail, setDetail] = useState<CharacterProfile | null>(null);
+    const [musicState, setMusicState] = useState<VRMusicRoomState | null>(null);
+    const music = useMusic();
+
+    useEffect(() => {
+        if (!isMusic) return;
+        const load = async () => setMusicState(await DB.getVRMusicRoom());
+        void load();
+        const onDone = () => { void load(); };
+        window.addEventListener('vr-session-done', onDone);
+        return () => window.removeEventListener('vr-session-done', onDone);
+    }, [isMusic]);
+
+    const np = musicState?.nowPlaying;
+    const npPlaying = !!np && music.current?.id === np.song.id && music.playing;
+    const playNow = () => {
+        if (!np) return;
+        if (music.current?.id === np.song.id) music.togglePlay();
+        else music.playSong(toSong(np.song));
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex flex-col">
             <VRStyleTag />
@@ -397,6 +421,42 @@ const RoomScene: React.FC<{
                     <span className="text-base font-black text-white drop-shadow flex items-center gap-1.5">{room.emoji} {room.name}</span>
                     <span className="ml-auto text-[10px] text-white/70">{occupants.length} 人在场</span>
                 </div>
+
+                {/* 听歌房：正在放 + 队列面板 */}
+                {isMusic && (
+                    <div className="absolute top-12 left-3 right-3 z-20">
+                        {np ? (
+                            <div className="rounded-2xl p-2.5 flex items-center gap-3 backdrop-blur-md"
+                                style={{ background: 'rgba(20,8,40,0.6)', border: '1px solid rgba(255,123,213,0.35)', boxShadow: '0 6px 20px rgba(120,40,160,.4)' }}>
+                                {np.song.albumPic
+                                    ? <img src={np.song.albumPic} className={`h-14 w-14 rounded-xl object-cover ${npPlaying ? 'animate-spin-slow' : ''}`} style={npPlaying ? { animation: 'spin 8s linear infinite' } : {}} alt="" />
+                                    : <div className="h-14 w-14 rounded-xl bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center"><MusicNotes size={22} weight="fill" className="text-white/80" /></div>}
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-[9px] text-pink-200/70 tracking-wide flex items-center gap-1"><MusicNotes size={9} weight="fill" /> NOW PLAYING · {np.charName} 点的</div>
+                                    <div className="text-[13px] font-bold text-white truncate">{np.song.name}</div>
+                                    <div className="text-[10.5px] text-pink-100/60 truncate">{np.song.artists}</div>
+                                </div>
+                                <button onClick={playNow} className="h-10 w-10 rounded-full bg-white/90 flex items-center justify-center active:scale-90 transition-transform shrink-0">
+                                    {npPlaying ? <Pause size={18} weight="fill" className="text-purple-700" /> : <Play size={18} weight="fill" className="text-purple-700 ml-0.5" />}
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl p-3 text-center backdrop-blur-md" style={{ background: 'rgba(20,8,40,0.5)', border: '1px solid rgba(255,123,213,0.25)' }}>
+                                <p className="text-[11px] text-pink-100/80">还没有人放歌。让有音乐人格的角色逛进来，ta 就会点一首。</p>
+                                <p className="text-[9.5px] text-pink-200/50 mt-1">没有音乐人格？去「音乐」App 给角色生成一个网易云档案。</p>
+                            </div>
+                        )}
+                        {musicState?.queue && musicState.queue.length > 0 && (
+                            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-full overflow-x-auto no-scrollbar" style={{ background: 'rgba(20,8,40,0.45)' }}>
+                                <Queue size={12} weight="bold" className="text-pink-200/70 shrink-0" />
+                                {musicState.queue.slice(0, 6).map((q, i) => (
+                                    <span key={i} className="text-[9.5px] text-pink-100/70 whitespace-nowrap shrink-0">《{q.song.name}》<span className="text-pink-200/40">·{q.charName}</span>{i < Math.min(5, musicState.queue.length - 1) ? ' ·' : ''}</span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* chibi 站位 */}
                 {occupants.map((c, i) => {
                     const slot = slots[i % slots.length];
@@ -405,34 +465,39 @@ const RoomScene: React.FC<{
                     const bubble = latest?.meta.activity || idle;
                     return (
                         <div key={c.id} className="absolute" style={{ left: `${slot.x}%`, top: `${slot.y}%`, zIndex: Math.round(slot.y) }}>
-                            <Chibi char={c} bubble={bubble} size={104} onTap={() => setDetail(c)} />
+                            <Chibi char={c} bubble={bubble} size={104} dance={isMusic} onTap={() => setDetail(c)} />
                         </div>
                     );
                 })}
-                {occupants.length === 0 && (
+                {occupants.length === 0 && !isMusic && (
                     <div className="absolute inset-0 flex items-center justify-center">
                         <p className="text-white/70 text-[12px] bg-black/30 rounded-full px-4 py-2">这个房间还没有人。去「接入」启用角色吧。</p>
                     </div>
                 )}
             </div>
-            {/* 角色活动详情 */}
+
+            {/* 角色活动详情 —— 盖在 chibi 之上（zIndex 高于任何 chibi） */}
             {detail && (
-                <div className="absolute inset-0 z-30 flex items-end bg-black/40" onClick={() => setDetail(null)}>
+                <div className="absolute inset-0 flex items-end bg-black/45" style={{ zIndex: 200 }} onClick={() => setDetail(null)}>
                     <div className="w-full rounded-t-2xl p-4 text-white" style={{ background: 'linear-gradient(180deg,#2a2350,#1b1838)' }} onClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-2 mb-2">
                             {detail.avatar ? <img src={detail.avatar} className="h-9 w-9 rounded-full object-cover" alt="" /> : <div className="h-9 w-9 rounded-full bg-indigo-400/40" />}
                             <span className="font-bold">{detail.name}</span>
                             <button onClick={() => setDetail(null)} className="ml-auto p-1 text-white/60"><X size={18} /></button>
                         </div>
-                        {latestByChar[detail.id] ? (
-                            <>
-                                <p className="text-[12.5px] text-indigo-50/90 leading-relaxed">{latestByChar[detail.id].meta.activity}</p>
-                                {latestByChar[detail.id].meta.annotationExcerpts?.map((ex, i) => (
-                                    <div key={i} className="mt-1.5 text-[11.5px] text-indigo-200/80 pl-2 border-l-2 border-amber-300/50 leading-snug">{ex}</div>
-                                ))}
-                                <p className="text-[9px] text-indigo-300/50 mt-2">{new Date(latestByChar[detail.id].timestamp).toLocaleString('zh-CN')}</p>
-                            </>
-                        ) : (
+                        {latestByChar[detail.id] ? (() => {
+                            const m = latestByChar[detail.id].meta;
+                            return (
+                                <>
+                                    <p className="text-[12.5px] text-indigo-50/90 leading-relaxed">{m.activity}</p>
+                                    {m.behavior && <p className="text-[11px] text-pink-200/80 mt-1.5">🎧 {m.behavior}</p>}
+                                    {m.annotationExcerpts?.map((ex, i) => (
+                                        <div key={i} className="mt-1.5 text-[11.5px] text-indigo-200/80 pl-2 border-l-2 border-amber-300/50 leading-snug">{ex}</div>
+                                    ))}
+                                    <p className="text-[9px] text-indigo-300/50 mt-2">{new Date(latestByChar[detail.id].timestamp).toLocaleString('zh-CN')}</p>
+                                </>
+                            );
+                        })() : (
                             <p className="text-[12px] text-indigo-300/60">还没有留下动态，等 ta 下一次登入吧。</p>
                         )}
                     </div>
@@ -993,6 +1058,7 @@ const VRStyleTag: React.FC = () => (
     <style>{`
         @keyframes vrfloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
         @keyframes vrwave { from { transform: scaleY(0.5); } to { transform: scaleY(1.05); } }
+        @keyframes vrdance { 0%{transform:translateY(0) rotate(-5deg)} 25%{transform:translateY(-9px) rotate(3deg)} 50%{transform:translateY(0) rotate(5deg)} 75%{transform:translateY(-9px) rotate(-3deg)} 100%{transform:translateY(0) rotate(-5deg)} }
     `}</style>
 );
 

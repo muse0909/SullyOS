@@ -22,6 +22,8 @@ import { DB } from '../db';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessages } from '../memoryPalace/pipeline';
+import { loadMusicCfgStandalone } from '../../context/MusicContext';
+import { getCharLyricSnippet } from '../charLyricCache';
 import { getRoom, VR_DEFAULT_INTERVAL_MIN } from './constants';
 import { getReadingWindow, getBookmark, buildAnnotation } from './novel';
 import {
@@ -146,7 +148,15 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
                 .filter(c => c.vrState?.enabled && c.vrState.currentRoom === 'music')
                 .map(c => c.name);
             if (!occupantNames.includes(char.name)) occupantNames.push(char.name);
-            roomTurn = buildMusicRoomTurn(musicState, occupantNames, pickable, char.name);
+            // 按网易云 id 拉一段当前在放歌曲的歌词（双层缓存；拉不到则无损降级）
+            let nowLyric: string[] = [];
+            const np = musicState?.nowPlaying;
+            if (np) {
+                try {
+                    nowLyric = await getCharLyricSnippet(loadMusicCfgStandalone(), np.song.id, `${char.id}-${np.song.id}`, 10);
+                } catch { /* 歌词拉取失败不影响 */ }
+            }
+            roomTurn = buildMusicRoomTurn(musicState, occupantNames, pickable, char.name, nowLyric);
         }
 
         // 调 LLM

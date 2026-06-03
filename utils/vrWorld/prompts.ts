@@ -69,7 +69,7 @@ export const MUSIC_OUTPUT_FORMAT = [
     `【输出格式】`,
     `<彼方>`,
     `<点歌 序号="N"/>（从下面"你的歌单"里挑第 N 首放进队列。没有歌单、或这次不想点，就省略这行）`,
-    `<乐评>对当前正在放的那首歌的真实评价——结合歌名/歌手/你的品味，毒舌或真诚都行（房间里没在放歌就省略这一项）</乐评>`,
+    `<乐评>对当前正在放的那首歌的真实评价——结合歌名/歌手/歌词/你的品味，毒舌或真诚都行（房间里没在放歌就省略这一项）</乐评>`,
     `<行为>你此刻在做什么，一句话：盯着谁跳、跟着节奏蹦、给谁录一段、跟着唱、靠在角落放空…按你的人设</行为>`,
     `<动态>一句第三人称活动播报，像游戏成就。例：在听歌房循环了三遍副歌，跟着蹦到出汗。</动态>`,
     `</彼方>`,
@@ -88,6 +88,7 @@ export function buildMusicRoomTurn(
     occupantNames: string[],
     pickable: CharPlaylistSong[],
     selfName: string,
+    nowLyric?: string[],
 ): string {
     const lines: string[] = [];
     const others = occupantNames.filter(n => n !== selfName);
@@ -98,6 +99,10 @@ export function buildMusicRoomTurn(
     const np = state?.nowPlaying;
     if (np) {
         lines.push(`现在正放着——《${np.song.name}》 ${np.song.artists}${np.song.album ? `（专辑《${np.song.album}》）` : ''}，是 ${np.charName} 点的${np.vibe ? `，ta说"${np.vibe}"` : ''}。`);
+        if (nowLyric && nowLyric.length > 0) {
+            lines.push(`（正放到这几句歌词）：`);
+            nowLyric.forEach(l => lines.push(`  ${l}`));
+        }
     } else {
         lines.push(`房间里还没有人放歌，很安静。`);
     }

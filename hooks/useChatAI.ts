@@ -864,6 +864,7 @@ if (latestImageUrl) {
         .reverse()
         .find((msg: any) =>
             msg?.role === 'user' &&
+            msg?.type === 'image' &&
             isImageContent(msg?.content) &&
             !msg?.metadata?.imageDesc
         );
@@ -875,6 +876,7 @@ if (!latestImageUrl || !targetImageRawMsg) {
         .reverse()
         .find((msg: any) =>
             msg?.role === 'user' &&
+            msg?.type === 'image' &&
             isImageContent(msg?.content) &&
             !msg?.metadata?.imageDesc
         );

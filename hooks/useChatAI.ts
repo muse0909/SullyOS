@@ -1151,78 +1151,155 @@ if (toolsList.length > 0) {
                 }
             }
 
-                      // 3.5 生图工具 generate_image 处理
-            if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
-                const toolCalls = data.choices[0].message.tool_calls;
-                const imgCall = toolCalls.find((tc: any) => tc.function?.name === 'generate_image');
-                if (imgCall && apiConfig.imageBaseUrl && apiConfig.imageApiKey && apiConfig.imageModel) {
-                    let imgPrompt = '';
-                    try {
-                        const raw = imgCall.function?.arguments ?? imgCall.arguments;
-                        const args = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
-                        imgPrompt = args.prompt || '';
-                    } catch (e) {
-                        console.warn('🎨 [ImageGen] prompt 解析失败:', e);
-                    }
+                      
+          // 3.5 生图工具 generate_image 处理
+if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+    const toolCalls = data.choices[0].message.tool_calls;
+    const imgCall = toolCalls.find((tc: any) => tc.function?.name === 'generate_image');
 
-                    if (imgPrompt) {
-                        console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
-                        try {
-                            const imgResponse = await fetch(`${apiConfig.imageBaseUrl}/images/generations`, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${apiConfig.imageApiKey}`,
-                                },
-                                body: JSON.stringify({
-                                    model: apiConfig.imageModel,
-                                    prompt: imgPrompt,
-                                    n: 1,
-                                    size: '1024x1536',
-                                }),
-                            });
-                            const imgData = await imgResponse.json();
-                            const imageUrl = imgData.data?.[0]?.url || '';
+    if (imgCall) {
+        let imgPrompt = '';
+        let imageGenerated = false;
+        let imageGenError = '';
 
-                            if (imageUrl) {
-                                // 保存图片消息
-                                await DB.saveMessage({
-                                    charId: char.id,
-                                    role: 'assistant',
-                                    type: 'image',
-                                    content: imageUrl,
-                                });
-                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                                console.log('🎨 [ImageGen] 生图成功');
-                            } else {
-                                console.warn('🎨 [ImageGen] 生图返回为空:', imgData);
-                            }
-                        } catch (imgErr) {
-                            console.error('🎨 [ImageGen] 生图请求失败:', imgErr);
-                        }
-                    }
+        try {
+            const raw = imgCall.function?.arguments ?? imgCall.arguments;
+            const args = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+            imgPrompt = args.prompt || '';
+        } catch (e) {
+            console.warn('🎨 [ImageGen] prompt 解析失败:', e);
+            imageGenError = '生图参数解析失败';
+        }
 
-                                       // 让模型继续生成文字回复（简化方式，避免 tool 格式兼容问题）
-                                   const followMessages = [...fullMessages, 
-                        {
-                            role: 'assistant',
-                            content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
-                        },
-                        {
-                            role: 'user',
-                content: `[图片已生成，请根据刚才的情境继续回复]`,
-                        }
-                ];
-                    const followBody = { ...baseReqBody, messages: followMessages };
-                    delete followBody.tools;
-                delete followBody.tool_choice;
-                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                        body: JSON.stringify(followBody),
+        if (!apiConfig.imageBaseUrl || !apiConfig.imageApiKey || !apiConfig.imageModel) {
+            imageGenError = '生图 API 配置不完整，请检查生图地址、Key 和模型是否都已填写';
+            console.warn('🎨 [ImageGen] 配置不完整:', {
+                hasBaseUrl: !!apiConfig.imageBaseUrl,
+                hasKey: !!apiConfig.imageApiKey,
+                hasModel: !!apiConfig.imageModel,
+            });
+        }
+
+        if (!imgPrompt && !imageGenError) {
+            imageGenError = 'AI 没有提供有效的生图 prompt';
+            console.warn('🎨 [ImageGen] prompt 为空');
+        }
+
+        if (imgPrompt && !imageGenError) {
+            console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
+
+            try {
+                const imgResponse = await fetch(`${apiConfig.imageBaseUrl.replace(/\/+$/, '')}/images/generations`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiConfig.imageApiKey}`,
+                    },
+                    body: JSON.stringify({
+                        model: apiConfig.imageModel,
+                        prompt: imgPrompt,
+                        n: 1,
+                        size: '1024x1536',
+                    }),
+                });
+
+                let imgData: any = null;
+                try {
+                    imgData = await imgResponse.json();
+                } catch (jsonErr) {
+                    const rawText = await imgResponse.text().catch(() => '');
+                    throw new Error(`生图接口返回不是 JSON：${rawText.slice(0, 200)}`);
+                }
+
+                if (!imgResponse.ok) {
+                    const apiMsg =
+                        imgData?.error?.message ||
+                        imgData?.message ||
+                        JSON.stringify(imgData).slice(0, 300);
+                    throw new Error(`生图接口报错 ${imgResponse.status}：${apiMsg}`);
+                }
+
+                const imageUrl = imgData?.data?.[0]?.url || '';
+
+                if (imageUrl) {
+                    // 保存图片消息
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'assistant',
+                        type: 'image',
+                        content: imageUrl,
                     });
-                    updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
-             }
+
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    imageGenerated = true;
+                    console.log('🎨 [ImageGen] 生图成功:', imageUrl);
+                } else {
+                    imageGenError = `生图接口没有返回图片 URL：${JSON.stringify(imgData).slice(0, 300)}`;
+                    console.warn('🎨 [ImageGen] 生图返回为空:', imgData);
+                }
+            } catch (imgErr: any) {
+                imageGenError = imgErr?.message || String(imgErr);
+                console.error('🎨 [ImageGen] 生图请求失败:', imgErr);
             }
+        }
+
+        if (!imageGenerated) {
+            const msg = imageGenError || '未知错误';
+            addToast(`生图失败：${msg}`, 'error');
+
+            // 生图失败时，不允许模型继续说“图片已经发了”
+            const failMessages = [
+                ...fullMessages,
+                {
+                    role: 'system',
+                    content: `刚才系统尝试调用生图工具失败，失败原因：${msg}
+请你不要声称已经发送了图片。
+请自然地告诉用户：图片生成失败了，可以稍后重试，或者让用户检查生图配置。`
+                }
+            ];
+
+            const failBody = { ...baseReqBody, messages: failMessages };
+            delete failBody.tools;
+            delete failBody.tool_choice;
+
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(failBody),
+            });
+
+            updateTokenUsage(data, historyMsgCount, 'image-gen-failed-followup');
+        }
+
+        if (imageGenerated) {
+            // 只有真的保存了图片，才让模型继续说“图片已生成”
+            const followMessages = [
+                ...fullMessages,
+                {
+                    role: 'assistant',
+                    content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
+                },
+                {
+                    role: 'user',
+                    content: `[图片已生成，请根据刚才的情境继续回复]`,
+                }
+            ];
+
+            const followBody = { ...baseReqBody, messages: followMessages };
+            delete followBody.tools;
+            delete followBody.tool_choice;
+
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(followBody),
+            });
+
+            updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
+        }
+    }
+}
+
 
 
             // DEBUG: Log full API response details for troubleshooting truncation issues

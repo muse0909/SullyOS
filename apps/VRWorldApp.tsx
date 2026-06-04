@@ -261,7 +261,7 @@ const VRWorldApp: React.FC = () => {
                 <div className="absolute bottom-0 left-5 right-5 h-px" style={{ background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent)' }} />
             </div>
 
-            <div className="relative flex-1 overflow-y-auto px-4 py-4 z-10">
+            <div className="relative flex-1 overflow-y-auto vr-reader-scroll px-4 py-4 z-10">
                 {loading ? (
                     <div className="text-center text-white/40 text-[13px] tracking-[0.2em] py-12" style={{ fontFamily: `'Noto Serif SC',serif` }}>载入彼方…</div>
                 ) : tab === 'world' ? (
@@ -915,7 +915,7 @@ const RoomScene: React.FC<{
                         <div className="absolute top-14 left-3 right-3 bottom-16 z-20 rounded-2xl overflow-hidden flex flex-col backdrop-blur-md"
                             style={{ background: 'rgba(10,22,38,0.62)', border: '1px solid rgba(140,200,255,0.22)', boxShadow: '0 8px 26px rgba(0,0,0,.4)' }}>
                             <div className="px-3 py-2 text-[10px] tracking-[0.25em] text-sky-200/70 border-b border-white/10" style={{ fontFamily: `'Noto Serif SC',serif` }}>留言墙</div>
-                            <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-2">
+                            <div className="flex-1 overflow-y-auto vr-reader-scroll px-3 py-2.5 space-y-2">
                                 {msgs.length === 0 ? (
                                     <p className="text-[11px] text-white/40 text-center py-6">这面墙还空着。留下第一句话，或等角色们来开帖。</p>
                                 ) : msgs.map((m: VRGuestbookMessage) => {
@@ -1351,7 +1351,7 @@ const UploadModal: React.FC<{
 
     return (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={busy ? undefined : onClose}>
-            <div className="w-full max-w-md rounded-t-2xl p-4 max-h-[88vh] overflow-y-auto" style={{ background: 'linear-gradient(180deg,#161c2e 0%,#0c1019 100%)' }} onClick={e => e.stopPropagation()}>
+            <div className="w-full max-w-md rounded-t-2xl p-4 max-h-[88vh] overflow-y-auto vr-reader-scroll" style={{ background: 'linear-gradient(180deg,#161c2e 0%,#0c1019 100%)' }} onClick={e => e.stopPropagation()}>
                 <div className="flex items-center mb-3">
                     <span className="text-[15px] font-bold text-white">上传小说</span>
                     {!busy && <button onClick={onClose} className="ml-auto p-1 text-indigo-300/60"><X size={18} /></button>}

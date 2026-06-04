@@ -863,10 +863,14 @@ if (latestImageUrl) {
     targetImageRawMsg = [...historySlice]
         .reverse()
         .find((msg: any) =>
-            msg?.role === 'user' &&
-            msg?.type === 'image' &&
-            isImageContent(msg?.content) &&
-            !msg?.metadata?.imageDesc
+           msg?.role === 'user' &&
+msg?.type === 'image' &&
+!msg?.metadata?.emojiId &&
+!msg?.metadata?.isEmoji &&
+!msg?.metadata?.isSticker &&
+isImageContent(msg?.content) &&
+!msg?.metadata?.imageDesc
+
         );
 }
 
@@ -875,10 +879,14 @@ if (!latestImageUrl || !targetImageRawMsg) {
     targetImageRawMsg = [...historySlice]
         .reverse()
         .find((msg: any) =>
-            msg?.role === 'user' &&
-            msg?.type === 'image' &&
-            isImageContent(msg?.content) &&
-            !msg?.metadata?.imageDesc
+           msg?.role === 'user' &&
+msg?.type === 'image' &&
+!msg?.metadata?.emojiId &&
+!msg?.metadata?.isEmoji &&
+!msg?.metadata?.isSticker &&
+isImageContent(msg?.content) &&
+!msg?.metadata?.imageDesc
+
         );
 
     latestImageUrl = getImageUrlFromRawMsg(targetImageRawMsg);

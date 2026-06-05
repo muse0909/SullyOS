@@ -119,6 +119,29 @@ function parseSseToCompletion(raw: string): any | null {
  * 这里会给每次 attempt 起一个内部 AbortController，超时就 abort，避免提供方 stall
  * 住整个页面（用户误以为卡死，只能重新打开网页）。0 / 未传 = 不超时。
  */
+
+// CORS 代理：讯飞等不支持浏览器跨域的 API，走 Vercel 服务端转发
+async function proxyFetch(url: string, options: RequestInit): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (options.headers) {
+        const h = options.headers as Record<string, string>;
+        for (const [k, v] of Object.entries(h)) {
+            headers[k] = v;
+        }
+    }
+    const { 'Content-Type': _, ...forwardHeaders } = headers;
+    const resp = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            targetUrl: url,
+            headers: forwardHeaders,
+            body: options.body ? JSON.parse(options.body as string) : undefined,
+        }),
+    });
+    return resp;
+}
+
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
@@ -166,15 +189,56 @@ export async function safeFetchJson(
             }
 
             return await safeResponseJson(response);
-        } catch (e: any) {
+                } catch (e: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
+
+            // CORS 失败自动走代理（TypeError: Load failed 是典型 CORS 报错）
+            const isCorsLikely = e.name === 'TypeError' && /load failed|failed to fetch|network/i.test(e.message || '');
+            if (isCorsLikely && attempt === 0) {
+                console.log('[SafeAPI] CORS blocked, retrying via /api/proxy...');
+                try {
+                    const proxyResp = await proxyFetch(url, options);
+                    if (!proxyResp.ok) {
+                        const data = await safeResponseJson(proxyResp);
+                        const errMsg = data?.error?.message || data?.error || `HTTP ${proxyResp.status}`;
+                        throw new Error(`API Error ${proxyResp.status}: ${errMsg}`);
+                    }
+                    return await safeResponseJson(proxyResp);
+                } catch (proxyErr: any) {
+                    console.warn('[SafeAPI] Proxy also failed:', proxyErr.message);
+                    lastError = proxyErr;
+                    if (attempt < maxRetries) {
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(r => setTimeout(r, delay));
+                        continue;
+                    }
+                    throw proxyErr;
+                }
+            }
 
             // AbortError（含 timeout）：是否重试看上层策略，先按可重试处理（网络层面）
             const isAbort = e?.name === 'AbortError' || /aborted|timeout/i.test(e?.message || '');
 
             // Network errors (fetch itself failed) are retryable
             if ((e.name === 'TypeError' || isAbort) && attempt < maxRetries) {
+                const delay = Math.pow(2, attempt) * 1000;
+                console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+
+            // For HTML/parse errors on non-ok responses during retry, continue
+            if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
+                const delay = Math.pow(2, attempt) * 1000;
+                console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+
+            throw e;
+        }
+
                 const delay = Math.pow(2, attempt) * 1000;
                 console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
                 await new Promise(r => setTimeout(r, delay));

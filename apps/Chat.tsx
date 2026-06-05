@@ -1266,33 +1266,36 @@ const Chat: React.FC = () => {
         }
 
         // 原有逻辑（无记忆宫殿 or 所有消息已处理）
-        if (preserveContext) {
-            const allMessages = await DB.getMessagesByCharId(char.id, true);
-            const toKeep = allMessages.slice(-10);
-            const toKeepIds = new Set(toKeep.map(m => m.id));
-            const toDelete = allMessages.filter(m => !toKeepIds.has(m.id));
-            if (toDelete.length === 0) {
-                addToast('消息太少，无需清理', 'info');
-                return;
-            }
-            const toDeleteIds = toDelete.map(m => m.id);
-            await DB.deleteMessages(toDeleteIds);
-            discardVoiceForMessages(toDeleteIds);
-            setMessages(toKeep);
-            setTotalMsgCount(toKeep.length);
-            setVisibleCount(LOAD_BATCH_SIZE);
-            visibleCountRef.current = LOAD_BATCH_SIZE;
-            addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
-        } else {
-            const allIds = (await DB.getMessagesByCharId(char.id, true)).map(m => m.id);
-            await DB.clearMessages(char.id);
-            discardVoiceForMessages(allIds);
-            setMessages([]);
-            setTotalMsgCount(0);
-            setVisibleCount(LOAD_BATCH_SIZE);
-            visibleCountRef.current = LOAD_BATCH_SIZE;
-            addToast('已清空', 'success');
-        }
+const keepN = preserveCount ?? 10;
+const allMessages = await DB.getMessagesByCharId(char.id, true);
+
+if (keepN > 0) {
+    const toKeep = allMessages.slice(-keepN);
+    const toKeepIds = new Set(toKeep.map(m => m.id));
+    const toDelete = allMessages.filter(m => !toKeepIds.has(m.id));
+    if (toDelete.length === 0) {
+        addToast('消息太少，无需清理', 'info');
+        return;
+    }
+    const toDeleteIds = toDelete.map(m => m.id);
+    await DB.deleteMessages(toDeleteIds);
+    discardVoiceForMessages(toDeleteIds);
+    setMessages(toKeep);
+    setTotalMsgCount(toKeep.length);
+    setVisibleCount(LOAD_BATCH_SIZE);
+    visibleCountRef.current = LOAD_BATCH_SIZE;
+    addToast(`已清理 ${toDelete.length} 条历史，保留最近 ${keepN} 条`, 'success');
+} else {
+    const allIds = allMessages.map(m => m.id);
+    await DB.clearMessages(char.id);
+    discardVoiceForMessages(allIds);
+    setMessages([]);
+    setTotalMsgCount(0);
+    setVisibleCount(LOAD_BATCH_SIZE);
+    visibleCountRef.current = LOAD_BATCH_SIZE;
+    addToast('已全部清空', 'success');
+}
+
         setModalType('none');
     };
 

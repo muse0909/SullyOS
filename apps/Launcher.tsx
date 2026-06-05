@@ -257,6 +257,23 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     const calendarDays = Array.from({ length: totalDays }, (_, i) => i + 1);
     const paddingDays = Array.from({ length: startOffset }, () => null);
 
+    // --- Upcoming events: only today + future, soonest first (non-mutating), paginated ---
+    const todayStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const upcomingEvents = useMemo(
+        () => [...(anniversaries as any[])]
+            .filter((a: any) => a.date >= todayStr)
+            .sort((a: any, b: any) => a.date.localeCompare(b.date)),
+        [anniversaries, todayStr]
+    );
+    const EVENTS_PER_PAGE = 4;
+    const eventPageCount = Math.max(1, Math.ceil(upcomingEvents.length / EVENTS_PER_PAGE));
+    const [eventPage, setEventPage] = useState(0);
+    // Clamp the page if the list shrinks (e.g. an event passes / is removed)
+    useEffect(() => {
+        if (eventPage > eventPageCount - 1) setEventPage(eventPageCount - 1);
+    }, [eventPageCount, eventPage]);
+    const pagedEvents = upcomingEvents.slice(eventPage * EVENTS_PER_PAGE, eventPage * EVENTS_PER_PAGE + EVENTS_PER_PAGE);
+
     return (
         <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
               <div className="bg-white/25 rounded-3xl p-6 border border-white/25 shadow-xl">
@@ -293,20 +310,43 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                   </div>
               </div>
 
-              <div className="bg-white/25 rounded-3xl p-5 border border-white/25 shadow-xl flex-1 min-h-[200px]">
-                  <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-4 flex items-center gap-2" style={{ color: contentColor }}>
-                      <span className="w-2 h-2 bg-purple-400 rounded-full"></span> Upcoming Events
-                  </h3>
+              <div className="bg-white/25 rounded-3xl p-5 border border-white/25 shadow-xl flex flex-col flex-1 min-h-[200px]">
+                  <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest flex items-center gap-2" style={{ color: contentColor }}>
+                          <span className="w-2 h-2 bg-purple-400 rounded-full"></span> Upcoming Events
+                      </h3>
+                      {eventPageCount > 1 && (
+                          <div className="flex items-center gap-2 shrink-0" style={{ color: contentColor }}>
+                              <button
+                                  onClick={(e) => { e.stopPropagation(); setEventPage(p => Math.max(0, p - 1)); }}
+                                  disabled={eventPage === 0}
+                                  className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center disabled:opacity-25 hover:bg-white/30 transition-colors active:scale-90"
+                                  aria-label="Previous events"
+                              >
+                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+                              </button>
+                              <span className="text-[10px] font-mono opacity-60 tabular-nums">{eventPage + 1}/{eventPageCount}</span>
+                              <button
+                                  onClick={(e) => { e.stopPropagation(); setEventPage(p => Math.min(eventPageCount - 1, p + 1)); }}
+                                  disabled={eventPage >= eventPageCount - 1}
+                                  className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center disabled:opacity-25 hover:bg-white/30 transition-colors active:scale-90"
+                                  aria-label="Next events"
+                              >
+                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+                              </button>
+                          </div>
+                      )}
+                  </div>
                   <div className="space-y-3">
-                      {anniversaries.length > 0 ? anniversaries.sort((a: any, b: any) => a.date.localeCompare(b.date)).slice(0, 5).map((anni: any) => (
+                      {upcomingEvents.length > 0 ? pagedEvents.map((anni: any) => (
                           <div key={anni.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
-                              <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex flex-col items-center justify-center text-purple-200 border border-purple-500/30">
+                              <div className="w-10 h-10 shrink-0 bg-purple-500/20 rounded-lg flex flex-col items-center justify-center text-purple-200 border border-purple-500/30">
                                   <span className="text-[9px] opacity-70">{anni.date.split('-')[1]}</span>
                                   <span className="text-sm font-bold leading-none">{anni.date.split('-')[2]}</span>
                               </div>
-                              <div className="flex-1">
-                                  <div className="text-sm font-bold" style={{ color: contentColor }}>{anni.title}</div>
-                                  <div className="text-[10px] opacity-50" style={{ color: contentColor }}>{characters.find((c: any) => c.id === anni.charId)?.name || 'Unknown'}</div>
+                              <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-bold truncate" style={{ color: contentColor }}>{anni.title}</div>
+                                  <div className="text-[10px] opacity-50 truncate" style={{ color: contentColor }}>{characters.find((c: any) => c.id === anni.charId)?.name || 'Unknown'}</div>
                               </div>
                           </div>
                       )) : (

@@ -189,7 +189,7 @@ export async function safeFetchJson(
             }
 
             return await safeResponseJson(response);
-                } catch (e: any) {
+                       } catch (e: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
 
@@ -217,10 +217,9 @@ export async function safeFetchJson(
                 }
             }
 
-            // AbortError（含 timeout）：是否重试看上层策略，先按可重试处理（网络层面）
+            // AbortError（含 timeout）
             const isAbort = e?.name === 'AbortError' || /aborted|timeout/i.test(e?.message || '');
 
-            // Network errors (fetch itself failed) are retryable
             if ((e.name === 'TypeError' || isAbort) && attempt < maxRetries) {
                 const delay = Math.pow(2, attempt) * 1000;
                 console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
@@ -228,24 +227,6 @@ export async function safeFetchJson(
                 continue;
             }
 
-            // For HTML/parse errors on non-ok responses during retry, continue
-            if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
-                const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-            }
-
-            throw e;
-        }
-
-                const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-            }
-
-            // For HTML/parse errors on non-ok responses during retry, continue
             if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
                 const delay = Math.pow(2, attempt) * 1000;
                 console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
@@ -256,6 +237,7 @@ export async function safeFetchJson(
             throw e;
         }
     }
+
 
     throw lastError || new Error('API请求失败');
 }

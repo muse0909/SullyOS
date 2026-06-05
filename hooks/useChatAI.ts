@@ -941,7 +941,7 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             }
         ];
 
-        const visionUrl = normal​izeApiUrl(effectiveApi.v​isionBaseUrl);
+        const visionUrl = normalizeApiUrl(effectiveApi.v​isionBaseUrl);
         const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
             method: 'POST',
             headers: {

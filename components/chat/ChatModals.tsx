@@ -120,7 +120,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     emojiImportText, setEmojiImportText,
     settingsContextLimit, setSettingsContextLimit,
     settingsHideSysLogs, setSettingsHideSysLogs,
-    preserveContext, setPreserveContext,
+    preserveCount, setPreserveCount,
     editContent, setEditContent,
     newCategoryName, setNewCategoryName, onAddCategory,
     archivePrompts, selectedPromptId, setSelectedPromptId,

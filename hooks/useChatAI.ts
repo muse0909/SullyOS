@@ -23,6 +23,15 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
+
+// URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
+const normalizeApiUrl = (url?: string): string => {
+    const raw = (url || '').trim().replace(/\/+$/, '');
+    if (!raw) return '';
+    if (/\/v\d+$/i.test(raw)) return raw;
+    return `${raw}/v1`;
+};
+
 // —— 生图工具定义 ——
 const IMAGE_GENERATION_TOOL = {
   type: 'function' as const,
@@ -258,7 +267,7 @@ export async function evaluateEmotionBackground(
     try {
         const prompt = buildEmotionEvalPrompt(charData, userProfile, mainSystemPrompt, apiMessages);
 
-        const baseUrl = api.baseUrl.replace(/\/+$/, '');
+        const baseUrl = normalizeApiUrl(api.baseUrl);
         const headers = {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${api.apiKey || 'sk-none'}`
@@ -607,7 +616,7 @@ export const useChatAI = ({
         await KeepAlive.start();
 
         try {
-            const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
+            const baseUrl = normalizeApiUrl(effectiveApi.baseUrl);
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
             // ── 分段计时（从用户发送到 API 发出）──
@@ -932,7 +941,7 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             }
         ];
 
-        const visionUrl = effectiveApi.visionBaseUrl.replace(/\/+$/, '');
+        const visionUrl = normal​izeApiUrl(effectiveApi.v​isionBaseUrl);
         const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -1189,7 +1198,7 @@ if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
             try {
-                const imgResponse = await fetch(`${apiConfig.imageBaseUrl.replace(/\/+$/, '')}/images/generations`, {
+                const imgResponse = await fetch(`${normalizeApiUrl(apiCon​fig.imageBaseUrl)}/image​s/generations`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

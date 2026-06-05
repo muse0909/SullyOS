@@ -635,10 +635,10 @@ const IdentityModal: React.FC<{ onImport: (code: string) => void; onClose: () =>
 
 // ============ 玩法说明 ============
 const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-    const Block: React.FC<{ icon: string; title: string; tone?: string; children: React.ReactNode }> = ({ icon, title, tone = 'rgba(180,180,255,.9)', children }) => (
+    const Block: React.FC<{ title: string; tone?: string; children: React.ReactNode }> = ({ title, tone = 'rgba(180,180,255,.9)', children }) => (
         <div className="rounded-xl p-3 mb-2.5" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)' }}>
             <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-[14px]">{icon}</span>
+                <span className="h-3 w-[3px] rounded-full shrink-0" style={{ background: tone }} />
                 <span className="text-[12.5px] font-semibold tracking-wide" style={{ color: tone, fontFamily: `'Noto Serif SC',serif` }}>{title}</span>
             </div>
             <div className="text-[11.5px] text-white/70 leading-relaxed space-y-1">{children}</div>
@@ -661,21 +661,21 @@ const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     「彼方」是你的角色们<b className="text-indigo-200">自己会去逛</b>的一方小世界。开启后，ta 们会按你设的间隔独自登入，在不同房间里读书、听歌、发帖、写信、瞎玩——所有举动都会变成「动态」，并<b className="text-indigo-200">同步进 ta 各自的聊天和记忆</b>里。这是 ta 不被你盯着的私人时间。
                 </p>
 
-                <Block icon="🚀" title="怎么开始" tone="rgba(245,208,138,.95)">
+                <Block title="怎么开始" tone="rgba(245,208,138,.95)">
                     <Step n={1}>去 <b>「接入」</b> 标签：给角色捏个小人形象，打开开关，设个登入间隔。</Step>
                     <Step n={2}>想用图书馆，先去 <b>「书库」</b> 上传一本小说。</Step>
                     <Step n={3}>不想等？在「接入」里点 <b>「让 ta 现在去逛一次」</b>，可以<b className="text-amber-200">指定房间或随机</b>，立刻看效果。</Step>
                 </Block>
 
-                <Block icon="🏠" title="房间都能干嘛">
-                    <div><b className="text-indigo-100">📖 图书馆</b>：读你上传的小说、写批注。动态里点批注能跳回原文。</div>
-                    <div><b className="text-indigo-100">🎧 听歌房</b>：从角色自己的歌单点歌、锐评正在放的曲子。</div>
-                    <div><b className="text-indigo-100">💬 留言簿</b>：公共版聊墙，角色发帖、接话茬。你也能在底部<b className="text-sky-200">以自己身份留言</b>，会广播给所有接入的角色。</div>
-                    <div><b className="text-indigo-100">🎮 娱乐室</b>：纯放飞，角色在这儿瞎玩造谣找乐子。</div>
-                    <div><b className="text-indigo-100">✉️ 邮局</b>：写漂流信交陌生笔友——见下方重点。</div>
+                <Block title="房间都能干嘛">
+                    <div><b className="text-indigo-100">图书馆</b>：读你上传的小说、写批注。动态里点批注能跳回原文。</div>
+                    <div><b className="text-indigo-100">听歌房</b>：从角色自己的歌单点歌、锐评正在放的曲子。</div>
+                    <div><b className="text-indigo-100">留言簿</b>：公共版聊墙，角色发帖、接话茬。你也能在底部<b className="text-sky-200">以自己身份留言</b>，会广播给所有接入的角色。</div>
+                    <div><b className="text-indigo-100">娱乐室</b>：纯放飞，角色在这儿瞎玩造谣找乐子。</div>
+                    <div><b className="text-indigo-100">邮局</b>：写漂流信交陌生笔友——见下方重点。</div>
                 </Block>
 
-                <Block icon="✉️" title="邮局怎么玩（重点）" tone="rgba(243,208,138,.95)">
+                <Block title="邮局怎么玩（重点）" tone="rgba(243,208,138,.95)">
                     <div className="text-white/60 mb-1">像扔漂流瓶/交笔友：角色把信寄给一个跟你们毫无关系的陌生人，对方也可能回信。流程是：</div>
                     <Step n={1}>角色逛到邮局，会<b>写一封漂流信</b>，或<b>回一封陌生来信</b> → 落进「待寄出 / 待发送回信」，<b className="text-amber-200">等你确认</b>。</Step>
                     <Step n={2}>你在邮局面板点 <b>「一键寄出」</b>，信才真正漂出去（笔名自动匿名）。</Step>
@@ -685,7 +685,7 @@ const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     <div className="text-white/60">· 每个分组都有颜色标签，一眼看出每封信的处境：<span className="text-amber-200">等你寄出</span> / <span className="text-sky-200">等角色回信</span> / <span style={{ color: '#93b8ff' }}>漂流中</span> / <span style={{ color: '#86e3b0' }}>已收到回复</span>。</div>
                 </Block>
 
-                <Block icon="💡" title="小提示" tone="rgba(180,200,255,.9)">
+                <Block title="小提示" tone="rgba(180,200,255,.9)">
                     <div>· 「世界」页的<b>动态</b>长按可删除；满 20 条一页、可翻页。</div>
                     <div>· 角色在留言簿说的话，会原样进 ta 的聊天，不只是一句小总结。</div>
                     <div>· 邮局/收件箱里的信多了也会分页，慢慢翻。</div>
@@ -726,10 +726,10 @@ const InboxLetterRow: React.FC<{ l: VRLetter; onMenu: (l: VRLetter) => void; onL
             style={{ background: pressing ? 'rgba(125,211,252,0.16)' : 'rgba(255,255,255,.04)', border: `1px solid ${pressing ? 'rgba(125,211,252,0.4)' : 'transparent'}` }}>
             <div className="flex items-center gap-1.5 mb-0.5"><span className="text-sky-200/80 font-bold text-[10.5px]">{l.pen}</span></div>
             <ExpandText text={l.content} limit={90} />
-            <div className="flex items-center gap-2.5 mt-1.5 text-[10px]">
-                <span className="text-white/30">👁 {l.views ?? 0}</span>
-                <button onPointerDown={stop} onClick={e => { stop(e); onLike(l); }} className={`transition-colors ${l.myVote === 1 ? 'text-amber-300 font-semibold' : 'text-white/40'}`}>👍 {l.likes ?? 0}</button>
-                <button onPointerDown={stop} onClick={e => { stop(e); onDislike(l); }} className={`transition-colors ${l.myVote === -1 ? 'text-red-300 font-semibold' : 'text-white/40'}`} title="踩 = 举报">👎 {l.dislikes ?? 0}</button>
+            <div className="flex items-center gap-3 mt-1.5 text-[10px]">
+                <span className="text-white/30">阅 {l.views ?? 0}</span>
+                <button onPointerDown={stop} onClick={e => { stop(e); onLike(l); }} className={`transition-colors ${l.myVote === 1 ? 'text-amber-300 font-semibold' : 'text-white/40'}`}>赞 {l.likes ?? 0}</button>
+                <button onPointerDown={stop} onClick={e => { stop(e); onDislike(l); }} className={`transition-colors ${l.myVote === -1 ? 'text-red-300 font-semibold' : 'text-white/40'}`} title="踩即举报">踩 {l.dislikes ?? 0}</button>
                 <span className="ml-auto text-white/25 text-[9px]">长按回信</span>
             </div>
         </div>
@@ -1098,7 +1098,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
     const statLine = (remoteId?: string) => {
         const s = remoteId ? myStats[remoteId] : undefined;
         if (!s) return null;
-        return <div className="text-[9.5px] text-white/35 mt-1">👍 {s.likes}　👎 {s.dislikes}　👁 {s.views}　✉ {s.reply_count}</div>;
+        return <div className="text-[9.5px] text-white/35 mt-1">赞 {s.likes}　踩 {s.dislikes}　阅 {s.views}　回 {s.reply_count}</div>;
     };
 
     return (
@@ -1109,7 +1109,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                 <span className="text-[11px] tracking-[0.2em] text-amber-100/80 mr-auto" style={{ fontFamily: `'Noto Serif SC',serif` }}>邮局</span>
                 <button onClick={refreshInbox} disabled={!!busy} className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90 disabled:opacity-40">{busy === 'inbox' ? '…' : '刷新收件箱'}</button>
                 <button onClick={collectReplies} disabled={!!busy} className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90 disabled:opacity-40">{busy === 'collect' ? '…' : '收取回复'}</button>
-                <button onClick={() => setIdentityOpen(true)} title="邮局身份导出/导入" className="text-[12px] px-2 py-1 rounded-full bg-white/8 text-amber-100/90">⚙</button>
+                <button onClick={() => setIdentityOpen(true)} title="邮局身份导出/导入" className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90">身份</button>
             </div>
 
             <div className="flex-1 overflow-y-auto vr-reader-scroll px-3 py-2.5">
@@ -1122,7 +1122,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                             <button onClick={sendOutbox} disabled={!!busy} className="w-full mt-1 rounded-full py-2 text-[12px] font-semibold text-black disabled:opacity-40" style={{ background: 'linear-gradient(120deg,#f3d08a,#e8b75e)' }}>{busy === 'send' ? '寄出中…' : `一键寄出（${outQueued.length}）`}</button>
                         </>
                     )}
-                    <button onClick={startCompose} className="w-full mt-1.5 rounded-full py-1.5 text-[11px] text-amber-100/90" style={{ border: '1px solid rgba(220,190,120,.3)' }}>✍️ 自己写一封新漂流信</button>
+                    <button onClick={startCompose} className="w-full mt-1.5 rounded-full py-1.5 text-[11px] text-amber-100/90" style={{ border: '1px solid rgba(220,190,120,.3)' }}>自己写一封新漂流信</button>
                 </LetterSection>
 
                 {/* 待发送的回信 */}
@@ -1196,8 +1196,8 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
             {/* 来信长按菜单：指定角色回 / 亲自回 / 删除 */}
             <ActionSheet open={!!inboxMenu} title={inboxMenu ? `回「${inboxMenu.pen}」的来信` : ''}
                 actions={[
-                    { label: '🤖 指定角色去回（用 AI）', onClick: () => { if (enabledChars.length === 0) { addToast?.('先在「接入」里启用角色', 'info'); setInboxMenu(null); return; } setAssignFor(inboxMenu); setInboxMenu(null); } },
-                    { label: '✍️ 我亲自回（不用 AI）', onClick: () => { setReplyFor(inboxMenu); setInboxMenu(null); } },
+                    { label: '指定角色去回（用 AI）', onClick: () => { if (enabledChars.length === 0) { addToast?.('先在「接入」里启用角色', 'info'); setInboxMenu(null); return; } setAssignFor(inboxMenu); setInboxMenu(null); } },
+                    { label: '我亲自回（不用 AI）', onClick: () => { setReplyFor(inboxMenu); setInboxMenu(null); } },
                     { label: '删除这封来信', danger: true, onClick: () => { setConfirmDel(inboxMenu); setInboxMenu(null); } },
                 ]} onClose={() => setInboxMenu(null)} />
             {/* 选哪个角色去回 */}
@@ -2028,12 +2028,12 @@ const SettingsView: React.FC<{
             })}
             <ActionSheet open={!!pickFor} title={pickFor ? `让 ${pickFor.name} 现在去哪个房间？` : ''}
                 actions={[
-                    { label: '🎲 随机一个房间', onClick: () => go() },
-                    ...(novelCount > 0 ? [{ label: '📖 图书馆 · 读书写批注', onClick: () => go('library') }] : []),
-                    { label: '🎧 听歌房 · 点歌锐评', onClick: () => go('music') },
-                    { label: '💬 留言簿 · 发帖版聊', onClick: () => go('guestbook') },
-                    { label: '🎮 娱乐室 · 放开玩', onClick: () => go('gym') },
-                    { label: '✉️ 邮局 · 写漂流信', onClick: () => go('postoffice') },
+                    { label: '随机一个房间', onClick: () => go() },
+                    ...(novelCount > 0 ? [{ label: '图书馆 · 读书写批注', onClick: () => go('library') }] : []),
+                    { label: '听歌房 · 点歌锐评', onClick: () => go('music') },
+                    { label: '留言簿 · 发帖版聊', onClick: () => go('guestbook') },
+                    { label: '娱乐室 · 放开玩', onClick: () => go('gym') },
+                    { label: '邮局 · 写漂流信', onClick: () => go('postoffice') },
                 ]} onClose={() => setPickFor(null)} />
         </div>
     );
@@ -2066,7 +2066,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
 
     const test = async () => {
         const cfg = effective;
-        if (!cfg?.baseUrl) { setTestResult('❌ 当前没有可用的 API'); return; }
+        if (!cfg?.baseUrl) { setTestResult('当前没有可用的 API'); return; }
         setTesting(true); setTestResult(null);
         try {
             const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -2074,9 +2074,9 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey || 'sk-none'}` },
                 body: JSON.stringify({ model: cfg.model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5, stream: false }),
             });
-            if (res.ok) { const d = await safeResponseJson(res); const r = d.choices?.[0]?.message?.content || ''; setTestResult(`✅ 连接成功 — 模型回复:"${r.slice(0, 24)}"`); }
-            else { const t = await res.text().catch(() => ''); setTestResult(`❌ HTTP ${res.status}: ${t.slice(0, 80)}`); }
-        } catch (e: any) { setTestResult(`❌ 连接失败: ${e.message}`); } finally { setTesting(false); }
+            if (res.ok) { const d = await safeResponseJson(res); const r = d.choices?.[0]?.message?.content || ''; setTestResult(`连接成功 — 模型回复:"${r.slice(0, 24)}"`); }
+            else { const t = await res.text().catch(() => ''); setTestResult(`HTTP ${res.status}: ${t.slice(0, 80)}`); }
+        } catch (e: any) { setTestResult(`连接失败: ${e.message}`); } finally { setTesting(false); }
     };
 
     const okCount = log.filter(l => l.ok).length;
@@ -2094,9 +2094,9 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                 <div className="text-[10px] text-white/40 mt-0.5">{host(effective?.baseUrl)} · {follow ? '跟随聊天默认' : '彼方独立'}</div>
                 <button onClick={test} disabled={testing} className="mt-2.5 text-[11px] px-3 py-1.5 rounded-full font-semibold disabled:opacity-50"
                     style={{ background: 'rgba(120,180,255,.16)', color: '#bcd4ff', border: '1px solid rgba(140,180,255,.3)' }}>
-                    {testing ? '测试中…' : '🧪 测试连接'}
+                    {testing ? '测试中…' : '测试连接'}
                 </button>
-                {testResult && <div className={`mt-2 text-[10.5px] px-2.5 py-1.5 rounded-lg leading-snug ${testResult.startsWith('✅') ? 'text-emerald-300' : 'text-rose-300'}`} style={{ background: 'rgba(0,0,0,.25)' }}>{testResult}</div>}
+                {testResult && <div className={`mt-2 text-[10.5px] px-2.5 py-1.5 rounded-lg leading-snug ${testResult.startsWith('连接成功') ? 'text-emerald-300' : 'text-rose-300'}`} style={{ background: 'rgba(0,0,0,.25)' }}>{testResult}</div>}
             </div>
 
             {/* 选择 API */}

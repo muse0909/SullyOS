@@ -302,13 +302,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     )}
                 </div>
                 
-                <div className="flex items-center justify-between px-1">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
-                    <div className="flex gap-2">
-                        {isManageMode && selectedIds.size > 0 && <button onClick={(e) => { e.stopPropagation(); requestDelete(); }} className="text-[10px] bg-red-500 text-white px-3 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform">删除 ({selectedIds.size})</button>}
-                        <button onClick={() => { setIsManageMode(!isManageMode); setSelectedIds(new Set()); }} className={`text-[10px] px-3 py-1 rounded-full border transition-colors ${isManageMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{isManageMode ? '完成' : '管理'}</button>
-                    </div>
-                </div>
+                <div
+  style={{ position: 'sticky', top: 44, zIndex: 10, background: 'white', paddingTop: 6, paddingBottom: 6 }}
+  className="flex items-center justify-between px-1"
+>
+  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
+  {effectiveManageMode && selectedIds.size > 0 && (
+    <button
+      onClick={(e) => { e.stopPropagation(); requestDelete(); }}
+      className="text-[10px] bg-red-500 text-white px-3 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
+    >
+      删除 ({selectedIds.size})
+    </button>
+  )}
+</div>
 
                 <div className="mt-2 pl-2">
                     {Object.entries(groupedByDay).map(([date, dayMemories]) => (
@@ -334,13 +341,13 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                     <div 
                                         key={mem.id} 
                                         className={`relative group transition-all duration-300 ${isManageMode ? 'cursor-pointer' : ''}`} 
-                                        onClick={() => { if (isManageMode) toggleSelection(mem.id); }}
+                                        onClick={() => { if (effectiveManageMode) toggleSelection(mem.id); }}
                                     >
                                         {isManageMode && <div className={`absolute -left-[38px] top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors z-20 ${selectedIds.has(mem.id) ? 'bg-primary border-primary' : 'bg-white border-slate-300'}`}>{selectedIds.has(mem.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}</div>}
                                         <div className={`bg-white p-4 rounded-xl rounded-tl-none border border-slate-100 shadow-sm hover:shadow-md hover:border-primary/20 transition-all relative ${isManageMode && selectedIds.has(mem.id) ? 'ring-2 ring-primary ring-offset-2' : ''}`} onClick={(e) => { if (!isManageMode) { e.stopPropagation(); toggleMemoryExpanded(mem.id); } }}>
                                             
                                             {/* Explicit Edit Button - Visible always on desktop, touchable on mobile */}
-                                            {!isManageMode && (
+                                            {!effectiveManageMode && (
                                                 <button 
                                                     onClick={(e) => { e.stopPropagation(); setEditMemory(mem); }}
                                                     className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-primary bg-transparent hover:bg-slate-50 rounded-full transition-colors z-10"
@@ -354,7 +361,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
 
                                             {mem.mood && <div className="mb-1 pr-6"><span className="text-[10px] px-1.5 py-0.5 bg-primary/5 text-primary rounded-md font-medium">#{mem.mood}</span></div>}
                                             <p className="text-sm text-slate-700 leading-relaxed text-justify whitespace-pre-wrap">{expandedMemoryIds.has(mem.id) ? mem.summary : (mem.summary.length > 120 ? `${mem.summary.slice(0, 120)}...` : mem.summary)}</p>
-                                            {!isManageMode && mem.summary.length > 120 && <div className="mt-2 text-[10px] text-slate-400">{expandedMemoryIds.has(mem.id) ? '点击收起' : '点击展开'}</div>}
+                                            {!effectiveManageMode && mem.summary.length > 120 && <div className="mt-2 text-[10px] text-slate-400">{expandedMemoryIds.has(mem.id) ? '点击收起' : '点击展开'}</div>}
                                         </div>
                                     </div>
                                 ))}

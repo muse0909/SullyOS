@@ -200,12 +200,17 @@ const GameApp: React.FC = () => {
     const [worldStyle, setWorldStyle] = useState<string>('高奇幻');
     const [worldIdea, setWorldIdea] = useState('');        // 用户额外给的灵感/想法（可选）
     const [isGeneratingWorld, setIsGeneratingWorld] = useState(false);
+    // 新游戏玩法设置
+    const [newDiceDisabled, setNewDiceDisabled] = useState(false);            // 关闭骰子（默认每次直接成功）
+    const [newArchiveMode, setNewArchiveMode] = useState<'auto' | 'manual'>('auto');
+    const [showArchiveHelp, setShowArchiveHelp] = useState(false);            // 归档模式问号说明
 
     // Play State
     const [userInput, setUserInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isSummarizing, setIsSummarizing] = useState(false); // 自动总结全屏反馈
     const [showArchived, setShowArchived] = useState(false);    // 已归档剧情折叠展开
+    const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(new Set()); // 每段总结对应原文的展开状态
     const [lastRoll, setLastRoll] = useState<number | null>(null); // 最近一次自动骰点结果（瞬时展示）
     const [lastTokenUsage, setLastTokenUsage] = useState<{prompt?: number, completion?: number, total: number} | null>(null);
     const [totalTokensUsed, setTotalTokensUsed] = useState(0);
@@ -467,7 +472,7 @@ ${playerContext}
 你现在是 **Game Master (GM)**。请为这个冒险故事生成一个**精彩的开场 (Prologue)**。
 1. **剧情描述**: 描述这个世界正在发生什么、小队所处的环境与正在逼近的事件。**先有世界，再有人**——开场不要围着玩家转，而是把舞台和危机铺开。
 2. **角色反应**: 简要描述队友们的初始状态或第一句台词。请**务必**参考【神经链接】中的私聊状态来决定他们的态度；同时让每个角色展现**自己的性格与目的**，而不是一上来就众星捧月地讨好玩家。
-3. **初始选项**: 给出三个玩家可以采取的行动选项（每个选项玩家执行时都会自动骰 D20 判定，因此选项应是"有成败风险的尝试"而非必然成功的动作）。
+3. **初始选项**: 给出三个玩家可以采取的行动选项${newDiceDisabled ? '（本场未启用骰子，玩家行动默认顺利成功，选项可以是各种有趣的方向）' : '（每个选项玩家执行时都会自动骰 D20 判定，因此选项应是"有成败风险的尝试"而非必然成功的动作）'}。
 
 ### 一致性自检 (Consistency Check)
 输出前，请在心里核对：每个角色的台词/行为是否**只**来自 TA 自己的"角色档案"（性格、记忆、印象）？严禁把某个角色的记忆、口癖或人设安到另一个角色身上（防止"串台"）。
@@ -544,6 +549,8 @@ ${playerContext}
                     inventory: []
                 },
                 suggestedActions: res?.suggested_actions || [],
+                diceDisabled: newDiceDisabled,
+                archiveMode: newArchiveMode,
                 createdAt: Date.now(),
                 lastPlayedAt: Date.now()
             };
@@ -557,6 +564,8 @@ ${playerContext}
             setNewTitle('');
             setNewWorld('');
             setWorldIdea('');
+            setNewDiceDisabled(false);
+            setNewArchiveMode('auto');
             setSelectedPlayers(new Set());
 
         } catch (e: any) {
@@ -656,10 +665,12 @@ ${playerContext}
                 : '';
             const activeLogText = contextLogs.filter(l => !l.archived).map(serializeLog).join('\n');
 
-            // 当前这步行动的骰点提示
+            // 当前这步行动的判定提示：开了骰子按 D20 裁定；关了骰子默认直接成功
             const rollInstruction = currentRoll
                 ? `\n### 本回合判定\n玩家这次行动掷出了 **D20 = ${currentRoll}（${rollFlavor(currentRoll)}）**。请据此裁定行动的成败与代价：20=出乎意料的大成功，1=灾难性大失败，高分顺利、低分受挫。让结果自然融入叙事，不要直接复述数字。\n`
-                : '';
+                : (activeGame.diceDisabled
+                    ? `\n### 判定模式\n本场冒险未启用骰子，玩家的行动默认视为顺利成功（除非剧情逻辑上明显不可能）。请直接推进正向结果，不要用随机失败打断节奏。\n`
+                    : '');
 
             const prompt = `### TRPG 跑团模式: ${activeGame.title}
 **当前剧本**: ${activeGame.worldSetting}
@@ -852,6 +863,7 @@ ${logText}
                 id: `sum-${Date.now()}`,
                 content: summaryText,
                 logCount: toArchive.length,
+                logIds: toArchive.map(l => l.id),
                 createdAt: Date.now(),
             };
 
@@ -867,26 +879,31 @@ ${logText}
             setActiveGame(updated);
             await DB.saveGame(updated);
 
-            // 以小卡片形式发送到参与角色的记忆与聊天上下文
-            const now = new Date();
-            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-            const cardLine = `和【${playerNames}】一起玩《${game.title}》TRPG，${summaryText}`;
-            for (const p of players) {
-                const mem = {
-                    id: `mem-${Date.now()}-${Math.random()}`,
-                    date: dateStr,
-                    summary: cardLine,
-                    mood: 'fun'
-                };
-                updateCharacter(p.id, { memories: [...(p.memories || []), mem] });
-                await DB.saveMessage({
-                    charId: p.id,
-                    role: 'system',
-                    type: 'text',
-                    content: `[TRPG 进度卡: 你正和${playerNames}玩《${game.title}》。${summaryText}]`
-                });
+            // 归档模式决定是否把总结推送到角色 chatapp。
+            // 'auto' 推送；'manual'（含旧存档无此字段者）不推送，仅手动归档时才送。
+            if (game.archiveMode === 'auto') {
+                const now = new Date();
+                const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                const cardLine = `和【${playerNames}】一起玩《${game.title}》TRPG，${summaryText}`;
+                for (const p of players) {
+                    const mem = {
+                        id: `mem-${Date.now()}-${Math.random()}`,
+                        date: dateStr,
+                        summary: cardLine,
+                        mood: 'fun'
+                    };
+                    updateCharacter(p.id, { memories: [...(p.memories || []), mem] });
+                    await DB.saveMessage({
+                        charId: p.id,
+                        role: 'system',
+                        type: 'text',
+                        content: `[TRPG 进度卡: 你正和${playerNames}玩《${game.title}》。${summaryText}]`
+                    });
+                }
+                addToast('已自动总结并归档（已同步到角色聊天）', 'success');
+            } else {
+                addToast('已自动总结并归档前文', 'success');
             }
-            addToast('已自动总结并归档前文', 'success');
         } catch (e) {
             console.error('[GameApp] auto summary failed', e);
             // 总结失败不阻塞游戏，静默跳过
@@ -1277,6 +1294,59 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                         </div>
                     </div>
 
+                    {/* 玩法设置 */}
+                    <div>
+                        <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider block mb-2">玩法设置</label>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 divide-y divide-white/10">
+                            {/* 骰子开关 */}
+                            <div className="flex items-center justify-between p-4">
+                                <div className="flex flex-col">
+                                    <span className="text-sm font-medium flex items-center gap-1.5"><DiceFive size={16} weight="fill" /> 骰子判定 (D20)</span>
+                                    <span className="text-[10px] text-white/40 mt-0.5">{newDiceDisabled ? '已关闭：行动默认直接成功' : '开启：每次行动自动骰点定成败'}</span>
+                                </div>
+                                <button
+                                    onClick={() => setNewDiceDisabled(v => !v)}
+                                    role="switch"
+                                    aria-checked={!newDiceDisabled}
+                                    className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${newDiceDisabled ? 'bg-white/15' : 'bg-emerald-500'}`}
+                                >
+                                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${newDiceDisabled ? '' : 'translate-x-6'}`}></span>
+                                </button>
+                            </div>
+
+                            {/* 归档模式 */}
+                            <div className="p-4">
+                                <div className="flex items-center gap-1.5 mb-2.5">
+                                    <span className="text-sm font-medium">归档模式</span>
+                                    <button onClick={() => setShowArchiveHelp(v => !v)} className="w-4 h-4 rounded-full border border-white/30 text-white/50 text-[10px] leading-none flex items-center justify-center hover:bg-white/10 transition-colors">?</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        onClick={() => setNewArchiveMode('auto')}
+                                        className={`rounded-xl p-2.5 text-left border transition-all active:scale-95 ${newArchiveMode === 'auto' ? 'border-purple-400 bg-purple-500/15' : 'border-white/10 bg-white/5'}`}
+                                    >
+                                        <div className="text-xs font-bold">自动归档</div>
+                                        <div className="text-[9px] text-white/40 mt-0.5 leading-snug">满20条总结，并同步进角色聊天</div>
+                                    </button>
+                                    <button
+                                        onClick={() => setNewArchiveMode('manual')}
+                                        className={`rounded-xl p-2.5 text-left border transition-all active:scale-95 ${newArchiveMode === 'manual' ? 'border-purple-400 bg-purple-500/15' : 'border-white/10 bg-white/5'}`}
+                                    >
+                                        <div className="text-xs font-bold">手动归档</div>
+                                        <div className="text-[9px] text-white/40 mt-0.5 leading-snug">满20条总结，但不进角色聊天</div>
+                                    </button>
+                                </div>
+                                {showArchiveHelp && (
+                                    <div className="mt-2.5 text-[10px] text-white/50 leading-relaxed bg-black/30 rounded-xl p-3 space-y-1.5 border border-white/10">
+                                        <p>两种模式都会<b className="text-white/70">每满 20 条剧情自动总结一次</b>，总结都会一直保留在游戏的前情提要里、并送进 GM 的上下文。区别只在于：</p>
+                                        <p><b className="text-purple-300">自动归档</b>：每次总结会<b className="text-white/70">立即同步到参与角色的聊天 App</b>（角色会"记得"和你跑过团）。</p>
+                                        <p><b className="text-purple-300">手动归档</b>：自动总结<b className="text-white/70">不会</b>打扰角色的聊天，只有你在菜单里点「归档记忆并退出」时，才把整段经历送进角色聊天。</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
                     {/* 邀请玩家 */}
                     <div>
                         <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider block mb-2 flex items-center justify-between">
@@ -1412,36 +1482,76 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                 className="flex-1 overflow-y-auto p-4 space-y-6 no-scrollbar relative animate-fade-in"
             >
                 {/* 已归档剧情 (自动总结后折叠灰显，不删除) */}
-                {(activeGame.logs.some(l => l.archived) || (activeGame.summaries && activeGame.summaries.length > 0)) && (
-                    <div className="my-2">
-                        <button
-                            onClick={() => setShowArchived(v => !v)}
-                            className={`w-full text-[11px] py-2 px-3 rounded-lg border border-dashed ${theme.border} opacity-60 hover:opacity-100 transition-opacity flex items-center justify-center gap-2 font-mono`}
-                        >
-                            已归档 {activeGame.logs.filter(l => l.archived).length} 条剧情 · {(activeGame.summaries || []).length} 段前情提要 {showArchived ? '（点击折叠）' : '（点击展开）'}
-                        </button>
-                        {showArchived && (
-                            <div className="mt-3 space-y-4 opacity-50">
-                                {/* 前情提要小说式总结 */}
-                                {(activeGame.summaries || []).map((s, si) => (
-                                    <div key={s.id} className={`p-4 rounded-lg border ${theme.border} ${theme.cardBg} text-xs italic leading-relaxed`}>
-                                        <div className="text-[10px] font-bold uppercase tracking-widest mb-1 not-italic opacity-70">前情提要 · 第 {si + 1} 段</div>
-                                        <GameMarkdown content={s.content} theme={theme} />
-                                    </div>
-                                ))}
-                                {/* 折叠的原始日志 (灰显) */}
-                                <div className={`pl-3 border-l-2 ${theme.border} space-y-2`}>
-                                    {activeGame.logs.filter(l => l.archived).map((log, li) => (
-                                        <div key={log.id || li} className="text-[11px] leading-snug">
-                                            <span className="font-bold opacity-70">{log.role === 'gm' ? 'GM' : (log.speakerName || 'System')}: </span>
-                                            <span className="opacity-70">{log.content.replace(/\n+/g, ' ').slice(0, 120)}{log.content.length > 120 ? '…' : ''}</span>
-                                        </div>
-                                    ))}
+                {(activeGame.logs.some(l => l.archived) || (activeGame.summaries && activeGame.summaries.length > 0)) && (() => {
+                    const archivedLogs = activeGame.logs.filter(l => l.archived);
+                    const summaries = activeGame.summaries || [];
+                    // 把每段总结与它覆盖的原文对应起来：优先用 logIds，旧总结回退为按 logCount 顺序切分
+                    let cursor = 0;
+                    const groups = summaries.map((s, si) => {
+                        let logs: GameLog[];
+                        if (s.logIds && s.logIds.length) {
+                            const idset = new Set(s.logIds);
+                            logs = archivedLogs.filter(l => idset.has(l.id));
+                        } else {
+                            logs = archivedLogs.slice(cursor, cursor + s.logCount);
+                        }
+                        cursor += logs.length;
+                        return { summary: s, logs, index: si };
+                    });
+                    const covered = new Set(groups.flatMap(g => g.logs.map(l => l.id)));
+                    const orphanLogs = archivedLogs.filter(l => !covered.has(l.id));
+
+                    const renderLogs = (logs: GameLog[]) => (
+                        <div className={`pl-3 border-l-2 ${theme.border} space-y-1.5 mt-2`}>
+                            {logs.map((log, li) => (
+                                <div key={log.id || li} className="text-[11px] leading-snug">
+                                    <span className="font-bold opacity-70">{log.role === 'gm' ? 'GM' : (log.speakerName || 'System')}: </span>
+                                    <span className="opacity-70">{log.content.replace(/\n+/g, ' ').slice(0, 140)}{log.content.length > 140 ? '…' : ''}</span>
                                 </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            ))}
+                        </div>
+                    );
+
+                    return (
+                        <div className="my-2">
+                            <button
+                                onClick={() => setShowArchived(v => !v)}
+                                className={`w-full text-[11px] py-2 px-3 rounded-lg border border-dashed ${theme.border} opacity-60 hover:opacity-100 transition-opacity flex items-center justify-center gap-2 font-mono`}
+                            >
+                                已归档 {archivedLogs.length} 条剧情 · {summaries.length} 段前情提要 {showArchived ? '（点击折叠）' : '（点击展开）'}
+                            </button>
+                            {showArchived && (
+                                <div className="mt-3 space-y-4">
+                                    {groups.map(g => {
+                                        const open = expandedSummaries.has(g.summary.id);
+                                        return (
+                                            <div key={g.summary.id} className="space-y-2">
+                                                {/* 该段原文（默认折叠，可展开） */}
+                                                <button
+                                                    onClick={() => setExpandedSummaries(prev => { const n = new Set(prev); n.has(g.summary.id) ? n.delete(g.summary.id) : n.add(g.summary.id); return n; })}
+                                                    className={`w-full text-left text-[10px] font-mono opacity-50 hover:opacity-90 transition-opacity flex items-center gap-1.5`}
+                                                >
+                                                    <span>{open ? '▾' : '▸'}</span>
+                                                    <span>第 {g.index + 1} 段 · 原文 {g.logs.length} 条 {open ? '' : '(点击查看)'}</span>
+                                                </button>
+                                                {open && <div className="opacity-50">{renderLogs(g.logs)}</div>}
+                                                {/* 原文下面就是这段的总结 */}
+                                                <div className={`p-4 rounded-lg border ${theme.border} ${theme.cardBg} text-xs italic leading-relaxed opacity-80`}>
+                                                    <div className="text-[10px] font-bold uppercase tracking-widest mb-1 not-italic opacity-70">前情提要 · 第 {g.index + 1} 段</div>
+                                                    <GameMarkdown content={g.summary.content} theme={theme} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {/* 尚未被总结覆盖的归档原文（极少见，做个兜底） */}
+                                    {orphanLogs.length > 0 && (
+                                        <div className="opacity-50">{renderLogs(orphanLogs)}</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {activeGame.logs.map((log, i) => {
                     if (log.archived) return null; // 归档日志在上方折叠区块渲染

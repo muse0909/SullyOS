@@ -1868,6 +1868,7 @@ export interface GameSummary {
     id: string;
     content: string;       // 小说式总结（起因/经过/结果 + 人物关系变化）
     logCount: number;      // 本段总结覆盖了多少条日志
+    logIds?: string[];     // 本段总结覆盖的日志 id（用于把原文与总结对应展示）
     createdAt: number;
 }
 
@@ -1886,7 +1887,10 @@ export interface GameSession {
         inventory: string[];
     };
     sanityLocked?: boolean;
-    diceDisabled?: boolean;      // 关闭骰子：行动不再自动骰 D20
+    diceDisabled?: boolean;      // 关闭骰子：行动不再自动骰 D20，默认直接成功
+    // 归档模式：'auto' 满20条自动总结并送进角色 chatapp；'manual' 自动总结但不送，仅手动归档时送。
+    // 旧存档无此字段，按 'manual' 处理（不污染旧角色的聊天上下文）。
+    archiveMode?: 'auto' | 'manual';
     suggestedActions?: GameActionOption[];
     summaries?: GameSummary[];   // 自动总结归档的前情提要
     createdAt: number;

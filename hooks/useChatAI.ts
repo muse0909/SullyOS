@@ -1198,7 +1198,7 @@ if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
             try {
-                const imgResponse = await fetch(`${normalizeApiUrl(apiConfig.imageBaseUrl)}/image​s/generations`, {
+                const imgResponse = await fetch(`${normalizeApiUrl(apiConfig.imageBaseUrl)}/images/generations`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

@@ -92,6 +92,8 @@ const Character: React.FC = () => {
 
   // Impression State
   const [isGeneratingImpression, setIsGeneratingImpression] = useState(false);
+  const [isMemoryManageMode, setIsMemoryManageMode] = useState(false);
+
   const [isLoadingVoices, setIsLoadingVoices] = useState(false);
   const [voiceOptions, setVoiceOptions] = useState<Record<'system' | 'voice_cloning' | 'voice_generation', MiniMaxVoiceItem[]>>({
       system: [],
@@ -982,9 +984,9 @@ ${isInitialGeneration ? `
                        <button onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
                    </div>
                    <div className="flex gap-6 text-sm font-medium text-slate-400 pl-1">
-                       <button onClick={() => setDetailTab('identity')} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
+                       <button onClick={() => { setDetailTab('identity'); setIsMemoryManageMode(false); }} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => setDetailTab('memory')} className={`pb-2 transition-colors relative ${detailTab === 'memory' ? 'text-slate-800' : ''}`}>记忆 ({(formData.memories || []).length}){detailTab === 'memory' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
-                       <button onClick={() => setDetailTab('impression')} className={`pb-2 transition-colors relative ${detailTab === 'impression' ? 'text-slate-800' : ''}`}>印象{detailTab === 'impression' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
+                       <button onClick={() => { setDetailTab('impression'); setIsMemoryManageMode(false); }} className={`pb-2 transition-colors relative ${detailTab === 'impression' ? 'text-slate-800' : ''}`}>印象{detailTab === 'impression' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                    </div>
                </div>
                <div className="flex-1 overflow-y-auto p-5 no-scrollbar pb-10">
@@ -1160,30 +1162,41 @@ ${isInitialGeneration ? `
                    )}
                    
                    {detailTab === 'memory' && (
-                       <div className="space-y-4 animate-fade-in">
-                           <div className="flex justify-center gap-2 mb-4">
-                               <button onClick={() => setShowBatchModal(true)} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">批量总结（可指定日期）</button>
-                               <button onClick={() => setShowImportModal(true)} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">导入/清洗</button>
-                               <button onClick={handleExportPreview} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">备份</button>
-                           </div>
-                           <MemoryArchivist
-                               memories={formData.memories || []}
-                               refinedMemories={formData.refinedMemories || {}}
-                               activeMemoryMonths={formData.activeMemoryMonths || []}
-                               charName={formData.name || ''}
-                               userName={userProfile.name}
-                               onRefine={handleRefineMonth}
-                               onDeleteMemories={handleDeleteMemories}
-                               onUpdateMemory={handleUpdateMemory}
-                               onToggleActiveMonth={handleToggleActiveMonth}
-                               onUpdateRefinedMemory={handleUpdateRefinedMemory}
-                               onDeleteRefinedMemory={handleDeleteRefinedMemory}
-                               onForceArchiveDate={handleForceArchiveDate}
-                               forceArchiveTemplates={archivePrompts}
-                               forceArchiveDefaultPromptId={selectedPromptId}
-                           />
-                       </div>
-                   )}
+          <div className="space-y-4 animate-fade-in">
+            <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'white', padding: '8px 0 6px', marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap' }>
+                <button onClick={() => setShowBatchModal(true)} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">批量总结（可指定日期）</button>
+                <button onClick={() => setShowImportModal(true)} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">导入/清洗</button>
+                <button onClick={handleExportPreview} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">备份</button>
+                <button
+                  onClick={() => setIsMemoryManageMode(prev => !prev)}
+                  className={`px-3 py-2 rounded-full text-xs font-semibold shadow-sm border transition-colors ${isMemoryManageMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-100'}`}
+                >
+                  {isMemoryManageMode ? '完成' : '管理'}
+                </button>
+              </div>
+            </div>
+            <MemoryArchivist
+              memories={formData.memories || []}
+              refinedMemories={formData.refinedMemories || {}}
+              activeMemoryMonths={formData.activeMemoryMonths || []}
+              charName={formData.name || ''}
+              userName={userProfile.name}
+              onRefine={handleRefineMonth}
+              onDeleteMemories={handleDeleteMemories}
+              onUpdateMemory={handleUpdateMemory}
+              onToggleActiveMonth={handleToggleActiveMonth}
+              onUpdateRefinedMemory={handleUpdateRefinedMemory}
+              onDeleteRefinedMemory={handleDeleteRefinedMemory}
+              onForceArchiveDate={handleForceArchiveDate}
+              forceArchiveTemplates={archivePrompts}
+              forceArchiveDefaultPromptId={selectedPromptId}
+              externalManageMode={isMemoryManageMode}
+              onExternalManageModeChange={setIsMemoryManageMode}
+            />
+          </div>
+        )}
+
 
                    {detailTab === 'impression' && (
                        <ImpressionPanel

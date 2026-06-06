@@ -62,13 +62,14 @@ const StatusBar: React.FC = () => {
   return (
     <>
       <div 
-         className="w-full flex justify-between items-start px-3 text-[11px] font-bold z-50 absolute top-0 left-0 bg-transparent transition-colors duration-500 select-none pointer-events-none"
-          style={{
+          className="w-full flex justify-between items-start px-6 text-[11px] font-bold z-50 absolute top-0 left-0 bg-transparent transition-colors duration-500 select-none pointer-events-none"
+          style={{ 
               color: textColor,
               paddingTop: 'max(4px, env(safe-area-inset-top))',
               height: 'auto',
-              minHeight: '2.75rem'
-          }}>
+              minHeight: '2rem'
+          }}
+      >
         <div className="w-1/3 pl-2 flex items-center gap-2 pointer-events-auto">
           <span>{format(virtualTime.hours)}:{format(virtualTime.minutes)}</span>
         </div>

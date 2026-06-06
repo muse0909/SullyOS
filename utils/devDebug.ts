@@ -248,9 +248,12 @@ export function isEmotionEvalSkipped(): boolean {
 }
 
 export function isCaptureEnabled(category: DevDebugCaptureCategory): boolean {
-    // 「关闭」按钮 = 强制下线整个调试系统（任意分支）。这里也必须挡住捕获，
-    // 否则面板已收起，业务代码却还往 localStorage 里写带 url/status 的日志条目（隐私债）。
-    if (devDebugForceClosed) return false;
+    // 跟可用性绑定：面板看不见就别录。覆盖三种「隐身但 flag 还在 localStorage 里」的场景：
+    //   1. 关闭按钮（devDebugForceClosed=true）
+    //   2. prod 刷新后（manualUnlock 重置为 false，但 captureEnabled 还在存档里）
+    //   3. master 构建（__BUILD_BADGE_VISIBLE__=false，未解锁）
+    // 不挡的话用户看不到面板还在偷偷写带 url/status 的日志条目——隐私债。
+    if (!isDevDebugAvailable()) return false;
     const flags = readDevDebugFlags();
     // 总开关关掉时一律不抓，哪怕该类别勾着。
     return flags.captureEnabled && flags.captureLogs.includes(category);

@@ -1164,7 +1164,7 @@ ${isInitialGeneration ? `
                    {detailTab === 'memory' && (
           <div className="space-y-4 animate-fade-in">
             <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'white', padding: '8px 0 6px', marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap' }>
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <button onClick={() => setShowBatchModal(true)} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">批量总结（可指定日期）</button>
                 <button onClick={() => setShowImportModal(true)} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">导入/清洗</button>
                 <button onClick={handleExportPreview} className="px-3 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">备份</button>

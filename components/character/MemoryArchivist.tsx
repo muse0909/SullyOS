@@ -293,7 +293,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     )}
                 </div>
                 
-               <div className="flex items-center justify-between sticky z-30 py-2 -mx-5 pl-6 pr-5" style={{ top: '7.5rem', background: 'linear-gradient(to bottom, #f8fafc, #f8fafc)' }}>
+               <div className="flex items-center justify-between sticky z-30 py-2 bg-slate-100 -mx-5 pl-6 pr-5">
 
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
                     <div className="flex gap-2">

@@ -24,9 +24,12 @@ interface MemoryArchivistProps {
     /** 可选：传入归档模板列表 + 默认选中 id，用于重总结前让用户选模板（避开和内部月度精炼模板 state 同名） */
     forceArchiveTemplates?: { id: string; name: string; content: string }[];
     forceArchiveDefaultPromptId?: string;
+  externalManageMode?: boolean;
+  onExternalManageModeChange?: (mode: boolean) => void;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId, externalManageMode, onExternalManageModeChange, }) => {
+
     // 每个日期的"强制重总结"运行状态
     const [forcingDate, setForcingDate] = useState<string | null>(null);
     // 重总结前弹出模板选择器：把 date 存起来打开 modal
@@ -59,6 +62,12 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     }>({ level: 'root', selectedYear: null, selectedMonth: null });
     const [isRefining, setIsRefining] = useState(false);
     const [isManageMode, setIsManageMode] = useState(false);
+  const effectiveManageMode = externalManageMode !== undefined ? externalManageMode : isManageMode;
+  const setEffectiveManageMode = (v: boolean) => {
+    setIsManageMode(v);
+    onExternalManageModeChange?.(v);
+  };
+    
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -165,7 +174,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         });
     };
     const requestDelete = () => { if (selectedIds.size > 0) setShowDeleteConfirm(true); };
-    const performDelete = () => { onDeleteMemories(Array.from(selectedIds)); setSelectedIds(new Set()); setIsManageMode(false); setShowDeleteConfirm(false); };
+    const performDelete = () => { onDeleteMemories(Array.from(selectedIds)); setSelectedIds(new Set()); setEffectiveManageMode(false); setShowDeleteConfirm(false); };
 
     // Core Memory Interaction
     const handleCoreTouchStart = (content: string) => {

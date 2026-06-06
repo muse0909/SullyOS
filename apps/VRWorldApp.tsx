@@ -57,7 +57,7 @@ const stripSelfName = (text: string | undefined, name: string | undefined): stri
     }
     return text;
 };
-import type { CharacterProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong, VRGuestbookState, VRGuestbookMessage, VRLetter, ApiPreset, APIConfig } from '../types';
+import type { CharacterProfile, UserProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong, VRGuestbookState, VRGuestbookMessage, VRLetter, ApiPreset, APIConfig } from '../types';
 
 // ============ chibi 形象解析（vrState.chibi → 立绘 → 头像） ============
 interface ChibiDisplay { img: string; scale: number; offsetY: number; flip: boolean; isFallback: boolean; }
@@ -97,7 +97,7 @@ const IDLE_QUIPS: Record<VRRoomId, string[]> = {
 };
 
 const VRWorldApp: React.FC = () => {
-    const { closeApp, characters, updateCharacter, addToast, registerBackHandler, userProfile, apiPresets, apiConfig } = useOS();
+    const { closeApp, characters, updateCharacter, addToast, registerBackHandler, userProfile, updateUserProfile, apiPresets, apiConfig } = useOS();
     const userName = userProfile?.name || '我';
     const [tab, setTab] = useState<Tab>('world');
     const [novels, setNovels] = useState<VRWorldNovel[]>([]);
@@ -130,6 +130,7 @@ const VRWorldApp: React.FC = () => {
     const [readerJump, setReaderJump] = useState<{ novel: VRWorldNovel; seg: number } | null>(null);
     const [showUpload, setShowUpload] = useState(false);
     const [chibiEditChar, setChibiEditChar] = useState<CharacterProfile | null>(null);
+    const [chibiEditUser, setChibiEditUser] = useState(false); // 用户本人捏 chibi
     const [showHelp, setShowHelp] = useState(false);
     // 启用流程：设定 chibi 后回调启用
     const [pendingEnable, setPendingEnable] = useState<string | null>(null);
@@ -191,20 +192,28 @@ const VRWorldApp: React.FC = () => {
                 (map[room] ||= []).push(c);
             }
         }
+        // 用户本人接入彼方且设了 chibi → 作为伪 occupant 站进自己挂着的房间
+        const uv = userProfile?.vrState;
+        if (uv?.enabled && uv.chibi?.img) {
+            const room = uv.currentRoom || 'guestbook';
+            const pseudo = { id: 'user', name: userName, avatar: userProfile?.avatar || '', vrState: { enabled: true, intervalMinutes: 0, currentRoom: room, chibi: uv.chibi } } as unknown as CharacterProfile;
+            (map[room] ||= []).push(pseudo);
+        }
         return map;
-    }, [characters]);
+    }, [characters, userProfile, userName]);
 
     const enabledCount = characters.filter(c => c.vrState?.enabled).length;
 
     // 返回键：有弹层先关弹层（阅读器/房间/上传/捏人），而不是直接退回桌面
     useEffect(() => registerBackHandler(() => {
         if (chibiEditChar) { setChibiEditChar(null); setPendingEnable(null); return true; }
+        if (chibiEditUser) { setChibiEditUser(false); return true; }
         if (showUpload) { setShowUpload(false); return true; }
         if (readerJump) { setReaderJump(null); return true; }
         if (readerNovel) { setReaderNovel(null); return true; }
         if (enterRoom) { setEnterRoom(null); return true; }
         return false; // 无弹层 → 交回默认（关闭 App）
-    }), [registerBackHandler, chibiEditChar, showUpload, readerJump, readerNovel, enterRoom]);
+    }), [registerBackHandler, chibiEditChar, chibiEditUser, showUpload, readerJump, readerNovel, enterRoom]);
 
     // 从动态/批注点回原文：peek 模式打开阅读器跳到该段，不动用户书签
     const jumpToAnnotation = useCallback((novelId: string | undefined, segIdx: number) => {
@@ -231,6 +240,22 @@ const VRWorldApp: React.FC = () => {
             } as any);
         }
         addToast?.(enabled.length > 0 ? `已留言，并广播给 ${enabled.length} 位接入角色` : '已留言', 'success');
+    }, [characters, userName, addToast]);
+
+    // 用户更新自己的彼方状态：以行为卡片广播给所有接入彼方的角色（机制同留言簿发言）
+    const onUserVRBroadcast = useCallback(async (room: VRRoomId, activity: string) => {
+        const roomName = VR_ROOMS.find(r => r.id === room)?.name || '彼方';
+        const act = (activity || '').trim() || '在彼方里挂机放空';
+        const line = `${userName} 现在在「彼方 · ${roomName}」：${act}`;
+        const enabled = characters.filter(c => c.vrState?.enabled);
+        for (const c of enabled) {
+            await DB.saveMessage({
+                charId: c.id, role: 'user', type: 'vr_card',
+                content: `「彼方 · ${roomName}」${line}`,
+                metadata: { vrCard: true, room, userBoardPost: true, activity: line },
+            } as any);
+        }
+        addToast?.(enabled.length > 0 ? `已更新状态，并广播给 ${enabled.length} 位接入角色` : '已更新彼方状态', 'success');
     }, [characters, userName, addToast]);
 
     const onDeleteFeed = useCallback(async (msgId: number) => {
@@ -319,9 +344,13 @@ const VRWorldApp: React.FC = () => {
                         onAdd={() => setShowUpload(true)}
                         onDelete={async (id) => { await DB.deleteVRNovel(id); await loadNovels(); addToast?.('已删除', 'success'); }} />
                 ) : tab === 'settings' ? (
-                    <SettingsView characters={characters} updateCharacter={updateCharacter} addToast={addToast}
-                        novelCount={novels.length} onReload={reloadAll}
-                        onRequestEnable={requestEnable} onEditChibi={setChibiEditChar} />
+                    <div className="space-y-3">
+                        <UserVRPanel userProfile={userProfile} updateUserProfile={updateUserProfile}
+                            onEditChibi={() => setChibiEditUser(true)} onBroadcast={onUserVRBroadcast} addToast={addToast} />
+                        <SettingsView characters={characters} updateCharacter={updateCharacter} addToast={addToast}
+                            novelCount={novels.length} onReload={reloadAll}
+                            onRequestEnable={requestEnable} onEditChibi={setChibiEditChar} />
+                    </div>
                 ) : (
                     <VRApiSettings apiPresets={apiPresets} chatApi={apiConfig} addToast={addToast} />
                 )}
@@ -362,6 +391,16 @@ const VRWorldApp: React.FC = () => {
                         } else {
                             addToast?.('形象已更新', 'success');
                         }
+                    }} />
+            )}
+            {chibiEditUser && (
+                <UserChibiEditor userName={userName} existing={userProfile?.vrState?.chibi}
+                    onClose={() => setChibiEditUser(false)}
+                    onSave={(chibi) => {
+                        const uv = userProfile?.vrState;
+                        updateUserProfile({ vrState: { ...(uv || {}), enabled: !!uv?.enabled, chibi, updatedAt: Date.now() } });
+                        setChibiEditUser(false);
+                        addToast?.('形象已更新', 'success');
                     }} />
             )}
         </div>
@@ -2146,6 +2185,150 @@ const ChibiEditor: React.FC<{
                     保存形象{char.vrState?.enabled ? '' : ' 并接入'}
                 </button>
             </div>
+        </div>
+    );
+};
+
+// ============ 用户本人捏 chibi（mode="user"，结构同角色 chibi） ============
+const UserChibiEditor: React.FC<{
+    userName: string;
+    existing?: { img: string; state?: any; scale?: number; offsetY?: number; flip?: boolean };
+    onClose: () => void;
+    onSave: (chibi: ChibiSave) => void;
+}> = ({ userName, existing, onClose, onSave }) => {
+    const [creating, setCreating] = useState<boolean>(!existing?.img);
+    const [img, setImg] = useState<string>(existing?.img || '');
+    const [state, setState] = useState<any>(existing?.state);
+    const [scale, setScale] = useState<number>(existing?.scale ?? 1);
+    const [offsetY, setOffsetY] = useState<number>(existing?.offsetY ?? 0);
+    const [flip, setFlip] = useState<boolean>(!!existing?.flip);
+    const presets = existing?.state?.selected;
+
+    const onConfirm = (r: ChibiResult) => {
+        setImg(r.transparentDataUrl); setState(r.state);
+        setScale(1); setOffsetY(0); setFlip(false); setCreating(false);
+    };
+
+    if (creating) {
+        return (
+            <div className="fixed inset-0 z-[60] flex flex-col bg-black" style={{ paddingTop: VR_OVERLAY_TOP }}>
+                <CreatorIframe mode="user" charName={userName} presets={presets}
+                    draftKey="vr_user" title={`捏一个你自己 · ${userName}`} subtitle="彼方 · 你的 CHIBI"
+                    onConfirm={onConfirm} />
+            </div>
+        );
+    }
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55" onClick={onClose}>
+            <div className="w-full max-w-md rounded-t-2xl p-4" style={{ background: 'linear-gradient(180deg,#161c2e 0%,#0c1019 100%)' }} onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[15px] font-bold text-white">你的彼方形象</span>
+                    <button onClick={onClose} className="ml-auto p-1 text-indigo-300/60"><X size={18} /></button>
+                </div>
+                <p className="text-[10.5px] text-indigo-300/60 mb-3">这个 Q 版小人就是「你」在彼方里的化身，会站在你挂着的房间里。</p>
+                <div className="relative rounded-xl h-48 overflow-hidden mb-3 flex items-end justify-center" style={{ background: 'linear-gradient(180deg,#2a2350,#15132b)' }}>
+                    {img && <img src={img} alt="" className="object-contain mb-3" style={{ height: 140 * scale, transform: `scaleX(${flip ? -1 : 1}) translateY(${offsetY}px)`, filter: 'drop-shadow(0 4px 8px rgba(0,0,0,.5))', animation: 'vrfloat 3.2s ease-in-out infinite' }} />}
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-[50%]" style={{ width: 76, height: 17, background: 'radial-gradient(ellipse,rgba(0,0,0,.5),transparent)' }} />
+                </div>
+                <button onClick={() => setCreating(true)} className="w-full rounded-lg border border-indigo-300/40 py-2 mb-3 text-[12px] text-indigo-100 flex items-center justify-center gap-1.5 active:bg-white/5">
+                    <PencilSimple size={14} weight="bold" /> 重新捏小人
+                </button>
+                <div className="space-y-2.5 mb-3">
+                    <label className="flex items-center gap-2 text-[11px] text-indigo-200/80">
+                        <UploadSimple size={14} className="rotate-90" /> 大小
+                        <input type="range" min={0.5} max={1.6} step={0.05} value={scale} onChange={e => setScale(Number(e.target.value))} className="flex-1 accent-indigo-400" />
+                    </label>
+                    <button onClick={() => setFlip(f => !f)} className={`text-[11px] rounded-full px-3 py-1 flex items-center gap-1.5 ${flip ? 'bg-indigo-400 text-white' : 'bg-white/10 text-indigo-200/80'}`}>
+                        <FlipHorizontal size={13} /> 水平翻转
+                    </button>
+                </div>
+                <button onClick={() => { if (img) onSave({ img, state, scale, offsetY, flip }); }} disabled={!img}
+                    className="w-full rounded-xl py-2.5 text-[13px] font-bold text-white disabled:opacity-40" style={{ background: 'linear-gradient(120deg, rgba(150,168,255,.92), rgba(188,168,255,.85) 55%, rgba(150,212,204,.9))' }}>
+                    保存形象
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// ============ 用户本人接入彼方面板（捏 chibi / 选房间 / 写在干嘛 / 广播） ============
+const USER_VR_PRESETS = ['在看小说', '在自习 / 刷题', '在听歌单曲循环', '单纯挂机放空', '在娱乐室瞎玩', '在写漂流信'];
+const UserVRPanel: React.FC<{
+    userProfile?: UserProfile;
+    updateUserProfile: (u: Partial<UserProfile>) => void;
+    onEditChibi: () => void;
+    onBroadcast: (room: VRRoomId, activity: string) => Promise<void> | void;
+    addToast?: (m: string, t?: any) => void;
+}> = ({ userProfile, updateUserProfile, onEditChibi, onBroadcast, addToast }) => {
+    const uv = userProfile?.vrState;
+    const enabled = !!uv?.enabled;
+    const chibi = uv?.chibi;
+    const [room, setRoom] = useState<VRRoomId>(uv?.currentRoom || 'guestbook');
+    const [activity, setActivity] = useState(uv?.activity || '');
+
+    // userProfile 外部变化（如刚捏完 chibi）时同步本地草稿
+    useEffect(() => { setRoom(uv?.currentRoom || 'guestbook'); setActivity(uv?.activity || ''); }, [uv?.currentRoom, uv?.activity]);
+
+    const ROOMS: [VRRoomId, string][] = [['library', '图书馆'], ['music', '听歌房'], ['guestbook', '留言簿'], ['gym', '娱乐室'], ['postoffice', '邮局']];
+
+    const join = () => {
+        if (!chibi?.img) { onEditChibi(); return; } // 没捏小人 → 先捏，再回来开接入
+        updateUserProfile({ vrState: { ...(uv || {}), enabled: true, currentRoom: room, activity: activity.trim(), updatedAt: Date.now() } });
+        addToast?.('你已接入彼方', 'success');
+    };
+    const logout = () => {
+        updateUserProfile({ vrState: { ...(uv || {}), enabled: false } });
+        addToast?.('已从彼方登出', 'success'); // 登出后角色聊天里的"你在彼方"提示随之消失
+    };
+    const saveBroadcast = () => {
+        updateUserProfile({ vrState: { ...(uv || {}), enabled: true, currentRoom: room, activity: activity.trim(), updatedAt: Date.now() } });
+        void onBroadcast(room, activity.trim());
+    };
+
+    return (
+        <div className="rounded-2xl p-3.5 backdrop-blur-sm" style={{ background: 'linear-gradient(135deg, rgba(120,130,255,0.10), rgba(150,212,204,0.06))', border: '1px solid rgba(150,168,255,0.22)' }}>
+            <div className="flex items-center gap-2.5">
+                <button onClick={onEditChibi} className="relative h-12 w-12 rounded-xl overflow-hidden bg-black/20 flex items-end justify-center shrink-0 active:opacity-80">
+                    {chibi?.img ? <img src={chibi.img} className="h-11 object-contain object-bottom" style={{ transform: `scaleX(${chibi.flip ? -1 : 1})` }} alt="" /> : <span className="text-lg text-indigo-300/60 mb-2">＋</span>}
+                    <span className="absolute bottom-0 right-0 bg-indigo-500/90 rounded-tl-md p-0.5"><PencilSimple size={9} weight="bold" /></span>
+                </button>
+                <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-bold text-white truncate">你自己 · {userProfile?.name || '我'}</div>
+                    <div className="text-[10px] text-indigo-300/60">{enabled ? '已接入彼方 · 角色能看到你在这儿' : chibi?.img ? '已捏形象 · 未接入' : '捏个自己的小人，接入彼方'}</div>
+                </div>
+                <button onClick={enabled ? logout : join}
+                    className={`relative w-11 h-6 rounded-full transition-colors ${enabled ? 'bg-indigo-400' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+                </button>
+            </div>
+            {enabled && (
+                <>
+                    <div className="mt-3 text-[10px] tracking-[0.2em] text-indigo-200/55 mb-1.5">你挂在哪个房间</div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {ROOMS.map(([rid, label]) => (
+                            <button key={rid} onClick={() => setRoom(rid)}
+                                className={`text-[10.5px] rounded-full px-2.5 py-1 font-semibold ${room === rid ? 'bg-indigo-400 text-white' : 'bg-white/10 text-indigo-200/70'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="mt-3 text-[10px] tracking-[0.2em] text-indigo-200/55 mb-1.5">你在干嘛（角色会看到）</div>
+                    <input value={activity} onChange={e => setActivity(e.target.value)}
+                        placeholder="例：在看小说 / 在自习 / 单纯挂机…"
+                        className="w-full rounded-lg px-3 py-2 text-[12.5px] text-white placeholder-white/30 outline-none" style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(150,200,255,.2)' }} />
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {USER_VR_PRESETS.map(p => (
+                            <button key={p} onClick={() => setActivity(p)} className="text-[10px] rounded-full px-2 py-0.5 bg-white/[0.08] text-indigo-200/60 active:bg-white/15">{p}</button>
+                        ))}
+                    </div>
+                    <button onClick={saveBroadcast}
+                        className="mt-3 w-full rounded-xl py-2 text-[12.5px] font-bold text-white" style={{ background: 'linear-gradient(120deg, rgba(150,168,255,.92), rgba(188,168,255,.85) 55%, rgba(150,212,204,.9))' }}>
+                        保存并广播给所有角色
+                    </button>
+                    <p className="text-[9.5px] text-indigo-300/45 mt-2 leading-relaxed">角色聊天里会知道"你此刻在彼方做什么"，但已明确告知 ta：这只是虚拟空间挂机、你本人不一定在线，一切以聊天记录为准。</p>
+                </>
+            )}
         </div>
     );
 };

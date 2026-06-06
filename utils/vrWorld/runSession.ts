@@ -159,10 +159,14 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         const contextLimit = char.contextLimit || 500;
         const historyMsgs = await DB.getRecentMessagesByCharId(char.id, contextLimit);
 
-        // 在某房间的在场玩家名（含自己）
+        // 在某房间的在场玩家名（含自己；用户本人接入彼方且挂在该房间时也算在场）
         const occupantsOf = (rid: VRRoomId) => {
             const ns = characters.filter(c => c.vrState?.enabled && c.vrState.currentRoom === rid).map(c => c.name);
             if (!ns.includes(char.name)) ns.push(char.name);
+            const uv = userProfile?.vrState;
+            if (uv?.enabled && uv.currentRoom === rid && userProfile.name && !ns.includes(userProfile.name)) {
+                ns.push(userProfile.name);
+            }
             return ns;
         };
 

@@ -1412,6 +1412,30 @@ export interface UserProfile {
     name: string;
     avatar: string;
     bio: string;
+    /**
+     * 用户本人接入「彼方」的状态：捏的 chibi、此刻所在房间、在干嘛。可随时改。
+     * enabled=false（登出）时，聊天里给角色的"用户在彼方"提示词随之消失。
+     */
+    vrState?: UserVRState;
+}
+
+export interface UserVRState {
+    /** 是否接入彼方（登出后不再向角色注入"用户在彼方"提示） */
+    enabled: boolean;
+    /** 用户此刻把自己挂在哪个房间 */
+    currentRoom?: VRRoomId;
+    /** 用户自己写的"在彼方干嘛"，会注入聊天提示词 + 广播成行为卡片 */
+    activity?: string;
+    /** 最近一次更新时间 */
+    updatedAt?: number;
+    /** 用户在彼方里的 chibi 形象（同角色 chibi 结构，来自 mode="user" 的捏人器） */
+    chibi?: {
+        img: string;
+        state?: any;
+        scale?: number;
+        offsetY?: number;
+        flip?: boolean;
+    };
 }
 
 export interface Toast {

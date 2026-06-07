@@ -650,13 +650,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const [resource, config] = args;
           
           const urlStr = String(resource);
-          const isApiCall = urlStr.includes('/chat/completions') || urlStr.includes('/models');
+          const isChatApi = urlStr.includes('/chat/completions') || urlStr.includes('/models');
           const isImageApi = urlStr.includes('/images/generations');
+          const isProxyApi = urlStr.includes('/api/proxy');
+          const isUserFacingAiEndpoint = isChatApi || isImageApi || isProxyApi;
           
           try {
               const response = await originalFetch(...args);
               
-              if (!response.ok && isApiCall && !isImageApi && (response.status >= 500 || response.status === 429)) {
+              if (!response.ok && !isUserFacingAiEndpoint && (response.status >= 500 || response.status === 429)) {
                   try {
                       const clone = response.clone();
                       const text = await clone.text();
@@ -682,7 +684,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return response;
           } catch (err: any) {
               // Network Failure
-              if (!isImageApi) {
+              if (!isUserFacingAiEndpoint) {
                   appendSystemLog({
                       id: `log-${Date.now()}`,
                       timestamp: Date.now(),

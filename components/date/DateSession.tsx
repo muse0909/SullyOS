@@ -102,7 +102,13 @@ const DateSession: React.FC<DateSessionProps> = ({
     const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
     
     // Core VN State
-    const [isNovelMode, setIsNovelMode] = useState(false);
+    // 三模式: gal=视觉GalGame / novel=小说阅读 / bubble=长文气泡
+    const [viewMode, setViewMode] = useState<'gal' | 'novel' | 'bubble'>(() => {
+      if (initialState?.viewMode) return initialState.viewMode;
+      if (initialState?.isNovelMode) return 'novel';
+      return 'gal';
+    });
+    const isNovelMode = viewMode === 'novel';
     const [bgImage, setBgImage] = useState<string>(char.dateBackground || '');
     const [currentSprite, setCurrentSprite] = useState<string>('');
     const [spriteConfig, setSpriteConfig] = useState(char.spriteConfig || { scale: 1, x: 0, y: 0 });
@@ -117,6 +123,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Interaction State
     const [input, setInput] = useState('');
     const [showInputBox, setShowInputBox] = useState(false);
+    const [showPlusMenu, setShowPlusMenu] = useState(false);
+    const [showModeSwitch, setShowModeSwitch] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -354,10 +362,10 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // Novel Mode Scroll
     useEffect(() => {
-        if (isNovelMode && novelScrollRef.current) {
+        if ((viewMode === 'novel' || viewMode === 'bubble') && novelScrollRef.current) {
             novelScrollRef.current.scrollTop = novelScrollRef.current.scrollHeight;
         }
-    }, [sessionMessages.length, isNovelMode, showInputBox]);
+    }, [sessionMessages.length, viewMode]);
 
     // Typewriter effect
     useEffect(() => {
@@ -412,8 +420,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleScreenClick = (e: React.MouseEvent) => {
-        if ((e.target as HTMLElement).closest('button, input, textarea, .control-panel')) return;
-        if (isNovelMode) return;
+        if ((e.target as HTMLElement).closest('button, input, textarea')) return;
+        setShowPlusMenu(false);
+        setShowModeSwitch(false);
+        if (viewMode !== 'gal') return;
 
         // Skip animation
         if (isTextAnimating) {
@@ -441,7 +451,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!input.trim() || isTyping) return;
         const text = input.trim();
         setInput('');
-        setShowInputBox(false);
+        setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
@@ -605,85 +615,88 @@ const DateSession: React.FC<DateSessionProps> = ({
                 style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }}
             ></div>
 
-            {/* Menu Layer */}
-            <div className="absolute top-0 right-0 p-4 pt-12 z-[100] flex justify-end gap-3 pointer-events-auto">
-                {!isTyping && canReroll && (
-                    <button onClick={(e) => { e.stopPropagation(); handleRerollClick(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white/10 backdrop-blur-md border-slate-300/30 text-slate-400 hover:bg-white/20' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                    </button>
-                )}
-                
-                {/* Voice Toggle — tap opens the language picker (where the off switch lives);
-                    double-click / long-press are kept as shortcuts to disable voice directly. */}
-                <div className="relative">
-                    <button onClick={(e) => {
-                            e.stopPropagation();
-                            if (voiceEnabled) {
-                                setShowVoiceLangPicker(prev => !prev);
-                            } else {
-                                updateCharacter(char.id, { dateVoiceEnabled: true });
-                                addToast('语音已开启', 'info');
-                                setShowVoiceLangPicker(true);
-                            }
-                        }}
-                        onDoubleClick={(e) => { e.stopPropagation(); if (voiceEnabled) { updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); } }}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${voiceEnabled ? 'bg-white/20 backdrop-blur-md border-white/30 text-white/80' : 'bg-black/30 backdrop-blur-md border-white/20 text-white/50 hover:bg-white/20'}`}
-                        title={voiceEnabled ? '点击展开：选语种 / 关闭语音' : '开启语音'}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            {voiceEnabled
-                                ? <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
-                                : <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />}
-                        </svg>
-                        {voiceEnabled && voiceLang && <span className="absolute -bottom-1 -right-1 text-[8px] font-bold bg-white/30 text-white rounded-full px-1 leading-tight">{VOICE_LANG_OPTIONS.find(o => o.v === voiceLang)?.l || ''}</span>}
-                    </button>
-                    {/* Collapsible Language Picker — includes an always-visible off switch
-                        so users aren't stuck guessing that the button needs a double-click. */}
-                    {voiceEnabled && showVoiceLangPicker && (
-                        <div className="absolute top-12 right-0 flex flex-col gap-1 animate-fade-in">
-                            {VOICE_LANG_OPTIONS.map(opt => (
-                                <button key={opt.v} onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
-                                    className={`h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap ${voiceLang === opt.v ? 'bg-white/30 text-white shadow-md' : 'bg-black/30 backdrop-blur-md text-white/60 border border-white/10'}`}>
-                                    {opt.l}
-                                </button>
-                            ))}
-                            <button onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); }}
-                                className="h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap bg-red-500/50 text-white border border-red-300/40 shadow-md flex items-center gap-1 justify-center">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5"><path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clipRule="evenodd" /></svg>
-                                关闭
-                            </button>
-                        </div>
-                    )}
-                </div>
-
-                {/* Novel Mode Toggle */}
-                <button onClick={(e) => { e.stopPropagation(); setIsNovelMode(!isNovelMode); exitBatchMode(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                    {isNovelMode ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                    ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
-                    )}
-                </button>
-
-                <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); setShowSettings(true); }} className="bg-black/30 backdrop-blur-md text-white w-10 h-10 rounded-full flex items-center justify-center border border-white/20 hover:bg-white/20 transition-all shadow-lg active:scale-95">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                </button>
-                {isNovelMode && char.dateLightReading && (
-                    <button
-                        onClick={(e) => { e.stopPropagation(); isBatchSelectMode ? exitBatchMode() : setIsBatchSelectMode(true); }}
-                        className={`px-3 h-10 rounded-full text-xs font-bold border shadow-lg ${isBatchSelectMode ? 'bg-primary text-white border-primary' : 'bg-black/30 backdrop-blur-md border-white/20 text-white'}`}
-                    >
-                        {isBatchSelectMode ? '完成' : '多选'}
-                    </button>
-                )}
-                <button onClick={() => setShowExitModal(true)} className="bg-red-500/80 backdrop-blur-md text-white px-4 h-10 rounded-full flex items-center justify-center gap-1 border border-white/20 hover:bg-red-600 transition-colors shadow-lg active:scale-95">
-                    <span className="text-xs font-bold mr-1">离开</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" /></svg>
-                </button>
+            {/* Top Return Button */}
+            <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
+              style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
+                className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
             </div>
+
+            {/* === 长文气泡模式 ===== */}
+            {viewMode === 'bubble' && (
+              <div
+                ref={novelScrollRef}
+                className="absolute inset-0 overflow-y-auto no-scrollbar"
+                style={{
+                  paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
+                  paddingBottom: '140px',
+                  paddingLeft: '12px',
+                  paddingRight: '12px',
+                  background: char.dateBubbleThemeStyle === 'light'
+                    ? 'rgba(244,244,0.96)'
+                    : 'rgba(18,18,28,0.88)',
+                }}
+                onClick={() => { setShowPlusMenu(false); setShowModeSwitch(false); }}
+              >
+                {sessionMessages.map((msg) => {
+                  const content = cleanTextForDisplay(msg.content || '');
+                  if (!content) return null;
+                  const isUser = msg.role === 'user';
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
+                      onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                      onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                      onTouchEnd={handleMsgTouchEnd}
+                      onTouchMove={handleMsgTouchMove}
+                      onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                      onMouseUp={handleMsgTouchEnd}
+                      onMouseLeave={handleMsgTouchEnd}
+                    >
+                      {!isUser && (
+                        <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
+                      )}
+                      <div
+                        className={`max-w-[78%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                          isUser
+                            ? 'bg-primary text-white rounded-br-md'
+                            : char.dateBubbleThemeStyle === 'light'
+                              ? 'bg-white text-slate-800 rounded-bl-md border border-slate-100'
+                              : 'bg-white/12 text-white/90 rounded-bl-md backdrop-blur-md border border-white/10'
+                        }`}
+                        style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                      >
+                        {content}
+                      </div>
+                      {isUser && (
+                        <div className="w-8 h-8 rounded-full ml-2 self-end shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600">
+                          我
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {isTyping && (
+                  <div className="flex justify-start mb-4">
+                    <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
+                    <div className={`px-4 py-3 rounded-2xl rounded-bl-md ${char.dateBubbleThemeStyle === 'light' ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md'}`}>
+                      <div className="flex gap-1 items-center h-4">
+                        {[0, 1, 2].map(i => (
+                          <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Novel Mode View */}
             {isNovelMode && (
@@ -818,12 +831,120 @@ const DateSession: React.FC<DateSessionProps> = ({
                         </div>
                     </div>
                 )}
-                {showInputBox && (
-                    <div className={`w-[90%] max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
-                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
-                        <button onClick={handleSend} disabled={!input.trim() || isTyping} className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center">SEND</button>
+
+            {/* ===== 底部输入区 + Plus菜单 ===== */}
+            <div className="absolute bottom-0 left-0 right-0 z-30" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} onClick={e => e.stopPropagation()}>
+
+              {showPlusMenu && (
+                <div className="px-4 pb-2 flex-col gap-2">
+                  {showVoiceLangPicker && (
+                    <div className="flex gap-2 flex-wrap justify-center">
+                      {VOICE_LANG_OPTIONS.map(opt => (
+                        <button key={opt.v}
+                          onClick={() => { updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
+                          className={`h-8 px-3 rounded-full text-[11px] font-bold active:scale-95 transition-all ${voiceLang === opt.v ? 'bg-white/30 text-white' : 'bg-black/30 text-white/60 border border-white/15'}`}>
+                          {opt.l}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}
+                        className="h-8 px-3 rounded-full text-[11px] font-bold bg-red-500/60 text-white border-red-300/40 active:scale-95">
+                        {voiceEnabled ? '关闭语音' : '开启语音'}
+                      </button>
                     </div>
-                )}
+                  )}
+
+                  {showModeSwitch ? (
+                    <div className="flex gap-2">
+                      {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['bubble', '长文气泡']] as const).map(([m, label]) => (
+                        <button key={m}
+                          onClick={() => { setViewMode(m); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
+                          className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95 ${viewMode === m ? 'bg-white text-black shadow-md' : 'bg-white/10 backdrop-blur-md text-white border-white/20'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 justify-center flex-wrap">
+                      {canReroll && !isTyping && (
+                        <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v" /></svg>
+                          重新生成
+                        </button>
+                      )}
+                      <button onClick={() => setShowModeSwitch(true)}
+                        className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 3M21 7.5H7.5" /></svg>
+                        模式切换
+                      </button>
+                      <button onClick={() => setShowVoiceLangPicker(p => !p)}
+                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-500/80 text-white' : 'bg-white/10 text-white/60 border border-white/20'}`}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                        语音设置
+                      </button>
+                      {viewMode === 'gal' && (
+                        <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-amber-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21l6.75-6.75 1.5 1.5M21 3l-9 9" /></svg>
+                          场景布置
+                        </button>
+                      )}
+                      {viewMode === 'bubble' && (
+                        <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 01-2.4 2.245 4.5 4.5 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" /></svg>
+                          主题设置
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-2 items-end px-4 pb-2 pt-1">
+                <button
+                  onClick={() => { setShowPlusMenu(p => !p); setShowModeSwitch(false); setShowVoiceLangPicker(false); }}
+                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-all active:scale-90 shadow-lg shrink-0 ${
+                    showPlusMenu ? 'bg-primary text-white' : 'bg-black/40 backdrop-blur-md border-white/20 text-white'
+                  }`}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={`w-5 h-5 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                </button>
+
+                <div className={`flex-1 flex gap-2 items-end rounded-2xl px-4 py-2 min-h-[44px] ${
+                  viewMode === 'bubble'
+                    ? (char.dateBubbleThemeStyle === 'light' ? 'bg-white shadow border-slate-100' : 'bg-white/12 backdrop-blur-md border border-white/10')
+                    : 'bg-black/35 backdrop-blur-md border border-white/15'
+                }`}>
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                    placeholder={isTyping ? '等待回应…' : '输入对话…'}
+                    disabled={isTyping}
+                    rows={1}
+                    className={`flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-1 ${
+                      viewMode === 'bubble' && char.dateBubbleThemeStyle === 'light'
+                        ? 'text-slate-800 placeholder:text-slate-400'
+                        : 'text-white placeholder:text-white/30'
+                    }`}
+                    style={{ maxHeight: '88px', overflowY: 'auto' }}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isTyping}
+                    className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90 mb-0.5"
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
+                      <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 018.445-8.98675.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
             </div>
 
             {/* Settings Overlay */}

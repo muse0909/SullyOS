@@ -88,7 +88,7 @@ async function perRoleNotes(script: VRScript, cast: VRCastAssign[], charAssigns:
                 historyMsgs, contextLimit,
                 recallQueryHint: `彼方剧院排戏《${script.title}》。同台：${cast.map(c => c.actorName).filter(n => n !== char.name).join('、')}。`,
             });
-            const userTurn = buildActorReviewTurn(script.title, script.logline, script.body, a.roleName, line, char.name);
+            const userTurn = buildActorReviewTurn(script.title, script.logline, script.body, a.roleName, line, char.name, ctx.userProfile?.name || '主人');
             const out = await chat(api, [{ role: 'system', content: payload.systemPrompt }, ...payload.cleanedApiMessages, { role: 'user', content: userTurn }]);
             const p = parseActorReview(out);
             return { actorId: char.id, actorName: char.name, roleName: a.roleName, note: p.note, changes: p.changes, attitude: p.attitude, cooperative: p.cooperative };

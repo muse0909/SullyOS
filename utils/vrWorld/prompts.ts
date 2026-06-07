@@ -673,22 +673,22 @@ export function parseScriptOutput(raw: string): ParsedScript {
 }
 
 const ATTITUDE_GUIDE = [
-    `**关键：你不一定要反抗剧本**。按你的真实性子，落在这条光谱的某一点——`,
-    `· 欣然：正合你意，乐意演；`,
-    `· 配合：无所谓，导演说啥是啥；`,
-    `· 勉强：心里有点别扭，但还是会演（脸上挂不挂得住看你）；`,
-    `· 隐忍：不情愿，忍着没发作，只在细节上较劲；`,
-    `· 抵触：明确不满，想大改或对着干；`,
-    `· 拒演：这戏/这角色你是真接受不了。`,
-    `别所有人都演成硬刚——大多数时候是欣然/配合/勉强/隐忍，抵触和拒演是少数。按你本色自然落点。`,
+    `**你是自愿来玩这场戏的，基调就是"我乐意来凑这个热闹"**。下面的态度只针对"分到的这个角色合不合你胃口"，跟"要不要参与""跟谁作不作对"无关——`,
+    `· 欣然：这角色正合你意，演得来劲；`,
+    `· 配合：演什么都行，无所谓；`,
+    `· 勉强：这角色有点不对胃口，但你还是乐呵呵玩下去；`,
+    `· 隐忍：不太喜欢这个角色，忍着演，顶多在细节上小小较劲；`,
+    `· 抵触：挺不想演这个角色的，想跟导演商量改改或换换；`,
+    `· 拒演：这个角色你是真演不来（但你人还在场陪玩，不是闹翻）。`,
+    `就像剧本杀里"我来都来了、就是不太想当这个角色"那种感觉——别把它演成跟人结了仇。大多数时候是欣然/配合/勉强。`,
 ].join('\n');
 
 /** 演员读剧本 → 给导演意见（逐角色模式：一次一个演员）。 */
-export function buildActorReviewTurn(title: string, logline: string, body: string, myRole: string, castLine: string, selfName: string): string {
+export function buildActorReviewTurn(title: string, logline: string, body: string, myRole: string, castLine: string, selfName: string, userName: string): string {
     return [
-        `「彼方 · 剧院」导演看中了一出戏《${title}》（${logline}），邀请你参演。`,
-        `这出戏的演员分配：${castLine}`,
-        `**你饰演的角色是：${myRole}**。`,
+        `「彼方 · 剧院」今天有场戏要排——剧本是${userName || '主人'}亲自挑的，你们是自发来「彼方」玩的，气氛像一局剧本杀：你本来就乐意来凑这个热闹。`,
+        `这次的角色分配：${castLine}`,
+        `**你分到的角色是：${myRole}**。`,
         '',
         '完整剧本如下：',
         body,
@@ -708,7 +708,7 @@ export function buildActorReviewTurn(title: string, logline: string, body: strin
 export function buildActorsBatchTurn(title: string, logline: string, body: string, cast: { roleName: string; actorName: string; persona?: string }[]): string {
     const roster = cast.map(c => `- ${c.actorName}（饰 ${c.roleName}）${c.persona ? `\n  本色：${c.persona}` : ''}`).join('\n');
     return [
-        `「彼方 · 剧院」要排一出戏《${title}》（${logline}）。下面是全体演员、各自分到的角色和本色：`,
+        `「彼方 · 剧院」要排一出戏《${title}》（${logline}）——剧本是主人亲自挑的，这些角色都是自发来「彼方」玩的，气氛像一局剧本杀，大家本来就乐意来凑热闹。下面是全体演员、各自分到的角色和本色：`,
         roster,
         '',
         '完整剧本：',
@@ -716,7 +716,7 @@ export function buildActorsBatchTurn(title: string, logline: string, body: strin
         '',
         `请你**分别**站在每位演员的立场、按各自性格给导演反应。`,
         ATTITUDE_GUIDE,
-        `**态度别整齐划一**：让不同人落在光谱不同点上，更别全员硬刚。`,
+        `**态度别整齐划一**：让不同人落在光谱不同点上；但记住大家都是自愿来玩的，别把谁写成跟人结仇。`,
         `每位演员用一个 <演员> 块（标签外不要写别的）：`,
         cast.map(c => `<演员 名="${c.actorName}">\n<态度>欣然/配合/勉强/隐忍/抵触/拒演 选一</态度>\n<意见>带该态度语气的一句话</意见>\n<修改>...或：无</修改>\n</演员>`).join('\n'),
     ].join('\n');
@@ -769,7 +769,7 @@ export function buildDirectorTurn(
         '原始剧本：',
         body,
         '',
-        '演员们读完后的态度与意见（请尊重各自态度：欣然就顺着演；勉强/隐忍就让那点别扭从神态细节里渗出来；抵触/拒演就把冲突、临场状况、甚至罢演风波写进戏里——别强行把所有人抹平成一团和气）：',
+        '演员们读完后的态度与意见（大家都是自愿来玩这场戏的、像一局剧本杀，态度只是"对分到的角色合不合胃口"——请尊重各自态度：欣然就顺着演；勉强/隐忍就让那点"不太想演这角色"的别扭从神态细节里渗出来；抵触/拒演就让 ta 出点戏、敷衍、或临时找导演救场，但**别写成反目成仇/敌对**，底色始终是"来都来了陪你们玩"）：',
         feedback || '（演员没什么意见）',
         '',
         `请整合成最终演出版，每句台词贴合对应演员的本色，然后严格按下面格式输出（标签外不要写别的）：`,

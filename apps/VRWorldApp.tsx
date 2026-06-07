@@ -9,7 +9,7 @@ import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
 import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
-import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
+import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, GARDEN_SPECIES, getSpecies, plantStage, STAGE_LABEL, GARDEN_MAX_PLANTS, stageEmoji } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
 import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
@@ -65,7 +65,7 @@ const stripSelfName = (text: string | undefined, name: string | undefined): stri
     }
     return text;
 };
-import type { CharacterProfile, UserProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong, VRGuestbookState, VRGuestbookMessage, VRLetter, ApiPreset, APIConfig } from '../types';
+import type { CharacterProfile, UserProfile, VRWorldNovel, VRNovelAnnotation, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong, VRGuestbookState, VRGuestbookMessage, VRGardenState, VRGardenPlant, VRLetter, ApiPreset, APIConfig } from '../types';
 
 // ============ chibi 形象解析（vrState.chibi → 立绘 → 头像） ============
 interface ChibiDisplay { img: string; scale: number; offsetY: number; flip: boolean; isFallback: boolean; }
@@ -92,6 +92,7 @@ const ROOM_SLOTS: Record<VRRoomId, { x: number; y: number }[]> = {
     guestbook: [{ x: 28, y: 76 }, { x: 52, y: 78 }, { x: 73, y: 74 }, { x: 40, y: 68 }],
     gym:       [{ x: 26, y: 74 }, { x: 50, y: 80 }, { x: 74, y: 74 }, { x: 38, y: 66 }, { x: 62, y: 66 }],
     postoffice:[{ x: 28, y: 76 }, { x: 52, y: 78 }, { x: 72, y: 72 }, { x: 42, y: 68 }],
+    garden:    [{ x: 22, y: 82 }, { x: 78, y: 82 }, { x: 50, y: 86 }, { x: 35, y: 76 }, { x: 66, y: 76 }],
     cafe:      [{ x: 30, y: 74 }, { x: 54, y: 78 }, { x: 70, y: 72 }],
 };
 
@@ -101,6 +102,7 @@ const IDLE_QUIPS: Record<VRRoomId, string[]> = {
     guestbook: ['写点什么呢', '路过留个名', '看看墙上的话', '嗯…'],
     gym: ['活动一下', '再来一组！', '伸个懒腰', '热身中'],
     postoffice: ['给谁写封信呢', '封口、寄出', '翻翻信格', '写点心里话'],
+    garden: ['浇浇水', '看看花苞', '松松土', '闻闻花香'],
     cafe: ['', '', '', ''],
 };
 
@@ -444,6 +446,32 @@ const RoomBackground: React.FC<{ roomId: VRRoomId; className?: string }> = ({ ro
                 <div className="absolute inset-0" style={{ background: 'radial-gradient(120% 92% at 50% 36%, transparent 40%, rgba(5,4,14,0.66) 100%)' }} />
                 {/* 顶部一抹冷紫晕，呼应"彼方"外壳 */}
                 <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(96,72,180,0.16), transparent 28%)' }} />
+            </div>
+        );
+    }
+    if (roomId === 'garden') {
+        // 唯一的暖色房间：呼应"无人岛/慢生活"的治愈调性（暖米色天 + 青绿草地），
+        // 跟其它房间的暗紫星空形成反差，立绘与花都更跳。
+        const dots: [number, number, string][] = [
+            [16, 70, '#f9a8d4'], [30, 62, '#fbbf24'], [46, 72, '#fb7185'],
+            [60, 64, '#c4b5fd'], [74, 70, '#fde68a'], [86, 62, '#fca5a5'],
+        ];
+        return (
+            <div className={`absolute inset-0 overflow-hidden ${className || ''}`} style={{ background: 'linear-gradient(180deg,#fbe9c8 0%,#f7ddb2 28%,#c8e6b3 54%,#8ccb8c 100%)' }}>
+                {/* 暖阳 */}
+                <div className="absolute top-[9%] right-[15%] w-14 h-14 rounded-full" style={{ background: 'radial-gradient(circle,#fff6d0,#ffd97a 58%,transparent 72%)', boxShadow: '0 0 46px 14px rgba(255,214,120,.5)' }} />
+                {/* 远处柔云 */}
+                <div className="absolute top-[15%] left-[10%] w-24 h-7 rounded-full" style={{ background: 'rgba(255,255,255,.62)', filter: 'blur(6px)' }} />
+                <div className="absolute top-[23%] left-[42%] w-16 h-5 rounded-full" style={{ background: 'rgba(255,255,255,.5)', filter: 'blur(6px)' }} />
+                {/* 草地垄沟（透视） */}
+                <div className="absolute left-0 right-0 bottom-0 h-[50%]" style={{
+                    backgroundImage: 'repeating-linear-gradient(96deg, rgba(70,150,80,0) 0 26px, rgba(60,140,75,.22) 26px 30px)',
+                    transform: 'perspective(320px) rotateX(56deg)', transformOrigin: 'bottom',
+                }} />
+                {/* 零星小花点缀 */}
+                {dots.map(([l, t, c], i) => (
+                    <div key={i} className="absolute w-2 h-2 rounded-full" style={{ left: `${l}%`, top: `${t}%`, background: c, boxShadow: `0 0 6px ${c}` }} />
+                ))}
             </div>
         );
     }
@@ -796,6 +824,7 @@ const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     <div><b className="text-indigo-100">留言簿</b>：公共版聊墙，角色发帖、接话茬。你也能在底部<b className="text-sky-200">以自己身份留言</b>，会广播给所有接入的角色。</div>
                     <div><b className="text-indigo-100">娱乐室</b>：纯放飞，角色在这儿瞎玩造谣找乐子。</div>
                     <div><b className="text-indigo-100">邮局</b>：写漂流信交陌生笔友——见下方重点。</div>
+                    <div><b style={{ color: '#9fe0a3' }}>花田</b>：公共花圃。角色逛进来会<b>种花</b>（许个愿）或给别人的花<b>浇水</b>帮它长大。你也能<b style={{ color: '#9fe0a3' }}>亲自种 / 浇水</b>——一株花浇满 5 次水就会开花，是大家接力养出来的。</div>
                 </Block>
 
                 <Block title="邮局怎么玩（重点）" tone="rgba(243,208,138,.95)">
@@ -1008,6 +1037,11 @@ const FeedCard: React.FC<{ item: FeedItem; onJump: (novelId: string | undefined,
                 {item.meta.room === 'postoffice' && item.meta.letterExcerpt && (
                     <div className="mt-1 text-[10.5px] text-amber-100/75 pl-2 border-l-2 border-amber-300/45 leading-snug" style={{ fontStyle: 'italic' }}>
                         「{item.meta.letterExcerpt.length > 70 ? item.meta.letterExcerpt.slice(0, 70) + '…' : item.meta.letterExcerpt}」
+                    </div>
+                )}
+                {item.meta.room === 'garden' && item.meta.gardenNote && (
+                    <div className="mt-1 text-[10.5px] text-emerald-100/75 pl-2 border-l-2 border-emerald-300/45 leading-snug" style={{ fontStyle: 'italic' }}>
+                        {item.meta.gardenAction === 'plant' ? '寄语：' : ''}「{item.meta.gardenNote.length > 70 ? item.meta.gardenNote.slice(0, 70) + '…' : item.meta.gardenNote}」
                     </div>
                 )}
             </div>
@@ -1460,6 +1494,164 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
 // ============ 房间场景（全屏） ============
 const toSong = (s: CharPlaylistSong): Song => ({ id: s.id, name: s.name, artists: s.artists, album: s.album, albumPic: s.albumPic, duration: s.duration, fee: s.fee ?? 0 });
 
+// ============ 共享花田面板（场景内：看花圃、种花、浇水） ============
+const GardenPanel: React.FC<{ addToast?: (m: string, t?: any) => void; characters: CharacterProfile[]; userName: string }> = ({ addToast, userName }) => {
+    const [garden, setGarden] = useState<VRGardenState | null>(null);
+    const [picking, setPicking] = useState(false);
+    const [speciesKey, setSpeciesKey] = useState(GARDEN_SPECIES[0].key);
+    const [wish, setWish] = useState('');
+    const [detail, setDetail] = useState<VRGardenPlant | null>(null);
+
+    const load = useCallback(async () => setGarden(await DB.getVRGarden()), []);
+    useEffect(() => {
+        void load();
+        const onDone = () => { void load(); };
+        window.addEventListener('vr-session-done', onDone);
+        return () => window.removeEventListener('vr-session-done', onDone);
+    }, [load]);
+
+    const plants = garden?.plants || [];
+    const full = plants.length >= GARDEN_MAX_PLANTS;
+
+    const plantSeed = async () => {
+        const fresh: VRGardenState = (await DB.getVRGarden()) || { id: 'garden', plants: [], updatedAt: Date.now() };
+        if ((fresh.plants || []).length >= GARDEN_MAX_PLANTS) { addToast?.('花圃满了，先给现有的花浇浇水吧', 'error'); setPicking(false); return; }
+        const used = new Set((fresh.plants || []).map(p => p.slot));
+        let slot = 0; while (used.has(slot) && slot < GARDEN_MAX_PLANTS) slot++;
+        const sp = getSpecies(speciesKey);
+        const plant: VRGardenPlant = {
+            id: genLocalId('plt'), species: sp.key, planterId: 'user', planterName: userName,
+            wish: wish.trim() || undefined, plantedAt: Date.now(), waterCount: 0, wateredBy: [], slot, updatedAt: Date.now(),
+        };
+        fresh.plants = [...(fresh.plants || []), plant];
+        fresh.updatedAt = Date.now();
+        await DB.saveVRGarden(fresh);
+        setGarden({ ...fresh }); setPicking(false); setWish('');
+        addToast?.(`种下了一株${sp.name}`, 'success');
+    };
+
+    const water = async (p: VRGardenPlant) => {
+        const fresh = await DB.getVRGarden();
+        if (!fresh) return;
+        const target = fresh.plants.find(x => x.id === p.id);
+        if (!target) return;
+        target.waterCount += 1;
+        target.wateredBy = [...(target.wateredBy || []), { id: 'user', name: userName, at: Date.now() }].slice(-12);
+        target.updatedAt = Date.now();
+        fresh.updatedAt = Date.now();
+        await DB.saveVRGarden(fresh);
+        setGarden({ ...fresh }); setDetail({ ...target });
+        addToast?.(`给${getSpecies(target.species).name}浇了浇水`, 'success');
+    };
+
+    return (
+        <>
+            <div className="absolute left-3 right-3 z-20 rounded-2xl overflow-hidden flex flex-col backdrop-blur-md"
+                style={{ top: VR_ROOM_PANEL_TOP, bottom: vrBottomPad('4rem'), background: 'rgba(40,30,16,0.42)', border: '1px solid rgba(245,224,168,0.3)', boxShadow: '0 8px 26px rgba(0,0,0,.35)' }}>
+                <div className="px-3 py-2 flex items-center gap-2 border-b border-white/12">
+                    <span className="text-[10px] tracking-[0.25em] text-amber-50/85" style={{ fontFamily: `'Noto Serif SC',serif` }}>花田</span>
+                    <span className="ml-auto text-[9px] text-amber-100/55">{plants.length} 株 · {full ? '已种满' : `还能种 ${GARDEN_MAX_PLANTS - plants.length} 株`}</span>
+                </div>
+                <div className="flex-1 overflow-y-auto vr-reader-scroll p-3">
+                    {plants.length === 0 ? (
+                        <p className="text-[11px] text-amber-50/70 text-center py-8 leading-relaxed">花圃还空着，泥土松软。<br />种下第一颗种子，角色们路过时会替它浇水。</p>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {plants.map(p => {
+                                const sp = getSpecies(p.species);
+                                const stage = plantStage(p.waterCount);
+                                return (
+                                    <button key={p.id} onClick={() => setDetail(p)}
+                                        className="rounded-xl p-2 flex flex-col items-center active:scale-95 transition-transform"
+                                        style={{ background: 'rgba(255,255,255,.06)', border: `1px solid ${stage === 'bloom' ? sp.color + '88' : 'rgba(255,255,255,.1)'}` }}>
+                                        <div className="text-[26px] leading-none mb-1" style={{ filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.35))' }}>{stageEmoji(p)}</div>
+                                        <div className="text-[9.5px] text-amber-50/90 font-medium truncate max-w-full">{sp.name}</div>
+                                        <div className="text-[8px] text-amber-100/55 mt-0.5">{STAGE_LABEL[stage]} · 💧{p.waterCount}</div>
+                                        <div className="text-[8px] text-amber-100/40 truncate max-w-full">{p.planterName}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 底部：种一株 */}
+            <div className="absolute left-0 right-0 z-30 flex items-center justify-center px-3 py-2.5"
+                style={{ bottom: vrBottomPad('0px'), background: 'linear-gradient(0deg,rgba(30,22,10,.9),transparent)' }}>
+                <button onClick={() => !full && setPicking(true)} disabled={full}
+                    className="h-9 px-5 rounded-full text-[12px] font-semibold text-amber-950 disabled:opacity-45 shrink-0 flex items-center gap-1.5"
+                    style={{ background: 'linear-gradient(120deg,#f7d98a,#eebd5c)' }}>
+                    <Plus size={14} weight="bold" /> {full ? '花圃满了' : '种一株'}
+                </button>
+            </div>
+
+            {/* 种花弹窗：选品种 + 寄语 */}
+            {picking && (
+                <div className="fixed inset-0 z-[300] flex items-end justify-center bg-black/55 backdrop-blur-sm" onClick={() => setPicking(false)}>
+                    <div className="w-full max-w-md rounded-t-2xl p-4" onClick={e => e.stopPropagation()}
+                        style={{ background: 'linear-gradient(180deg,#241b10,#15100a)', border: '1px solid rgba(220,190,120,.28)', paddingBottom: vrBottomPad('1rem') }}>
+                        <div className="text-[13px] font-semibold text-amber-100 mb-2.5" style={{ fontFamily: `'Noto Serif SC',serif` }}>种一株花</div>
+                        <div className="grid grid-cols-4 gap-2 mb-3">
+                            {GARDEN_SPECIES.map(s => (
+                                <button key={s.key} onClick={() => setSpeciesKey(s.key)}
+                                    className="rounded-xl py-2 flex flex-col items-center gap-0.5 active:scale-95 transition-transform"
+                                    style={{ background: speciesKey === s.key ? s.color + '33' : 'rgba(255,255,255,.05)', border: `1px solid ${speciesKey === s.key ? s.color + 'aa' : 'rgba(255,255,255,.1)'}` }}>
+                                    <span className="text-[20px] leading-none">{s.emoji}</span>
+                                    <span className="text-[9px] text-amber-50/85">{s.name}</span>
+                                </button>
+                            ))}
+                        </div>
+                        <input value={wish} onChange={e => setWish(e.target.value)} maxLength={40}
+                            placeholder="种下时许个愿 / 写句寄语（可留空）"
+                            className="w-full rounded-lg bg-black/25 px-3 py-2 text-[12px] text-amber-50 placeholder-white/30 outline-none mb-3"
+                            style={{ border: '1px solid rgba(220,190,120,.2)' }} />
+                        <div className="flex gap-2">
+                            <button onClick={() => setPicking(false)} className="flex-1 rounded-full py-2 text-[12.5px] text-white/70" style={{ border: '1px solid rgba(255,255,255,.16)' }}>取消</button>
+                            <button onClick={plantSeed} className="flex-1 rounded-full py-2 text-[12.5px] font-semibold text-amber-950" style={{ background: 'linear-gradient(120deg,#f7d98a,#eebd5c)' }}>种下</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 单株详情：成长进度 + 浇水 + 寄语 + 浇水的人 */}
+            {detail && (() => {
+                const sp = getSpecies(detail.species);
+                const stage = plantStage(detail.waterCount);
+                const toBloom = Math.max(0, 5 - detail.waterCount);
+                return (
+                    <div className="fixed inset-0 z-[300] flex items-end justify-center bg-black/55 backdrop-blur-sm" onClick={() => setDetail(null)}>
+                        <div className="w-full max-w-md rounded-t-2xl p-4 text-amber-50" onClick={e => e.stopPropagation()}
+                            style={{ background: 'linear-gradient(180deg,#241b10,#15100a)', border: `1px solid ${sp.color}55`, paddingBottom: vrBottomPad('1rem') }}>
+                            <div className="flex items-center gap-3 mb-2.5">
+                                <span className="text-[34px] leading-none">{stageEmoji(detail)}</span>
+                                <div className="min-w-0">
+                                    <div className="text-[14px] font-semibold">{sp.name} · <span style={{ color: sp.color }}>{STAGE_LABEL[stage]}</span></div>
+                                    <div className="text-[10px] text-amber-100/55">{detail.planterName} 种的 · 已浇水 {detail.waterCount} 次</div>
+                                </div>
+                                <button onClick={() => setDetail(null)} className="ml-auto p-1 text-white/55"><X size={18} /></button>
+                            </div>
+                            {detail.wish && <p className="text-[11.5px] text-amber-100/80 leading-relaxed mb-2.5 pl-2 border-l-2" style={{ borderColor: sp.color + '88', fontStyle: 'italic' }}>「{detail.wish}」</p>}
+                            {/* 成长进度条 */}
+                            <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: 'rgba(255,255,255,.1)' }}>
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(100, (detail.waterCount / 5) * 100)}%`, background: `linear-gradient(90deg,${sp.color},#fff7)` }} />
+                            </div>
+                            <p className="text-[9.5px] text-amber-100/50 mb-3">{stage === 'bloom' ? '已经盛开啦 🌟' : `再浇 ${toBloom} 次水就开花`}</p>
+                            {detail.wateredBy.length > 0 && (
+                                <p className="text-[9.5px] text-amber-100/45 mb-3">浇过水的人：{Array.from(new Set(detail.wateredBy.map(w => w.name))).join('、')}</p>
+                            )}
+                            <button onClick={() => water(detail)} className="w-full rounded-full py-2.5 text-[13px] font-semibold text-amber-950 flex items-center justify-center gap-1.5"
+                                style={{ background: 'linear-gradient(120deg,#bfe7ff,#8fd0f0)' }}>
+                                💧 浇一次水
+                            </button>
+                        </div>
+                    </div>
+                );
+            })()}
+        </>
+    );
+};
+
 const RoomScene: React.FC<{
     roomId: VRRoomId; occupants: CharacterProfile[];
     latestByChar: Record<string, FeedItem>; onClose: () => void;
@@ -1474,6 +1666,7 @@ const RoomScene: React.FC<{
     const isMusic = roomId === 'music';
     const isGuestbook = roomId === 'guestbook';
     const isPostOffice = roomId === 'postoffice';
+    const isGarden = roomId === 'garden';
     const [detail, setDetail] = useState<CharacterProfile | null>(null);
     const [musicState, setMusicState] = useState<VRMusicRoomState | null>(null);
     const [board, setBoard] = useState<VRGuestbookState | null>(null);
@@ -1640,6 +1833,9 @@ const RoomScene: React.FC<{
                 {/* 邮局：信件管理面板 */}
                 {isPostOffice && <PostOfficePanel addToast={addToast} characters={characters} userName={userName} />}
 
+                {/* 共享花田：花圃面板（种花 / 浇水） */}
+                {isGarden && <GardenPanel addToast={addToast} characters={characters} userName={userName} />}
+
                 {/* chibi 站位（可隐藏，避免挡住留言墙等文字） */}
                 {!hideChibi && occupants.map((c, i) => {
                     const slot = slots[i % slots.length];
@@ -1652,7 +1848,7 @@ const RoomScene: React.FC<{
                         </div>
                     );
                 })}
-                {occupants.length === 0 && !isMusic && !isGuestbook && !isPostOffice && (
+                {occupants.length === 0 && !isMusic && !isGuestbook && !isPostOffice && !isGarden && (
                     <div className="absolute inset-0 flex items-center justify-center">
                         <p className="text-white/70 text-[12px] bg-black/30 rounded-full px-4 py-2">这个房间还没有人。去「接入」启用角色吧。</p>
                     </div>

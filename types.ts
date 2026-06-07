@@ -608,7 +608,7 @@ export interface NovelBook {
 // =====================================================================
 
 /** 虚拟世界里的房间。 */
-export type VRRoomId = 'library' | 'music' | 'guestbook' | 'gym' | 'postoffice' | 'cafe';
+export type VRRoomId = 'library' | 'music' | 'guestbook' | 'gym' | 'postoffice' | 'garden' | 'cafe';
 
 /** 全局小说库里的一本书（所有角色共享原文，各自留批注、各自书签）。 */
 export interface VRWorldNovel {
@@ -723,6 +723,13 @@ export interface VRCardMeta {
     // --- 邮局专用 ---
     /** 本次写信/回信的正文摘要 */
     letterExcerpt?: string;
+    // --- 共享花田专用 ---
+    /** 本次在花田做了什么：种花 / 浇水 / 只是赏花 */
+    gardenAction?: 'plant' | 'water' | 'admire';
+    /** 涉及的那株花（品种名，UI 展示用） */
+    gardenPlantLabel?: string;
+    /** 种花寄语 / 浇水留言（保留正文） */
+    gardenNote?: string;
 }
 
 /** 邮局：一封信收到的回复（留档用）。 */
@@ -806,6 +813,37 @@ export interface VRMusicRoomState {
         since: number;
     };
     queue: VRMusicQueueItem[];
+    updatedAt: number;
+}
+
+/** 共享花田：一株花的成长阶段（由浇水次数推进，见 constants.plantStage）。 */
+export type VRPlantStage = 'seed' | 'sprout' | 'bud' | 'bloom';
+
+/** 共享花田里的一株花（谁种的、谁浇过、长到第几阶段）。 */
+export interface VRGardenPlant {
+    id: string;
+    /** 花的品种 key（决定颜色/emoji/名字，见 constants.GARDEN_SPECIES） */
+    species: string;
+    /** 种花人 id（'user' = 用户本人，其余为 charId） */
+    planterId: string;
+    planterName: string;
+    /** 种下时的一句寄语 / 心愿（可选） */
+    wish?: string;
+    plantedAt: number;
+    /** 累计浇水次数（驱动成长） */
+    waterCount: number;
+    /** 浇过水的人（保留最近若干条，含可选留言） */
+    wateredBy: { id: string; name: string; note?: string; at: number }[];
+    /** 花圃格位（0-based，决定站位） */
+    slot: number;
+    /** 最近一次被改动的时间（成长/浇水） */
+    updatedAt: number;
+}
+
+/** 共享花田状态（单例，所有角色 + 用户共用一片花圃）。 */
+export interface VRGardenState {
+    id: string; // 'garden' 单例
+    plants: VRGardenPlant[];
     updatedAt: number;
 }
 
@@ -1992,6 +2030,7 @@ export interface FullBackupData {
     customCreatorParts?: CustomCreatorPart[]; // 捏脸系统自定义部件
     vrMusicRoom?: VRMusicRoomState;            // 听歌房共享状态
     vrGuestbook?: VRGuestbookState;            // 留言簿共享状态
+    vrGarden?: VRGardenState;                  // 共享花田状态
     vrLetters?: VRLetter[];                    // 邮局信件（本地存档+队列）
     vrSettings?: any[];                        // 彼方设置（独立 API + 调用记录）
     vrPostOffice?: Record<string, string>;     // 邮局本机配置：身份 deviceId / 后端地址（存 localStorage）

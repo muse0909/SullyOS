@@ -17,7 +17,7 @@
 import {
     CharacterProfile, UserProfile, GroupProfile, RealtimeConfig, APIConfig,
     VRWorldNovel, VRCardMeta, VRRoomId, VRMusicRoomState, CharPlaylistSong, CharMusicReview,
-    VRGuestbookState, VRGuestbookMessage, VRLetter,
+    VRGuestbookState, VRGuestbookMessage, VRLetter, VRGardenState, VRGardenPlant,
 } from '../../types';
 import { DB } from '../db';
 import { buildChatRequestPayload } from '../chatRequestPayload';
@@ -25,7 +25,7 @@ import { safeFetchJson } from '../safeApi';
 import { processNewMessages } from '../memoryPalace/pipeline';
 import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
-import { getRoom, VR_DEFAULT_INTERVAL_MIN } from './constants';
+import { getRoom, VR_DEFAULT_INTERVAL_MIN, GARDEN_SPECIES, GARDEN_MAX_PLANTS, getSpecies } from './constants';
 import { getVRApi, logVRApiCall } from './vrApi';
 import { PostOffice } from './postOffice';
 import { getReadingWindow, getBookmark, buildAnnotation } from './novel';
@@ -36,6 +36,7 @@ import {
     buildGymRoomTurn, parseGymOutput,
     buildPostOfficeRoomTurn, parsePostOfficeOutput,
     buildPostOfficeReadTurn, parsePostOfficeReadOutput,
+    buildGardenRoomTurn, parseGardenOutput,
 } from './prompts';
 
 /** 记忆管线所需配置的最小形状（避免从 OSContext 反向 import 造成循环依赖）。 */
@@ -120,9 +121,16 @@ function nameLine(name: string, act: string): string {
     return t.startsWith(name) ? t : `${name}${act}`;
 }
 
-/** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；留言簿/娱乐室/邮局恒可去。 */
+/** 给一株新种的花找一个空格位（0..MAX-1 优先填洞，满了循环复用）。 */
+function nextFreeSlot(plants: VRGardenPlant[]): number {
+    const used = new Set(plants.map(p => p.slot));
+    for (let i = 0; i < GARDEN_MAX_PLANTS; i++) if (!used.has(i)) return i;
+    return plants.length % GARDEN_MAX_PLANTS;
+}
+
+/** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；留言簿/娱乐室/邮局/花田恒可去。 */
 function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicState: VRMusicRoomState | null, prefer?: VRRoomId): VRRoomId | null {
-    const pool: VRRoomId[] = ['guestbook', 'gym', 'postoffice'];
+    const pool: VRRoomId[] = ['guestbook', 'gym', 'postoffice', 'garden'];
     if (novels.length > 0) pool.push('library');
     if (gatherCharSongs(char).length > 0 || musicState?.nowPlaying) pool.push('music');
     if (prefer && pool.includes(prefer)) return prefer; // 指定的房间可用则去，否则回退随机
@@ -179,6 +187,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         let allAnn: Awaited<ReturnType<typeof DB.getVRAnnotations>> = [];
         let pickable: CharPlaylistSong[] = [];
         let guestbook: VRGuestbookState | null = null;
+        let garden: VRGardenState | null = null;
         let poTarget: VRLetter | null = null;
         let poReadTarget: VRLetter | null = null;
         const recallNames = new Set<string>();
@@ -248,6 +257,12 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             // 让角色召回"我当初为什么写这个"。截断到 200 字，够 embedding 抓语义即可。
             const recallLetter = (forcedTarget || poTarget)?.content || poReadTarget?.content;
             if (recallLetter) recallExtra.push(`一封信聊到：${recallLetter.slice(0, 200)}`);
+        } else if (room.id === 'garden') {
+            garden = await DB.getVRGarden();
+            occupantsOf('garden').forEach(n => recallNames.add(n));
+            (garden?.plants || []).slice(-24).forEach(p => { if (p.planterId !== char.id) recallNames.add(p.planterName); });
+            const full = (garden?.plants?.length || 0) >= GARDEN_MAX_PLANTS;
+            roomTurn = buildGardenRoomTurn(garden?.plants || [], occupantsOf('garden'), char.name, full);
         } else {
             // gym
             occupantsOf('gym').forEach(n => recallNames.add(n));
@@ -425,6 +440,48 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, activity)];
             if (parsed.behavior) cardLines.push(`· ${parsed.behavior}`);
             meta = { vrCard: true, room: 'gym', activity, behavior: parsed.behavior };
+        } else if (room.id === 'garden') {
+            // === 共享花田：种花 / 浇水（读-改-写串行化，杜绝并发覆盖） ===
+            const parsed = parseGardenOutput(aiContent);
+            const { gardenAction, plantLabel, note } = await withSharedRoomLock(async () => {
+                let action: 'plant' | 'water' | 'admire' = 'admire';
+                let label: string | undefined;
+                let noteText: string | undefined;
+                const state: VRGardenState = (await DB.getVRGarden()) || { id: 'garden', plants: [], updatedAt: Date.now() };
+                state.plants = state.plants || [];
+                const wantPlant = parsed.plantSpeciesIdx !== undefined && GARDEN_SPECIES[parsed.plantSpeciesIdx];
+                if (wantPlant && state.plants.length < GARDEN_MAX_PLANTS) {
+                    const sp = GARDEN_SPECIES[parsed.plantSpeciesIdx!];
+                    state.plants = [...state.plants, {
+                        id: genId('plt'), species: sp.key, planterId: char.id, planterName: char.name,
+                        wish: parsed.wish, plantedAt: Date.now(), waterCount: 0, wateredBy: [],
+                        slot: nextFreeSlot(state.plants), updatedAt: Date.now(),
+                    }];
+                    action = 'plant'; label = sp.name; noteText = parsed.wish;
+                } else if (parsed.waterLabel) {
+                    const target = state.plants.find(p => p.id.slice(-4) === parsed.waterLabel);
+                    if (target) {
+                        target.waterCount += 1;
+                        target.wateredBy = [...(target.wateredBy || []), { id: char.id, name: char.name, note: parsed.waterNote, at: Date.now() }].slice(-12);
+                        target.updatedAt = Date.now();
+                        state.plants = state.plants.map(p => p.id === target.id ? target : p);
+                        action = 'water'; label = getSpecies(target.species).name; noteText = parsed.waterNote;
+                    }
+                }
+                state.updatedAt = Date.now();
+                await DB.saveVRGarden(state);
+                return { gardenAction: action, plantLabel: label, note: noteText };
+            });
+            await updateCharacter(char.id, { vrState: { ...prevState, currentRoom: 'garden', lastActiveAt: Date.now() } });
+            activity = parsed.activity || (
+                gardenAction === 'plant' ? `在花田种下一株${plantLabel}。`
+                : gardenAction === 'water' ? `给花田里的${plantLabel}浇了浇水。`
+                : '在花田里赏了会儿花。');
+            cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, activity)];
+            if (gardenAction === 'plant' && note) cardLines.push(`寄语：${note}`);
+            else if (gardenAction === 'water' && note) cardLines.push(`浇水时说：${note}`);
+            if (parsed.behavior) cardLines.push(`· ${parsed.behavior}`);
+            meta = { vrCard: true, room: 'garden', activity, behavior: parsed.behavior, gardenAction, gardenPlantLabel: plantLabel, gardenNote: note };
         } else if (room.id === 'postoffice' && poReadTarget) {
             // === 邮局：认领自己寄出的信、读陌生人的回信、写感触 → 封存 ===
             const parsed = parsePostOfficeReadOutput(aiContent);

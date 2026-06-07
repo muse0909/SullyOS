@@ -6,7 +6,7 @@
  * 待在一起"的破绽。定时器驱动每个角色独立登入一次，完成一次活动。
  */
 
-import { VRRoomId } from '../../types';
+import { VRRoomId, VRPlantStage, VRGardenPlant } from '../../types';
 
 export interface VRRoomDef {
     id: VRRoomId;
@@ -69,6 +69,15 @@ export const VR_ROOMS: VRRoomDef[] = [
         accent: 'amber',
     },
     {
+        id: 'garden',
+        name: '花田',
+        blurb: '一片公共花圃，海风里开着各色花。有人种下种子，有人替它浇水，慢慢就开成了一片。',
+        affordance: '你可以在花圃里种下一株花（许个愿、写句寄语），给别人种的花浇浇水帮它长大，或纯粹蹲下来赏花、闻香、发会儿呆。',
+        emoji: '',
+        implemented: true,
+        accent: 'teal',
+    },
+    {
         id: 'cafe',
         name: '糯米鸡研发中心',
         blurb: '蒸笼热气腾腾，据说很快就会端出点什么。',
@@ -91,3 +100,55 @@ export const VR_NOVEL_FEED_CHARS = 40000;
 
 /** 切块时单个 segment 的目标字数。 */
 export const VR_SEGMENT_TARGET_CHARS = 400;
+
+// ============ 共享花田 ============
+
+export interface GardenSpecies {
+    key: string;
+    name: string;
+    /** 开花时的 emoji */
+    emoji: string;
+    /** 主色（花苞/开花 UI 用） */
+    color: string;
+}
+
+/** 可种的花品种（暖色治愈系，呼应"无人岛"调性）。 */
+export const GARDEN_SPECIES: GardenSpecies[] = [
+    { key: 'tulip',     name: '郁金香', emoji: '🌷', color: '#f9a8d4' },
+    { key: 'sunflower', name: '向日葵', emoji: '🌻', color: '#fbbf24' },
+    { key: 'rose',      name: '玫瑰',   emoji: '🌹', color: '#fb7185' },
+    { key: 'daisy',     name: '雏菊',   emoji: '🌼', color: '#fde68a' },
+    { key: 'lavender',  name: '薰衣草', emoji: '🪻', color: '#c4b5fd' },
+    { key: 'cherry',    name: '樱',     emoji: '🌸', color: '#fbcfe8' },
+    { key: 'hibiscus',  name: '扶桑',   emoji: '🌺', color: '#fca5a5' },
+];
+
+export const getSpecies = (key: string): GardenSpecies =>
+    GARDEN_SPECIES.find(s => s.key === key) || GARDEN_SPECIES[0];
+
+/** 花圃容量上限（满了就只能浇水、不能再种）。 */
+export const GARDEN_MAX_PLANTS = 18;
+
+/**
+ * 浇水次数 → 成长阶段。阈值压得很低，第一次浇水就能看到发芽，
+ * 让"帮一把"立刻有正反馈；开花需要多人/多次接力浇水。
+ */
+export function plantStage(waterCount: number): VRPlantStage {
+    if (waterCount >= 5) return 'bloom';
+    if (waterCount >= 3) return 'bud';
+    if (waterCount >= 1) return 'sprout';
+    return 'seed';
+}
+
+export const STAGE_LABEL: Record<VRPlantStage, string> = {
+    seed: '种子', sprout: '发芽', bud: '花苞', bloom: '盛开',
+};
+
+/** 阶段对应的展示 emoji（盛开时用品种 emoji，其余用通用成长图标）。 */
+export function stageEmoji(p: Pick<VRGardenPlant, 'species' | 'waterCount'>): string {
+    const stage = plantStage(p.waterCount);
+    if (stage === 'bloom') return getSpecies(p.species).emoji;
+    if (stage === 'bud') return '🌿';
+    if (stage === 'sprout') return '🌱';
+    return '🌰';
+}

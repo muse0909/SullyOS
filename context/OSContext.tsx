@@ -637,51 +637,61 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       // 1. Monkey Patch Fetch
       const originalFetch = window.fetch;
+      const appendSystemLog = (log: SystemLog) => {
+          setSystemLogs(prev => {
+              if (prev[0]?.message === log.message && prev[0]?.detail === log.detail && prev[0]?.source === log.source) {
+                  return prev;
+              }
+              return [log, ...prev.slice(0, 49)];
+          });
+      };
+
       const patchedFetch = async (...args: [RequestInfo | URL, RequestInit?]) => {
           const [resource, config] = args;
           
           const urlStr = String(resource);
+          const isApiCall = urlStr.includes('/chat/completions') || urlStr.includes('/models');
+          const isImageApi = urlStr.includes('/images/generations');
           
           try {
               const response = await originalFetch(...args);
               
-              if (!response.ok) {
-                  // Only log if it's likely an API call (contains chat/completions or models)
-                  if (urlStr.includes('/chat/completions') || urlStr.includes('/models')) {
-                      try {
-                          const clone = response.clone();
-                          const text = await clone.text();
-                          setSystemLogs(prev => [{
-                              id: `log-${Date.now()}`,
-                              timestamp: Date.now(),
-                              type: 'network',
-                              source: 'API Request',
-                              message: `HTTP ${response.status} Error`,
-                              detail: `URL: ${urlStr}\nResponse: ${text.substring(0, 500)}`
-                          }, ...prev.slice(0, 49)]); // Keep last 50
-                      } catch (e) {
-                          setSystemLogs(prev => [{
-                              id: `log-${Date.now()}`,
-                              timestamp: Date.now(),
-                              type: 'network',
-                              source: 'API Request',
-                              message: `HTTP ${response.status} (Unreadable Body)`,
-                              detail: `URL: ${urlStr}`
-                          }, ...prev.slice(0, 49)]);
-                      }
+              if (!response.ok && isApiCall && !isImageApi && (response.status >= 500 || response.status === 429)) {
+                  try {
+                      const clone = response.clone();
+                      const text = await clone.text();
+                      appendSystemLog({
+                          id: `log-${Date.now()}`,
+                          timestamp: Date.now(),
+                          type: 'network',
+                          source: 'API Request',
+                          message: `HTTP ${response.status} Error`,
+                          detail: `URL: ${urlStr}\nResponse: ${text.substring(0, 500)}`
+                      });
+                  } catch (e) {
+                      appendSystemLog({
+                          id: `log-${Date.now()}`,
+                          timestamp: Date.now(),
+                          type: 'network',
+                          source: 'API Request',
+                          message: `HTTP ${response.status} (Unreadable Body)`,
+                          detail: `URL: ${urlStr}`
+                      });
                   }
               }
               return response;
           } catch (err: any) {
               // Network Failure
-              setSystemLogs(prev => [{
-                  id: `log-${Date.now()}`,
-                  timestamp: Date.now(),
-                  type: 'network',
-                  source: 'Network',
-                  message: err.message || 'Fetch Failed',
-                  detail: `URL: ${urlStr}`
-              }, ...prev.slice(0, 49)]);
+              if (!isImageApi) {
+                  appendSystemLog({
+                      id: `log-${Date.now()}`,
+                      timestamp: Date.now(),
+                      type: 'network',
+                      source: 'Network',
+                      message: err.message || 'Fetch Failed',
+                      detail: `URL: ${urlStr}`
+                  });
+              }
               throw err;
           }
       };

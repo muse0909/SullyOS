@@ -478,6 +478,33 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                 </div>
             )}
 
+{/* ===== 长文气泡主题 ===== */}
+<div className="bg-white rounded-2xl p-4 shadow-sm border-slate-100 space-y-3">
+  <div className="text-sm font-bold text-slate-700">长文气泡主题</div>
+  <p className="text-xs text-slate-400">在长文气泡模式下生效</p>
+  <div className="flex gap-3">
+    <button
+      onClick={() => updateCharacter(char.id, { dateBubbleThemeStyle: 'dark' })}
+      className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+        (char.dateBubleThemeStyle || 'dark') === 'dark'
+          ? 'border-primary bg-slate-800 text-white'
+          : 'border-slate-200 bg-slate-50 text-slate-600'
+      }`}
+    >
+      🌙 暗色
+    </button>
+    <button
+      onClick={() => updateCharacter(char.id, { dateBubleThemeStyle: 'light' })}
+      className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+        char.dateBubbleThemeStyle === 'light'
+          ? 'border-primary bg-white text-slate-800 shadow-sm'
+          : 'border-slate-200 bg-slate-50 text-slate-600'
+      }`}
+    >☀️ 亮色
+    </button>
+  </div>
+</div>
+
             <div className="p-4 border-t border-slate-200 bg-white/90 backdrop-blur-sm sticky bottom-0 z-20">
                 <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">
                     保存当前布置

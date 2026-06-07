@@ -1248,7 +1248,7 @@ if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
                 }
             } catch (imgErr: any) {
                 imageGenError = imgErr?.message || String(imgErr);
-                console.error('🎨 [ImageGen] 生图请求失败:', imgErr);
+                console.warn('🎨 [ImageGen] 生图请求失败:', imgErr);
             }
         }
 

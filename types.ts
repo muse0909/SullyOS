@@ -611,6 +611,7 @@ export interface DateState {
     bgImage: string;
     currentSprite: string;
     isNovelMode: boolean;
+    viewMode?: 'gal' | 'novel' | 'bubble'; // 三模式，替代 isNovelMode
     timestamp: number;
     peekStatus: string; 
 }
@@ -874,6 +875,7 @@ export interface CharacterProfile {
   hideBeforeMessageId?: number; 
   
   dateBackground?: string;
+  dateBubbleThemeStyle?: 'light' | 'dark'; // 长文气泡主题（亮色/暗色）
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)

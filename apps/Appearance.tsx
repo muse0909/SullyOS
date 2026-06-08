@@ -132,6 +132,56 @@ const CHAT_LAYOUT_COMBOS: { name: string; desc: string; config: Partial<OSTheme>
     { name: '简约模式', desc: '小头像+最简界面', config: { chatAvatarShape: 'circle', chatAvatarSize: 'small', chatBubbleStyle: 'flat', chatMessageSpacing: 'compact', chatHeaderStyle: 'minimal', chatInputStyle: 'flat', chatShowTimestamp: 'never' } },
 ];
 
+// --- 桌面整机风格（皮肤）---
+// 动森风壁纸：天空 → 草地渐变 + 太阳 + 云朵 + 起伏山丘 + 飘叶，整张内联 SVG。
+const ACNH_WALLPAPER = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice">`
+  + `<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">`
+  + `<stop offset="0" stop-color="#BCE7F5"/><stop offset="0.45" stop-color="#D8F0DA"/>`
+  + `<stop offset="0.7" stop-color="#BBE38F"/><stop offset="1" stop-color="#9BD16B"/></linearGradient></defs>`
+  + `<rect width="400" height="800" fill="url(#sky)"/>`
+  + `<circle cx="320" cy="120" r="46" fill="#FFF3B0" opacity="0.85"/>`
+  + `<g fill="#ffffff" opacity="0.9"><ellipse cx="90" cy="140" rx="46" ry="24"/><ellipse cx="132" cy="150" rx="40" ry="22"/>`
+  + `<ellipse cx="250" cy="240" rx="38" ry="20"/><ellipse cx="286" cy="248" rx="32" ry="18"/></g>`
+  + `<path d="M0 560 Q100 500 200 555 T400 545 L400 800 L0 800Z" fill="#A6D871" opacity="0.95"/>`
+  + `<path d="M0 640 Q120 580 240 635 T400 625 L400 800 L0 800Z" fill="#8FC85B"/>`
+  + `<path d="M0 720 Q140 670 280 715 T400 705 L400 800 L0 800Z" fill="#7CBA4C"/>`
+  + `<g fill="#7FB85A" opacity="0.5"><path d="M60 300 q30 -18 42 6 q-30 18 -42 -6Z"/>`
+  + `<path d="M330 420 q26 -16 38 5 q-27 16 -38 -5Z"/><path d="M180 200 q22 -14 32 4 q-23 14 -32 -4Z"/></g></svg>`
+)}`;
+
+const DESKTOP_SKINS: { id: string; name: string; desc: string; swatch: string; config: Partial<OSTheme> }[] = [
+  {
+    id: 'animalcrossing',
+    name: '动森风格',
+    desc: 'NookPhone 彩色图标 · 草地天空 · 暖色界面',
+    swatch: 'linear-gradient(135deg,#BCE7F5 0%,#BBE38F 55%,#7CBA4C 100%)',
+    config: {
+      skin: 'animalcrossing',
+      hue: 95, saturation: 48, lightness: 56,
+      contentColor: '#5b4a2f',
+      wallpaper: ACNH_WALLPAPER,
+      chatAvatarShape: 'rounded', chatAvatarSize: 'medium',
+      chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious',
+      chatHeaderStyle: 'default', chatInputStyle: 'rounded',
+      chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
+      chatShowTimestamp: 'hover',
+    },
+  },
+  {
+    id: 'default',
+    name: '默认风格',
+    desc: '经典 SullyOS 玻璃拟物界面',
+    swatch: 'linear-gradient(135deg,#FFDEE9 0%,#B5FFFC 100%)',
+    config: {
+      skin: 'default',
+      hue: 245, saturation: 25, lightness: 65,
+      contentColor: '#ffffff',
+      wallpaper: DEFAULT_WALLPAPER,
+    },
+  },
+];
+
 const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<OSTheme>) => void }> = ({ theme, updateTheme }) => {
     const avatarShape = theme.chatAvatarShape || 'circle';
     const avatarSize = theme.chatAvatarSize || 'medium';
@@ -772,6 +822,30 @@ const Appearance: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">桌面风格</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">一键切换整机主题：壁纸、配色、图标外观、聊天界面全部联动改变。</p>
+                    <div className="grid grid-cols-2 gap-3">
+                        {DESKTOP_SKINS.map(skin => {
+                            const active = (theme.skin || 'default') === skin.id;
+                            return (
+                                <button
+                                    key={skin.id}
+                                    onClick={() => { updateTheme(skin.config); addToast(`已切换到「${skin.name}」`, 'success'); }}
+                                    className={`relative text-left rounded-2xl p-3 border-2 transition-all active:scale-[0.98] ${active ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200 hover:border-slate-300'}`}
+                                >
+                                    <div className="h-16 w-full rounded-xl mb-2 shadow-inner" style={{ background: skin.swatch }} />
+                                    <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                                        {skin.name}
+                                        {active && <span className="text-[9px] font-bold text-primary">· 当前</span>}
+                                    </div>
+                                    <div className="text-[9px] text-slate-400 mt-0.5 leading-snug">{skin.desc}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </section>
+
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Preset Themes</h2>
                     <div className="flex gap-3 mb-6 overflow-x-auto no-scrollbar pb-1">

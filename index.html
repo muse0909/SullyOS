@@ -119,6 +119,11 @@
         --keyboard-inset: 0px;
         --app-font: 'Quicksand', sans-serif;
       }
+      /* 动森风格皮肤：整机换上圆润可爱的字体（ZCOOL KuaiLe 已在上方字体表加载）。
+         选择 html[data-skin] 而非 :root，优先级更高，能盖过运行时注入的 --app-font。 */
+      html[data-skin="animalcrossing"] {
+        --app-font: 'ZCOOL KuaiLe', 'Quicksand', sans-serif;
+      }
       html, body, #root {
         width: 100%;
         min-height: var(--app-height, 100lvh);

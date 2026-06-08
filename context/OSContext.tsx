@@ -1103,6 +1103,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       root.style.setProperty('--primary-hue', String(h));
       root.style.setProperty('--primary-sat', `${s}%`);
       root.style.setProperty('--primary-lightness', `${l}%`);
+
+      // 桌面皮肤：写到 <html data-skin>，供全局 CSS（index.html）与组件读取。
+      root.dataset.skin = theme.skin || 'default';
   }, [theme]);
 
   // --- Update: Handle Scheduled Messages with Unread Flags & Web Notifications ---

@@ -99,7 +99,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes } = useOS();
     
     // Core VN State
     // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
@@ -622,7 +622,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Top Return Button */}
             <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
-              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 12px)' }}>
+              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 20px)' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
                 className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
@@ -643,26 +643,86 @@ const DateSession: React.FC<DateSessionProps> = ({
                   paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
                   paddingLeft: '12px',
                   paddingRight: '12px',
-                  background: char.dateLightReading
-                    ? '#faf8f5'
-                    : 'rgba(8,8,18,0.96)',
+                  background: 'transparent',
                 }}
                 onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
               >
-                <div className={`min-h-full ${longformTheme === 'half-novel' ? 'max-w-3xl mx-auto space-y-6' : ''}`}>
+                {/* Gradient overlay for half-novel */}
+                {longformTheme === 'half-novel' && (
+                  <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none"
+                    style={{
+                      background: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.7) 100%)'
+                    }}
+                  ></div>
+                )}
+                
+                <div className={`relative z-10 min-h-full ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-4 pt-32' : 'space-y-4'}`}>
                   {sessionMessages.map((msg) => {
                     const content = cleanTextForDisplay(msg.content || '');
                     if (!content) return null;
                     const isUser = msg.role === 'user';
                     const useBubble = longformTheme === 'long-bubble';
                     const bubbleStyle = char.dateBubbleThemeStyle || 'dark';
-                    const wrapperClasses = useBubble
-                      ? `flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`
-                      : `mb-6 max-w-3xl ${isUser ? 'ml-auto' : ''}`;
+                    
+                    // 获取气泡预设样式（如果已选择）
+                    let bubblePresetStyle: any = null;
+                    if (char.dateLongformBubblePresetId && customThemes) {
+                      const preset = customThemes.find(t => t.id === char.dateLongformBubblePresetId);
+                      if (preset && !isUser) {
+                        const aiStyle = preset.ai;
+                        bubblePresetStyle = aiStyle || {};
+                      }
+                    }
+                    
+                    if (useBubble) {
+                      // long-bubble: 头像顶部 + 消息内容
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex gap-2 mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
+                          onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                          onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                          onTouchEnd={handleMsgTouchEnd}
+                          onTouchMove={handleMsgTouchMove}
+                          onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                          onMouseUp={handleMsgTouchEnd}
+                          onMouseLeave={handleMsgTouchEnd}
+                        >
+                          {!isUser && (
+                            <img src={char.avatar} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover self-start mt-1" />
+                          )}
+                          <div className={`flex flex-col gap-1 max-w-[70%] ${isUser ? 'items-end' : 'items-start'}`}>
+                            <div
+                              className={`px-5 py-4 text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white rounded-3xl' : bubblePresetStyle ? '' : (bubbleStyle === 'light' ? 'bg-white text-slate-800 border border-slate-200 rounded-3xl' : 'bg-white/10 text-white/90 border border-white/10 rounded-3xl')}`}
+                              style={{
+                                wordBreak: 'break-word',
+                                whiteSpace: 'pre-wrap',
+                                ...(bubblePresetStyle && !isUser ? {
+                                  backgroundColor: bubblePresetStyle.backgroundColor || 'rgba(255, 255, 255, 0.1)',
+                                  color: bubblePresetStyle.textColor || 'rgba(255, 255, 255, 0.9)',
+                                  borderRadius: bubblePresetStyle.borderRadius ? `${bubblePresetStyle.borderRadius}px` : '24px',
+                                  border: bubblePresetStyle.borderColor ? `1px solid ${bubblePresetStyle.borderColor}` : 'none',
+                                  opacity: bubblePresetStyle.opacity ?? 1,
+                                } : {})
+                              }}
+                            >
+                              {content}
+                            </div>
+                          </div>
+                          {isUser && (
+                            <div className="w-8 h-8 rounded-full shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600 self-start mt-1">
+                              我
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                    
+                    // half-novel: 半屏小说风格 - 半透明气泡叠在背景上
                     return (
                       <div
                         key={msg.id}
-                        className={wrapperClasses}
+                        className={`mb-4 max-w-2xl ${isUser ? 'ml-auto' : ''}`}
                         onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                         onTouchStart={(e) => handleMsgTouchStart(e, msg)}
                         onTouchEnd={handleMsgTouchEnd}
@@ -671,27 +731,21 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onMouseUp={handleMsgTouchEnd}
                         onMouseLeave={handleMsgTouchEnd}
                       >
-                        {!isUser && useBubble && (
-                          <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
-                        )}
                         <div
-                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : useBubble ? (bubbleStyle === 'light' ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10') : (char.dateLightReading ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10')}`}
-                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: useBubble ? '78%' : '100%' }}
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20'}`}
+                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
                         >
                           {content}
                         </div>
-                        {isUser && useBubble && (
-                          <div className="w-8 h-8 rounded-full ml-2 self-end shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600">
-                            我
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                   {isTyping && (
-                    <div className="flex justify-start mb-4">
-                      <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
-                      <div className={`px-4 py-3 rounded-2xl ${char.dateLightReading ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md'}`}>
+                    <div className={`flex gap-2 mb-4 ${longformTheme === 'half-novel' ? '' : ''}`}>
+                      {longformTheme === 'long-bubble' && (
+                        <img src={char.avatar} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover self-start mt-1" />
+                      )}
+                      <div className={`px-4 py-3 rounded-2xl ${longformTheme === 'half-novel' ? 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20' : (char.dateLightReading ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md')}`}>
                         <div className="flex gap-1 items-center h-4">
                           {[0, 1, 2].map(i => (
                             <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
@@ -876,13 +930,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                       {canReroll && !isTyping && (
                         <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v" /></svg>
                           重新生成
                         </button>
                       )}
                       <button onClick={() => setShowModeSwitch(true)}
                         className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 3M21 7.5H7.5" /></svg>
                         模式切换
                       </button>
                       <button onClick={() => setShowVoiceLangPicker(p => !p)}

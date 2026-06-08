@@ -14,7 +14,7 @@ interface DateSettingsProps {
 }
 
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
-    const { updateCharacter, addToast } = useOS();
+    const { updateCharacter, addToast, customThemes } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
@@ -205,6 +205,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             </div>
             
             {/* Live Preview Area */}
+            {settingsTab === 'visual' ? (
             <div className="h-64 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
                     <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
                     <div className="absolute inset-0 flex items-end justify-center pointer-events-none">
@@ -218,6 +219,12 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
             </div>
+            ) : (
+            <div className="h-64 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
+                    <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
+                    <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
+            </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-5 space-y-8 pb-20">{settingsTab === 'visual' ? (<>
                 <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
@@ -495,29 +502,28 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
   </section>
 
   <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
-    <div className="text-sm font-bold text-slate-700">气泡样式</div>
-    <p className="text-xs text-slate-400 mt-1">长文气泡主题中可切换亮暗背景。</p>
-    <div className="mt-4 flex gap-3">
-      <button
-        onClick={() => updateCharacter(char.id, { dateBubbleThemeStyle: 'dark' })}
-        className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-          (char.dateBubbleThemeStyle || 'dark') === 'dark'
-            ? 'border-primary bg-slate-900 text-white'
-            : 'border-slate-200 bg-slate-50 text-slate-600'
-        }`}
-      >
-        暗色气泡
-      </button>
-      <button
-        onClick={() => updateCharacter(char.id, { dateBubbleThemeStyle: 'light' })}
-        className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-          char.dateBubbleThemeStyle === 'light'
-            ? 'border-primary bg-white text-slate-800 shadow-sm'
-            : 'border-slate-200 bg-slate-50 text-slate-600'
-        }`}
-      >
-        亮色气泡
-      </button>
+    <div className="text-sm font-bold text-slate-700">气泡预设</div>
+    <p className="text-xs text-slate-400 mt-1">从气泡工坊选择已保存的预设。</p>
+    <div className="mt-4">
+      {customThemes && customThemes.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {customThemes.map((theme) => (
+            <button
+              key={theme.id}
+              onClick={() => updateCharacter(char.id, { dateLongformBubblePresetId: theme.id })}
+              className={`px-4 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+                char.dateLongformBubblePresetId === theme.id
+                  ? 'border-primary bg-slate-50 text-slate-800 shadow-sm'
+                  : 'border-slate-200 bg-slate-50 text-slate-600'
+              }`}
+            >
+              {theme.name || '预设'}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-slate-400 italic py-4 text-center">暂无气泡预设，请先到气泡工坊创建</div>
+      )}
     </div>
   </section>
 

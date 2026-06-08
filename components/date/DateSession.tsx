@@ -637,22 +637,27 @@ const DateSession: React.FC<DateSessionProps> = ({
             {isLongform && (
               <div
                 ref={novelScrollRef}
-                className="absolute inset-0 overflow-y-auto no-scrollbar"
+                className={`absolute overflow-y-auto no-scrollbar ${longformTheme === 'half-novel' ? 'left-0 right-0 bottom-0' : 'inset-0'}`}
                 style={{
-                  paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
-                  paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
-                  paddingLeft: longformTheme === 'half-novel' ? '24px' : '12px',
-                  paddingRight: longformTheme === 'half-novel' ? '24px' : '12px',
+                  ...(longformTheme === 'half-novel' ? {
+                    top: '42%',
+                    paddingTop: '16px',
+                    paddingBottom: 'max(80px, calc(env(safe-area-inset-bottom) + 70px))',
+                    paddingLeft: '20px',
+                    paddingRight: '20px',
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 12%, rgba(0,0,0,1) 28%, rgba(0,0,0,1) 100%)',
+                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 12%, rgba(0,0,0,1) 28%, rgba(0,0,0,1) 100%)',
+                  } : {
+                    paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
+                    paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
+                    paddingLeft: '16px',
+                    paddingRight: '16px',
+                  }),
                   background: 'transparent',
                 }}
                 onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
               >
-                <div className={`relative z-10 min-h-full ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-4 pt-32' : 'space-y-4'}`}
-                  style={longformTheme === 'half-novel' ? {
-                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.1) 18%, rgba(0,0,0,1) 40%, rgba(0,0,0,1) 100%)',
-                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.1) 18%, rgba(0,0,0,1) 40%, rgba(0,0,0,1) 100%)',
-                  } : {}}
-                >
+                <div className={`relative z-10 ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-3' : 'space-y-4'}`}>
                   {sessionMessages.map((msg) => {
                     const content = cleanTextForDisplay(msg.content || '');
                     if (!content) return null;
@@ -718,7 +723,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     return (
                       <div
                         key={msg.id}
-                        className={`mb-4 ${isUser ? 'ml-auto' : ''}`}
+                        className="mb-3"
                         onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                         onTouchStart={(e) => handleMsgTouchStart(e, msg)}
                         onTouchEnd={handleMsgTouchEnd}
@@ -729,7 +734,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       >
                         <div
                           className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm bg-white/15 text-white/95 backdrop-blur-md border border-white/20`}
-                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: '88%' }}
+                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
                         >
                           {content}
                         </div>
@@ -912,11 +917,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                   )}
 
                   {showModeSwitch ? (
-                    <div className="flex gap-2 flex-wrap justify-center" style={{ maxWidth: 'calc(100vw - 32px)' }}>
+                    <div className="flex gap-2 justify-center w-full px-4">
                       {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([m, label]) => (
                         <button key={m}
                           onClick={() => { setViewMode(m); updateCharacter(char.id, { dateViewMode: m }); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
-                          className={`flex-1 min-w-[120px] py-3 px-3 rounded-2xl text-sm font-bold transition-all active:scale-95 whitespace-nowrap border-2 ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/40 backdrop-blur-md text-white border-white/30'}`}>
+                          className={`flex-1 py-3 px-2 rounded-2xl text-sm font-bold transition-all active:scale-95 whitespace-nowrap border ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/50 backdrop-blur-md text-white/90 border-white/40'}`}>
                           {label}
                         </button>
                       ))}
@@ -925,27 +930,33 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <div className="flex gap-2 justify-center flex-wrap">
                       {canReroll && !isTyping && (
                         <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                           重新生成
                         </button>
                       )}
                       <button onClick={() => setShowModeSwitch(true)}
-                        className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                        className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                         模式切换
                       </button>
                       <button onClick={() => setShowVoiceLangPicker(p => !p)}
-                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-500/80 text-white' : 'bg-white/10 text-white/60 border border-white/20'}`}>
+                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-slate-400/40 text-white/80 border border-white/20'}`}>
                         语音设置
                       </button>
+                      {viewMode === 'novel' && (
+                        <button onClick={() => { updateCharacter(char.id, { dateLightReading: !char.dateLightReading }); addToast(char.dateLightReading ? '已切换暗色' : '已切换亮色', 'info'); }}
+                          className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${char.dateLightReading ? 'bg-amber-200/70 text-amber-800' : 'bg-slate-500/60 text-white'}`}>
+                          {char.dateLightReading ? '亮色模式' : '暗色模式'}
+                        </button>
+                      )}
                       {viewMode === 'gal' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-amber-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-amber-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                           主题设置
                         </button>
                       )}
                       {viewMode === 'longform' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                           主题设置
                         </button>
                       )}
@@ -954,19 +965,18 @@ const DateSession: React.FC<DateSessionProps> = ({
                 </div>
               )}
 
-              <div className="flex gap-2 items-end px-4 pb-2 pt-1">
-                <button
-                  onClick={() => { setShowPlusMenu(p => !p); setShowModeSwitch(false); setShowVoiceLangPicker(false); }}
-                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-all active:scale-90 shadow-lg shrink-0 -mb-1 ${
-                    showPlusMenu ? 'bg-primary text-white' : 'bg-black/40 backdrop-blur-md border-white/20 text-white'
-                  }`}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={`w-5 h-5 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
-                </button>
-
-                <div className="flex-1 flex gap-2 items-end rounded-2xl px-4 py-2 min-h-[44px] bg-black/35 backdrop-blur-md border border-white/15">
+              <div className="flex gap-2 items-center px-4 pb-2 pt-1">
+                <div className="flex-1 flex items-center gap-1 rounded-2xl px-2 py-1 min-h-[44px] bg-black/35 backdrop-blur-md border border-white/15">
+                  <button
+                    onClick={() => { setShowPlusMenu(p => !p); setShowModeSwitch(false); setShowVoiceLangPicker(false); }}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 shrink-0 ${
+                      showPlusMenu ? 'bg-primary text-white' : 'bg-white/15 text-white/70'
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={`w-4 h-4 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                  </button>
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -974,13 +984,13 @@ const DateSession: React.FC<DateSessionProps> = ({
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}
-                    className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-1 text-white placeholder:text-white/30"
+                    className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-2 text-white placeholder:text-white/30"
                     style={{ maxHeight: '88px', overflowY: 'auto' }}
                   />
                   <button
                     onClick={handleSend}
                     disabled={!input.trim() || isTyping}
-                    className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90 mb-0.5"
+                    className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />

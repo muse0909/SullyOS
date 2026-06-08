@@ -21,7 +21,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
     const [tempSpriteConfig, setTempSpriteConfig] = useState<SpriteConfig>(DEFAULT_SPRITE_CONFIG);
     const [newEmotionName, setNewEmotionName] = useState<string>('');
-    const [settingsTab, setSettingsTab] = useState<'visual' | 'longform'>('visual');
+    const [settingsTab, setSettingsTab] = useState<'visual' | 'longform'>('longform');
 
     // Skin system state
     const [newSkinName, setNewSkinName] = useState('');
@@ -220,9 +220,42 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
             </div>
             ) : (
-            <div className="h-64 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
+            <div className="h-72 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
                     <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
+                    {/* 模拟气泡预览 */}
+                    <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2"
+                      style={{
+                        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
+                        maskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
+                      }}
+                    >
+                      {(char.dateLongformTheme || 'half-novel') === 'half-novel' ? (
+                        <>
+                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[85%]">
+                            这是半小说式的气泡预览效果，背景渐变淡出...
+                          </div>
+                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2 text-white/90 text-xs max-w-[70%] ml-auto">
+                            用户消息预览
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex gap-2 items-start">
+                            <div className="w-6 h-6 rounded-full bg-slate-400 shrink-0" />
+                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[80%]">
+                              长文气泡式预览，头像在顶部显示...
+                            </div>
+                          </div>
+                          <div className="flex gap-2 items-start justify-end">
+                            <div className="bg-primary/80 rounded-2xl px-4 py-2 text-white text-xs max-w-[70%]">
+                              用户消息预览
+                            </div>
+                            <div className="w-6 h-6 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-[8px] text-slate-600">我</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
             </div>
             )}
 

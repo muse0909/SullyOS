@@ -622,7 +622,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Top Return Button */}
             <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
-              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 20px)' }}>
+              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 28px)' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
                 className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
@@ -641,22 +641,18 @@ const DateSession: React.FC<DateSessionProps> = ({
                 style={{
                   paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
                   paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
-                  paddingLeft: '12px',
-                  paddingRight: '12px',
+                  paddingLeft: longformTheme === 'half-novel' ? '24px' : '12px',
+                  paddingRight: longformTheme === 'half-novel' ? '24px' : '12px',
                   background: 'transparent',
                 }}
                 onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
               >
-                {/* Gradient overlay for half-novel */}
-                {longformTheme === 'half-novel' && (
-                  <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none"
-                    style={{
-                      background: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 50%, rgba(0,0,0,0.7) 100%)'
-                    }}
-                  ></div>
-                )}
-                
-                <div className={`relative z-10 min-h-full ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-4 pt-32' : 'space-y-4'}`}>
+                <div className={`relative z-10 min-h-full ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-4 pt-32' : 'space-y-4'}`}
+                  style={longformTheme === 'half-novel' ? {
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.1) 18%, rgba(0,0,0,1) 40%, rgba(0,0,0,1) 100%)',
+                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.1) 18%, rgba(0,0,0,1) 40%, rgba(0,0,0,1) 100%)',
+                  } : {}}
+                >
                   {sessionMessages.map((msg) => {
                     const content = cleanTextForDisplay(msg.content || '');
                     if (!content) return null;
@@ -679,7 +675,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       return (
                         <div
                           key={msg.id}
-                          className={`flex gap-2 mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
+                          className={`flex gap-2 mb-4 w-full ${isUser ? 'justify-end' : 'justify-start'}`}
                           onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                           onTouchStart={(e) => handleMsgTouchStart(e, msg)}
                           onTouchEnd={handleMsgTouchEnd}
@@ -691,7 +687,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                           {!isUser && (
                             <img src={char.avatar} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover self-start mt-1" />
                           )}
-                          <div className={`flex flex-col gap-1 max-w-[70%] ${isUser ? 'items-end' : 'items-start'}`}>
+                          <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
                             <div
                               className={`px-5 py-4 text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white rounded-3xl' : bubblePresetStyle ? '' : (bubbleStyle === 'light' ? 'bg-white text-slate-800 border border-slate-200 rounded-3xl' : 'bg-white/10 text-white/90 border border-white/10 rounded-3xl')}`}
                               style={{
@@ -722,7 +718,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     return (
                       <div
                         key={msg.id}
-                        className={`mb-4 max-w-2xl ${isUser ? 'ml-auto' : ''}`}
+                        className={`mb-4 ${isUser ? 'ml-auto' : ''}`}
                         onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                         onTouchStart={(e) => handleMsgTouchStart(e, msg)}
                         onTouchEnd={handleMsgTouchEnd}
@@ -732,8 +728,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onMouseLeave={handleMsgTouchEnd}
                       >
                         <div
-                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20'}`}
-                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm bg-white/15 text-white/95 backdrop-blur-md border border-white/20`}
+                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: '88%' }}
                         >
                           {content}
                         </div>
@@ -916,11 +912,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                   )}
 
                   {showModeSwitch ? (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap justify-center" style={{ maxWidth: 'calc(100vw - 32px)' }}>
                       {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([m, label]) => (
                         <button key={m}
                           onClick={() => { setViewMode(m); updateCharacter(char.id, { dateViewMode: m }); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
-                          className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95 ${viewMode === m ? 'bg-white text-black shadow-md' : 'bg-white/10 backdrop-blur-md text-white border-white/20'}`}>
+                          className={`flex-1 min-w-[120px] py-3 px-3 rounded-2xl text-sm font-bold transition-all active:scale-95 whitespace-nowrap border-2 ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/40 backdrop-blur-md text-white border-white/30'}`}>
                           {label}
                         </button>
                       ))}
@@ -961,7 +957,7 @@ const DateSession: React.FC<DateSessionProps> = ({
               <div className="flex gap-2 items-end px-4 pb-2 pt-1">
                 <button
                   onClick={() => { setShowPlusMenu(p => !p); setShowModeSwitch(false); setShowVoiceLangPicker(false); }}
-                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-all active:scale-90 shadow-lg shrink-0 ${
+                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-all active:scale-90 shadow-lg shrink-0 -mb-1 ${
                     showPlusMenu ? 'bg-primary text-white' : 'bg-black/40 backdrop-blur-md border-white/20 text-white'
                   }`}
                 >

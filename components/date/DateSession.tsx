@@ -827,7 +827,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Input Layer */}
-            <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="absolute inset-x-0 bottom-0 z-40 flex justify-center transition-all duration-300">
                 {isTyping && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">

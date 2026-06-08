@@ -950,7 +950,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       ))}
                     </div>
                   ) : (
-                    <div className="flex gap-2 justify-center flex-wrap w-full">
+                    <div className="flex gap-2 justify-center flex-wrap">
                       {canReroll && !isTyping && (
                         <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">

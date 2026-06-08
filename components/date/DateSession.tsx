@@ -622,7 +622,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Top Return Button */}
             <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
-              style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 12px)' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
                 className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
@@ -640,7 +640,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 className="absolute inset-0 overflow-y-auto no-scrollbar"
                 style={{
                   paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
-                  paddingBottom: '140px',
+                  paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
                   paddingLeft: '12px',
                   paddingRight: '12px',
                   background: char.dateLightReading
@@ -655,6 +655,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     if (!content) return null;
                     const isUser = msg.role === 'user';
                     const useBubble = longformTheme === 'long-bubble';
+                    const bubbleStyle = char.dateBubbleThemeStyle || 'dark';
                     const wrapperClasses = useBubble
                       ? `flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`
                       : `mb-6 max-w-3xl ${isUser ? 'ml-auto' : ''}`;
@@ -674,7 +675,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                           <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
                         )}
                         <div
-                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : (char.dateLightReading ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10')}`}
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : useBubble ? (bubbleStyle === 'light' ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10') : (char.dateLightReading ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10')}`}
                           style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: useBubble ? '78%' : '100%' }}
                         >
                           {content}
@@ -705,7 +706,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
+                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} style={{ paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))' }} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
                     <div className="min-h-full flex flex-col justify-end">
                         <div className="max-w-2xl mx-auto animate-fade-in space-y-6">
                             {isBatchSelectMode && (
@@ -793,7 +794,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Visual Mode View */}
             {viewMode === 'gal' && (
                 <>
-                    <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none z-10 overflow-hidden">
+                    <div className="absolute inset-x-0 z-30 flex items-end justify-center pointer-events-none overflow-hidden"
+                  style={{ bottom: 'max(120px, calc(env(safe-area-inset-bottom) + 92px))' }}>
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
                     </div>
                     {!isTyping && (
@@ -885,20 +887,17 @@ const DateSession: React.FC<DateSessionProps> = ({
                       </button>
                       <button onClick={() => setShowVoiceLangPicker(p => !p)}
                         className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-500/80 text-white' : 'bg-white/10 text-white/60 border border-white/20'}`}>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
                         语音设置
                       </button>
                       {viewMode === 'gal' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-amber-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21l6.75-6.75 1.5 1.5M21 3l-9 9" /></svg>
-                          场景布置
+                          主题设置
                         </button>
                       )}
                       {viewMode === 'longform' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 01-2.4 2.245 4.5 4.5 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" /></svg>
                           主题设置
                         </button>
                       )}
@@ -935,8 +934,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     disabled={!input.trim() || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90 mb-0.5"
                   >
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
-                      <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 018.445-8.98675.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
                     </svg>
                   </button>
                 </div>

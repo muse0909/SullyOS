@@ -102,13 +102,17 @@ const DateSession: React.FC<DateSessionProps> = ({
     const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
     
     // Core VN State
-    // 三模式: gal=视觉GalGame / novel=小说阅读 / bubble=长文气泡
-    const [viewMode, setViewMode] = useState<'gal' | 'novel' | 'bubble'>(() => {
-      if (initialState?.viewMode) return initialState.viewMode;
+    // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
+    const [viewMode, setViewMode] = useState<'gal' | 'novel' | 'longform'>(() => {
+      const initialMode = initialState?.viewMode === 'bubble' ? 'longform' : initialState?.viewMode;
+      if (initialMode) return initialMode;
       if (initialState?.isNovelMode) return 'novel';
+      if (char.dateViewMode) return char.dateViewMode;
       return 'gal';
     });
     const isNovelMode = viewMode === 'novel';
+    const isLongform = viewMode === 'longform';
+    const longformTheme = char.dateLongformTheme || 'half-novel';
     const [bgImage, setBgImage] = useState<string>(char.dateBackground || '');
     const [currentSprite, setCurrentSprite] = useState<string>('');
     const [spriteConfig, setSpriteConfig] = useState(char.spriteConfig || { scale: 1, x: 0, y: 0 });
@@ -319,7 +323,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDisplayedText(initialState.currentText);
             setDialogueQueue(initialState.dialogueQueue);
             setDialogueBatch(initialState.dialogueBatch);
-            setIsNovelMode(initialState.isNovelMode);
+            const restoredMode = initialState.viewMode === 'bubble' ? 'longform' : initialState.viewMode;
+            setViewMode(restoredMode || (initialState.isNovelMode ? 'novel' : 'gal'));
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
             const s = (() => {
@@ -360,9 +365,9 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (char.dateBackground) setBgImage(char.dateBackground);
     }, [char]);
 
-    // Novel Mode Scroll
+    // Novel / Longform Mode Scroll
     useEffect(() => {
-        if ((viewMode === 'novel' || viewMode === 'bubble') && novelScrollRef.current) {
+        if ((viewMode === 'novel' || viewMode === 'longform') && novelScrollRef.current) {
             novelScrollRef.current.scrollTop = novelScrollRef.current.scrollHeight;
         }
     }, [sessionMessages.length, viewMode]);
@@ -628,8 +633,8 @@ const DateSession: React.FC<DateSessionProps> = ({
               </button>
             </div>
 
-            {/* === 长文气泡模式 ===== */}
-            {viewMode === 'bubble' && (
+            {/* Longform Mode View */}
+            {isLongform && (
               <div
                 ref={novelScrollRef}
                 className="absolute inset-0 overflow-y-auto no-scrollbar"
@@ -638,63 +643,63 @@ const DateSession: React.FC<DateSessionProps> = ({
                   paddingBottom: '140px',
                   paddingLeft: '12px',
                   paddingRight: '12px',
-                  background: char.dateBubbleThemeStyle === 'light'
-                    ? 'rgba(244,244,0.96)'
-                    : 'rgba(18,18,28,0.88)',
+                  background: char.dateLightReading
+                    ? '#faf8f5'
+                    : 'rgba(8,8,18,0.96)',
                 }}
-                onClick={() => { setShowPlusMenu(false); setShowModeSwitch(false); }}
+                onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
               >
-                {sessionMessages.map((msg) => {
-                  const content = cleanTextForDisplay(msg.content || '');
-                  if (!content) return null;
-                  const isUser = msg.role === 'user';
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
-                      onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
-                      onTouchStart={(e) => handleMsgTouchStart(e, msg)}
-                      onTouchEnd={handleMsgTouchEnd}
-                      onTouchMove={handleMsgTouchMove}
-                      onMouseDown={(e) => handleMsgTouchStart(e, msg)}
-                      onMouseUp={handleMsgTouchEnd}
-                      onMouseLeave={handleMsgTouchEnd}
-                    >
-                      {!isUser && (
-                        <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
-                      )}
+                <div className={`min-h-full ${longformTheme === 'half-novel' ? 'max-w-3xl mx-auto space-y-6' : ''}`}>
+                  {sessionMessages.map((msg) => {
+                    const content = cleanTextForDisplay(msg.content || '');
+                    if (!content) return null;
+                    const isUser = msg.role === 'user';
+                    const useBubble = longformTheme === 'long-bubble';
+                    const wrapperClasses = useBubble
+                      ? `flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`
+                      : `mb-6 max-w-3xl ${isUser ? 'ml-auto' : ''}`;
+                    return (
                       <div
-                        className={`max-w-[78%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                          isUser
-                            ? 'bg-primary text-white rounded-br-md'
-                            : char.dateBubbleThemeStyle === 'light'
-                              ? 'bg-white text-slate-800 rounded-bl-md border border-slate-100'
-                              : 'bg-white/12 text-white/90 rounded-bl-md backdrop-blur-md border border-white/10'
-                        }`}
-                        style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                        key={msg.id}
+                        className={wrapperClasses}
+                        onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                        onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                        onTouchEnd={handleMsgTouchEnd}
+                        onTouchMove={handleMsgTouchMove}
+                        onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                        onMouseUp={handleMsgTouchEnd}
+                        onMouseLeave={handleMsgTouchEnd}
                       >
-                        {content}
-                      </div>
-                      {isUser && (
-                        <div className="w-8 h-8 rounded-full ml-2 self-end shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600">
-                          我
+                        {!isUser && useBubble && (
+                          <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
+                        )}
+                        <div
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white' : (char.dateLightReading ? 'bg-white text-slate-800 border border-slate-200' : 'bg-white/10 text-white/90 border border-white/10')}`}
+                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: useBubble ? '78%' : '100%' }}
+                        >
+                          {content}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {isTyping && (
-                  <div className="flex justify-start mb-4">
-                    <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
-                    <div className={`px-4 py-3 rounded-2xl rounded-bl-md ${char.dateBubbleThemeStyle === 'light' ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md'}`}>
-                      <div className="flex gap-1 items-center h-4">
-                        {[0, 1, 2].map(i => (
-                          <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                        ))}
+                        {isUser && useBubble && (
+                          <div className="w-8 h-8 rounded-full ml-2 self-end shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600">
+                            我
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {isTyping && (
+                    <div className="flex justify-start mb-4">
+                      <img src={char.avatar} alt="" className="w-8 h-8 rounded-full mr-2 self-end shrink-0 object-cover" />
+                      <div className={`px-4 py-3 rounded-2xl ${char.dateLightReading ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md'}`}>
+                        <div className="flex gap-1 items-center h-4">
+                          {[0, 1, 2].map(i => (
+                            <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
 
@@ -786,7 +791,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Visual Mode View */}
-            {!isNovelMode && (
+            {viewMode === 'gal' && (
                 <>
                     <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none z-10 overflow-hidden">
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
@@ -856,9 +861,9 @@ const DateSession: React.FC<DateSessionProps> = ({
 
                   {showModeSwitch ? (
                     <div className="flex gap-2">
-                      {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['bubble', '长文气泡']] as const).map(([m, label]) => (
+                      {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([m, label]) => (
                         <button key={m}
-                          onClick={() => { setViewMode(m); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
+                          onClick={() => { setViewMode(m); updateCharacter(char.id, { dateViewMode: m }); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
                           className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95 ${viewMode === m ? 'bg-white text-black shadow-md' : 'bg-white/10 backdrop-blur-md text-white border-white/20'}`}>
                           {label}
                         </button>
@@ -890,7 +895,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                           场景布置
                         </button>
                       )}
-                      {viewMode === 'bubble' && (
+                      {viewMode === 'longform' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-500/80 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 01-2.4 2.245 4.5 4.5 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" /></svg>
@@ -914,11 +919,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                   </svg>
                 </button>
 
-                <div className={`flex-1 flex gap-2 items-end rounded-2xl px-4 py-2 min-h-[44px] ${
-                  viewMode === 'bubble'
-                    ? (char.dateBubbleThemeStyle === 'light' ? 'bg-white shadow border-slate-100' : 'bg-white/12 backdrop-blur-md border border-white/10')
-                    : 'bg-black/35 backdrop-blur-md border border-white/15'
-                }`}>
+                <div className="flex-1 flex gap-2 items-end rounded-2xl px-4 py-2 min-h-[44px] bg-black/35 backdrop-blur-md border border-white/15">
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -926,11 +927,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}
-                    className={`flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-1 ${
-                      viewMode === 'bubble' && char.dateBubbleThemeStyle === 'light'
-                        ? 'text-slate-800 placeholder:text-slate-400'
-                        : 'text-white placeholder:text-white/30'
-                    }`}
+                    className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-1 text-white placeholder:text-white/30"
                     style={{ maxHeight: '88px', overflowY: 'auto' }}
                   />
                   <button

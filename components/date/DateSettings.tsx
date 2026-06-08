@@ -224,7 +224,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
                     {/* 模拟气泡预览 */}
-                    <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2"
+                    <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2 z-10"
                       style={{
                         WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
                         maskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
@@ -535,7 +535,17 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
   </section>
 
   <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
-    <div className="text-sm font-bold text-slate-700">气泡预设</div>
+    <div className="flex items-center justify-between">
+      <div className="text-sm font-bold text-slate-700">气泡预设</div>
+      {char.dateLongformBubblePresetId && (
+        <button
+          onClick={() => { updateCharacter(char.id, { dateLongformBubblePresetId: undefined }); addToast('已还原为默认磨砂气泡', 'success'); }}
+          className="px-3 py-1 rounded-full text-xs font-bold bg-primary/10 text-primary border border-primary/20 active:scale-95 transition-all"
+        >
+          还原默认
+        </button>
+      )}
+    </div>
     <p className="text-xs text-slate-400 mt-1">从气泡工坊选择已保存的预设。</p>
     <div className="mt-4">
       {customThemes && customThemes.length > 0 ? (

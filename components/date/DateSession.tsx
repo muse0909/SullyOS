@@ -104,10 +104,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Core VN State
     // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
     const [viewMode, setViewMode] = useState<'gal' | 'novel' | 'longform'>(() => {
+      // 优先使用角色设置的默认模式，再看 savedDateState
+      if (char.dateViewMode) return char.dateViewMode === 'bubble' ? 'longform' : char.dateViewMode;
       const initialMode = initialState?.viewMode === 'bubble' ? 'longform' : initialState?.viewMode;
       if (initialMode) return initialMode;
       if (initialState?.isNovelMode) return 'novel';
-      if (char.dateViewMode) return char.dateViewMode;
       return 'gal';
     });
     const isNovelMode = viewMode === 'novel';
@@ -500,6 +501,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         bgImage,
         currentSprite,
         isNovelMode,
+        viewMode,
         timestamp: Date.now(),
         peekStatus
     });
@@ -645,8 +647,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     paddingBottom: 'max(80px, calc(env(safe-area-inset-bottom) + 70px))',
                     paddingLeft: '20px',
                     paddingRight: '20px',
-                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 12%, rgba(0,0,0,1) 28%, rgba(0,0,0,1) 100%)',
-                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 12%, rgba(0,0,0,1) 28%, rgba(0,0,0,1) 100%)',
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
+                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
                   } : {
                     paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
                     paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
@@ -665,13 +667,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                     const useBubble = longformTheme === 'long-bubble';
                     const bubbleStyle = char.dateBubbleThemeStyle || 'dark';
                     
-                    // 获取气泡预设样式（如果已选择）
+                    // 获取气泡预设样式（如果已选择）- AI和用户都获取
                     let bubblePresetStyle: any = null;
                     if (char.dateLongformBubblePresetId && customThemes) {
                       const preset = customThemes.find(t => t.id === char.dateLongformBubblePresetId);
-                      if (preset && !isUser) {
-                        const aiStyle = preset.ai;
-                        bubblePresetStyle = aiStyle || {};
+                      if (preset) {
+                        bubblePresetStyle = isUser ? (preset.user || preset.ai || {}) : (preset.ai || {});
                       }
                     }
                     
@@ -694,16 +695,22 @@ const DateSession: React.FC<DateSessionProps> = ({
                           )}
                           <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
                             <div
-                              className={`px-5 py-4 text-sm leading-relaxed shadow-sm ${isUser ? 'bg-primary text-white rounded-3xl' : bubblePresetStyle ? '' : (bubbleStyle === 'light' ? 'bg-white text-slate-800 border border-slate-200 rounded-3xl' : 'bg-white/10 text-white/90 border border-white/10 rounded-3xl')}`}
+                              className={`px-5 py-4 text-sm leading-relaxed shadow-sm rounded-3xl ${bubblePresetStyle ? '' : 'bg-white/15 text-white/90 backdrop-blur-md border border-white/20'}`}
                               style={{
                                 wordBreak: 'break-word',
                                 whiteSpace: 'pre-wrap',
-                                ...(bubblePresetStyle && !isUser ? {
-                                  backgroundColor: bubblePresetStyle.backgroundColor || 'rgba(255, 255, 255, 0.1)',
-                                  color: bubblePresetStyle.textColor || 'rgba(255, 255, 255, 0.9)',
+                                ...(bubblePresetStyle ? {
+                                  backgroundColor: isUser
+                                    ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
+                                    : (bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)'),
+                                  color: isUser
+                                    ? (bubblePresetStyle.userTextColor || bubblePresetStyle.textColor || 'rgba(255,255,255,0.9)')
+                                    : (bubblePresetStyle.textColor || 'rgba(255,255,255,0.9)'),
                                   borderRadius: bubblePresetStyle.borderRadius ? `${bubblePresetStyle.borderRadius}px` : '24px',
                                   border: bubblePresetStyle.borderColor ? `1px solid ${bubblePresetStyle.borderColor}` : 'none',
                                   opacity: bubblePresetStyle.opacity ?? 1,
+                                  backdropFilter: 'blur(12px)',
+                                  WebkitBackdropFilter: 'blur(12px)',
                                 } : {})
                               }}
                             >
@@ -719,7 +726,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       );
                     }
                     
-                    // half-novel: 半屏小说风格 - 半透明气泡叠在背景上
+                    // half-novel: 半屏小说风格 - 半透明气泡叠在背景上（也支持预设切换）
                     return (
                       <div
                         key={msg.id}
@@ -733,8 +740,24 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onMouseLeave={handleMsgTouchEnd}
                       >
                         <div
-                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm bg-white/15 text-white/95 backdrop-blur-md border border-white/20`}
-                          style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${bubblePresetStyle ? '' : 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20'}`}
+                          style={{
+                            wordBreak: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            ...(bubblePresetStyle ? {
+                              backgroundColor: isUser
+                                ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
+                                : (bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)'),
+                              color: isUser
+                                ? (bubblePresetStyle.userTextColor || bubblePresetStyle.textColor || 'rgba(255,255,255,0.95)')
+                                : (bubblePresetStyle.textColor || 'rgba(255,255,255,0.95)'),
+                              borderRadius: bubblePresetStyle.borderRadius ? `${bubblePresetStyle.borderRadius}px` : '24px',
+                              border: bubblePresetStyle.borderColor ? `1px solid ${bubblePresetStyle.borderColor}` : 'none',
+                              opacity: bubblePresetStyle.opacity ?? 1,
+                              backdropFilter: 'blur(12px)',
+                              WebkitBackdropFilter: 'blur(12px)',
+                            } : {})
+                          }}
                         >
                           {content}
                         </div>
@@ -898,36 +921,36 @@ const DateSession: React.FC<DateSessionProps> = ({
             <div className="absolute bottom-0 left-0 right-0 z-30" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} onClick={e => e.stopPropagation()}>
 
               {showPlusMenu && (
-                <div className="px-4 pb-2 flex-col gap-2">
+                <div className="px-4 pb-2 flex flex-col gap-2 w-full max-w-full overflow-hidden">
                   {showVoiceLangPicker && (
                     <div className="flex gap-2 flex-wrap justify-center">
                       {VOICE_LANG_OPTIONS.map(opt => (
                         <button key={opt.v}
                           onClick={() => { updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
-                          className={`h-8 px-3 rounded-full text-[11px] font-bold active:scale-95 transition-all ${voiceLang === opt.v ? 'bg-white/30 text-white' : 'bg-black/30 text-white/60 border border-white/15'}`}>
+                          className={`h-8 px-3 rounded-full text-[11px] font-bold active:scale-95 transition-all ${voiceLang === opt.v ? 'bg-white/30 text-white' : 'bg-black/80 text-white/90 border border-white/25'}`}>
                           {opt.l}
                         </button>
                       ))}
                       <button
                         onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}
-                        className="h-8 px-3 rounded-full text-[11px] font-bold bg-red-500/60 text-white border-red-300/40 active:scale-95">
+                        className="h-8 px-3 rounded-full text-[11px] font-bold bg-red-500/90 text-white border-red-300/50 active:scale-95">
                         {voiceEnabled ? '关闭语音' : '开启语音'}
                       </button>
                     </div>
                   )}
 
                   {showModeSwitch ? (
-                    <div className="flex gap-2 justify-center w-full px-4">
+                    <div className="flex gap-2 justify-center flex-wrap px-4">
                       {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([m, label]) => (
                         <button key={m}
                           onClick={() => { setViewMode(m); updateCharacter(char.id, { dateViewMode: m }); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
-                          className={`flex-1 py-3 px-2 rounded-2xl text-sm font-bold transition-all active:scale-95 whitespace-nowrap border ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/50 backdrop-blur-md text-white/90 border-white/40'}`}>
+                          className={`py-2.5 px-5 rounded-2xl text-xs font-bold transition-all active:scale-95 whitespace-nowrap border ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/50 backdrop-blur-md text-white/90 border-white/40'}`}>
                           {label}
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div className="flex gap-2 justify-center flex-wrap">
+                    <div className="flex gap-2 justify-center flex-wrap w-full">
                       {canReroll && !isTyping && (
                         <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
                           className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
@@ -939,7 +962,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         模式切换
                       </button>
                       <button onClick={() => setShowVoiceLangPicker(p => !p)}
-                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-slate-400/40 text-white/80 border border-white/20'}`}>
+                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-emerald-300/70 text-white border border-white/20'}`}>
                         语音设置
                       </button>
                       {viewMode === 'novel' && (
@@ -950,7 +973,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       )}
                       {viewMode === 'gal' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-amber-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
                           主题设置
                         </button>
                       )}

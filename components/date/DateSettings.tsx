@@ -238,6 +238,25 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </section>
 
+                <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h3 className="text-xs font-bold text-slate-400 uppercase">默认见面模式</h3>
+                            <p className="text-[11px] text-slate-400 mt-1">可设置角色进入见面时默认启动的视图模式。</p>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                        {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([mode, label]) => (
+                            <button
+                                key={mode}
+                                onClick={() => { updateCharacter(char.id, { dateViewMode: mode }); addToast('默认见面模式已保存', 'success'); }}
+                                className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-all active:scale-95 ${char.dateViewMode === mode ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </section>
+
                 <section>
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">背景 (Background)</h3>
                     <div 
@@ -478,29 +497,30 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                 </div>
             )}
 
-{/* ===== 长文气泡主题 ===== */}
+{/* ===== 长文模式主题 ===== */}
 <div className="bg-white rounded-2xl p-4 shadow-sm border-slate-100 space-y-3">
-  <div className="text-sm font-bold text-slate-700">长文气泡主题</div>
-  <p className="text-xs text-slate-400">在长文气泡模式下生效</p>
+  <div className="text-sm font-bold text-slate-700">长文模式主题</div>
+  <p className="text-xs text-slate-400">在长文模式下选择展示风格。</p>
   <div className="flex gap-3">
     <button
-      onClick={() => updateCharacter(char.id, { dateBubbleThemeStyle: 'dark' })}
+      onClick={() => updateCharacter(char.id, { dateLongformTheme: 'half-novel' })}
       className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-        (char.dateBubleThemeStyle || 'dark') === 'dark'
-          ? 'border-primary bg-slate-800 text-white'
+        (char.dateLongformTheme || 'half-novel') === 'half-novel'
+          ? 'border-primary bg-slate-900 text-white'
           : 'border-slate-200 bg-slate-50 text-slate-600'
       }`}
     >
-      🌙 暗色
+      半小说式
     </button>
     <button
-      onClick={() => updateCharacter(char.id, { dateBubleThemeStyle: 'light' })}
+      onClick={() => updateCharacter(char.id, { dateLongformTheme: 'long-bubble' })}
       className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-        char.dateBubbleThemeStyle === 'light'
+        char.dateLongformTheme === 'long-bubble'
           ? 'border-primary bg-white text-slate-800 shadow-sm'
           : 'border-slate-200 bg-slate-50 text-slate-600'
       }`}
-    >☀️ 亮色
+    >
+      长文气泡式
     </button>
   </div>
 </div>

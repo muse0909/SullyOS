@@ -463,8 +463,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </section>
 
-            </div>
-          </>) : (<>
+            </>) : (<>
 
 {/* ===== 长文模式主题 ===== */}
 <div className="space-y-4">
@@ -539,7 +538,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     </div>
   </section>
 </div>
-            </>)}
+            </>)}</div>
             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
             {showUrlModal && (
                 <div className="fixed inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setShowUrlModal(false)}>

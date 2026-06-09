@@ -1,46 +1,51 @@
 
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
-import Settings from '../apps/Settings';
-import Character from '../apps/Character';
-import Chat from '../apps/Chat'; 
-import GroupChat from '../apps/GroupChat'; 
-import ThemeMaker from '../apps/ThemeMaker';
-import Appearance from '../apps/Appearance';
-import Gallery from '../apps/Gallery'; 
-import DateApp from '../apps/DateApp'; 
-import UserApp from '../apps/UserApp';
-import JournalApp from '../apps/JournalApp'; 
-import ScheduleApp from '../apps/ScheduleApp'; 
-import RoomApp from '../apps/RoomApp'; 
-import CheckPhone from '../apps/CheckPhone';
-import SocialApp from '../apps/SocialApp'; 
-import StudyApp from '../apps/StudyApp'; 
-import FAQApp from '../apps/FAQApp'; 
-import GameApp from '../apps/GameApp'; 
-import WorldbookApp from '../apps/WorldbookApp';
-import NovelApp from '../apps/NovelApp'; 
-import BankApp from '../apps/BankApp';
-import XhsStockApp from '../apps/XhsStockApp';
-import XhsFreeRoamApp from '../apps/XhsFreeRoamApp';
-import BrowserApp from '../apps/BrowserApp';
-import SongwritingApp from '../apps/SongwritingApp';
-import MusicApp from '../apps/MusicApp';
-import CallApp from '../apps/CallApp';
-import VoiceDesignerApp from '../apps/VoiceDesignerApp';
-import GuidebookApp from '../apps/GuidebookApp';
-import LifeSimApp from '../apps/LifeSimApp';
-import MemoryPalaceApp from '../apps/MemoryPalaceApp';
-import HandbookApp from '../apps/HandbookApp';
-import QQBridge from '../apps/QQBridge';
-import HotNewsApp from '../apps/HotNewsApp';
-import VRWorldApp from '../apps/VRWorldApp';
-import CharCreatorDevApp from '../apps/CharCreatorDevApp';
-import { SpecialMomentsApp } from './ValentineEvent';
+
+// 按需懒加载各 App —— 切到对应 App 时才下载/解析其代码块，首屏只加载 Launcher 与外壳，
+// 大体积 App（MemoryPalace / VRWorld / Songwriting 等）不再压在主包里。
+// 默认导出直接 lazy；命名导出（SpecialMomentsApp）用 .then 适配成 { default }。
+// Launcher 保持静态导入：桌面常驻、需要秒开，不走懒加载。
+const Settings = lazy(() => import('../apps/Settings'));
+const Character = lazy(() => import('../apps/Character'));
+const Chat = lazy(() => import('../apps/Chat'));
+const GroupChat = lazy(() => import('../apps/GroupChat'));
+const ThemeMaker = lazy(() => import('../apps/ThemeMaker'));
+const Appearance = lazy(() => import('../apps/Appearance'));
+const Gallery = lazy(() => import('../apps/Gallery'));
+const DateApp = lazy(() => import('../apps/DateApp'));
+const UserApp = lazy(() => import('../apps/UserApp'));
+const JournalApp = lazy(() => import('../apps/JournalApp'));
+const ScheduleApp = lazy(() => import('../apps/ScheduleApp'));
+const RoomApp = lazy(() => import('../apps/RoomApp'));
+const CheckPhone = lazy(() => import('../apps/CheckPhone'));
+const SocialApp = lazy(() => import('../apps/SocialApp'));
+const StudyApp = lazy(() => import('../apps/StudyApp'));
+const FAQApp = lazy(() => import('../apps/FAQApp'));
+const GameApp = lazy(() => import('../apps/GameApp'));
+const WorldbookApp = lazy(() => import('../apps/WorldbookApp'));
+const NovelApp = lazy(() => import('../apps/NovelApp'));
+const BankApp = lazy(() => import('../apps/BankApp'));
+const XhsStockApp = lazy(() => import('../apps/XhsStockApp'));
+const XhsFreeRoamApp = lazy(() => import('../apps/XhsFreeRoamApp'));
+const BrowserApp = lazy(() => import('../apps/BrowserApp'));
+const SongwritingApp = lazy(() => import('../apps/SongwritingApp'));
+const MusicApp = lazy(() => import('../apps/MusicApp'));
+const CallApp = lazy(() => import('../apps/CallApp'));
+const VoiceDesignerApp = lazy(() => import('../apps/VoiceDesignerApp'));
+const GuidebookApp = lazy(() => import('../apps/GuidebookApp'));
+const LifeSimApp = lazy(() => import('../apps/LifeSimApp'));
+const MemoryPalaceApp = lazy(() => import('../apps/MemoryPalaceApp'));
+const HandbookApp = lazy(() => import('../apps/HandbookApp'));
+const QQBridge = lazy(() => import('../apps/QQBridge'));
+const HotNewsApp = lazy(() => import('../apps/HotNewsApp'));
+const VRWorldApp = lazy(() => import('../apps/VRWorldApp'));
+const CharCreatorDevApp = lazy(() => import('../apps/CharCreatorDevApp'));
+const SpecialMomentsApp = lazy(() => import('./ValentineEvent').then(m => ({ default: m.SpecialMomentsApp })));
 import { Like520Controller, shouldShowLike520Popup } from './Like520Event';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { WorkerUpdateReminderController, shouldShowWorkerUpdateReminder } from './WorkerUpdateReminderEvent';
@@ -320,6 +325,18 @@ const ImportRecoveryPopup: React.FC<{
     </div>
   );
 };
+
+// App 懒加载时的占位：居中三点轻脉冲，复用全局 dot-pulse 动画，配合外壳的毛玻璃背景不抢戏。
+// chunk 命中缓存后几乎一闪而过，仅首次打开某 App 时短暂可见。
+const AppLoadingFallback: React.FC = () => (
+  <div className="w-full h-full flex items-center justify-center bg-transparent">
+    <div className="flex items-center gap-1.5">
+      <span className="w-2.5 h-2.5 rounded-full bg-primary/70 animate-dot-pulse" style={{ animationDelay: '0ms' }} />
+      <span className="w-2.5 h-2.5 rounded-full bg-primary/70 animate-dot-pulse" style={{ animationDelay: '160ms' }} />
+      <span className="w-2.5 h-2.5 rounded-full bg-primary/70 animate-dot-pulse" style={{ animationDelay: '320ms' }} />
+    </div>
+  </div>
+);
 
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
@@ -625,7 +642,9 @@ const PhoneShell: React.FC = () => {
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
-              {renderApp()}
+              <Suspense fallback={<AppLoadingFallback />}>
+                {renderApp()}
+              </Suspense>
             </AppErrorBoundary>
           </div>
 

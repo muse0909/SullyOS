@@ -985,6 +985,8 @@ const WorldView: React.FC<{
 
         <div>
             <div className="flex items-center gap-2.5 mb-3 mt-1">
+                {/* 左侧占位：与右侧齿轮等宽，撑对称，让「彼方动态」真正居中 */}
+                {feed.length > 0 && <span className="w-7 shrink-0" aria-hidden="true" />}
                 <span className="h-px flex-1" style={{ background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.14))' }} />
                 <span className="text-[10.5px] tracking-[0.3em] text-white/50" style={{ fontFamily: `'Noto Serif SC',serif` }}>彼方动态</span>
                 <span className="h-px flex-1" style={{ background: 'linear-gradient(90deg,rgba(255,255,255,.14),transparent)' }} />

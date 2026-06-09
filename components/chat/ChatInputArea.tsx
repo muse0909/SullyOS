@@ -434,7 +434,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             {/* Panels — always mounted, height transitions for smooth open/close */}
             {!selectionMode && (
                 <div
-                    className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
+                    className={`sully-chat-panel ${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
                     style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px' }}
                 >
                     

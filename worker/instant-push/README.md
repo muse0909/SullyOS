@@ -4,6 +4,8 @@
 收到前端的 POST 请求后，调用你自己的 OpenAI 兼容 LLM，把回复分句后逐条发成 Web Push 通知。
 默认零数据库、零 cron；大包默认走 `_multipart` 分片传输。想要更稳的大对象传输时，可以额外启用 D1 BlobStore，Worker 会自动建表并顺手清理过期数据。
 
+> **改这里的 `sse: { backupPush: 'on' }` 配置或前端 catch 逻辑前**，先读 [`docs/instant-push-dual-channel.md`](../../docs/instant-push-dual-channel.md)。SSE 跟 Web Push 是并发双通道、SW 端按 messageId 去重 —— 这是个**结构性契约**，破了就会重现 iOS PWA「报错但收到消息」的 bug。`backupPush='on'` 在 amsg-instant 0.9+ 是强制的，库会直接拒绝其他值。
+
 ---
 
 ## 文件说明

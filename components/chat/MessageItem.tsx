@@ -283,9 +283,9 @@ const ForwardCard: React.FC<{
 
             {/* Expanded Full-screen Overlay */}
             {expanded && (
-                <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col animate-fade-in" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={(e) => e.stopPropagation()}>
                     {/* Header */}
-                    <div className="pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 px-4 bg-white border-b border-slate-100 shrink-0 flex items-center gap-3">
+                    <div className="pt-[calc(var(--safe-top)+0.75rem)] pb-3 px-4 bg-white border-b border-slate-100 shrink-0 flex items-center gap-3">
                         <button onClick={() => setExpanded(false)} className="p-2 -ml-2 rounded-full hover:bg-slate-100 text-slate-600">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
@@ -1627,11 +1627,33 @@ const MessageItem = React.memo(({
                     style={{ height: 200 }}
                     onLoad={(e) => {
                         try {
-                            const f = e.currentTarget;
+                            const f = e.currentTarget as HTMLIFrameElement & { __htmlCardRO?: ResizeObserver };
                             const doc = f.contentDocument;
                             if (!doc || !doc.body) return;
-                            const h = Math.min(800, Math.max(60, doc.body.scrollHeight + 4));
-                            f.style.height = h + 'px';
+                            // 量内容真实高度并把 iframe 调成等高，避免内部滚动。
+                            // 上限放宽到 2400，足够长卡片完整展开；真正超长的才会兜底滚动。
+                            const fit = () => {
+                                try {
+                                    const root = doc.documentElement;
+                                    const body = doc.body;
+                                    const natural = Math.max(
+                                        body.scrollHeight, body.offsetHeight,
+                                        root ? root.scrollHeight : 0,
+                                    );
+                                    const h = Math.min(2400, Math.max(60, natural + 4));
+                                    f.style.height = h + 'px';
+                                } catch { /* 同源读不到时静默 */ }
+                            };
+                            fit();
+                            // 交互卡片（:checked 展开 / 折叠）、动画、字体晚到都会改变高度，
+                            // 用 ResizeObserver 持续跟随，让高度始终自适应而不是只量一次。
+                            f.__htmlCardRO?.disconnect();
+                            if (typeof ResizeObserver !== 'undefined') {
+                                const ro = new ResizeObserver(() => fit());
+                                ro.observe(doc.body);
+                                if (doc.documentElement) ro.observe(doc.documentElement);
+                                f.__htmlCardRO = ro;
+                            }
                         } catch { /* 同源也读不到时静默 */ }
                     }}
                 />

@@ -772,7 +772,7 @@ export const useChatAI = ({
 
             // ─── Instant Push 分支 ───
             // 与本地 fetch 对称：sendInstantPushAndAwaitReply 内部完成 sub 获取 / push 监听 /
-            // 90s 超时兜底，返回时 push 已落库（或失败）。外层 finally 统一清 isTyping /
+            // 300s 超时兜底，返回时 push 已落库（或失败）。外层 finally 统一清 isTyping /
             // KeepAlive / 跑 memory palace 后处理，与本地路径完全对齐。
             // worker 端跑完 LLM → push → SW → activeMsgRuntime.flushInboxToChat 写 DB 并刷 UI。
             if (isInstantConfigReady()) {
@@ -793,13 +793,15 @@ export const useChatAI = ({
                     // 放顶层字段, 不进 metadata —— 框架不会回显它, 副 API apiKey 不会泄进 push.
                     ...(instantEmotionEval ? { emotionEval: instantEmotionEval } : {}),
                 }, char.id, undefined, onInstantPosted);
-                if (!instantResult.ok) {
+                if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
                     // 长报错 (worker 400 校验信息 + CF 错误页可能很长) 走弹窗, 手机用户能
                     // 看清并复制反馈; 没注入 showError 时降级到 toast.
                     // 完整诊断由 instantPushClient 的 formatDiagnostics 输出 —— 涵盖
                     // http (status/bodyBytes/keepalive/cf-ray/response 截断) / fetchError /
                     // config / subscription / timeout / context / env 各段, 已主动 mask
                     // worker / api host, 不含 apiKey / apiUrl / workerUrl / push endpoint.
+                    //
+                    // 'cancelled' = pagehide / signal abort, caller 自己取消的, 不弹错。
                     const errMsg = instantResult.error || '未知错误';
                     if (showError && instantResult.diagnostics) {
                         showError(

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>大头贴机 · 出件啦 ｜ 520</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -80,7 +80,11 @@
   .title-en { font-size: 7px; letter-spacing: 2px; color: var(--text-soft); margin-top: 1px; }
 
   .stage {
-    flex: 0 0 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+    /* 撑满 header/action-row/panel 之间的剩余空间，把 panel 推到 .app 底，
+       否则手机模式下 children flex-start 排列，panel 上面的人物区只占自然高度，
+       panel 之后会剩一大块空白，看起来像"夸张的 safe area"把 header 顶飞。
+       character-frame 自己有 max-width: 220px + aspect-ratio: 1/1，stage 拉大不会变形。 */
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
     padding: 2px 10px; position: relative;
   }
   .character-frame {
@@ -162,7 +166,7 @@
     border-radius: 28px 28px 0 0;
     border-top: 1px solid rgba(255, 255, 255, 1);
     box-shadow: 0 -8px 24px rgba(199, 97, 130, 0.08);
-    padding: 14px 0 calc(12px + env(safe-area-inset-bottom));
+    padding: 14px 0 calc(12px + var(--like520-safe-bottom, env(safe-area-inset-bottom)));
     max-height: 55vh;
     display: flex; flex-direction: column;
     overscroll-behavior: contain;
@@ -636,6 +640,11 @@ let LIKE520_DRAFT_KEY = ''; // 调用方可传唯一 draftKey 做草稿隔离（
 
 function applyLike520Init(init) {
   if (!init) return;
+  // iframe 内 env(safe-area-inset-bottom) 在 iOS standalone PWA 常返回 0，
+  // 父层把 JS probe 探出的真实值传进来，写到 :root 兜底。
+  if (typeof init.safeBottomPx === 'number' && init.safeBottomPx >= 0) {
+    document.documentElement.style.setProperty('--like520-safe-bottom', init.safeBottomPx + 'px');
+  }
   LIKE520_MODE = init.mode || 'char';
   LIKE520_CHAR_NAME = init.charName || '';
   LIKE520_IS_SULLY = !!init.isSully;

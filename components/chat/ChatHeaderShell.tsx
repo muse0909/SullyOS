@@ -215,13 +215,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                           ? 'bg-white/85 backdrop-blur-xl border-b border-white/70 shadow-sm'
                           : 'bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm';
     const headerBaseHeight = headerDensity === 'compact' ? '5rem' : headerDensity === 'airy' ? '7rem' : '6rem';
-    // 两种对齐都用对称 py，让内容在安全区下方垂直居中（原标准布局只给 pb → 底贴、上方留白、整体不居中）。
+    // 两种对齐都用对称 py，让内容垂直居中（原标准布局只给 pb → 底贴、上方留白、整体不居中）。
     const headerDensityClass = headerDensity === 'compact' ? 'px-4 py-2' : headerDensity === 'airy' ? 'px-6 py-4' : 'px-5 py-3';
-    // 让出顶部状态栏（paddingTop = safe-top），内容在其下方约 headerBaseHeight 的可用区内垂直居中。
-    const headerSafeStyle: React.CSSProperties = {
-        minHeight: `calc(${headerBaseHeight} + var(--safe-top))`,
-        paddingTop: 'var(--safe-top)',
-    };
+    // safe-top 已由外层 spacer 单独让位（见 return：透明 + backdrop-blur 的状态栏占位条），
+    // header 主体不再把 --safe-top 算进高度（否则会让两次）；内容在 headerBaseHeight 内垂直居中。
+    const headerSafeStyle: React.CSSProperties = { minHeight: headerBaseHeight };
     const primaryTextClass = acnh ? 'text-[#6b5a3e]' : isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
     const secondaryTextClass = acnh ? 'text-[#5a9e7a]' : isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
     const iconButtonClass = acnh
@@ -380,8 +378,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     );
 
     return (
-        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`} style={headerSafeStyle}>
-            {/* 动森彩蛋：顶栏右下角纯色松树剪影（z-[-1] 在内容之下，不挡按钮） */}
+        <div className="shrink-0 z-30 sticky top-0">
+        {/* safe-top spacer：透明 + backdrop-blur 跟 iOS status bar 一致自适应容器色，刘海下不再铺白带 */}
+        <div className="bg-transparent backdrop-blur-xl" style={{ height: 'var(--safe-top)' }} />
+        {/* header 主体：sully-chat-header 钩子 + 内容垂直居中（items-center）；safe-top 已由上面 spacer 让位 */}
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center relative ${headerToneClass}`} style={headerSafeStyle}>
+            {/* 动森彩蛋：顶栏右下角纯色松树剪影（z-[-1] 在内容之下，不挡按钮）。塞在 header 主体内而非外层 spacer，否则会飘到刘海上 */}
             {acnh && !selectionMode && (
                 <svg viewBox="0 0 140 46" className="absolute right-2 bottom-[5px] h-9 w-auto pointer-events-none" style={{ zIndex: -1, opacity: 0.9 }} fill="#76b48f" aria-hidden>
                     <rect x="98" y="40" width="4" height="6" /><path d="M84 41 L116 41 L100 24Z" /><path d="M88 32 L112 32 L100 18Z" /><path d="M91 24 L109 24 L100 10Z" />
@@ -514,6 +516,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>,
                 document.body,
             )}
+        </div>
         </div>
     );
 };

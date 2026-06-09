@@ -523,7 +523,7 @@ const CouponPicker: React.FC<{
     useEffect(() => { reload(); /* eslint-disable-next-line */ }, [storeCode, beCode, orderType, beType]);
 
     return (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center" onClick={onClose}>
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={onClose}>
             <div
                 className="bg-gradient-to-b from-yellow-50 to-amber-50 w-full sm:max-w-md rounded-t-2xl shadow-2xl flex flex-col"
                 style={{ maxHeight: '70vh' }}
@@ -1294,7 +1294,7 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" onClick={onClose}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={onClose}>
             <style>{`
                 .mcd-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
                 .mcd-scroll::-webkit-scrollbar-track { background: transparent; }

@@ -106,10 +106,41 @@ export const openDB = (): Promise<IDBDatabase> => {
     let settled = false;
 
     request.onerror = () => {
-        console.error("DB Open Error:", request.error);
+        const err = request.error;
+        // 版本回退兜底: 浏览器里已存在「比当前 build 的 DB_VERSION 更高」的版本时
+        // (用户先跑过更新的 build / 另一个 tab 升过级 / SW 缓存了更新的 bundle),
+        // 带 DB_VERSION 打开会抛 VersionError("lower version than existing")。
+        // 旧逻辑直接 reject → 整个 origin 的 IndexedDB 读写全挂: SYSTEM ERROR、
+        // 美化(themes 存在库里)读不出来、线下(LifeSim)进不去。其实更高版本的 store
+        // 只是当前 schema 的超集, 不带版本号打开就能连到现有版本、读写完全兼容,
+        // 不需要也不能降级建表。所以这里回退到「不带版本号 open」一次而不是报死。
+        if (err?.name === 'VersionError') {
+            console.warn('[DB] open VersionError —— 现有版本高于当前 build, 回退到不带版本号打开');
+            settled = true; // 原 request 已终结 (VersionError 后不会再 onsuccess), 标记以防迟到回调
+            const fb = indexedDB.open(DB_NAME); // 不带版本号 = 连到现有(更高)版本, 不触发 upgrade
+            fb.onsuccess = () => {
+                const db = fb.result;
+                // 与正常路径一致地挂上失效自愈回调 (另一 tab 升级 / 浏览器强关连接)。
+                db.onversionchange = () => {
+                    db.close();
+                    if (dbPromise === promise) dbPromise = null;
+                };
+                db.onclose = () => {
+                    if (dbPromise === promise) dbPromise = null;
+                };
+                resolve(db);
+            };
+            fb.onerror = () => {
+                console.error("DB Open Error (versionless fallback):", fb.error);
+                if (dbPromise === promise) dbPromise = null;
+                reject(fb.error);
+            };
+            return;
+        }
+        console.error("DB Open Error:", err);
         if (dbPromise === promise) dbPromise = null; // 打开失败别把 rejected promise 缓存住
         settled = true;
-        reject(request.error);
+        reject(err);
     };
 
     request.onsuccess = () => {

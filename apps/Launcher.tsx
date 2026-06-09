@@ -625,7 +625,9 @@ const Launcher: React.FC = () => {
 
   const contentColor = theme.contentColor || '#ffffff';
   const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：Dock 换奶油木质底
-  const launcherBottomInset = 'calc(var(--safe-bottom) + 1.25rem)';
+  // 已迁移 App 外壳已收回到可见 viewport 底边，dock 仅需自留视觉间距，无需再 + safe-bottom
+  // （否则会比 home 条上方多让 34px，dock 看起来悬空）。
+  const launcherBottomInset = '1.25rem';
   
   const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0);
   const widgetUnread = widgetChar && unreadMessages[widgetChar.id] ? unreadMessages[widgetChar.id] : 0;

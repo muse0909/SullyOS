@@ -770,11 +770,18 @@ const PhoneShell: React.FC = () => {
        
        <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
        
-       {/* 外壳安全区：自理安全区的 App 全屏铺底、自己让位，外壳不加 padding（否则双重留白或露出外壳底色成硬色条）；
-          未迁移 App 暂由外壳用单一来源变量 --safe-* 兜底，保证内容不被状态栏/home 条裁切。 */}
+       {/* 外壳安全区两种策略：
+          - 未迁移 App：外壳铺满 body（含 --app-height 多出的 +safe-bottom 溢出区），用 padding 让位安全区，
+            内容只画到可见 viewport 内，home 条上方留出 safe-bottom 视觉间隙。
+          - 已迁移 App（彼方/聊天/群聊/桌面）：自理安全区。外壳直接把底边收回到可见 viewport
+            （bottom = --standalone-safe-area-bottom），不让那多出来的 34px 把 App 底部控件压到 home 条上。 */}
       <div
-        className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none flex flex-col"
-        style={shellHandlesSafeArea ? { paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' } : undefined}
+        className="absolute top-0 left-0 right-0 z-10 overflow-hidden bg-transparent overscroll-none flex flex-col"
+        style={
+          shellHandlesSafeArea
+            ? { bottom: 0, paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }
+            : { bottom: 'var(--standalone-safe-area-bottom, 0px)' }
+        }
       >
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>

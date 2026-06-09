@@ -957,16 +957,21 @@ export async function sendInstantPushAndAwaitReply(
   const abortCtrl = new AbortController();
   const cleanups: Array<() => void> = [];
 
-  // observed signal: SW broadcast → resolve 一个带 sessionId 的 receipt。identity 用本次
-  // 预分配 sessionId, mismatch 会被库内 _validateReceipt 拦截重等, 杜绝并发不同 char 串单。
+  // observed signal: SW broadcast → resolve 一个带 sessionId 的 receipt。identity 优先用 sessionId 严格匹配,
+  // 杜绝同 char 多轮并发 / 上一轮延迟到达的旧 push 把新一轮 send 误判成 delivered。老 inbox 残留消息可能不带
+  // sessionId, 此时回退按 charId 兼容; 等所有客户端 / SW 全部走过这次 PR 之后这个 fallback 可以删。
   let receivedPushDetail: any = null;
   const observed = new Promise<{ sessionId: string; channel: string }>((resolve) => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.charId === charId) {
+      const matchesSession = detail?.sessionId && detail.sessionId === sessionId;
+      const matchesCharFallback = !detail?.sessionId && detail?.charId === charId;
+      if (matchesSession || matchesCharFallback) {
         receivedPushDetail = detail;
         instantTrace(sessionId, 'active-msg-received', {
           detailCharId: detail?.charId,
+          detailSessionId: detail?.sessionId,
+          matchedBy: matchesSession ? 'sessionId' : 'charId-fallback',
           bodyChars: typeof detail?.body === 'string' ? detail.body.length : undefined,
           emotionUpdate: !!detail?.emotionUpdate,
         });

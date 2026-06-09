@@ -878,6 +878,9 @@ const Chat: React.FC = () => {
         // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
         const instantCfg = loadInstantConfig();
         if (type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
+            // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
+            // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
+            if (isTyping) return;
             // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
             setInstantSendingActive(true);
             triggerAI(messages, undefined, () => setInstantSendingActive(false));
@@ -888,6 +891,8 @@ const Chat: React.FC = () => {
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
     // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
     const handleManualTrigger = () => {
+        // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
+        if (isTyping) return;
         if (!isInstantConfigReady()) { triggerAI(messages); return; }
         // instantSendingActive 驱动 header "发送中…" 徽章 (拼接+发送窗口). 消息上的三个小圆点
         // 另走纯前端判定 (isTyping && 最后一条消息), 见渲染处.

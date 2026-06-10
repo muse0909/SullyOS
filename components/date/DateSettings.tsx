@@ -14,13 +14,14 @@ interface DateSettingsProps {
 }
 
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
-    const { updateCharacter, addToast } = useOS();
+    const { updateCharacter, addToast, customThemes } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
     const [tempSpriteConfig, setTempSpriteConfig] = useState<SpriteConfig>(DEFAULT_SPRITE_CONFIG);
     const [newEmotionName, setNewEmotionName] = useState<string>('');
+    const [settingsTab, setSettingsTab] = useState<'visual' | 'longform'>('longform');
 
     // Skin system state
     const [newSkinName, setNewSkinName] = useState('');
@@ -181,15 +182,30 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
 
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col">
-            <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white shrink-0 z-20">
-                <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                </button>
-                <span className="font-bold text-slate-700">场景布置</span>
-                <div className="w-8"></div>
+            <div className="flex flex-col gap-3 px-4 pt-4 pb-3 border-b border-slate-200 bg-white shrink-0 z-20" style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 12px)' }}>
+                <div className="flex items-center justify-between">
+                    <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                    </button>
+                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '视觉主题' : '长文主题'}</span>
+                    <div className="w-8"></div>
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setSettingsTab('visual')}
+                        className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-all active:scale-95 ${settingsTab === 'visual' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                        视觉主题
+                    </button>
+                    <button
+                        onClick={() => setSettingsTab('longform')}
+                        className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-all active:scale-95 ${settingsTab === 'longform' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                        长文主题
+                    </button>
+                </div>
             </div>
             
             {/* Live Preview Area */}
+            {settingsTab === 'visual' ? (
             <div className="h-64 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
                     <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
                     <div className="absolute inset-0 flex items-end justify-center pointer-events-none">
@@ -203,8 +219,47 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
             </div>
+            ) : (
+            <div className="h-72 bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
+                    <div className="absolute inset-0 bg-cover bg-center opacity-60" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
+                    <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
+                    {/* 模拟气泡预览 */}
+                    <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2 z-10"
+                      style={{
+                        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
+                        maskImage: 'linear-gradient(to bottom, transparent 0%, black 30%, black 100%)',
+                      }}
+                    >
+                      {(char.dateLongformTheme || 'half-novel') === 'half-novel' ? (
+                        <>
+                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[85%]">
+                            这是半小说式的气泡预览效果，背景渐变淡出...
+                          </div>
+                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2 text-white/90 text-xs max-w-[70%] ml-auto">
+                            用户消息预览
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex gap-2 items-start">
+                            <div className="w-6 h-6 rounded-full bg-slate-400 shrink-0" />
+                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[80%]">
+                              长文气泡式预览，头像在顶部显示...
+                            </div>
+                          </div>
+                          <div className="flex gap-2 items-start justify-end">
+                            <div className="bg-primary/80 rounded-2xl px-4 py-2 text-white text-xs max-w-[70%]">
+                              用户消息预览
+                            </div>
+                            <div className="w-6 h-6 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-[8px] text-slate-600">我</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+            </div>
+            )}
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-8 pb-20">
+            <div className="flex-1 overflow-y-auto p-5 space-y-8 pb-20">{settingsTab === 'visual' ? (<>
                 <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-4">立绘位置调整</h3>
                     <div className="space-y-6">
@@ -235,6 +290,25 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         >
                             <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${char.dateLightReading ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
                         </button>
+                    </div>
+                </section>
+
+                <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h3 className="text-xs font-bold text-slate-400 uppercase">默认见面模式</h3>
+                            <p className="text-[11px] text-slate-400 mt-1">可设置角色进入见面时默认启动的视图模式。</p>
+                        </div>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                        {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([mode, label]) => (
+                            <button
+                                key={mode}
+                                onClick={() => { updateCharacter(char.id, { dateViewMode: mode }); addToast('默认见面模式已保存', 'success'); }}
+                                className={`flex-1 py-3 rounded-2xl text-sm font-bold transition-all active:scale-95 ${char.dateViewMode === mode ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                                {label}
+                            </button>
+                        ))}
                     </div>
                 </section>
 
@@ -429,10 +503,92 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </section>
 
-                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-            </div>
+            </>) : (<>
 
-            {/* URL Input Modal */}
+{/* ===== 长文模式主题 ===== */}
+<div className="space-y-4">
+  <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <div className="text-sm font-bold text-slate-700">长文模式主题</div>
+    <p className="text-xs text-slate-400 mt-1">在长文模式下选择展示风格，适配小说与气泡阅读。</p>
+    <div className="mt-4 flex gap-3">
+      <button
+        onClick={() => updateCharacter(char.id, { dateLongformTheme: 'half-novel' })}
+        className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+          (char.dateLongformTheme || 'half-novel') === 'half-novel'
+            ? 'border-primary bg-slate-900 text-white'
+            : 'border-slate-200 bg-slate-50 text-slate-600'
+        }`}
+      >
+        半小说式
+      </button>
+      <button
+        onClick={() => updateCharacter(char.id, { dateLongformTheme: 'long-bubble' })}
+        className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+          char.dateLongformTheme === 'long-bubble'
+            ? 'border-primary bg-white text-slate-800 shadow-sm'
+            : 'border-slate-200 bg-slate-50 text-slate-600'
+        }`}
+      >
+        长文气泡式
+      </button>
+    </div>
+  </section>
+
+  <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <div className="flex items-center justify-between">
+      <div className="text-sm font-bold text-slate-700">气泡预设</div>
+      {char.dateLongformBubblePresetId && (
+        <button
+          onClick={() => { updateCharacter(char.id, { dateLongformBubblePresetId: undefined }); addToast('已还原为默认磨砂气泡', 'success'); }}
+          className="px-3 py-1 rounded-full text-xs font-bold bg-primary/10 text-primary border border-primary/20 active:scale-95 transition-all"
+        >
+          还原默认
+        </button>
+      )}
+    </div>
+    <p className="text-xs text-slate-400 mt-1">从气泡工坊选择已保存的预设。</p>
+    <div className="mt-4">
+      {customThemes && customThemes.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {customThemes.map((theme) => (
+            <button
+              key={theme.id}
+              onClick={() => updateCharacter(char.id, { dateLongformBubblePresetId: theme.id })}
+              className={`px-4 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
+                char.dateLongformBubblePresetId === theme.id
+                  ? 'border-primary bg-slate-50 text-slate-800 shadow-sm'
+                  : 'border-slate-200 bg-slate-50 text-slate-600'
+              }`}
+            >
+              {theme.name || '预设'}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-slate-400 italic py-4 text-center">暂无气泡预设，请先到气泡工坊创建</div>
+      )}
+    </div>
+  </section>
+
+  <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">背景</h3>
+    <div
+      onClick={() => triggerUpload('bg')}
+      className="aspect-video bg-slate-200 rounded-xl overflow-hidden relative border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-primary group"
+    >
+      {char.dateBackground ? (
+        <>
+          <img src={char.dateBackground} className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><span className="text-white text-xs font-bold">更换背景</span></div>
+        </>
+      ) : (
+        <span className="text-slate-400 text-xs">+ 上传背景图</span>
+      )}
+    </div>
+  </section>
+</div>
+            </>)}</div>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
             {showUrlModal && (
                 <div className="fixed inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setShowUrlModal(false)}>
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -477,34 +633,6 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </div>
             )}
-
-{/* ===== 长文气泡主题 ===== */}
-<div className="bg-white rounded-2xl p-4 shadow-sm border-slate-100 space-y-3">
-  <div className="text-sm font-bold text-slate-700">长文气泡主题</div>
-  <p className="text-xs text-slate-400">在长文气泡模式下生效</p>
-  <div className="flex gap-3">
-    <button
-      onClick={() => updateCharacter(char.id, { dateBubbleThemeStyle: 'dark' })}
-      className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-        (char.dateBubleThemeStyle || 'dark') === 'dark'
-          ? 'border-primary bg-slate-800 text-white'
-          : 'border-slate-200 bg-slate-50 text-slate-600'
-      }`}
-    >
-      🌙 暗色
-    </button>
-    <button
-      onClick={() => updateCharacter(char.id, { dateBubleThemeStyle: 'light' })}
-      className={`flex-1 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${
-        char.dateBubbleThemeStyle === 'light'
-          ? 'border-primary bg-white text-slate-800 shadow-sm'
-          : 'border-slate-200 bg-slate-50 text-slate-600'
-      }`}
-    >☀️ 亮色
-    </button>
-  </div>
-</div>
-
             <div className="p-4 border-t border-slate-200 bg-white/90 backdrop-blur-sm sticky bottom-0 z-20">
                 <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">
                     保存当前布置

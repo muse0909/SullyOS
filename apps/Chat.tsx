@@ -1,4 +1,4 @@
-import ThinkingBubble from '../components/chat/ThinkingBubble';
+import ThinkingBubble from "../components/chat/ThinkingBubble";
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -2245,6 +2245,7 @@ if (keepN > 0) {
                     );
                 })}
                 
+                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={`${osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9'} ${osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-[10px]'} object-cover`} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">

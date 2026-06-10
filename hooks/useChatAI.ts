@@ -391,6 +391,12 @@ export async function evaluateEmotionBackground(
 
 const normalizeAiContent = (raw: string): string => {
     let cleaned = raw || '';
+    // 在 strip 前保存思维链内容
+    const thinkMatch = cleaned.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch && thinkMatch[1].trim()) {
+        try { localStorage.setItem("os_last_thinking", thinkMatch[1].trim()); } catch {}
+    }
+
     // Strip hidden chain-of-thought blocks such as <think>...</think>
     cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
     cleaned = cleaned.replace(/<think>[\s\S]*$/gi, '');

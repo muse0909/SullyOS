@@ -1,4 +1,5 @@
-import ApiLogPanel from '../components/settings/ApiLogPanel';
+import ApiLogPanel from "../components/settings/ApiLogPanel";
+import { useApiLogStore } from "../hooks/useApiLogStore";
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
@@ -1611,9 +1612,10 @@ onChange={(e) => updateApiConfig({ ...apiConfig, imgbbApiKey: e.target.value })}
         </section>
         )}
 
-
-<section><ApiLogPanel /></section>
-
+        <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
+              <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+                <ApiLogPanel />
+              </section>
             v2.2 (Realtime Awareness)
         </div>
       </div>

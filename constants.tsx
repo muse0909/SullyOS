@@ -32,6 +32,7 @@ import {
   Brain,
   Notebook,
   Plugs,
+  Planet,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -68,9 +69,11 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   MemoryPalace: ({ className }) => <Brain className={className} weight="bold" />,
   Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
   QQBridge: ({ className }) => <Plugs className={className} weight="bold" />,
+  VRWorld: ({ className }) => <Planet className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
+  { id: AppID.VRWorld, name: '彼方', icon: 'VRWorld', color: 'violet' },
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },

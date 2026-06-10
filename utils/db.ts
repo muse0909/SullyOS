@@ -6,11 +6,13 @@ import {
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState, HandbookEntry, Tracker, TrackerEntry
+    LifeSimState, HandbookEntry, Tracker, TrackerEntry,
+    VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter
 } from '../types';
+import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 50; // Bumped: v50 add 'trackers' + 'tracker_entries' stores (手账 tracker 引擎)
+const DB_VERSION = 62; // Bumped: v62 add messages [charId, type] 复合索引 + 彼方数据表
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -268,6 +270,37 @@ export const openDB = (): Promise<IDBDatabase> => {
           const phlStore = db.createObjectStore('pixel_home_layouts', { keyPath: ['charId', 'roomId'] });
           phlStore.createIndex('charId', 'charId', { unique: false });
       }
+
+      // ─── VR World / 彼方 stores ──────────────────────
+      // v62: messages 加 [charId, type] 复合索引。彼方动态按 (charId, 'vr_card') 直取。
+      try {
+          const msgStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('messages');
+          if (msgStore && !msgStore.indexNames.contains('charId_type')) {
+              msgStore.createIndex('charId_type', ['charId', 'type'], { unique: false });
+          }
+      } catch (e) { console.log('charId_type index migration skipped', e); }
+
+      createStore('vr_novels', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('vr_annotations')) {
+          const vrAnnStore = db.createObjectStore('vr_annotations', { keyPath: 'id' });
+          vrAnnStore.createIndex('novelId', 'novelId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('cc_custom_parts')) {
+          const ccStore = db.createObjectStore('cc_custom_parts', { keyPath: 'id' });
+          ccStore.createIndex('categoryKey', 'categoryKey', { unique: false });
+      }
+      createStore('vr_music', { keyPath: 'id' });
+      createStore('vr_guestbook', { keyPath: 'id' });
+      createStore('vr_scripts', { keyPath: 'id' });
+      createStore('vr_plays', { keyPath: 'id' });
+      createStore('vr_presets', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('vr_letters')) {
+          const ltStore = db.createObjectStore('vr_letters', { keyPath: 'id' });
+          ltStore.createIndex('box', 'box', { unique: false });
+          ltStore.createIndex('status', 'status', { unique: false });
+      }
+      createStore('vr_settings', { keyPath: 'id' });
+      createStore('api_call_log', { keyPath: 'id' });
     };
   });
 };

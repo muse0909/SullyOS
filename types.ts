@@ -34,6 +34,7 @@ export enum AppID {
   MemoryPalace = 'memory_palace', // 记忆宫殿 — 七个房间可视化
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
   QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
+  VRWorld = 'vrworld', // 彼方 — 角色自主登入的虚拟世界
 }
 
 export interface SystemLog {
@@ -1542,7 +1543,6 @@ export interface FullBackupData {
     availableModels?: string[];
     realtimeConfig?: RealtimeConfig;  // 实时感知配置（天气/新闻/Notion）
     customIcons?: Record<string, string>;
-    customIcons?: Record<string, string>;
     appearancePresets?: AppearancePreset[];
     characters?: CharacterProfile[];
     groups?: GroupProfile[]; 
@@ -1877,7 +1877,6 @@ export interface SimAction {
     reactionToUser?: string;  // 角色对玩家操作的评价
     narrative?: CharNarrative; // 角色叙事层（LLM回合使用）
     chainFromId?: string;     // 由哪个事件链引发
-    chainFromId?: string;
     storyKind?: SimStoryKind;
     headline?: string;
     involvedNpcIds?: string[];
@@ -2006,4 +2005,197 @@ export interface LifeSimState {
     buildings?: SimBuilding[];
     worldInventory?: Record<string, number>;
     worldGold?: number;
+}
+
+// =====================================================================
+// --- VR WORLD ("彼方") TYPES ---
+// 角色自主登入的虚拟世界。定时器驱动每个角色独立调用一次 LLM，在某个房间
+// 完成一次活动，产出一张活动卡注入该角色的 1v1 聊天。
+// =====================================================================
+
+/** 虚拟世界里的房间。 */
+export type VRRoomId = 'library' | 'music' | 'guestbook' | 'gym' | 'postoffice' | 'theater' | 'cafe';
+
+/** 全局小说库里的一本书。 */
+export interface VRWorldNovel {
+    id: string;
+    title: string;
+    author?: string;
+    summary?: string;
+    segments: VRNovelSegment[];
+    totalChars: number;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 小说里的一个阅读单元。 */
+export interface VRNovelSegment {
+    idx: number;
+    text: string;
+    chars: number;
+}
+
+/** 一条批注。 */
+export interface VRNovelAnnotation {
+    id: string;
+    novelId: string;
+    segIdx: number;
+    authorId: string;
+    authorName: string;
+    content: string;
+    targetAnnotationId?: string;
+    createdAt: number;
+}
+
+/** 角色在虚拟世界里的个人状态。 */
+export interface VRWorldCharState {
+    enabled: boolean;
+    intervalMinutes: number;
+    novelBookmarks?: Record<string, number>;
+    currentRoom?: VRRoomId;
+    lastActiveAt?: number;
+    api?: { baseUrl: string; apiKey: string; model: string };
+    chibi?: {
+        img: string;
+        state?: any;
+        scale?: number;
+        offsetY?: number;
+        flip?: boolean;
+    };
+}
+
+/** 注入聊天的 vr_card 消息的 metadata 结构。 */
+export interface VRCardMeta {
+    vrCard: true;
+    room: VRRoomId;
+    activity: string;
+    novelId?: string;
+    novelTitle?: string;
+    segRange?: [number, number];
+    annotationExcerpts?: string[];
+    annotationRefs?: { segIdx: number; text: string }[];
+    songLabel?: string;
+    queuedLabel?: string;
+    behavior?: string;
+    boardPost?: string;
+    boardPosts?: { content: string; replyToName?: string }[];
+    boardReplyToName?: string;
+    userBoardPost?: boolean;
+    letterExcerpt?: string;
+}
+
+/** 邮局信件。 */
+export interface VRLetterReply {
+    pen: string;
+    content: string;
+    createdAt: number;
+}
+
+export interface VRLetter {
+    id: string;
+    box: 'outbox' | 'inbox';
+    pen: string;
+    content: string;
+    createdAt: number;
+    charId?: string;
+    status?: 'queued' | 'sent' | 'archived' | 'sealed';
+    remoteId?: string;
+    released?: boolean;
+    sentAt?: number;
+    repliesReceived?: VRLetterReply[];
+    reaction?: { content: string; createdAt: number };
+    remoteLetterId?: string;
+    replyStatus?: 'none' | 'queued' | 'sent';
+    reply?: { charId: string; pen: string; content: string; createdAt: number; userNote?: string };
+    fetchedAt?: number;
+    likes?: number;
+    dislikes?: number;
+    views?: number;
+    myVote?: 1 | -1 | 0;
+}
+
+/** 听歌房队列项。 */
+export interface VRMusicQueueItem {
+    song: CharPlaylistSong;
+    charId: string;
+    charName: string;
+}
+
+/** 留言簿共享状态。 */
+export interface VRGuestbookMessage {
+    id: string;
+    authorId: string;
+    authorName: string;
+    content: string;
+    replyToId?: string;
+    replyToName?: string;
+    isChar: boolean;
+    charAvatar?: string;
+    emoji?: string;
+    attachments?: string[];
+    createdAt: number;
+}
+
+export interface VRGuestbookState {
+    messages: VRGuestbookMessage[];
+    updatedAt: number;
+}
+
+/** 听歌房共享状态。 */
+export interface VRMusicRoomState {
+    song: CharPlaylistSong | null;
+    queue: VRMusicQueueItem[];
+    startTime: number;
+    updatedAt: number;
+}
+
+/** 剧院·投稿剧本库。 */
+export interface VRScript {
+    id: string;
+    title: string;
+    setting: string;
+    roles: string[];
+    outline: string;
+    contributorId: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 剧院·历史舞台剧。 */
+export interface VRStagedPlay {
+    id: string;
+    title: string;
+    scriptId: string;
+    directorId: string;
+    cast: { actorCharId: string; roleName: string; avatarUrl?: string }[];
+    performance: { actorCharId: string; roleName: string; line: string; stageDir?: string; emotion?: string }[];
+    status: 'rehearsal' | 'performed' | 'archived';
+    createdAt: number;
+    performedAt?: number;
+}
+
+/** 捏脸系统自定义部件。 */
+export interface CustomCreatorPart {
+    id: string;
+    categoryKey: string;
+    label: string;
+    transparentDataUrl: string;
+    left?: number;
+    top?: number;
+    width?: number;
+    height?: number;
+    locked?: boolean;
+    createdAt: number;
+}
+
+// 彼方设置单例：API + 调用记录
+export interface VRApiCall {
+    id: string;
+    model: string;
+    endpoint: string;
+    tokens?: number;
+    durationMs?: number;
+    success: boolean;
+    errorMsg?: string;
+    timestamp: number;
 }

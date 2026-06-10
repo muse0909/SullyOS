@@ -73,7 +73,6 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
-  { id: AppID.VRWorld, name: '彼方', icon: 'VRWorld', color: 'violet' },
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
@@ -83,7 +82,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },            // 原小小窝位置
   { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
-  { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },     // 原档案位置
+  { id: AppID.VRWorld, name: '彼方', icon: 'VRWorld', color: 'purple' },               // 原气泡工坊位置
   { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },           // 原存钱罐位置
   { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },                     // 原交换日记位置
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },               // 原自习室位置

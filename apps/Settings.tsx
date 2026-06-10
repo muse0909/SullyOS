@@ -1611,6 +1611,9 @@ onChange={(e) => updateApiConfig({ ...apiConfig, imgbbApiKey: e.target.value })}
         )}
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
+import ApiLogPanel from '../components/settings/ApiLogPanel';
+              <ApiLogPanel />
+
             v2.2 (Realtime Awareness)
         </div>
       </div>

@@ -7,7 +7,7 @@ import { ContextBuilder } from '../utils/context';
 import { extractContent, extractJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import Modal from '../components/os/Modal';
-import { Planet, RocketLaunch, Lightning, LockSimple, DiceFive, Toolbox, FloppyDisk, ArrowsClockwise, DoorOpen } from '@phosphor-icons/react';
+import { Planet, RocketLaunch, Lightning, LockSimple, DiceFive, Toolbox, FloppyDisk, ArrowsClockwise, DoorOpen, NotePencil, ShareNetwork } from '@phosphor-icons/react';
 
 // --- Themes Configuration (Enhanced) ---
 const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string, font: string, border: string, cardBg: string, gradient: string, optionNormal: string, optionChaotic: string, optionEvil: string }> = {
@@ -143,9 +143,15 @@ const GameApp: React.FC = () => {
     const [userInput, setUserInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [diceResult, setDiceResult] = useState<number | null>(null);
+    const [diceType, setDiceType] = useState<number>(20);
     const [isRolling, setIsRolling] = useState(false);
     const [lastTokenUsage, setLastTokenUsage] = useState<{prompt?: number, completion?: number, total: number} | null>(null);
     const [totalTokensUsed, setTotalTokensUsed] = useState(0);
+    const [showDicePicker, setShowDicePicker] = useState(false);
+    const [gmNoteMode, setGmNoteMode] = useState(false);
+    const [gmNoteInput, setGmNoteInput] = useState('');
+    const [showForwardMenu, setShowForwardMenu] = useState(false);
+    const [forwardLogIndex, setForwardLogIndex] = useState<number>(-1);
     
     // [FIX] Use Container Ref instead of Element Ref for safer scrolling
     const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -441,8 +447,9 @@ ${playerContext}
     };
 
     // --- Gameplay Logic ---
-    const rollDice = () => {
+    const rollDice = (sides?: number) => {
         if (isRolling || isTyping) return;
+        const max = sides || diceType;
         setIsRolling(true);
         const duration = 1000;
         const start = Date.now();
@@ -450,16 +457,53 @@ ${playerContext}
         const animate = () => {
             const now = Date.now();
             if (now - start > duration) {
-                const final = Math.floor(Math.random() * 20) + 1;
+                const final = Math.floor(Math.random() * max) + 1;
                 setDiceResult(final);
                 setIsRolling(false);
-                handleAction(`[System: 投掷了 D20 骰子，结果: ${final}]`);
+                setShowDicePicker(false);
+                handleAction(`[System: 投掷了 D${max} 骰子，结果: ${final}]`);
             } else {
-                setDiceResult(Math.floor(Math.random() * 20) + 1);
+                setDiceResult(Math.floor(Math.random() * max) + 1);
                 requestAnimationFrame(animate);
             }
         };
         requestAnimationFrame(animate);
+    };
+
+    const submitGmNote = () => {
+        if (!activeGame || !gmNoteInput.trim()) return;
+        const noteLog: GameLog = {
+            id: `gm-note-${Date.now()}`,
+            role: 'system',
+            speakerName: 'GM笔记',
+            content: `[GM笔记] ${gmNoteInput.trim()}`,
+            timestamp: Date.now(),
+        };
+        const updated = { ...activeGame, logs: [...activeGame.logs, noteLog], lastPlayedAt: Date.now() };
+        setActiveGame(updated);
+        DB.saveGame(updated);
+        setGmNoteInput('');
+        setGmNoteMode(false);
+        addToast('GM 笔记已记录', 'success');
+    };
+
+    const handleForwardLog = (index: number) => {
+        setForwardLogIndex(index);
+        setShowForwardMenu(true);
+    };
+
+    const doForwardLog = async (charId: string) => {
+        if (!activeGame || forwardLogIndex < 0) return;
+        const log = activeGame.logs[forwardLogIndex];
+        if (!log) return;
+        await DB.saveMessage({
+            charId,
+            role: 'system',
+            type: 'text',
+            content: `[TRPG 转发] 来自跑团游戏《${activeGame.title}》:\n${log.speakerName ? `【${log.speakerName}】` : ''} ${log.content}`,
+        });
+        setShowForwardMenu(false);
+        addToast('已转发到聊天', 'success');
     };
 
     const handleAction = async (actionText: string, isReroll: boolean = false) => {
@@ -1103,13 +1147,35 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                 {/* Collapsible Action Toolbar */}
                 {showTools && (
                     <div className="flex gap-2 mb-3 animate-fade-in">
-                        <button 
-                            onClick={rollDice} 
-                            disabled={isRolling}
-                            className={`flex-1 py-2 rounded border ${theme.border} hover:bg-white/10 active:scale-95 transition-transform flex items-center justify-center gap-2 font-bold text-sm`}
-                        >
-                            <DiceFive size={24} weight="fill" /> {isRolling ? 'Rolling...' : (diceResult || 'Roll D20')}
-                        </button>
+                        <div className="flex gap-1">
+                            <button 
+                                onClick={() => rollDice()} 
+                                disabled={isRolling}
+                                className={`flex-1 py-2 rounded border ${theme.border} hover:bg-white/10 active:scale-95 transition-transform flex items-center justify-center gap-2 font-bold text-sm`}
+                            >
+                                <DiceFive size={24} weight="fill" /> {isRolling ? 'Rolling...' : (diceResult || `D${diceType}`)}
+                            </button>
+                            <div className="relative">
+                                <button 
+                                    onClick={() => setShowDicePicker(!showDicePicker)}
+                                    className={`px-2 py-2 rounded border ${theme.border} hover:bg-white/10 active:scale-95 transition-transform text-xs`}
+                                    title="选择骰子"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
+                                </button>
+                                {showDicePicker && (
+                                    <div className="absolute bottom-full mb-1 right-0 bg-black/90 border border-white/20 rounded-xl p-2 flex gap-1 shadow-xl z-30 animate-fade-in">
+                                        {[4, 6, 8, 10, 12, 20, 100].map(s => (
+                                            <button 
+                                                key={s}
+                                                onClick={() => { setDiceType(s); rollDice(s); }}
+                                                className={`px-2 py-1 text-xs rounded ${diceType === s ? 'bg-orange-500 text-white' : 'text-white/70 hover:bg-white/10'} font-bold`}
+                                            >D{s}</button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                         {['调查', '攻击', '交涉'].map(action => (
                             <button key={action} onClick={() => handleAction(action)} className={`px-4 py-2 rounded border ${theme.border} hover:bg-white/10 text-xs font-bold transition-colors active:scale-95`}>{action}</button>
                         ))}

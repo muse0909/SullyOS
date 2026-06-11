@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 import { useOS, DEFAULT_WALLPAPER } from '../context/OSContext';
-import { OSTheme, DesktopDecoration, AppearancePreset, Toast } from '../types';
+import { OSTheme, DesktopDecoration, AppearancePreset, Toast, AppID } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
 import { Sparkle } from '@phosphor-icons/react';
@@ -456,7 +456,7 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 };
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset } = useOS();
+  const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset } = useOS();
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
@@ -659,7 +659,8 @@ const Appearance: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20">
+      <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20 overflow-x-auto no-scrollbar">
+          <button onClick={() => openApp(AppID.ThemeMaker)} className="flex-1 py-3 text-sm font-medium transition-colors text-slate-400 shrink-0">气泡工坊</button>
           <button onClick={() => setActiveTab('theme')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>系统主题</button>
           <button onClick={() => setActiveTab('icons')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
           <button onClick={() => setActiveTab('presets')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>

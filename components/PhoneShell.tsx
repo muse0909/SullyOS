@@ -453,9 +453,18 @@ const PhoneShell: React.FC = () => {
 > 
           {/* App Container */}
          <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
-    <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
-        {renderApp()}
-    </AppErrorBoundary>
+        <div
+          className="absolute left-0 right-0 bottom-0 overflow-hidden"
+          style={{
+            top: theme.hideStatusBar
+              ? 'env(safe-area-inset-top, 0px)'
+              : 'calc(env(safe-area-inset-top, 0px) + 2.5rem)'
+          }}
+        >
+          <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
+              {renderApp()}
+          </AppErrorBoundary>
+        </div>
 </div>
 
           {/* Overlays: Status Bar (Top) */}

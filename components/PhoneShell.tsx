@@ -380,7 +380,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Character: return <Character />;
       case AppID.Chat: return <Chat />;
       case AppID.GroupChat: return <GroupChat />; 
-      case AppID.ThemeMaker: return <Appearance />;
+      case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;
       case AppID.Gallery: return <Gallery />;
       case AppID.Date: return <DateApp />; 

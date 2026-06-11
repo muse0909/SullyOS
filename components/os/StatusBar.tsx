@@ -60,24 +60,23 @@ const StatusBar: React.FC = () => {
   // 状态栏背景与聊天头部风格联动
   const headerStyle = (theme as any).chatHeaderStyle || 'default';
   const chromeStyle = (theme as any).chatChromeStyle || 'soft';
-  const statusBarBgClass =
-      headerStyle === 'gradient'
-          ? 'bg-gradient-to-r from-primary/30 via-primary/15 to-white/90 backdrop-blur-xl'
-          : headerStyle === 'minimal'
-          ? 'bg-white/95 backdrop-blur-md'
-          : headerStyle === 'wechat'
-          ? 'bg-[#f7f7f7]/95 backdrop-blur-md'
-          : headerStyle === 'telegram'
-          ? 'bg-white/90 backdrop-blur-xl'
-          : headerStyle === 'discord'
-          ? 'bg-slate-900/95 backdrop-blur-xl'
-          : headerStyle === 'pixel'
-          ? 'bg-[#c99872]'
-          : chromeStyle === 'flat'
-          ? 'bg-white/95'
-          : chromeStyle === 'floating'
-          ? 'bg-white/90 backdrop-blur-xl'
-          : 'bg-white/85 backdrop-blur-xl';
+  const statusBarBgClass = headerStyle === 'gradient'
+    ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl'
+    : headerStyle === 'minimal'
+    ? 'bg-white/95 backdrop-blur-md'
+    : headerStyle === 'wechat'
+    ? 'bg-[#f7f7f7]/95 backdrop-blur-md'
+    : headerStyle === 'telegram'
+    ? 'bg-white/85 backdrop-blur-xl'
+    : headerStyle === 'discord'
+    ? 'bg-slate-900/95 backdrop-blur-xl'
+    : headerStyle === 'pixel'
+    ? 'bg-[#c99872]'
+    : chromeStyle === 'flat'
+    ? 'bg-white'
+    : chromeStyle === 'floating'
+    ? 'bg-white/85 backdrop-blur-xl'
+    : 'bg-white/80 backdrop-blur-xl';
 
   const hasError = systemLogs.length > 0;
 

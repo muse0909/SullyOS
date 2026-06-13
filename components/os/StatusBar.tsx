@@ -83,7 +83,7 @@ const StatusBar: React.FC = () => {
   return (
     <>
       <div 
-          className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 ${statusBarBgClass}`}
+          className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-1 text-[11px] font-semibold bg-black/5 backdrop-blur-xl ${statusBarBgClass}`}
           style={{ 
               color: textColor,
               paddingTop: 'env(safe-area-inset-top)',

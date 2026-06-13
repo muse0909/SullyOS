@@ -1001,21 +1001,26 @@ const handleSaveTts = () => {
             </div>
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">让AI角色感知真实世界：天气、新闻热点、当前时间。角色可以根据天气关心你、聊聊最近的热点话题。</p>
             <div className="grid grid-cols-5 gap-2 text-center">
-              {[
-                { key: 'rtWeatherEnabled', label: '天气', sun: true },
-                { key: 'rtNewsEnabled', label: '新闻', sun: false },
-                { key: 'rtNotionEnabled', label: 'Notion', sun: false },
-                { key: 'rtFeishuEnabled', label: '飞书', sun: false },
-                { key: 'rtXhsEnabled', label: '小红书', sun: false },
-              ].map(({ key, label }) => {
-                const enabled = key === 'rtWeatherEnabled' ? rtWeatherEnabled : key === 'rtNewsEnabled' ? rtNewsEnabled : key === 'rtNotionEnabled' ? rtNotionEnabled : key === 'rtFeishuEnabled' ? rtFeishuEnabled : rtXhsEnabled;
-                return (
-                  <div key={key} className={`py-3 rounded-xl text-xs font-bold ${enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{enabled ? '✅' : '❌'}</div>
-                    {label}
-                  </div>
-                );
-              })}
+              <div className={`py-3 rounded-xl text-xs font-bold ${rtWeatherEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
+                <div className="text-lg mb-1">{rtWeatherEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2600.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f32b.png" className="w-5 h-5 inline" alt="" />}</div>
+                天气
+              </div>
+              <div className={`py-3 rounded-xl text-xs font-bold ${rtNewsEnabled ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
+                <div className="text-lg mb-1">{rtNewsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f0.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" className="w-5 h-5 inline" alt="" />}</div>
+                新闻
+              </div>
+              <div className={`py-3 rounded-xl text-xs font-bold ${rtNotionEnabled ? 'bg-orange-50 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
+                <div className="text-lg mb-1">{rtNotionEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dd.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
+                Notion
+              </div>
+              <div className={`py-3 rounded-xl text-xs font-bold ${rtFeishuEnabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'}`}>
+                <div className="text-lg mb-1">{rtFeishuEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d2.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
+                飞书
+              </div>
+              <div className={`py-3 rounded-xl text-xs font-bold ${rtXhsEnabled ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
+                <div className="text-lg mb-1">{rtXhsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d5.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
+                小红书
+              </div>
             </div>
           </section>
         </SettingsSection>

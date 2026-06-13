@@ -1202,49 +1202,96 @@ const handleSaveTts = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={showRealtimeModal} title="实时感知配置" onClose={() => setShowRealtimeModal(false)} footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}>
-        <div className="space-y-5 max-h-[60vh] overflow-y-auto no-scrollbar">
-          <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2"><Sun size={20} weight="fill" /><span className="text-sm font-bold text-emerald-700">天气感知</span></div>
-              <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtWeatherEnabled} onChange={e => setRtWeatherEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div></label>
-            </div>
-            {rtWeatherEnabled && (
-              <div className="space-y-2">
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">API Key</label><input type="password" value={rtWeatherKey} onChange={e => setRtWeatherKey(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" /></div>
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市 (英文)</label><input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" /></div>
-                <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl">测试天气API</button>
+      <Modal
+          isOpen={showRealtimeModal}
+          title="实时感知配置"
+          onClose={() => setShowRealtimeModal(false)}
+          footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}
+      >
+          <div className="space-y-5 max-h-[60vh] overflow-y-auto no-scrollbar">
+              <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><Sun size={20} weight="fill" /><span className="text-sm font-bold text-emerald-700">天气感知</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtWeatherEnabled} onChange={e => setRtWeatherEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div></label>
+                  </div>
+                  {rtWeatherEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">OpenWeatherMap API Key</label><input type="password" value={rtWeatherKey} onChange={e => setRtWeatherKey(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: openweathermap.org" /></div>
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市 (英文)</label><input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="Beijing, Shanghai, etc." /></div>
+                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
+                      </div>
+                  )}
               </div>
-            )}
-          </div>
-          <div className="bg-orange-50/50 p-4 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2"><NotePencil size={20} weight="fill" /><span className="text-sm font-bold text-orange-700">Notion 日记</span></div>
-              <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtNotionEnabled} onChange={e => setRtNotionEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div></label>
-            </div>
-            {rtNotionEnabled && (
-              <div className="space-y-2">
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Integration Token</label><input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" /></div>
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID</label><input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" /></div>
-                <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl">测试连接</button>
+              <div className="bg-blue-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><Newspaper size={20} weight="fill" /><span className="text-sm font-bold text-blue-700">新闻热点</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtNewsEnabled} onChange={e => setRtNewsEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div></label>
+                  </div>
+                  {rtNewsEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Brave Search API Key (推荐)</label><input type="password" value={rtNewsApiKey} onChange={e => setRtNewsApiKey(e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: brave.com/search/api" /></div>
+                      </div>
+                  )}
               </div>
-            )}
-          </div>
-          <div className="bg-yellow-50/60 p-4 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2"><ForkKnife size={20} weight="fill" className="text-yellow-600" /><span className="text-sm font-bold text-yellow-700">麦当劳 MCP</span></div>
-              <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div></label>
-            </div>
-            {mcdEnabled && (
-              <div className="space-y-2">
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token</label><input type="password" value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" /></div>
-                <button onClick={testMcdApi} disabled={mcdTesting} className="w-full py-2 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl">{mcdTesting ? '测试中…' : '测试连接'}</button>
-                {mcdTestStatus && (<div className={`p-2 rounded-lg text-[11px] ${mcdTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{mcdTestStatus}</div>)}
+              <div className="bg-orange-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><NotePencil size={20} weight="fill" /><span className="text-sm font-bold text-orange-700">Notion 日记</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtNotionEnabled} onChange={e => setRtNotionEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div></label>
+                  </div>
+                  {rtNotionEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Notion Integration Token</label><input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="secret_..." /></div>
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID</label><input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" /></div>
+                          <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
+                      </div>
+                  )}
               </div>
-            )}
+              <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><Notebook size={20} weight="fill" /><span className="text-sm font-bold text-indigo-700">飞书日记</span><span className="text-[9px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full">中国区</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtFeishuEnabled} onChange={e => setRtFeishuEnabled(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div></label>
+                  </div>
+                  {rtFeishuEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App ID</label><input type="text" value={rtFeishuAppId} onChange={e => setRtFeishuAppId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="cli_xxxxxxxx" /></div>
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App Secret</label><input type="password" value={rtFeishuAppSecret} onChange={e => setRtFeishuAppSecret(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="xxxxxxxxxxxxxxxx" /></div>
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">多维表格 App Token</label><input type="text" value={rtFeishuBaseId} onChange={e => setRtFeishuBaseId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从多维表格URL中获取" /></div>
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">数据表 Table ID</label><input type="text" value={rtFeishuTableId} onChange={e => setRtFeishuTableId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="tblxxxxxxxx" /></div>
+                          <button onClick={testFeishuApi} className="w-full py-2 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试飞书连接</button>
+                      </div>
+                  )}
+              </div>
+              <div className="bg-red-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><Book size={20} weight="fill" /><span className="text-sm font-bold text-red-700">小红书</span><span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">浏览器自动化</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={rtXhsMcpEnabled} onChange={e => { setRtXhsMcpEnabled(e.target.checked); setRtXhsEnabled(e.target.checked); }} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div></label>
+                  </div>
+                  {rtXhsMcpEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">服务器 URL</label><input value={rtXhsMcpUrl} onChange={e => setRtXhsMcpUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" /></div>
+                          <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          <div className="grid grid-cols-2 gap-2">
+                              <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label><input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="手动填写" /></div>
+                              <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label><input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="可选，用于查看主页" /></div>
+                          </div>
+                      </div>
+                  )}
+              </div>
+              <div className="bg-yellow-50/60 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2"><ForkKnife size={20} weight="fill" className="text-yellow-600" /><span className="text-sm font-bold text-yellow-700">麦当劳</span><span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">官方 MCP</span></div>
+                      <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" /><div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div></label>
+                  </div>
+                  {mcdEnabled && (
+                      <div className="space-y-2">
+                          <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label><input type="password" value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.mcd.cn/mcp 申请" /></div>
+                          <button onClick={testMcdApi} disabled={mcdTesting} className="w-full py-2 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">{mcdTesting ? '测试中…' : '测试连接'}</button>
+                          {mcdTestStatus && (<div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${mcdTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : mcdTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>{mcdTestStatus}</div>)}
+                      </div>
+                  )}
+              </div>
+              {rtTestStatus && (<div className={`p-3 rounded-xl text-xs font-medium text-center ${rtTestStatus.includes('成功') ? 'bg-emerald-100 text-emerald-700' : rtTestStatus.includes('失败') || rtTestStatus.includes('错误') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>{rtTestStatus}</div>)}
           </div>
-          {rtTestStatus && (<div className={`p-3 rounded-xl text-xs font-medium text-center ${rtTestStatus.includes('成功') ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>{rtTestStatus}</div>)}
-        </div>
       </Modal>
 
       <Modal isOpen={showResetConfirm} title="系统警告" onClose={() => setShowResetConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowResetConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button><button onClick={confirmReset} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">确认格式化</button></div>}>

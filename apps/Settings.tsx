@@ -1145,7 +1145,7 @@ const handleSaveTts = () => {
           </section>
         </SettingsSection>
 
-        <SettingsSection id="secondaryApi" icon="⚙️" title="副 API 配置" subtitle="心声 / 记忆摘要 / 事件提取">
+        <SettingsSection id="secondaryApi" icon="⚙️" title="识图配置" subtitle="独立识图通道">
           {/* 识图专用 API 区域 - 独立补丁 */}
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
@@ -1246,8 +1246,7 @@ const handleSaveTts = () => {
           </section>
         </SettingsSection>
 
-        <SettingsSection id="tts" icon="🔊" title="语音合成" subtitle="MiniMax / ElevenLabs·通话声线"
-          statusText={apiConfig.minimaxApiKey ? '' : '未配置'} statusColor="text-slate-400">
+        <SettingsSection id="tts" icon="🔊" title="语音合成" subtitle="MiniMax / ElevenLabs·通话声线">
           {/* 语音 TTS */}
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
             <div className="flex items-center gap-2 mb-4">
@@ -1322,8 +1321,7 @@ const handleSaveTts = () => {
           </section>
         </SettingsSection>
 
-        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="Groq / 硅基流动 STT"
-          statusText="Groq" statusColor="text-slate-500">
+        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="Groq / 硅基流动 STT">
           <div className="py-6 text-center text-xs text-slate-400">
             语音识别使用 Groq Whisper，通话时自动启用，无需额外配置。
           </div>
@@ -1371,14 +1369,7 @@ const handleSaveTts = () => {
           </section>
         </SettingsSection>
 
-        <SettingsSection id="embedding" icon="✨" title="向量记忆引擎" subtitle="bge-m3"
-          statusText={apiConfig.embeddingBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
-          <div className="py-6 text-center text-xs text-slate-400">
-            向量记忆引擎配置请在记忆宫殿 App 内设置。
-          </div>
-        </SettingsSection>
-
-        <SettingsSection id="proactive" icon="🤖" title="自律代理" subtitle="主动消息频率·推送通知">
+        <SettingsSection id="proactive" icon="🤖" title="其他API" subtitle="MiniMax / Replicate·独立API">
           {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center gap-2 mb-4">
@@ -1511,7 +1502,9 @@ const handleSaveTts = () => {
               </button>
             </div>
           </section>
+        </SettingsSection>
 
+        <SettingsSection id="proactivePush" icon="🔔" title="消息加速" subtitle="主动消息频率·推送通知">
           {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
           {ppAvailable && (
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">

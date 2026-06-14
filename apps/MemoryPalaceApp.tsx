@@ -224,13 +224,6 @@ const Icon: React.FC<{ name: string; size?: number; style?: React.CSSProperties 
                     <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
             );
-        case 'pencil':
-            return (
-                <svg {...p}>
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                </svg>
-            );
         case 'book':
             return (
                 <svg {...p}>
@@ -401,7 +394,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>('picker');
@@ -423,11 +416,6 @@ export default function MemoryPalaceApp() {
     const [allBoxes, setAllBoxes] = useState<EventBox[]>([]);
     const [expandedBoxId, setExpandedBoxId] = useState<string | null>(null);
     const [boxMembers, setBoxMembers] = useState<Record<string, { summary: MemoryNode | null; live: MemoryNode[]; archived: MemoryNode[] }>>({});
-    // 事件盒名/tag 手动编辑状态（box.name / box.tags 仅用于展示抬头，不参与召回打分）
-    const [editingBoxId, setEditingBoxId] = useState<string | null>(null);
-    const [boxNameDraft, setBoxNameDraft] = useState('');
-    const [boxTagsDraft, setBoxTagsDraft] = useState('');
-    const [savingBox, setSavingBox] = useState(false);
 
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
@@ -700,40 +688,6 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    /** 进入/退出某盒的名字+tag 编辑态。box.name/box.tags 只决定召回时的展示抬头，
-     *  不参与向量/BM25 检索打分（检索只认成员节点的 content/tags），改它不影响召回结果。 */
-    const startEditBoxMeta = (box: EventBox) => {
-        setEditingBoxId(box.id);
-        setBoxNameDraft(box.name || '');
-        setBoxTagsDraft(box.tags.join(', '));
-    };
-    const cancelEditBoxMeta = () => {
-        setEditingBoxId(null);
-        setBoxNameDraft('');
-        setBoxTagsDraft('');
-    };
-    const handleSaveBoxMeta = async (box: EventBox) => {
-        if (!char) return;
-        setSavingBox(true);
-        try {
-            const fresh = (await EventBoxDB.getById(box.id)) || box;
-            // 名字留空 → 回退默认值，避免存出空标题
-            fresh.name = boxNameDraft.trim() || '未命名事件';
-            fresh.tags = boxTagsDraft.split(/[,，]/).map(t => t.trim()).filter(Boolean).slice(0, 20);
-            fresh.updatedAt = Date.now();
-            await EventBoxDB.save(fresh);
-            // 刷新盒列表（保持原排序：按 updatedAt 倒序）
-            const boxes = await EventBoxDB.getByCharId(char.id);
-            boxes.sort((a, b) => b.updatedAt - a.updatedAt);
-            setAllBoxes(boxes);
-            cancelEditBoxMeta();
-        } catch (e: any) {
-            alert(`保存失败：${e?.message || e}`);
-        } finally {
-            setSavingBox(false);
-        }
-    };
-
     /** 一键移出某 box 的所有活节点（应急出口：压缩连续失败导致活池堆到几十条时用）。
      *  记忆不删，回到"地上"作为独立记忆。summary / archived 保持不动。 */
     const handleUnbindAllLive = async (box: EventBox) => {
@@ -947,8 +901,9 @@ export default function MemoryPalaceApp() {
             apiKey: lightKey.trim(),
             model: lightModel.trim(),
         };
-        // 只写全局 lightLLM；与情绪 API（emotionConfig.api）完全独立，互不影响。
-        updateMemoryPalaceConfig({ lightLLM: api });
+        // 一次性写到全局 lightLLM + 所有角色的 emotionConfig.api
+        // （各角色 enabled 标志保持不变；记忆宫殿轻量 LLM 与情绪 API 共用一份配置）
+        syncEmotionApiToAllCharacters(api);
         setLightSaved(true);
         setTimeout(() => setLightSaved(false), 2000);
     };
@@ -963,12 +918,10 @@ export default function MemoryPalaceApp() {
 
     // 切换"记忆宫殿"总开关（picker 卡片上）
     const handleTogglePalaceFromPicker = (charId: string, on: boolean) => {
-        if (on) {
-            updateCharacter(charId, { memoryPalaceEnabled: true } as any);
-        } else {
-            // 关闭 palace 必然连带关闭全自动记忆；同时清空残留的向量召回注入，
-            // 否则旧的 memoryPalaceInjection 会被 saveCharacter 持久化并继续注入 prompt。
-            updateCharacter(charId, { memoryPalaceEnabled: false, autoArchiveEnabled: false, memoryPalaceInjection: undefined } as any);
+        updateCharacter(charId, { memoryPalaceEnabled: on } as any);
+        if (!on) {
+            // 关闭 palace 必然连带关闭全自动记忆
+            updateCharacter(charId, { autoArchiveEnabled: false } as any);
         }
     };
 
@@ -997,10 +950,13 @@ export default function MemoryPalaceApp() {
         updateCharacter(charId, { autoArchiveEnabled: true } as any);
 
         // 统计未同步消息数并决定是否立即追平历史
-        // 口径必须和 pipeline 的缓冲区定义一致：排除热区（最后 200 条），
-        // 否则会把"永远不会被处理"的热区也算成未同步，欺骗用户去点立即追平。
-        const { getMemoryPalaceUnprocessedBufferCount } = await import('../utils/memoryPalace/pipeline');
-        const unprocessedCount = await getMemoryPalaceUnprocessedBufferCount(charId);
+        const { DB } = await import('../utils/db');
+        const { getMemoryPalaceHighWaterMark, processNewMessages, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+        const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
+
+        const allMsgs = await DB.getMessagesByCharId(charId, true);
+        const hwm0 = getMemoryPalaceHighWaterMark(charId);
+        const unprocessedCount = allMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > hwm0).length;
 
         if (unprocessedCount < 10) {
             addToast('全自动记忆已开启（历史消息都已同步）', 'success');
@@ -1031,32 +987,28 @@ export default function MemoryPalaceApp() {
         const target = characters.find(c => c.id === charId);
         if (!target) return;
 
-        const {
-            getMemoryPalaceHighWaterMark,
-            getMemoryPalaceUnprocessedBufferCount,
-            processNewMessages,
-            mergePalaceFragmentsIntoMemories,
-        } = await import('../utils/memoryPalace/pipeline');
+        const { DB } = await import('../utils/db');
+        const { getMemoryPalaceHighWaterMark, processNewMessages, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+        const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
 
         setAutoArchiveSyncingId(charId);
         setAutoArchiveSyncProgress(`准备中... (${unprocessedCount} 条)`);
         try {
+            const BATCH_SIZE = 170;
             const MAX_ROUNDS = 50;
             let accumulatedMemories = (target as any).memories ? [...(target as any).memories] : [];
             let latestHideBefore = (target as any).hideBeforeMessageId;
             let totalProcessed = 0;
 
             for (let round = 1; round <= MAX_ROUNDS; round++) {
+                const curMsgs = await DB.getMessagesByCharId(charId, true);
                 const curHwm = getMemoryPalaceHighWaterMark(charId);
-                // 用 pipeline 的真实缓冲区口径（排除热区），避免把热区的 200 条
-                // 当未同步反复重试——下面的 force=true 调用其实也只会处理缓冲区，
-                // 用同一口径循环才能正确收敛。
-                const remaining = await getMemoryPalaceUnprocessedBufferCount(charId);
-                if (remaining < 10) break;
-                setAutoArchiveSyncProgress(`第 ${round} 轮：剩余 ${remaining} 条`);
+                const unprocessed = curMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > curHwm).sort((a, b) => a.id - b.id);
+                if (unprocessed.length < 10) break;
+                const batch = unprocessed.slice(0, BATCH_SIZE);
+                setAutoArchiveSyncProgress(`第 ${round} 轮：${batch.length} 条 / 剩余 ${unprocessed.length}`);
 
-                // processNewMessages 忽略首个参数（内部直接从 DB 加载），传 [] 即可
-                const result = await processNewMessages([], charId, charName, mpEmb, mpLLM, userProfile.name, true);
+                const result = await processNewMessages(batch, charId, charName, mpEmb, mpLLM, userProfile.name, true);
 
                 // 软跳过：缓冲区没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 palace 失败
                 if (result?.skipReason) {
@@ -1065,6 +1017,8 @@ export default function MemoryPalaceApp() {
                     }
                     break;
                 }
+
+                totalProcessed += batch.length;
 
                 if (result?.autoArchive) {
                     accumulatedMemories = mergePalaceFragmentsIntoMemories(accumulatedMemories, result.autoArchive.fragments);
@@ -1076,7 +1030,6 @@ export default function MemoryPalaceApp() {
                     addToast('追平中断：palace 处理失败，请检查副 API 配置', 'error');
                     break;
                 }
-                totalProcessed += result?.processedMessages || 0;
             }
 
             updateCharacter(charId, { memories: accumulatedMemories, hideBeforeMessageId: latestHideBefore } as any);
@@ -3135,37 +3088,75 @@ create table if not exists memory_vectors (
                     </button>
                 </div>
 
-                {/* 认知消化（手动触发/测试） */}
-                <div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <RoomIcon room="attic" size={14} style={{ color: ROOM_COLORS.attic }} />
-                        <span>认知消化</span>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
-                        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
-                        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
-                    </div>
+                {/* 认知消化（开关 + 手动触发/测试） */}
+<div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
+    <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RoomIcon room="attic" size={14} style={{ color: ROOM_COLORS.attic }} />
+            <span>认知消化</span>
+        </div>
+        <button
+            type="button"
+            onClick={() => {
+                const next = !((char as any).digestionEnabled !== false);
+                updateCharacter(char.id, { digestionEnabled: next } as any);
+            }}
+            style={{
+                position: 'relative',
+                width: 44,
+                height: 24,
+                borderRadius: 12,
+                border: 'none',
+                background: (char as any).digestionEnabled !== false ? '#16a34a' : '#d1d5db',
+                cursor: 'pointer',
+                padding: 0,
+                transition: 'background 0.2s',
+            }}
+            aria-label="切换自动消化"
+        >
+            <span
+                style={{
+                    position: 'absolute',
+                    top: 2,
+                    left: (char as any).digestionEnabled !== false ? 22 : 2,
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    background: 'white',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    transition: 'left 0.2s',
+                }}
+            />
+        </button>
+    </div>
+    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
+        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
+        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
+        关闭后不再自动消化，手动触发仍然可用。
+    </div>
 
-                    {digestResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
-                            <StatusMessage msg={digestResult} />
-                        </div>
-                    )}
+    {digestResult && (
+        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
+            <StatusMessage msg={digestResult} />
+        </div>
+    )}
 
-                    <button
-                        onClick={handleDigest}
-                        disabled={digesting}
-                        style={{
-                            width: '100%', padding: '10px 0', borderRadius: 12,
-                            border: 'none', fontWeight: 700, fontSize: 13,
-                            color: 'white',
-                            background: digesting ? '#d4d4d4' : '#16a34a',
-                            cursor: digesting ? 'not-allowed' : 'pointer',
-                        }}
-                    >
-                        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
-                    </button>
-                </div>
+    <button
+        onClick={handleDigest}
+        disabled={digesting}
+        style={{
+            width: '100%', padding: '10px 0', borderRadius: 12,
+            border: 'none', fontWeight: 700, fontSize: 13,
+            color: 'white',
+            background: digesting ? '#d4d4d4' : '#16a34a',
+            cursor: digesting ? 'not-allowed' : 'pointer',
+        }}
+    >
+        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
+    </button>
+</div>
+
+
                 </>)}
 
                 {/* 危险区：一键清空 */}
@@ -3715,19 +3706,6 @@ create table if not exists memory_vectors (
                                             <span>{box.name || '未命名'}</span>
                                             {box.sealed && <span style={{ fontSize: 10, marginLeft: 4, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>已封盒</span>}
                                         </div>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); editingBoxId === box.id ? cancelEditBoxMeta() : startEditBoxMeta(box); }}
-                                            title="编辑盒名和标签"
-                                            style={{
-                                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                                width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-                                                border: '1px solid #c7d2fe',
-                                                background: editingBoxId === box.id ? '#e0e7ff' : '#fff',
-                                                color: '#6366f1', cursor: 'pointer', padding: 0,
-                                            }}
-                                        >
-                                            <Icon name="pencil" size={12} />
-                                        </button>
                                         <div style={{ fontSize: 11, color: '#6366f1' }}>{expanded ? '▲' : '▼'}</div>
                                     </div>
                                     {box.tags.length > 0 && (
@@ -3747,66 +3725,6 @@ create table if not exists memory_vectors (
                                         <span>更新 {new Date(box.updatedAt).toLocaleDateString('zh-CN')}</span>
                                     </div>
                                 </div>
-
-                                {editingBoxId === box.id && (
-                                    <div style={{ padding: '0 12px 12px', borderTop: '1px solid #e0e7ff' }}>
-                                        <div style={{ fontSize: 10, color: '#6b7280', margin: '10px 0 8px', lineHeight: 1.5 }}>
-                                            盒名和标签仅用于召回时的展示抬头，不参与检索打分（改它不影响召回哪些记忆）。
-                                            注意：盒子之后再次压缩时，副 API 可能重新生成盒名/标签覆盖你的修改，不满意再改一次即可。
-                                        </div>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#4338ca' }}>盒名</label>
-                                        <input
-                                            value={boxNameDraft}
-                                            onChange={e => setBoxNameDraft(e.target.value)}
-                                            placeholder="未命名事件"
-                                            maxLength={40}
-                                            style={{
-                                                width: '100%', boxSizing: 'border-box', marginTop: 4, marginBottom: 10,
-                                                padding: '6px 8px', borderRadius: 6, border: '1px solid #c7d2fe',
-                                                fontSize: 13, outline: 'none',
-                                            }}
-                                        />
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#4338ca' }}>标签（逗号分隔，最多 20 个）</label>
-                                        <input
-                                            value={boxTagsDraft}
-                                            onChange={e => setBoxTagsDraft(e.target.value)}
-                                            placeholder="如：买衣服, 退货, 流行款"
-                                            style={{
-                                                width: '100%', boxSizing: 'border-box', marginTop: 4, marginBottom: 10,
-                                                padding: '6px 8px', borderRadius: 6, border: '1px solid #c7d2fe',
-                                                fontSize: 13, outline: 'none',
-                                            }}
-                                        />
-                                        <div style={{ display: 'flex', gap: 8 }}>
-                                            <button
-                                                onClick={() => handleSaveBoxMeta(box)}
-                                                disabled={savingBox}
-                                                style={{
-                                                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                                                    fontSize: 12, padding: '5px 12px', borderRadius: 6, border: 'none',
-                                                    background: '#6366f1', color: '#fff',
-                                                    cursor: savingBox ? 'default' : 'pointer', opacity: savingBox ? 0.6 : 1,
-                                                }}
-                                            >
-                                                <Icon name="check" size={12} />
-                                                <span>{savingBox ? '保存中…' : '保存'}</span>
-                                            </button>
-                                            <button
-                                                onClick={cancelEditBoxMeta}
-                                                disabled={savingBox}
-                                                style={{
-                                                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                                                    fontSize: 12, padding: '5px 12px', borderRadius: 6,
-                                                    border: '1px solid #d1d5db', background: '#fff', color: '#6b7280',
-                                                    cursor: savingBox ? 'default' : 'pointer',
-                                                }}
-                                            >
-                                                <Icon name="x" size={12} />
-                                                <span>取消</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
 
                                 {expanded && members && (
                                     <div style={{ padding: '0 12px 12px', borderTop: '1px solid #e0e7ff' }}>

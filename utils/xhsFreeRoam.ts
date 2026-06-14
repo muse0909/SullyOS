@@ -418,7 +418,6 @@ export const XhsFreeRoamEngine = {
     ): Promise<XhsFreeRoamSession> => {
         const mcpUrl = realtimeConfig.xhsMcpConfig?.serverUrl;
         if (!mcpUrl) throw new Error('MCP Server URL 未配置');
-        XhsMcpClient.setCookie(realtimeConfig.xhsMcpConfig?.cookie); // lite Worker auth (no-op for local backends)
 
         const sessionId = `xfr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const session: XhsFreeRoamSession = {

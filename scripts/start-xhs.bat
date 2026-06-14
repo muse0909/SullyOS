@@ -129,30 +129,9 @@ if not exist "%SKILLS_DIR%\.venv" (
     echo.
 )
 
-REM === Apply local patches to skills (idempotent, safe to re-run) ===
-REM Currently patches: publish.py tab-selector bug (off-screen carousel tabs).
-set "PATCH_SCRIPT=%TOOLKIT_DIR%\patch-xhs-publish.py"
-if not exist "%PATCH_SCRIPT%" (
-    if exist "%TOOLKIT_DIR%\scripts\patch-xhs-publish.py" set "PATCH_SCRIPT=%TOOLKIT_DIR%\scripts\patch-xhs-publish.py"
-)
-if exist "%PATCH_SCRIPT%" (
-    echo [PATCH] Checking xiaohongshu-skills patches...
-    pushd "%SKILLS_DIR%"
-    uv run python "%PATCH_SCRIPT%"
-    popd
-)
-
-REM === Detect skill version: OLD (CDP, needs --remote-debugging-port=9222) vs NEW (Extension Bridge) ===
-set "CHROME_EXTRA_ARGS="
-if exist "%SKILLS_DIR%\scripts\bridge_server.py" (
-    echo [INFO] NEW version skills detected - Chrome will use default profile [extension mode]
-) else (
-    set "CHROME_EXTRA_ARGS=--remote-debugging-port=9222 --user-data-dir=%USERPROFILE%\.xhs\chrome-profile"
-    echo [INFO] OLD version skills detected - Chrome will run with CDP port + isolated profile
-    echo        Login session will be saved in: %USERPROFILE%\.xhs\chrome-profile\
-)
-
-REM === Open Chrome to xiaohongshu.com ===
+REM === Start Chrome on port 9222 with XHS profile ===
+set "CHROME_PROFILE=%USERPROFILE%\.xhs\chrome-profile"
+set "CHROME_PORT=9222"
 
 REM Priority 1: CHROME_BIN environment variable (user can set this for portable Chrome)
 set "CHROME_EXE="
@@ -172,22 +151,25 @@ if not defined CHROME_EXE if exist "%LOCALAPPDATA%\Google\Chrome\Application\chr
 REM Try Chrome in toolkit directory (portable Chrome)
 if not defined CHROME_EXE if exist "%TOOLKIT_DIR%\chrome\chrome.exe" set "CHROME_EXE=%TOOLKIT_DIR%\chrome\chrome.exe"
 if not defined CHROME_EXE if exist "%TOOLKIT_DIR%\Chrome\Application\chrome.exe" set "CHROME_EXE=%TOOLKIT_DIR%\Chrome\Application\chrome.exe"
+REM Try Edge as fallback
+if not defined CHROME_EXE if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" set "CHROME_EXE=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+if not defined CHROME_EXE if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" set "CHROME_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 
 if not defined CHROME_EXE (
-    echo [WARN] Chrome not found in common locations.
+    echo [WARN] Chrome/Edge not found in common locations.
     echo        Set CHROME_BIN environment variable to your chrome.exe path.
     echo        Example: set CHROME_BIN=D:\Tools\Chrome\chrome.exe
-    echo        cli.py will try to start Chrome automatically on first request.
+    echo        CLI will try to start Chrome automatically.
 ) else (
-    echo [1] Opening Chrome to xiaohongshu.com...
-    echo     Path: "%CHROME_EXE%"
-    start "" "%CHROME_EXE%" %CHROME_EXTRA_ARGS% --no-first-run --start-maximized https://www.xiaohongshu.com
-    timeout /t 2 /nobreak >nul
+    echo [1] Starting Chrome with XHS profile...
+    echo     Path: %CHROME_EXE%
+    start "" "%CHROME_EXE%" --remote-debugging-port=%CHROME_PORT% --user-data-dir="%CHROME_PROFILE%" --no-first-run --start-maximized https://www.xiaohongshu.com
+    timeout /t 3 /nobreak >nul
 )
 
 REM === Step 2: Start bridge server ===
 echo [2] Starting bridge server...
-start "XHS-Bridge" cmd /k node "%BRIDGE%" --skills-dir "%SKILLS_DIR%" --port 18061
+start "XHS-Bridge" cmd /k node "%BRIDGE%" --skills-dir "%SKILLS_DIR%" --port 18061 --chrome-port %CHROME_PORT%
 timeout /t 2 /nobreak >nul
 
 REM === Step 3: Cloudflared tunnel (optional) ===
@@ -215,23 +197,12 @@ if defined CLOUDFLARED (
     echo   Set server URL to: http://localhost:18061/api
 )
 echo.
-echo   Chrome should be open at xiaohongshu.com.
+echo   Chrome should be open at xiaohongshu.com
 echo   Please login if not already logged in.
-echo.
-if exist "%SKILLS_DIR%\scripts\bridge_server.py" (
-    echo   NEW VERSION mode - extension required:
-    echo     1) chrome://extensions/  enable Developer mode
-    echo     2) Load unpacked  select %SKILLS_DIR%\extension\
-    echo     3) Make sure "XHS Bridge" is enabled.
-) else (
-    echo   OLD VERSION mode - CDP connection on port 9222.
-    echo   Login session saved in: %USERPROFILE%\.xhs\chrome-profile\
-)
+echo   Login session saved in: %USERPROFILE%\.xhs\chrome-profile\
 echo.
 echo   Troubleshooting:
 echo     - Chrome not found? Set CHROME_BIN=path\to\chrome.exe
-echo     - "Bridge server start timeout"? See cli.py logs in the XHS-Bridge window
-echo     - Extension not connecting? Reload it in chrome://extensions/
 echo     - Chinese path issues? Save this file as ANSI encoding
 echo     - Port in use? Close previous XHS windows first
 echo.

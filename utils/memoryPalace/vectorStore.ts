@@ -91,27 +91,8 @@ export async function vectorizeAndStore(
 }
 
 /**
- * 归一化模型名，用于「是否同一个底层模型」的比对。
- *
- * 去掉计费档位前缀 `Pro/`（硅基流动的付费独占算力档，底层权重与免费版
- * 完全相同：`Pro/BAAI/bge-m3` 与 `BAAI/bge-m3` 是同一个 bge-m3）。
- *
- * 这样硅基 `Pro/BAAI/bge-m3` → 火山 `BAAI/bge-m3` 这类「同一开源模型、
- * 仅换服务商/档位」的切换不会触发无谓重建（向量空间一致）。
- */
-function normalizeModelName(model: string): string {
-    return model
-        .replace(/^Pro\//i, '')   // 硅基付费档前缀
-        .trim()
-        .toLowerCase();
-}
-
-/**
  * 检测当前 embedding 模型是否与已有向量的模型一致。
  * 如果不一致，说明用户换了模型，需要重新向量化。
- *
- * 注意：只比对「模型本体」，`Pro/BAAI/bge-m3` 与 `BAAI/bge-m3` 视为同一个模型，
- * 跨服务商切换同一开源模型（如硅基 → 火山的 bge-m3）不会触发无谓重建。
  *
  * @returns 'match' | 'mismatch' | 'empty' (无已有向量)
  */
@@ -126,9 +107,7 @@ export async function checkModelConsistency(
     const sample = existing.find(v => v.model);
     if (!sample) return 'match'; // 旧数据无 model 字段，不触发重建，兼容过渡
 
-    return normalizeModelName(sample.model!) === normalizeModelName(currentModel)
-        ? 'match'
-        : 'mismatch';
+    return sample.model === currentModel ? 'match' : 'mismatch';
 }
 
 /**

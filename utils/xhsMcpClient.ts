@@ -25,22 +25,6 @@ const detectMode = (serverUrl: string): BackendMode => {
     return 'mcp'; // default: MCP (backwards compatible)
 };
 
-// Lite-Worker cookie: set from settings, sent as x-xhs-cookie on bridge calls.
-// Local Bridge/Skills servers ignore the header; the cloud Worker requires it.
-let liteCookie = '';
-
-// Resolve the XHS cookie for bridge requests: prefer the explicitly-set value,
-// otherwise read it straight from persisted realtime config. This keeps chat-
-// driven XHS calls authenticated without any call site having to push it in.
-const resolveLiteCookie = (): string => {
-    if (liteCookie) return liteCookie;
-    try {
-        const raw = localStorage.getItem('os_realtime_config');
-        if (raw) return JSON.parse(raw)?.xhsMcpConfig?.cookie || '';
-    } catch { /* ignore */ }
-    return '';
-};
-
 // ==================== Bridge Mode (REST) ====================
 
 const bridgePost = async (
@@ -51,14 +35,10 @@ const bridgePost = async (
     const baseUrl = serverUrl.replace(/\/+$/, '').replace(/\/api$/, '');
     const url = `${baseUrl}/api/${endpoint}`;
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const ck = resolveLiteCookie();
-    if (ck) headers['x-xhs-cookie'] = ck;
-
     try {
         const resp = await fetch(url, {
             method: 'POST',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
         });
 
@@ -370,13 +350,7 @@ export const XhsMcpClient = {
         mcpDiscoveredTools = [];
     },
 
-    // Lite Worker auth: register the XHS cookie used for x-xhs-cookie header.
-    setCookie: (cookie?: string) => {
-        liteCookie = cookie || '';
-    },
-
-    testConnection: async (serverUrl: string, cookie?: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean; xsecToken?: string }> => {
-        if (cookie !== undefined) liteCookie = cookie;
+    testConnection: async (serverUrl: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean; xsecToken?: string }> => {
         const mode = detectMode(serverUrl);
 
         if (mode === 'bridge') {

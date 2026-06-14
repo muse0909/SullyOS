@@ -12,21 +12,6 @@ import { House, User, Package, Warning } from '@phosphor-icons/react';
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
-// Convert a twemoji codepoint string (eg "1f388", "1f3d6-fe0f") to the actual emoji character.
-// Falls back to the input if conversion fails, or to ✨ if input itself looks broken.
-const codepointToEmoji = (code: string): string => {
-    if (!code) return '✨';
-    // If it already contains non-hex (likely already a real emoji char), return as-is.
-    if (!/^[0-9a-fA-F-]+$/.test(code)) return code;
-    try {
-        const points = code.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
-        if (points.length === 0) return '✨';
-        return String.fromCodePoint(...points);
-    } catch {
-        return '✨';
-    }
-};
-
 const STICKER_OPTIONS = [
     { code: '2728', label: 'sparkles' },
     { code: '1f388', label: 'balloon' },
@@ -411,9 +396,8 @@ const SocialApp: React.FC = () => {
 ${identityMap}
 
 ### 🚫 绝对禁令
-1. **禁止扮演用户**: 用户的网名是 "${socialProfile.name}"。绝对禁止生成 \`authorName\` 等于或近似 "${socialProfile.name}" 的帖子（无论是角色帖还是路人帖）。如果你想用类似的名字，请改成完全不同的网名。
-2. **路人不得冒用身份**: 路人的 \`authorName\` 必须是全新的网名，绝对不能与上方【角色身份表】中列出的任何【网名】重合。
-3. **禁止上帝视角**。
+1. **禁止扮演用户**: 绝对禁止生成作者名为 "${socialProfile.name}" (用户) 的帖子。
+2. **禁止上帝视角**。
 
 ### 输入上下文
 ${charContexts}
@@ -441,48 +425,33 @@ ${charContexts}
             const json = safeParseJSON(data.choices[0].message.content);
             if (!Array.isArray(json)) throw new Error('Parsed data is not an array');
             
-            const newPosts: SocialPost[] = json
-                .filter((item: any) => {
-                    // Defense in depth: drop any AI-generated post that tries to impersonate the user.
-                    const name = (item?.authorName || '').toString().trim();
-                    return name && name !== socialProfile.name;
-                })
-                .map((item: any) => {
+            const newPosts: SocialPost[] = json.map((item: any) => {
                 let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${item.authorName}`;
-                let matchedChar: CharacterProfile | undefined;
                 if (item.isCharacter) {
                     // Try to find matching char by ID first, then by Handle match
-                    matchedChar = characters.find(char => char.id === item.charId) || characters.find(char => {
+                    const c = characters.find(char => char.id === item.charId) || characters.find(char => {
                         const handles = characterHandles[char.id] || [];
                         return handles.some(h => h.handle === item.authorName);
                     });
-                    if (matchedChar) avatar = matchedChar.avatar;
-                }
-                // If AI flagged isCharacter but we couldn't match any char/handle, treat as stranger to avoid mis-attribution.
-                const isCharacterPost = !!matchedChar;
-                if (!isCharacterPost) {
+                    if (c) avatar = c.avatar;
+                } else {
                     const seeds = ['micah', 'avataaars', 'bottts', 'notionists'];
                     avatar = `https://api.dicebear.com/7.x/${seeds[Math.floor(Math.random() * seeds.length)]}/svg?seed=${item.authorName + Math.random()}`;
                 }
-                // Normalize emoji content. AI usually returns real emoji chars; fall back to a ✨ char (not codepoint) for safety.
-                const rawEmojis = Array.isArray(item.emojis) && item.emojis.length > 0 ? item.emojis : ['✨'];
-                const images = rawEmojis.map((e: any) => codepointToEmoji(String(e ?? '✨')));
                 return {
                     id: `post-${Date.now()}-${Math.random()}`,
                     authorName: item.authorName || 'Unknown',
                     authorAvatar: avatar,
                     title: item.title || '无标题',
                     content: item.content || '...',
-                    images,
+                    images: item.emojis || ['2728'],
                     likes: item.likes || 0,
                     isCollected: false,
                     isLiked: false,
                     comments: [],
                     timestamp: Date.now(),
                     tags: ['Life', 'Vlog'],
-                    bgStyle: getRandomStyle().bg,
-                    authorType: isCharacterPost ? 'character' : 'stranger',
-                    authorCharId: matchedChar?.id,
+                    bgStyle: getRandomStyle().bg
                 };
             });
             const updatedFeed = [...newPosts, ...feed];
@@ -511,40 +480,28 @@ ${charContexts}
             }
             
             let authorType = "Stranger";
-            if (post.authorType === 'user') authorType = "User";
-            else if (post.authorType === 'character' && post.authorCharId) {
-                const c = characters.find(ch => ch.id === post.authorCharId);
-                if (c) authorType = `Character "${c.name}"`;
-            } else if (!post.authorType) {
-                // Legacy fallback for posts saved before authorType was tracked.
-                if (post.authorName === socialProfile.name) authorType = "User";
-                else {
-                    const c = characters.find(ch => {
-                        const handles = characterHandles[ch.id] || [];
-                        return handles.some(h => h.handle === post.authorName);
-                    });
-                    if (c) authorType = `Character "${c.name}"`;
-                }
+            if (post.authorName === socialProfile.name) authorType = "User";
+            else { 
+                const c = characters.find(ch => {
+                    const handles = characterHandles[ch.id] || [];
+                    return handles.some(h => h.handle === post.authorName);
+                });
+                if (c) authorType = `Character "${c.name}"`; 
             }
 
             const prompt = `### 任务: 模拟社交APP评论区
 **帖子来源**: "Spark" 社区
 **楼主**: "${post.authorName}" (${authorType})
-**帖子标题**: "${post.title}"
-**帖子正文**:
-"""
-${post.content || '(楼主没写正文)'}
-"""
+**帖子**: "${post.title}"
 
-请基于上面的【标题 + 正文】生成 4-6 条评论，评论要切实回应正文里提到的内容，不要只对着标题空泛地说。混合使用 **选定角色** 和 **随机路人**。
+请生成 4-6 条评论。混合使用 **选定角色** 和 **随机路人**。
 角色评论时，请选择一个符合语境的马甲身份。
 
 ### 角色身份库
 ${identityMap}
 
 ### 禁令
-- **绝对禁止** 生成 \`author\` 等于或近似 "${socialProfile.name}" (用户) 的评论。
-- 路人评论的 \`author\` 必须是全新的网名，绝对不能与上方【角色身份库】中列出的任何马甲网名重合。
+- **绝对禁止** 生成署名为 "${socialProfile.name}" 的评论。
 
 ### 输入上下文
 ${contextPrompt}
@@ -562,34 +519,19 @@ ${contextPrompt}
                 const data = await safeResponseJson(response);
                 const json = safeParseJSON(data.choices[0].message.content);
                 if (Array.isArray(json)) {
-                    const comments: SocialComment[] = json
-                        .filter((c: any) => {
-                            const name = (c?.author || c?.authorName || '').toString().trim();
-                            // Drop any AI comment that tries to impersonate the user.
-                            return name && name !== socialProfile.name;
-                        })
-                        .map((c: any) => {
-                            const authorName = c.author || c.authorName || 'Unknown';
-                            let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-
-                            // Check if char (match by handle)
-                            const char = characters.find(ch => {
-                                const handles = characterHandles[ch.id] || [];
-                                return handles.some(h => h.handle === authorName);
-                            });
-
-                            if (char) avatar = char.avatar;
-                            return {
-                                id: `cmt-${Math.random()}`,
-                                authorName: authorName,
-                                authorAvatar: avatar,
-                                content: c.content || '...',
-                                likes: Math.floor(Math.random() * 100),
-                                isCharacter: !!char,
-                                authorType: char ? 'character' : 'stranger',
-                                authorCharId: char?.id,
-                            } as SocialComment;
+                    const comments: SocialComment[] = json.map((c: any) => {
+                        const authorName = c.author || c.authorName || 'Unknown';
+                        let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
+                        
+                        // Check if char
+                        const char = characters.find(ch => {
+                            const handles = characterHandles[ch.id] || [];
+                            return handles.some(h => h.handle === authorName);
                         });
+
+                        if (char) avatar = char.avatar;
+                        return { id: `cmt-${Math.random()}`, authorName: authorName, authorAvatar: avatar, content: c.content || '...', likes: Math.floor(Math.random() * 100), isCharacter: !!char };
+                    });
                     updatePostInFeed({ ...post, comments });
                 }
             }
@@ -608,31 +550,11 @@ ${contextPrompt}
                 identityMap += `- ${char.name}: ${hList}\n`;
             });
 
-            // Tell the model who actually wrote the post — if it's the user themselves, replies
-            // need to make sense as people responding to the user's own note (not strangers).
-            let postAuthorInfo = `"${post.authorName}"`;
-            if (post.authorType === 'user') postAuthorInfo += ' (用户本人)';
-            else if (post.authorType === 'character' && post.authorCharId) {
-                const c = characters.find(ch => ch.id === post.authorCharId);
-                if (c) postAuthorInfo += ` (角色 ${c.name} 的马甲)`;
-            } else if (post.authorName === socialProfile.name) {
-                postAuthorInfo += ' (用户本人)';
-            }
-
             const prompt = `### 任务: 回复用户的评论
-**帖子楼主**: ${postAuthorInfo}
-**帖子标题**: "${post.title}"
-**帖子正文**:
-"""
-${post.content || '(楼主没写正文)'}
-"""
-**用户 "${socialProfile.name}" 刚在帖子下发的评论**: "${userContent}"
-
-请基于楼主帖子的【标题 + 正文】+ 用户的评论上下文，生成 1-3 条对用户这条评论的回复，要扣题，不能脱离正文凭空发挥。
+**场景**: 用户 "${socialProfile.name}" 在帖子下发了一条评论: "${userContent}"。
+**帖子**: "${post.title}"
+请生成 1-3 条对用户评论的回复。
 ${identityMap}
-
-### 禁令
-- **绝对禁止** \`author\` 等于或近似 "${socialProfile.name}" (用户自己)。回复必须来自其他人。
 
 ### 输出格式 (JSON Array)
 [
@@ -647,32 +569,18 @@ ${identityMap}
                 const data = await safeResponseJson(response);
                 const json = safeParseJSON(data.choices[0].message.content);
                 if (Array.isArray(json)) {
-                    const newReplies: SocialComment[] = json
-                        .filter((c: any) => {
-                            const name = (c?.author || c?.authorName || '').toString().trim();
-                            return name && name !== socialProfile.name;
-                        })
-                        .map((c: any) => {
-                            const authorName = c.author || c.authorName || 'Unknown';
-                            let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-
-                            const char = characters.find(ch => {
-                                const handles = characterHandles[ch.id] || [];
-                                return handles.some(h => h.handle === authorName);
-                            });
-
-                            if (char) avatar = char.avatar;
-                            return {
-                                id: `cmt-reply-${Date.now()}-${Math.random()}`,
-                                authorName: authorName,
-                                authorAvatar: avatar,
-                                content: `回复 @${socialProfile.name}: ${c.content}`,
-                                likes: Math.floor(Math.random() * 10),
-                                isCharacter: !!char,
-                                authorType: char ? 'character' : 'stranger',
-                                authorCharId: char?.id,
-                            } as SocialComment;
+                    const newReplies: SocialComment[] = json.map((c: any) => {
+                        const authorName = c.author || c.authorName || 'Unknown';
+                        let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
+                        
+                        const char = characters.find(ch => {
+                            const handles = characterHandles[ch.id] || [];
+                            return handles.some(h => h.handle === authorName);
                         });
+
+                        if (char) avatar = char.avatar;
+                        return { id: `cmt-reply-${Date.now()}-${Math.random()}`, authorName: authorName, authorAvatar: avatar, content: `回复 @${socialProfile.name}: ${c.content}`, likes: Math.floor(Math.random() * 10) };
+                    });
                     if (newReplies.length > 0) {
                         updatePostInFeed({ ...post, comments: [...(post.comments || []), ...newReplies] });
                         addToast(`收到 ${newReplies.length} 条新回复`, 'info');
@@ -693,23 +601,20 @@ ${identityMap}
 
     const handleCreatePost = () => {
         if (!newPostContent.trim()) return;
-        const post: SocialPost = {
-            id: `user-post-${Date.now()}`,
+        const post: SocialPost = { 
+            id: `user-post-${Date.now()}`, 
             authorName: socialProfile.name, // Use Local Identity
             authorAvatar: socialProfile.avatar, // Use Local Identity
-            title: newPostTitle || '无标题',
-            content: newPostContent,
-            // Sticker selector stores twemoji codepoints (eg "2728"); convert to the real emoji char
-            // so that the feed/detail views render an emoji instead of the raw codepoint text.
-            images: [codepointToEmoji(newPostEmoji)],
-            likes: 0,
-            isCollected: false,
-            isLiked: false,
-            comments: [],
-            timestamp: Date.now(),
-            tags: ['User'],
-            bgStyle: getRandomStyle().bg,
-            authorType: 'user',
+            title: newPostTitle || '无标题', 
+            content: newPostContent, 
+            images: [newPostEmoji], 
+            likes: 0, 
+            isCollected: false, 
+            isLiked: false, 
+            comments: [], 
+            timestamp: Date.now(), 
+            tags: ['User'], 
+            bgStyle: getRandomStyle().bg 
         };
         persistFeed([post, ...feed]);
         setNewPostContent(''); setNewPostTitle(''); 
@@ -724,18 +629,17 @@ ${identityMap}
     const handleSendComment = async () => { 
         if (!selectedPost || !commentInput.trim()) return; 
         
-        const updatedPost = {
-            ...selectedPost,
-            comments: [...(selectedPost.comments || []), {
-                id: `cmt-user-${Date.now()}`,
+        const updatedPost = { 
+            ...selectedPost, 
+            comments: [...(selectedPost.comments || []), { 
+                id: `cmt-user-${Date.now()}`, 
                 authorName: socialProfile.name, // Use Local Identity
                 authorAvatar: socialProfile.avatar, // Use Local Identity
-                content: commentInput.trim(),
-                likes: 0,
-                isCharacter: false,
-                authorType: 'user' as const,
-            }]
-        };
+                content: commentInput.trim(), 
+                likes: 0, 
+                isCharacter: false 
+            }] 
+        }; 
         
         updatePostInFeed(updatedPost); 
         const contentToSend = commentInput; 
@@ -753,7 +657,7 @@ ${identityMap}
             <div className="aspect-[4/5] w-full flex items-center justify-center relative overflow-hidden" style={{ background: post.bgStyle }}>
                 {/* Decorative Overlay for "Premium" look */}
                 <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
-                <div className="relative z-10 text-6xl drop-shadow-xl filter saturate-150 transform transition-transform group-hover:scale-110 duration-500">{codepointToEmoji(post.images[0])}</div>
+                <div className="relative z-10 text-6xl drop-shadow-xl filter saturate-150 transform transition-transform group-hover:scale-110 duration-500">{post.images[0]}</div>
                 {post.title && (
                     <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/50 via-black/20 to-transparent">
                         <h3 className="text-white font-bold text-sm line-clamp-2 drop-shadow-md leading-tight">{post.title}</h3>
@@ -808,7 +712,7 @@ ${identityMap}
                         <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
                             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
                             {/* Removed animate-bounce-slow to prevent reflow jitter */}
-                            <div className="relative z-10 drop-shadow-2xl filter saturate-125">{codepointToEmoji(selectedPost.images[0])}</div>
+                            <div className="relative z-10 drop-shadow-2xl filter saturate-125">{selectedPost.images[0]}</div>
                         </div>
 
                         <div className="p-6 space-y-4">
@@ -946,7 +850,7 @@ ${identityMap}
 
             <Modal isOpen={showShareModal} title="分享帖子" onClose={() => setShowShareModal(false)}>
                 <div className="grid grid-cols-4 gap-4 p-2">
-                    {characters.map(c => (
+                    {characters.slice(0, 8).map(c => (
                         <button key={c.id} onClick={() => handleShare(c.id, false)} className="flex flex-col items-center gap-2 group">
                             <img src={c.avatar} className="w-12 h-12 rounded-full object-cover border border-slate-100 group-active:scale-90 transition-transform" />
                             <span className="text-[10px] text-slate-600 truncate w-full text-center">{c.name}</span>
@@ -1127,9 +1031,9 @@ ${identityMap}
 
                             <div className="p-2 min-h-[300px] bg-slate-50/50 pb-24">
                                 <div className="columns-2 gap-2 space-y-2">
-                                    {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
+                                    {feed.filter(p => profileTab === 'notes' ? p.authorName === socialProfile.name : p.isCollected).map(post => (
                                         <div key={post.id} onClick={() => { setSelectedPost(post); generateComments(post); }} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
-                                            <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{codepointToEmoji(post.images[0])}</div>
+                                            <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{post.images[0]}</div>
                                             <div className="p-3">
                                                 <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
                                                 <div className="flex justify-between items-center mt-2">
@@ -1140,7 +1044,7 @@ ${identityMap}
                                         </div>
                                     ))}
                                 </div>
-                                {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).length === 0 && (
+                                {feed.filter(p => profileTab === 'notes' ? p.authorName === socialProfile.name : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
                                         <Package size={48} className="text-slate-300 opacity-30" />
                                         <span className="text-xs">空空如也</span>

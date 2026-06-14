@@ -45,14 +45,4 @@ export const KeepAlive = {
   stop() {
     postToSW({ type: 'keepalive-stop' });
   },
-
-  /**
-   * Force re-register the SW. 调用方 (深度重置订阅) 已经先 unregister 了旧 SW;
-   * 这里只负责把内部 `registered` flag 清掉再走一遍 ensureRegistered, 否则
-   * 老的 idempotent guard 会以为 "已注册" 直接 return.
-   */
-  async reregister() {
-    registered = false;
-    await ensureRegistered();
-  },
 };

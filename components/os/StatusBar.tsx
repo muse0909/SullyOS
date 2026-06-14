@@ -26,7 +26,6 @@ const StatusBar: React.FC = () => {
 
   // Use content color from theme
   const textColor = theme.contentColor || '#ffffff';
-  const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：电量条用叶绿色
 
   useEffect(() => {
     const initBattery = async () => {
@@ -58,23 +57,43 @@ const StatusBar: React.FC = () => {
     initBattery();
   }, []);
 
+  // 状态栏背景与聊天头部风格联动
+  const headerStyle = (theme as any).chatHeaderStyle || 'default';
+  const chromeStyle = (theme as any).chatChromeStyle || 'soft';
+  const statusBarBgClass = headerStyle === 'gradient'
+    ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl'
+    : headerStyle === 'minimal'
+    ? 'bg-white/95 backdrop-blur-md'
+    : headerStyle === 'wechat'
+    ? 'bg-[#f7f7f7]/95 backdrop-blur-md'
+    : headerStyle === 'telegram'
+    ? 'bg-white/85 backdrop-blur-xl'
+    : headerStyle === 'discord'
+    ? 'bg-slate-900/95 backdrop-blur-xl'
+    : headerStyle === 'pixel'
+    ? 'bg-[#c99872]'
+    : chromeStyle === 'flat'
+    ? 'bg-white'
+    : chromeStyle === 'floating'
+    ? 'bg-white/85 backdrop-blur-xl'
+    : 'bg-white/80 backdrop-blur-xl';
+
   const hasError = systemLogs.length > 0;
 
   return (
     <>
       <div 
-          className="w-full flex justify-between items-start px-6 text-[11px] font-bold z-50 absolute top-0 left-0 bg-transparent transition-colors duration-500 select-none pointer-events-none"
+          className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-1 text-[11px] font-semibold bg-black/5 backdrop-blur-xl ${statusBarBgClass}`}
           style={{ 
               color: textColor,
-              paddingTop: 'max(4px, var(--safe-top))',
-              height: 'auto',
-              minHeight: '2rem'
+              paddingTop: 'env(safe-area-inset-top)',
+              height: 'calc(env(safe-area-inset-top) + 2.5rem)'
           }}
       >
         <div className="w-1/3 pl-2 flex items-center gap-2 pointer-events-auto">
-          <span>{format(virtualTime.hours)}:{format(virtualTime.minutes)}</span>
+          <span className="text-[13px] font-bold tracking-wide" style={{ color: textColor }}>{format(virtualTime.hours)}:{format(virtualTime.minutes)}</span>
         </div>
-        <div className="w-1/3 flex justify-center">
+        <div className="w-20 flex justify-center">
           {/* Notch Area spacer */}
         </div>
         <div className="w-1/3 flex justify-end gap-1.5 items-center pr-2">
@@ -82,10 +101,10 @@ const StatusBar: React.FC = () => {
             <path fillRule="evenodd" d="M1.371 8.143c5.858-5.857 15.356-5.857 21.213 0a.75.75 0 0 1 0 1.061l-.53.53a.75.75 0 0 1-1.06 0c-4.98-4.979-13.053-4.979-18.032 0a.75.75 0 0 1-1.06 0l-.53-.53a.75.75 0 0 1 0-1.06Zm3.182 3.182c4.1-4.1 10.749-4.1 14.85 0a.75.75 0 0 1 0 1.061l-.53.53a.75.75 0 0 1-1.062 0 8.25 8.25 0 0 0-11.667 0 .75.75 0 0 1-1.06 0l-.53-.53a.75.75 0 0 1 0-1.06Zm3.204 3.182a6 6 0 0 1 8.486 0 .75.75 0 0 1 0 1.061l-.53.53a.75.75 0 0 1-1.061 0 3.75 3.75 0 0 0-5.304 0 .75.75 0 0 1-1.06 0l-.53-.53a.75.75 0 0 1 0-1.06Zm3.182 3.182a1.5 1.5 0 0 1 2.122 0 .75.75 0 0 1 0 1.061l-.53.53a.75.75 0 0 1-1.061 0l-.53-.53a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
           </svg>
           <div className="flex items-center gap-1">
-            <span>{batteryLevel}%</span>
+            <span className="text-[13px] font-bold">{batteryLevel}%</span>
             <div className="w-5 h-2.5 border border-current rounded-[3px] p-[1px] relative opacity-80 flex items-center">
-              <div
-                  className={`h-full rounded-[1px] ${isCharging ? 'bg-green-400' : acnh ? 'bg-[#7cba4c]' : 'bg-current'}`}
+              <div 
+                  className={`h-full rounded-[1px] ${isCharging ? 'bg-green-400' : 'bg-current'}`} 
                   style={{ width: `${batteryLevel}%` }}
               ></div>
               {isCharging && (
@@ -105,7 +124,7 @@ const StatusBar: React.FC = () => {
           <button 
               onClick={() => setShowLogModal(true)} 
               className="fixed left-1/2 -translate-x-1/2 z-[60] bg-red-500/90 text-white rounded-full px-4 py-1.5 text-[10px] font-bold shadow-lg animate-pulse flex items-center gap-1.5 backdrop-blur-md border border-white/20 pointer-events-auto"
-              style={{ top: 'calc(var(--chrome-top) + 1rem)' }}
+              style={{ top: 'calc(env(safe-area-inset-top) + 3rem)' }}
           >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
                   <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />

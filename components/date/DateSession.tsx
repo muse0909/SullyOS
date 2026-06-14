@@ -99,10 +99,21 @@ const DateSession: React.FC<DateSessionProps> = ({
     onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes } = useOS();
     
     // Core VN State
-    const [isNovelMode, setIsNovelMode] = useState(false);
+    // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
+    const [viewMode, setViewMode] = useState<'gal' | 'novel' | 'longform'>(() => {
+      // 优先使用角色设置的默认模式，再看 savedDateState
+      if (char.dateViewMode) return char.dateViewMode === 'bubble' ? 'longform' : char.dateViewMode;
+      const initialMode = initialState?.viewMode === 'bubble' ? 'longform' : initialState?.viewMode;
+      if (initialMode) return initialMode;
+      if (initialState?.isNovelMode) return 'novel';
+      return 'gal';
+    });
+    const isNovelMode = viewMode === 'novel';
+    const isLongform = viewMode === 'longform';
+    const longformTheme = char.dateLongformTheme || 'half-novel';
     const [bgImage, setBgImage] = useState<string>(char.dateBackground || '');
     const [currentSprite, setCurrentSprite] = useState<string>('');
     const [spriteConfig, setSpriteConfig] = useState(char.spriteConfig || { scale: 1, x: 0, y: 0 });
@@ -117,6 +128,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Interaction State
     const [input, setInput] = useState('');
     const [showInputBox, setShowInputBox] = useState(false);
+    const [showPlusMenu, setShowPlusMenu] = useState(false);
+    const [showModeSwitch, setShowModeSwitch] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -311,7 +324,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDisplayedText(initialState.currentText);
             setDialogueQueue(initialState.dialogueQueue);
             setDialogueBatch(initialState.dialogueBatch);
-            setIsNovelMode(initialState.isNovelMode);
+            const restoredMode = initialState.viewMode === 'bubble' ? 'longform' : initialState.viewMode;
+            setViewMode(restoredMode || (initialState.isNovelMode ? 'novel' : 'gal'));
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
             const s = (() => {
@@ -352,12 +366,12 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (char.dateBackground) setBgImage(char.dateBackground);
     }, [char]);
 
-    // Novel Mode Scroll
+    // Novel / Longform Mode Scroll
     useEffect(() => {
-        if (isNovelMode && novelScrollRef.current) {
+        if ((viewMode === 'novel' || viewMode === 'longform') && novelScrollRef.current) {
             novelScrollRef.current.scrollTop = novelScrollRef.current.scrollHeight;
         }
-    }, [sessionMessages.length, isNovelMode, showInputBox]);
+    }, [sessionMessages.length, viewMode]);
 
     // Typewriter effect
     useEffect(() => {
@@ -412,8 +426,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleScreenClick = (e: React.MouseEvent) => {
-        if ((e.target as HTMLElement).closest('button, input, textarea, .control-panel')) return;
-        if (isNovelMode) return;
+        if ((e.target as HTMLElement).closest('button, input, textarea')) return;
+        setShowPlusMenu(false);
+        setShowModeSwitch(false);
+        if (viewMode !== 'gal') return;
 
         // Skip animation
         if (isTextAnimating) {
@@ -438,18 +454,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleSend = async () => {
-        if (isTyping) return;
-        const inputText = input.trim();
-        // 重发模式：输入为空但最后一条是 user 消息（说明上一轮 API 没回，可能错误中断或网络抖动），
-        // 让发送键直接拿 DB 里那条 user 的内容重新触发 LLM，不必让用户重打。与 chat app 行为对齐。
-        const lastMsg = messages[messages.length - 1];
-        const canRetry = !inputText && lastMsg?.role === 'user';
-        if (!inputText && !canRetry) return;
-        const text = inputText || lastMsg.content;
-        if (inputText) {
-            setInput('');
-            setShowInputBox(false);
-        }
+        if (!input.trim() || isTyping) return;
+        const text = input.trim();
+        setInput('');
+        setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
@@ -463,8 +471,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 processNextDialogue(items[0], items.slice(1));
             }
         } catch (e: any) {
-            // onSendMessage 内部含 API 调用 + 回复后处理, 抛错不一定是网络。用中性文案, 不误导成"连接中断"。
-            setCurrentText(`(出错了: ${e?.message || '未知错误'})`);
+            setCurrentText("(连接中断)");
             setShowInputBox(true);
         } finally {
             setIsTyping(false);
@@ -494,6 +501,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         bgImage,
         currentSprite,
         isNovelMode,
+        viewMode,
         timestamp: Date.now(),
         peekStatus
     });
@@ -614,89 +622,169 @@ const DateSession: React.FC<DateSessionProps> = ({
                 style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }}
             ></div>
 
-            {/* Menu Layer */}
-            <div className="absolute top-0 right-0 p-4 pt-12 z-[100] flex justify-end gap-3 pointer-events-auto">
-                {!isTyping && canReroll && (
-                    <button onClick={(e) => { e.stopPropagation(); handleRerollClick(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white/10 backdrop-blur-md border-slate-300/30 text-slate-400 hover:bg-white/20' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                    </button>
-                )}
-                
-                {/* Voice Toggle — tap opens the language picker (where the off switch lives);
-                    double-click / long-press are kept as shortcuts to disable voice directly. */}
-                <div className="relative">
-                    <button onClick={(e) => {
-                            e.stopPropagation();
-                            if (voiceEnabled) {
-                                setShowVoiceLangPicker(prev => !prev);
-                            } else {
-                                updateCharacter(char.id, { dateVoiceEnabled: true });
-                                addToast('语音已开启', 'info');
-                                setShowVoiceLangPicker(true);
-                            }
-                        }}
-                        onDoubleClick={(e) => { e.stopPropagation(); if (voiceEnabled) { updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); } }}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${voiceEnabled ? 'bg-white/20 backdrop-blur-md border-white/30 text-white/80' : 'bg-black/30 backdrop-blur-md border-white/20 text-white/50 hover:bg-white/20'}`}
-                        title={voiceEnabled ? '点击展开：选语种 / 关闭语音' : '开启语音'}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            {voiceEnabled
-                                ? <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
-                                : <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />}
-                        </svg>
-                        {voiceEnabled && voiceLang && <span className="absolute -bottom-1 -right-1 text-[8px] font-bold bg-white/30 text-white rounded-full px-1 leading-tight">{VOICE_LANG_OPTIONS.find(o => o.v === voiceLang)?.l || ''}</span>}
-                    </button>
-                    {/* Collapsible Language Picker — includes an always-visible off switch
-                        so users aren't stuck guessing that the button needs a double-click. */}
-                    {voiceEnabled && showVoiceLangPicker && (
-                        <div className="absolute top-12 right-0 flex flex-col gap-1 animate-fade-in">
-                            {VOICE_LANG_OPTIONS.map(opt => (
-                                <button key={opt.v} onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
-                                    className={`h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap ${voiceLang === opt.v ? 'bg-white/30 text-white shadow-md' : 'bg-black/30 backdrop-blur-md text-white/60 border border-white/10'}`}>
-                                    {opt.l}
-                                </button>
-                            ))}
-                            <button onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); }}
-                                className="h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap bg-red-500/50 text-white border border-red-300/40 shadow-md flex items-center gap-1 justify-center">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5"><path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clipRule="evenodd" /></svg>
-                                关闭
-                            </button>
-                        </div>
-                    )}
-                </div>
-
-                {/* Novel Mode Toggle */}
-                <button onClick={(e) => { e.stopPropagation(); setIsNovelMode(!isNovelMode); exitBatchMode(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                    {isNovelMode ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                    ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
-                    )}
-                </button>
-
-                <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); setShowSettings(true); }} className="bg-black/30 backdrop-blur-md text-white w-10 h-10 rounded-full flex items-center justify-center border border-white/20 hover:bg-white/20 transition-all shadow-lg active:scale-95">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                </button>
-                {isNovelMode && char.dateLightReading && (
-                    <button
-                        onClick={(e) => { e.stopPropagation(); isBatchSelectMode ? exitBatchMode() : setIsBatchSelectMode(true); }}
-                        className={`px-3 h-10 rounded-full text-xs font-bold border shadow-lg ${isBatchSelectMode ? 'bg-primary text-white border-primary' : 'bg-black/30 backdrop-blur-md border-white/20 text-white'}`}
-                    >
-                        {isBatchSelectMode ? '完成' : '多选'}
-                    </button>
-                )}
-                <button onClick={() => setShowExitModal(true)} className="bg-red-500/80 backdrop-blur-md text-white px-4 h-10 rounded-full flex items-center justify-center gap-1 border border-white/20 hover:bg-red-600 transition-colors shadow-lg active:scale-95">
-                    <span className="text-xs font-bold mr-1">离开</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" /></svg>
-                </button>
+            {/* Top Return Button */}
+            <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
+              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 28px)' }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
+                className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
             </div>
+
+            {/* Longform Mode View */}
+            {isLongform && (
+              <div
+                ref={novelScrollRef}
+                className={`absolute overflow-y-auto no-scrollbar ${longformTheme === 'half-novel' ? 'left-0 right-0 bottom-0' : 'inset-0'}`}
+                style={{
+                  ...(longformTheme === 'half-novel' ? {
+                    top: '42%',
+                    paddingTop: '16px',
+                    paddingBottom: 'max(80px, calc(env(safe-area-inset-bottom) + 70px))',
+                    paddingLeft: '20px',
+                    paddingRight: '20px',
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
+                    maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
+                  } : {
+                    paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
+                    paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
+                    paddingLeft: '16px',
+                    paddingRight: '16px',
+                  }),
+                  background: 'transparent',
+                }}
+                onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
+              >
+                <div className={`relative z-10 ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-3' : 'space-y-4'}`}>
+                  {sessionMessages.map((msg) => {
+                    const content = cleanTextForDisplay(msg.content || '');
+                    if (!content) return null;
+                    const isUser = msg.role === 'user';
+                    const useBubble = longformTheme === 'long-bubble';
+                    const bubbleStyle = char.dateBubbleThemeStyle || 'dark';
+                    
+                    // 获取气泡预设样式（如果已选择）- AI和用户都获取
+                    let bubblePresetStyle: any = null;
+                    if (char.dateLongformBubblePresetId && customThemes) {
+                      const preset = customThemes.find(t => t.id === char.dateLongformBubblePresetId);
+                      if (preset) {
+                        bubblePresetStyle = isUser ? (preset.user || preset.ai || {}) : (preset.ai || {});
+                      }
+                    }
+                    
+                    if (useBubble) {
+                      // long-bubble: 头像顶部 + 消息内容
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex gap-2 mb-4 w-full ${isUser ? 'justify-end' : 'justify-start'}`}
+                          onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                          onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                          onTouchEnd={handleMsgTouchEnd}
+                          onTouchMove={handleMsgTouchMove}
+                          onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                          onMouseUp={handleMsgTouchEnd}
+                          onMouseLeave={handleMsgTouchEnd}
+                        >
+                          {!isUser && (
+                            <img src={char.avatar} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover self-start mt-1" />
+                          )}
+                          <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
+                            <div
+                              className={`px-5 py-4 text-sm leading-relaxed shadow-sm rounded-3xl ${bubblePresetStyle ? '' : 'bg-white/15 text-white/90 backdrop-blur-md border border-white/20'}`}
+                              style={{
+                                wordBreak: 'break-word',
+                                whiteSpace: 'pre-wrap',
+                                ...(bubblePresetStyle ? {
+                                  backgroundColor: isUser
+                                    ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
+                                    : (bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)'),
+                                  color: isUser
+                                    ? (bubblePresetStyle.userTextColor || bubblePresetStyle.textColor || 'rgba(255,255,255,0.9)')
+                                    : (bubblePresetStyle.textColor || 'rgba(255,255,255,0.9)'),
+                                  borderRadius: bubblePresetStyle.borderRadius ? `${bubblePresetStyle.borderRadius}px` : '24px',
+                                  border: bubblePresetStyle.borderColor ? `1px solid ${bubblePresetStyle.borderColor}` : 'none',
+                                  opacity: bubblePresetStyle.opacity ?? 1,
+                                  backdropFilter: 'blur(12px)',
+                                  WebkitBackdropFilter: 'blur(12px)',
+                                } : {})
+                              }}
+                            >
+                              {content}
+                            </div>
+                          </div>
+                          {isUser && (
+                            <div className="w-8 h-8 rounded-full shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600 self-start mt-1">
+                              我
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                    
+                    // half-novel: 半屏小说风格 - 半透明气泡叠在背景上（也支持预设切换）
+                    return (
+                      <div
+                        key={msg.id}
+                        className="mb-3"
+                        onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                        onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                        onTouchEnd={handleMsgTouchEnd}
+                        onTouchMove={handleMsgTouchMove}
+                        onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                        onMouseUp={handleMsgTouchEnd}
+                        onMouseLeave={handleMsgTouchEnd}
+                      >
+                        <div
+                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${bubblePresetStyle ? '' : 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20'}`}
+                          style={{
+                            wordBreak: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            ...(bubblePresetStyle ? {
+                              backgroundColor: isUser
+                                ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
+                                : (bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)'),
+                              color: isUser
+                                ? (bubblePresetStyle.userTextColor || bubblePresetStyle.textColor || 'rgba(255,255,255,0.95)')
+                                : (bubblePresetStyle.textColor || 'rgba(255,255,255,0.95)'),
+                              borderRadius: bubblePresetStyle.borderRadius ? `${bubblePresetStyle.borderRadius}px` : '24px',
+                              border: bubblePresetStyle.borderColor ? `1px solid ${bubblePresetStyle.borderColor}` : 'none',
+                              opacity: bubblePresetStyle.opacity ?? 1,
+                              backdropFilter: 'blur(12px)',
+                              WebkitBackdropFilter: 'blur(12px)',
+                            } : {})
+                          }}
+                        >
+                          {content}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {isTyping && (
+                    <div className={`flex gap-2 mb-4 ${longformTheme === 'half-novel' ? '' : ''}`}>
+                      {longformTheme === 'long-bubble' && (
+                        <img src={char.avatar} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover self-start mt-1" />
+                      )}
+                      <div className={`px-4 py-3 rounded-2xl ${longformTheme === 'half-novel' ? 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20' : (char.dateLightReading ? 'bg-white border-slate-100' : 'bg-white/12 backdrop-blur-md')}`}>
+                        <div className="flex gap-1 items-center h-4">
+                          {[0, 1, 2].map(i => (
+                            <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
+                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} style={{ paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))' }} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
                     <div className="min-h-full flex flex-col justify-end">
                         <div className="max-w-2xl mx-auto animate-fade-in space-y-6">
                             {isBatchSelectMode && (
@@ -782,9 +870,10 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Visual Mode View */}
-            {!isNovelMode && (
+            {viewMode === 'gal' && (
                 <>
-                    <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none z-10 overflow-hidden">
+                    <div className="absolute inset-x-0 z-30 flex items-end justify-center pointer-events-none overflow-hidden"
+                  style={{ bottom: 'max(120px, calc(env(safe-area-inset-bottom) + 92px))' }}>
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
                     </div>
                     {!isTyping && (
@@ -818,7 +907,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Input Layer */}
-            <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="absolute inset-x-0 bottom-0 z-40 flex justify-center transition-all duration-300">
                 {isTyping && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
@@ -827,24 +916,112 @@ const DateSession: React.FC<DateSessionProps> = ({
                         </div>
                     </div>
                 )}
-                {showInputBox && (
-                    <div className={`w-[90%] max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
-                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
-                        {(() => {
-                            const lastMsg = messages[messages.length - 1];
-                            const canRetry = !input.trim() && !isTyping && lastMsg?.role === 'user';
-                            return (
-                                <button
-                                    onClick={handleSend}
-                                    disabled={(!input.trim() && !canRetry) || isTyping}
-                                    className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
-                                >
-                                    {canRetry ? 'RETRY' : 'SEND'}
-                                </button>
-                            );
-                        })()}
+
+            {/* ===== 底部输入区 + Plus菜单 ===== */}
+            <div className="absolute bottom-0 left-0 right-0 z-30" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} onClick={e => e.stopPropagation()}>
+
+              {showPlusMenu && (
+                <div className="px-4 pb-2 flex flex-col gap-2 w-full max-w-full overflow-hidden">
+                  {showVoiceLangPicker && (
+                    <div className="flex gap-2 flex-wrap justify-center">
+                      {VOICE_LANG_OPTIONS.map(opt => (
+                        <button key={opt.v}
+                          onClick={() => { updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
+                          className={`h-8 px-3 rounded-full text-[11px] font-bold active:scale-95 transition-all ${voiceLang === opt.v ? 'bg-white/30 text-white' : 'bg-black/80 text-white/90 border border-white/25'}`}>
+                          {opt.l}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}
+                        className="h-8 px-3 rounded-full text-[11px] font-bold bg-red-500/90 text-white border-red-300/50 active:scale-95">
+                        {voiceEnabled ? '关闭语音' : '开启语音'}
+                      </button>
                     </div>
-                )}
+                  )}
+
+                  {showModeSwitch ? (
+                    <div className="flex gap-2 justify-center flex-wrap px-4">
+                      {([['gal', '视觉 GalGame'], ['novel', '小说阅读'], ['longform', '长文模式']] as const).map(([m, label]) => (
+                        <button key={m}
+                          onClick={() => { setViewMode(m); updateCharacter(char.id, { dateViewMode: m }); setShowModeSwitch(false); setShowPlusMenu(false); exitBatchMode(); }}
+                          className={`py-2.5 px-5 rounded-2xl text-xs font-bold transition-all active:scale-95 whitespace-nowrap border ${viewMode === m ? 'bg-white text-black border-white shadow-md' : 'bg-black/50 backdrop-blur-md text-white/90 border-white/40'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 justify-center flex-wrap">
+                      {canReroll && !isTyping && (
+                        <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          重新生成
+                        </button>
+                      )}
+                      <button onClick={() => setShowModeSwitch(true)}
+                        className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                        模式切换
+                      </button>
+                      <button onClick={() => setShowVoiceLangPicker(p => !p)}
+                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-emerald-300/70 text-white border border-white/20'}`}>
+                        语音设置
+                      </button>
+                      {viewMode === 'novel' && (
+                        <button onClick={() => { updateCharacter(char.id, { dateLightReading: !char.dateLightReading }); addToast(char.dateLightReading ? '已切换暗色' : '已切换亮色', 'info'); }}
+                          className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${char.dateLightReading ? 'bg-amber-200/70 text-amber-800' : 'bg-slate-500/60 text-white'}`}>
+                          {char.dateLightReading ? '亮色模式' : '暗色模式'}
+                        </button>
+                      )}
+                      {viewMode === 'gal' && (
+                        <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          主题设置
+                        </button>
+                      )}
+                      {viewMode === 'longform' && (
+                        <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
+                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          主题设置
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-2 items-center px-4 pb-2 pt-1">
+                <div className="flex-1 flex items-center gap-1 rounded-2xl px-2 py-1 min-h-[44px] bg-black/35 backdrop-blur-md border border-white/15">
+                  <button
+                    onClick={() => { setShowPlusMenu(p => !p); setShowModeSwitch(false); setShowVoiceLangPicker(false); }}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 shrink-0 ${
+                      showPlusMenu ? 'bg-primary text-white' : 'bg-white/15 text-white/70'
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={`w-4 h-4 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                  </button>
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                    placeholder={isTyping ? '等待回应…' : '输入对话…'}
+                    disabled={isTyping}
+                    rows={1}
+                    className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-2 text-white placeholder:text-white/30"
+                    style={{ maxHeight: '88px', overflowY: 'auto' }}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isTyping}
+                    className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
             </div>
 
             {/* Settings Overlay */}

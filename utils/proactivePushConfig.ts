@@ -16,33 +16,12 @@
 
 // ═══════════════════════════════════════════════════════════════════
 //   FILL THESE IN AFTER DEPLOYING THE CLOUDFLARE WORKER
-//
-//   VAPID 公私钥已迁移到 utils/pushVapid.ts (push_vapid_v1) — 默认空，由
-//   用户在 Settings → Instant Push 里生成；Proactive 和 Instant 共用同一份
-//   VAPID，避免两边互相 unsubscribe 抢同一个 pushManager 订阅。
+//   (all three are safe to ship in the client bundle)
 // ═══════════════════════════════════════════════════════════════════
 const WORKER_URL = 'https://noir2.cc.cd';
+const VAPID_PUBLIC_KEY = 'BAKnuYYBsb6LXnpGApVCpMkumFqDLjZOSDmzjVPx32jIA5fbz-OWaRdk0RH8qftpVuNwzNO-l49CBEwieyezh0g';
 const CLIENT_TOKEN = 'weqwqewqeqwdcsccagdgs32132';
 // ═══════════════════════════════════════════════════════════════════
-
-// ── 全局停用开关（KILL SWITCH）─────────────────────────────────────
-// 主动消息 Push 加速这层已经全局下线（设置面板也藏了）。已经开过的用户
-// localStorage 里 proactive_push_enabled_v1 还是 'true'，光藏 UI 改不了，
-// 他们的客户端会照常心跳、Worker 照常发 wake push。把这里设成 true 后，
-// loadPushConfig() 一律返回 enabled=false：心跳不再启动、不再向 Worker
-// 注册，Worker 在心跳窗口（默认 5 分钟）内自动对这些设备停发。
-// 注意：只关掉 Worker 加速层，proactiveChat.ts 的本地定时主动消息不受影响。
-const FORCE_DISABLED = true;
-// ───────────────────────────────────────────────────────────────────
-
-import { loadPushVapid, isPushVapidReady } from './pushVapid';
-import { KeepAlive } from './keepAlive';
-import {
-  SUBSCRIBE_SETTLE_MS,
-  bytesToB64u,
-  isDeadPushEndpoint,
-  subscribeWithRetry,
-} from './pushSubscribeShared';
 
 const ENABLED_STORAGE_KEY = 'proactive_push_enabled_v1';
 const LAST_WAKE_AT_KEY = 'proactive_push_last_wake_at_v1';
@@ -57,16 +36,13 @@ export interface ProactivePushConfig {
 
 export function loadPushConfig(): ProactivePushConfig {
   let enabled = false;
-  // 全局 kill switch：下线后无论 localStorage 里存的是什么，一律当关闭处理。
-  if (!FORCE_DISABLED) {
-    try {
-      enabled = localStorage.getItem(ENABLED_STORAGE_KEY) === 'true';
-    } catch { /* ignore */ }
-  }
+  try {
+    enabled = localStorage.getItem(ENABLED_STORAGE_KEY) === 'true';
+  } catch { /* ignore */ }
   return {
     enabled,
     workerUrl: WORKER_URL.trim().replace(/\/+$/, ''),
-    vapidPublicKey: loadPushVapid().vapidPublicKey,
+    vapidPublicKey: VAPID_PUBLIC_KEY.trim(),
     clientToken: CLIENT_TOKEN.trim(),
   };
 }
@@ -82,19 +58,33 @@ export function savePushConfig(enabled: boolean) {
 export function isPushConfigReady(cfg: ProactivePushConfig = loadPushConfig()): boolean {
   return cfg.enabled
     && cfg.workerUrl.startsWith('https://')
-    && isPushVapidReady();
+    && cfg.vapidPublicKey.length > 80;
 }
 
 /** True if the deployment constants have been filled in (regardless of toggle). */
 export function isPushConfigAvailable(): boolean {
-  return WORKER_URL.startsWith('https://') && isPushVapidReady();
+  return WORKER_URL.startsWith('https://') && VAPID_PUBLIC_KEY.length > 80;
 }
 
 // ---------- Web Push subscription helpers ----------
-//
-// b64uToBytes / bytesToB64u / isDeadPushEndpoint / explainSubscribeError /
-// subscribeWithRetry / SUBSCRIBE_SETTLE_MS 全部从 pushSubscribeShared.ts 取,
-// 与 instantPushClient.ts 共用同一份实现.
+
+/** Convert base64url string to Uint8Array (for VAPID applicationServerKey). */
+function b64uToBytes(b64u: string): Uint8Array {
+  const padded = b64u.replace(/-/g, '+').replace(/_/g, '/')
+    + '='.repeat((4 - (b64u.length % 4)) % 4);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesToB64u(buf: ArrayBuffer | null): string {
+  if (!buf) return '';
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 interface SubscriptionInfo {
   endpoint: string;
@@ -103,11 +93,46 @@ interface SubscriptionInfo {
 }
 
 /**
- * 旧 API 名 — 调用方 (apps/Settings.tsx 等) 还在引用, 保留为薄包装.
- * 实现在 pushSubscribeShared.ts 的 isDeadPushEndpoint.
+ * True if a subscription's endpoint is a Chrome-internal "permanently
+ * removed" sentinel.  Browsers occasionally revoke subscriptions due to
+ * long inactivity, abuse signals, or the site being visited too rarely;
+ * `getSubscription()` then returns an object whose endpoint URL is
+ * `https://permanently-removed.invalid/...`.  `.invalid` is an RFC 2606
+ * reserved TLD that never resolves, so any push send would fail with a
+ * generic upstream error (which Cloudflare Workers wraps as HTTP 530).
+ *
+ * Detect this and treat the subscription as dead — unsubscribe + re-create.
  */
 export function isDeadSubscriptionEndpoint(endpoint: string | null | undefined): boolean {
-  return isDeadPushEndpoint(endpoint);
+  if (!endpoint) return false;
+  return endpoint.includes('permanently-removed.invalid');
+}
+
+/**
+ * Translate the browser's raw subscribe() rejection into a Chinese,
+ * end-user-actionable hint.  The common cases on Android phones without
+ * Google Play Services (or in third-party Chromium-based browsers that
+ * advertise `PushManager` but route through FCM internally) are
+ * `AbortError` / generic network errors when the FCM endpoint cannot be
+ * reached.  We surface those distinctly so the user knows it's not a
+ * permission issue.
+ */
+function explainSubscribeError(e: any): string {
+  const name = e?.name || '';
+  const msg = e?.message || String(e || '未知错误');
+  if (name === 'NotAllowedError') {
+    return '浏览器拒绝创建订阅（NotAllowedError）——通常是站点权限被拦截或处于隐身模式';
+  }
+  if (name === 'NotSupportedError') {
+    return '当前浏览器不支持网页推送——常见于没装谷歌服务的国行安卓手机（小米/华为/OPPO/vivo 大多默认就没有），或者手机自带的精简浏览器。换 Chrome / Edge / Firefox 桌面版试试';
+  }
+  if (name === 'AbortError' || /push service|FCM|network/i.test(msg)) {
+    return '连不上推送服务器——这台设备的网页推送链路走不通。最常见两种情况：1) 国行安卓手机没装谷歌服务（小米/华为/OPPO/vivo 默认就没有），系统层面就推不了；2) 当前网络挡住了谷歌的推送服务器。建议：换台装了谷歌服务的设备，或者用电脑上的 Chrome / Edge / Firefox 试试';
+  }
+  if (name === 'InvalidStateError') {
+    return '订阅状态冲突（InvalidStateError）——可能旧订阅没清干净，再点一次"重置订阅"';
+  }
+  return `订阅创建失败（${name || 'Error'}：${msg}）`;
 }
 
 interface SubscribeAttempt {
@@ -126,10 +151,8 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
   if (sub) {
     // Drop the existing sub if it's been zombified by the browser
     // (`permanently-removed.invalid` endpoint) — those can never deliver.
-    if (isDeadPushEndpoint(sub.endpoint)) {
+    if (isDeadSubscriptionEndpoint(sub.endpoint)) {
       try { await sub.unsubscribe(); } catch { /* ignore */ }
-      // 等浏览器清内部 removed 标记, 否则后面 subscribe() 又拿到死哨兵
-      await new Promise(r => setTimeout(r, SUBSCRIBE_SETTLE_MS));
       sub = null;
     }
   }
@@ -141,7 +164,6 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
       const existingKey = bytesToB64u(sub.options.applicationServerKey);
       if (existingKey && existingKey !== vapidPublicKey) {
         await sub.unsubscribe();
-        await new Promise(r => setTimeout(r, SUBSCRIBE_SETTLE_MS));
         sub = null;
       }
     } catch {
@@ -156,9 +178,23 @@ export async function getOrCreateSubscription(vapidPublicKey: string): Promise<S
     } else if (Notification.permission === 'denied') {
       return { sub: null, reason: '通知权限已被拒绝（请到浏览器站点设置里手动开启）' };
     }
-    const fresh = await subscribeWithRetry(reg, vapidPublicKey, '[ProactivePush]');
-    if (!fresh.sub) return { sub: null, reason: fresh.reason };
-    sub = fresh.sub;
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64uToBytes(vapidPublicKey),
+      });
+    } catch (e) {
+      console.warn('[ProactivePush] pushManager.subscribe failed', e);
+      return { sub: null, reason: explainSubscribeError(e) };
+    }
+  }
+
+  // Final paranoia: subscribe() in some Chrome versions can also return a
+  // dead sentinel.  Fail loudly rather than ship a useless endpoint to D1.
+  if (isDeadSubscriptionEndpoint(sub.endpoint)) {
+    console.warn('[ProactivePush] subscribe() returned a dead sentinel endpoint; giving up');
+    try { await sub.unsubscribe(); } catch { /* ignore */ }
+    return { sub: null, reason: '浏览器返回的订阅地址是 permanently-removed.invalid（zombie endpoint），无法投递' };
   }
 
   const p256dh = bytesToB64u(sub.getKey('p256dh'));
@@ -309,11 +345,8 @@ export interface SubscribeResult {
  */
 export async function ensureSubscribed(): Promise<SubscribeResult> {
   const cfg = loadPushConfig();
-  if (!cfg.workerUrl.startsWith('https://')) {
-    return { ok: false, reason: 'Worker URL 未配置' };
-  }
-  if (!isPushVapidReady()) {
-    return { ok: false, reason: 'VAPID 公钥未配置, 请到 Settings → Instant Push 生成' };
+  if (!cfg.workerUrl.startsWith('https://') || cfg.vapidPublicKey.length < 80) {
+    return { ok: false, reason: '推送加速器未配置（前端常量未填写）' };
   }
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     return { ok: false, reason: '当前浏览器不支持 Service Worker 或 Push API' };
@@ -398,11 +431,8 @@ export async function sendTestPush(): Promise<{ ok: boolean; status?: number; re
  */
 export async function resetSubscription(): Promise<{ ok: boolean; reason?: string; endpoint?: string }> {
   const cfg = loadPushConfig();
-  if (!cfg.workerUrl.startsWith('https://')) {
-    return { ok: false, reason: 'Worker URL 未配置' };
-  }
-  if (!isPushVapidReady()) {
-    return { ok: false, reason: 'VAPID 公钥未配置, 请到 Settings → Instant Push 生成' };
+  if (!cfg.workerUrl.startsWith('https://') || cfg.vapidPublicKey.length < 80) {
+    return { ok: false, reason: '推送加速器未配置' };
   }
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     return { ok: false, reason: '当前浏览器不支持 Service Worker 或 Push API' };
@@ -426,108 +456,10 @@ export async function resetSubscription(): Promise<{ ok: boolean; reason?: strin
 
   if (oldSub) {
     try { await oldSub.unsubscribe(); } catch { /* ignore */ }
-    // 等浏览器清内部 PushMessagingAppIdentifier removed 标记; 不等的话紧接
-    // 着的 subscribe() 大概率又拿到 zombie sentinel, 进入 subscribeWithRetry
-    // 的重试链路也会多走一轮.
-    await new Promise(r => setTimeout(r, SUBSCRIBE_SETTLE_MS));
   }
 
   // ensureSubscribed will re-create from clean slate (permission, fresh
   // PushSubscription, fresh D1 row).
-  return ensureSubscribed();
-}
-
-/**
- * 升级版重置: resetSubscription 的 subscribeWithRetry 全跑完仍拿到 zombie 时
- * (Chromium 内部 PushMessagingAppIdentifier 被锁死在 MarkedForRemoval 状态,
- * pushManager.unsubscribe 清不掉这个标记), 唯一可编程的逃离路径是 unregister
- * Service Worker 再 register 一遍 — 新 SW 拿到新的 sw_registration_id, 绑死
- * 在旧 id 上的坏 PushMessagingAppIdentifier 自然失效.
- *
- * 副作用:
- *  - SW 短暂下线 (< 1s), 期间收到的 push 会真丢. 但深度重置本来就是"已经
- *    收不到 push"才点的, 不存在"原本能收的现在丢了".
- *  - SW 内的 proactive setInterval 全清. 调用方 (Settings.tsx 的 "深度重置"
- *    handler) 必须在 deepResetSubscription resolve 后调一次
- *    `ProactiveChat.resume()` 把 schedule 推回新 SW, 否则主动消息悄悄不响.
- *  - KeepAlive 计数器清零. 跟"正在长 fetch"撞同一时刻概率近零, 不补救.
- */
-export async function deepResetSubscription(): Promise<{ ok: boolean; reason?: string; endpoint?: string }> {
-  const cfg = loadPushConfig();
-  if (!cfg.workerUrl.startsWith('https://')) {
-    return { ok: false, reason: 'Worker URL 未配置' };
-  }
-  if (!isPushVapidReady()) {
-    return { ok: false, reason: 'VAPID 公钥未配置, 请到 Settings → Instant Push 生成' };
-  }
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    return { ok: false, reason: '当前浏览器不支持 Service Worker 或 Push API' };
-  }
-
-  // 1) 拿现有 sub 的 endpoint, 通知 Worker 删 D1 行 (best-effort)
-  let oldEndpoint: string | undefined;
-  try {
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (reg) {
-      const sub = await reg.pushManager.getSubscription();
-      oldEndpoint = sub?.endpoint;
-      if (oldEndpoint) {
-        try {
-          await fetch(`${cfg.workerUrl}/unsubscribe`, {
-            method: 'POST',
-            headers: buildHeaders(cfg),
-            body: JSON.stringify({ endpoint: oldEndpoint }),
-          });
-        } catch { /* ignore */ }
-      }
-      // 2) 本地 unsubscribe (拿不掉 MarkedForRemoval 标记, 但走完流程)
-      if (sub) {
-        try { await sub.unsubscribe(); } catch { /* ignore */ }
-      }
-    }
-  } catch { /* 拿不到 reg 也继续; SW unregister 才是关键 */ }
-
-  // 3) Unregister 全部 SW registration — 关键步骤
-  try {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map(r => r.unregister().catch(() => false)));
-  } catch (e) {
-    console.warn('[ProactivePush] SW unregister failed', e);
-  }
-
-  // 4) 经 KeepAlive 走应用 boot 路径重 register — 同 scriptUrl + scope
-  try {
-    await KeepAlive.reregister();
-  } catch (e: any) {
-    return { ok: false, reason: `Service Worker 重新注册失败: ${e?.message || e}` };
-  }
-
-  // 5) 再保险等一次 ready (KeepAlive 内已 await 过, 这里防 race)
-  try {
-    await navigator.serviceWorker.ready;
-  } catch (e: any) {
-    return { ok: false, reason: `Service Worker ready 失败: ${e?.message || e}` };
-  }
-
-  // 6) 等 controller 切换 — 否则后续 postToSW (proactive sync) 会被 swallow.
-  //    新 SW activate 时已 clients.claim(), controllerchange 应该很快; 5s 兜底.
-  await new Promise<void>((resolve) => {
-    if (navigator.serviceWorker.controller) {
-      resolve();
-      return;
-    }
-    const onChange = () => {
-      navigator.serviceWorker.removeEventListener('controllerchange', onChange);
-      resolve();
-    };
-    navigator.serviceWorker.addEventListener('controllerchange', onChange);
-    setTimeout(() => {
-      navigator.serviceWorker.removeEventListener('controllerchange', onChange);
-      resolve();
-    }, 5000);
-  });
-
-  // 7) Fresh subscribe + POST /subscribe — 走 ensureSubscribed 全流程
   return ensureSubscribed();
 }
 
@@ -642,7 +574,7 @@ export async function getPushDiagnostics(): Promise<PushDiagnostics> {
     endpoint,
     endpointDead: isDeadSubscriptionEndpoint(endpoint),
     channel: detectChannelFromEndpoint(endpoint),
-    workerConfigured: cfg.workerUrl.startsWith('https://') && isPushVapidReady(),
+    workerConfigured: cfg.workerUrl.startsWith('https://') && cfg.vapidPublicKey.length > 80,
     enabled: cfg.enabled,
     lastWakeAt,
     lastWakeChar,

@@ -16,7 +16,6 @@ const BUBBLE_SIZE = 40;
 const EDGE_PAD = 8;
 const STORAGE_KEY = 'globalMiniPlayer.bubblePos.v1';
 const HIDDEN_KEY = 'globalMiniPlayer.hidden.v1';
-const EXPANDED_BOTTOM_KEY = 'globalMiniPlayer.expandedBottom.v1';
 const DRAG_THRESHOLD = 4; // 像素：超过这个位移算拖动，不触发点击
 
 type Pos = { x: number; y: number } | null;
@@ -31,35 +30,15 @@ const readPos = (): Pos => {
   return null;
 };
 
-const readExpandedBottom = (): number | null => {
-  try {
-    const raw = localStorage.getItem(EXPANDED_BOTTOM_KEY);
-    if (!raw) return null;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
-  } catch { return null; }
-};
-
 const GlobalMiniPlayer: React.FC = () => {
   const { activeApp } = useOS();
   const { current, playing, togglePlay, nextSong, prevSong, progress, duration } = useMusic();
 
   const [expanded, setExpanded] = useState(false); // 默认折叠
   const [pos, setPos] = useState<Pos>(() => readPos()); // null = 默认右下
-  const [expandedBottom, setExpandedBottom] = useState<number | null>(() => readExpandedBottom()); // 展开态距底部像素
   const [hidden, setHidden] = useState<boolean>(() => {
     try { return sessionStorage.getItem(HIDDEN_KEY) === '1'; } catch { return false; }
   });
-
-  const expandedRef = useRef<HTMLDivElement | null>(null);
-  const expandedDragState = useRef<{
-    startY: number;
-    startBottom: number;
-    parentH: number;
-    selfH: number;
-    moved: boolean;
-    pointerId: number;
-  } | null>(null);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const dragState = useRef<{
@@ -89,53 +68,6 @@ const GlobalMiniPlayer: React.FC = () => {
     if (!pos) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(pos)); } catch {}
   }, [pos]);
-
-  useEffect(() => {
-    if (expandedBottom == null) return;
-    try { localStorage.setItem(EXPANDED_BOTTOM_KEY, String(expandedBottom)); } catch {}
-  }, [expandedBottom]);
-
-  // 展开态：拖把手垂直拖动；点击则收起
-  const onExpandedHandleDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const el = expandedRef.current;
-    if (!el) return;
-    const parent = el.parentElement as HTMLElement | null;
-    if (!parent) return;
-    const parentRect = parent.getBoundingClientRect();
-    const selfRect = el.getBoundingClientRect();
-    const currentBottom = parentRect.bottom - selfRect.bottom;
-    expandedDragState.current = {
-      startY: e.clientY,
-      startBottom: currentBottom,
-      parentH: parentRect.height,
-      selfH: selfRect.height,
-      moved: false,
-      pointerId: e.pointerId,
-    };
-    try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-  }, []);
-
-  const onExpandedHandleMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const ds = expandedDragState.current;
-    if (!ds) return;
-    const dy = e.clientY - ds.startY;
-    if (!ds.moved && Math.abs(dy) > DRAG_THRESHOLD) ds.moved = true;
-    if (!ds.moved) return;
-    let nextBottom = ds.startBottom - dy;
-    const maxBottom = Math.max(0, ds.parentH - ds.selfH - EDGE_PAD);
-    nextBottom = Math.max(EDGE_PAD, Math.min(maxBottom, nextBottom));
-    setExpandedBottom(nextBottom);
-  }, []);
-
-  const onExpandedHandleUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const ds = expandedDragState.current;
-    expandedDragState.current = null;
-    try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-    if (ds && !ds.moved) {
-      // 当作"收起到小球"
-      setExpanded(false);
-    }
-  }, []);
 
   const hide = useCallback(() => {
     setHidden(true);
@@ -277,13 +209,9 @@ const GlobalMiniPlayer: React.FC = () => {
   // 刻意不给外层 wrapper 绑 onClick —— 在别的 App 里点它不应该跳到 Music App
   // （会把用户正在做的事情弄丢），只有里面的按钮生效。
   return (
-    <div
-      ref={expandedRef}
-      className="absolute left-3 right-3 z-[55] pointer-events-none"
-      style={{ bottom: expandedBottom != null ? expandedBottom : 12 }}
-    >
+    <div className="absolute left-3 right-3 bottom-3 z-[55] pointer-events-none">
       <div
-        className="pointer-events-auto flex items-center gap-2.5 rounded-2xl pl-1.5 pr-2.5 py-2 relative overflow-hidden animate-fade-in"
+        className="pointer-events-auto flex items-center gap-2.5 rounded-2xl px-2.5 py-2 relative overflow-hidden animate-fade-in"
         style={{
           background: 'rgba(20, 24, 35, 0.65)',
           backdropFilter: 'blur(24px) saturate(1.6)',
@@ -292,19 +220,6 @@ const GlobalMiniPlayer: React.FC = () => {
           boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
         }}
       >
-        {/* 拖动把手 — 垂直拖动整个条；点击则收起 */}
-        <div
-          onPointerDown={onExpandedHandleDown}
-          onPointerMove={onExpandedHandleMove}
-          onPointerUp={onExpandedHandleUp}
-          onPointerCancel={onExpandedHandleUp}
-          className="shrink-0 flex items-center justify-center px-1 cursor-grab active:cursor-grabbing touch-none select-none"
-          style={{ alignSelf: 'stretch' }}
-          aria-label="拖动调整位置（点击收起）"
-          title="上下拖动 · 点击收起"
-        >
-          <div className="w-1 h-7 rounded-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
-        </div>
         {/* 封面 */}
         <img
           src={current.albumPic}

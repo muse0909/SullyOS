@@ -158,9 +158,8 @@ date 字段填记忆对应的大概日期。`;
                 }),
             },
             1,         // 失败只再试 1 次（整体 3 次 × 5min = 15min 太久）
-            5 * 60_000, // 单次 5 分钟硬超时：第一批 142s 就过了，若超过 5min 基本是 provider 卡死，
+            5 * 60_000 // 单次 5 分钟硬超时：第一批 142s 就过了，若超过 5min 基本是 provider 卡死，
                        // 继续等只会让用户误以为整页冻住（实际主线程闲着等 fetch），主动 abort 切下一批。
-            { appName: '记忆宫殿', purpose: '记忆迁移' }
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
@@ -597,15 +596,9 @@ function buildLogSnippets(sortedLogs: MemoryFragment[]): string[] {
     for (const log of sortedLogs) {
         const summary = (log.summary || '').trim();
         if (!summary) continue;
-        // 按中英文句末标点、换行切分；保留标点让语义完整。
-        // 不用后行断言 (?<=…): iOS Safari <16.4 的 JSC 不支持, 旧设备 new RegExp 会抛
-        // "invalid group specifier name". 改成「句末标点后插哨兵(标点留前句) + 换行换哨兵」再 split,
-        // 与原 (?<=[标点])\s*|\n+ 字节等价 (见 utils/lookbehindFree.test.ts)。
-        const SPLIT = String.fromCharCode(1);
+        // 按中英文句末标点、换行切分；保留标点让语义完整
         const parts = summary
-            .replace(/([。！？!?])\s*/g, `$1${SPLIT}`)
-            .replace(/\n+/g, SPLIT)
-            .split(SPLIT)
+            .split(/(?<=[。！？!?])\s*|\n+/)
             .map(s => s.trim())
             .filter(Boolean);
         for (const p of parts) {

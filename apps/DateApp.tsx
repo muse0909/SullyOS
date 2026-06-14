@@ -4,8 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
 import { ContextBuilder } from '../utils/context';
-import { ChatPrompts } from '../utils/chatPrompts';
-import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { safeResponseJson } from '../utils/safeApi';
@@ -23,11 +22,6 @@ const DateApp: React.FC = () => {
     const [memoryPalaceResult, setMemoryPalaceResult] = useState<PipelineResult | null>(null);
     const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
     memoryPalaceStatusRef.current = memoryPalaceStatus;
-
-    // characters ref：见面 hook 跑完后用户可能已经在 MemoryPalaceApp 里关掉了宫殿，
-    // 直接闭包里的 charForHook 是回复开始时捕获的，会读到 stale memoryPalaceEnabled=true。
-    const charactersRef = useRef(characters);
-    charactersRef.current = characters;
     
     // Modes: 'select' -> 'peek' -> 'session' | 'settings' | 'history'
     const [mode, setMode] = useState<'select' | 'peek' | 'session' | 'settings' | 'history'>('select');
@@ -241,10 +235,7 @@ const DateApp: React.FC = () => {
     // 与聊天侧 useChatAI 完全一致的 Memory Palace 后台流程：
     // 触发缓冲区处理 + 自动归档（如开启） + 50 轮认知消化。
     const runMemoryPalacePostHook = useCallback(async (charForHook: CharacterProfile) => {
-        // 用 charactersRef 读最新状态，避免见面流程中用户去 MemoryPalaceApp 关掉宫殿后
-        // 这里仍然按 charForHook 闭包里的旧 enabled 触发一次 LLM 总结
-        const liveBefore = charactersRef.current.find(c => c.id === charForHook.id) || null;
-        if (!liveBefore?.memoryPalaceEnabled) return;
+        if (!charForHook.memoryPalaceEnabled) return;
         const mpEmb = memoryPalaceConfig?.embedding;
         const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
         const mpLLM = (mpLLMConfigured?.baseUrl)
@@ -265,33 +256,20 @@ const DateApp: React.FC = () => {
                 (stage) => setMemoryPalaceStatus(stage),
             );
 
-            // pipeline 跑的过程中用户可能又关了宫殿，再 check 一次
-            const liveAfter = charactersRef.current.find(c => c.id === charForHook.id) || null;
-            if (!liveAfter?.memoryPalaceEnabled) return;
-
             if (pipelineResult && pipelineResult.stored > 0) {
                 setMemoryPalaceResult(pipelineResult);
             }
 
-            if ((liveAfter as any).autoArchiveEnabled) {
+            if (pipelineResult?.autoArchive && (charForHook as any).autoArchiveEnabled) {
                 try {
-                    const patch: any = {};
-                    if (pipelineResult?.autoArchive) {
-                        patch.memories = mergePalaceFragmentsIntoMemories(
-                            liveAfter.memories || [],
-                            pipelineResult.autoArchive.fragments,
-                        );
-                    }
-                    // 隐藏线追平到向量高水位：覆盖「关闭期推进了 hwm 但 hide 被冻结」的历史空档。
-                    // 只要全自动记忆开着，每次自动总结都把 hide 追平到 hwm，无需用户手动操作。
-                    const hwm = getMemoryPalaceHighWaterMark(charForHook.id);
-                    const curHide = ((liveAfter as any).hideBeforeMessageId as number) || 0;
-                    if (hwm > curHide) {
-                        patch.hideBeforeMessageId = hwm;
-                    }
-                    if (Object.keys(patch).length > 0) {
-                        updateCharacter(charForHook.id, patch);
-                    }
+                    const mergedMemories = mergePalaceFragmentsIntoMemories(
+                        charForHook.memories || [],
+                        pipelineResult.autoArchive.fragments,
+                    );
+                    updateCharacter(charForHook.id, {
+                        memories: mergedMemories,
+                        hideBeforeMessageId: pipelineResult.autoArchive.hideBeforeMessageId,
+                    } as any);
                 } catch (e: any) {
                     console.warn(`📚 [DateApp AutoArchive] 失败: ${e?.message || e}`);
                 }
@@ -301,7 +279,7 @@ const DateApp: React.FC = () => {
             const shouldAutoDigest = incrementDigestRound(charForHook.id);
             if (shouldAutoDigest) {
                 setMemoryPalaceStatus(`${charForHook.name}闭上眼睛，开始整理内心…`);
-                const persona = [liveAfter.systemPrompt || '', liveAfter.worldview || ''].filter(Boolean).join('\n');
+                const persona = [charForHook.systemPrompt || '', charForHook.worldview || ''].filter(Boolean).join('\n');
                 await runCognitiveDigestion(charForHook.id, charForHook.name, persona, mpLLM, false, userProfile?.name, mpEmb);
             }
         } catch (e: any) {
@@ -319,19 +297,9 @@ const DateApp: React.FC = () => {
     // --- Session API Logic ---
     const handleSendMessage = async (text: string): Promise<string> => {
         if (!char) throw new Error("No char");
-
-        // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
-        // 就跳过重复落库，直接走 API。与 chat app 行为对齐，让用户按发送键即可重新触发 LLM。
-        const recentCheck = await DB.getRecentMessagesByCharId(char.id, 1, true);
-        const isRetry = recentCheck.length > 0
-            && recentCheck[0].role === 'user'
-            && recentCheck[0].content === text
-            && recentCheck[0].metadata?.source === 'date';
-
-        if (!isRetry) {
-            // 1. Save User Msg
-            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
-        }
+        
+        // 1. Save User Msg
+        await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
         
         // 2. Prepare Context
         // Re-fetch messages. Since we saved the opening in handleEnterSession,
@@ -343,18 +311,19 @@ const DateApp: React.FC = () => {
         setDateMessages(dateFiltered);
 
         const limit = char.contextLimit || 500;
-
-        // 与 chat app 完全对齐的历史构建：
-        // 1. 开了记忆宫殿 → 按高水位线过滤掉已被向量记忆替代的旧消息（chat 是在 DB 层做的；这里 allMsgs
-        //    用 includeProcessed=true 因为 dateFiltered 显示 + injectMemoryPalace 还要全集，所以手动过一遍）
-        // 2. 复用 ChatPrompts.buildMessageHistory：emoji / html_card / mcd_card / chat_forward / score_card
-        //    等都会被压成短摘要，不再像旧版 mapper 那样把 m.content 原样塞，避免 prompt 暴涨。
-        // 3. 排除最后一条（刚保存的 user msg），下面单独追加带 System Note 的版本。
-        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
-        const palaceFiltered = hwm > 0 ? allMsgs.filter(m => m.id > hwm) : allMsgs;
-        const historyForBuild = palaceFiltered.slice(0, -1);
-        const emojis = await DB.getEmojis();
-        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
+        
+        // Construct History for AI
+        // We exclude the very last message (UserMsg we just sent) from history array 
+        // because we'll pass it as the explicit user prompt "content".
+        // BUT, we must ensure the Opening (Assistant) is included in history.
+        const historyMsgs = allMsgs.slice(-limit, -1).map(m => {
+            const timeAxis = `[${new Date(m.timestamp).toLocaleString('zh-CN')}]`;
+            const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
+            return {
+                role: m.role,
+                content: m.type === 'image' ? `${timeAxis} ${source} [User sent an image]` : `${timeAxis} ${source} ${m.content}`
+            };
+        });
 
         await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
@@ -444,13 +413,12 @@ const DateApp: React.FC = () => {
         
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
 
-        // 3. Call API logic（与 handleSendMessage 同款：水位线 + 复用 ChatPrompts.buildMessageHistory）
+        // 3. Call API logic
         const limit = char.contextLimit || 500;
-        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
-        const palaceFiltered = hwm > 0 ? validMsgs.filter(m => m.id > hwm) : validMsgs;
-        const historyForBuild = palaceFiltered.slice(0, -1);
-        const emojis = await DB.getEmojis();
-        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
+        const historyMsgs = validMsgs.slice(-limit, -1).map(m => ({
+            role: m.role,
+            content: m.type === 'image' ? '[User sent an image]' : m.content
+        }));
 
         await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);

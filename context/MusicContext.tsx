@@ -13,7 +13,6 @@ import React, {
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 import { DB } from '../utils/db';
-import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -123,30 +122,6 @@ const loadCfg = (): MusicCfg => {
  * MusicCfg。走 localStorage 持久化层，不挂 Context。
  */
 export const loadMusicCfgStandalone = (): MusicCfg => loadCfg();
-
-/**
- * 实时播放快照 — 给 OSContext 主动消息流程读，避免 OSProvider 在 MusicProvider
- * 外层导致拿不到 useMusic()。MusicProvider mount 后会持续把当前播放状态写到这里。
- */
-export interface MusicPlaybackSnapshot {
-  current: Song | null;
-  playing: boolean;
-  lyric: LyricLine[];
-  activeLyricIdx: number;
-  listeningTogetherWith: string[];
-  cfg: MusicCfg;
-}
-let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
-export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
-
-/**
- * 模块级 musicHooks 出口 — 给 ChatParser.MUSIC_ACTION 用的三个钩子打包成一个对象, 由
- * MusicProvider mount 后持续写入最新闭包. 让 useChatAI (本地 fetch 路径) 和
- * activeMsgRuntime (instant push 路径) 都从这里取, 避免逻辑双份维护 / push 路径漏注入.
- * 行为细节见 chatParser.ts 的 MUSIC_ACTION 分支.
- */
-let __musicHooks: PostProcessMusicHooks | null = null;
-export const loadMusicHooks = (): PostProcessMusicHooks | null => __musicHooks;
 
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
@@ -788,112 +763,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!('mediaSession' in navigator)) return;
     try { (navigator as any).mediaSession.playbackState = playing ? 'playing' : 'paused'; } catch {}
   }, [playing]);
-
-  // 把当前播放状态写到模块级快照，供非 React 调用者（OSContext.runProactive
-  // 等位于 MusicProvider 上层的代码）读取。useMusic() 在那一层用不了。
-  useEffect(() => {
-    __musicPlaybackSnapshot = {
-      current,
-      playing,
-      lyric,
-      activeLyricIdx,
-      listeningTogetherWith,
-      cfg,
-    };
-  }, [current, playing, lyric, activeLyricIdx, listeningTogetherWith, cfg]);
-
-  // 把整组 musicHooks 写到模块级 slot — useChatAI 和 instant push activeMsgRuntime 都从这里取.
-  // current / addListeningPartner 变化时刷新闭包, 保证读到的是最新 React state.
-  // addSongToCharPlaylist 是纯 DB 操作, 与 React state 无关, 但一起打包让出口统一.
-  useEffect(() => {
-    __musicHooks = {
-      getListeningSnapshot: () => {
-        if (!current) return null;
-        return {
-          songId: current.id,
-          name: current.name,
-          artists: current.artists,
-          album: current.album,
-          albumPic: current.albumPic,
-          duration: current.duration,
-          fee: current.fee,
-        };
-      },
-      joinListeningTogether: (cid: string) => {
-        addListeningPartner(cid);
-      },
-      addSongToCharPlaylist: async (cid, song, target) => {
-        try {
-          const all = await DB.getAllCharacters();
-          const targetChar = all.find(c => c.id === cid);
-          if (!targetChar) return null;
-          const profile = targetChar.musicProfile;
-          if (!profile) return null;
-
-          const now = Date.now();
-          let playlists = profile.playlists.slice();
-          let chosenIdx = -1;
-          let created = false;
-
-          if (target?.kind === 'new') {
-            // 新建歌单 — 标题去重（已存在同名就当成 existing 处理）
-            const dup = playlists.findIndex(p =>
-              p.title.trim().toLowerCase() === target.title.trim().toLowerCase());
-            if (dup >= 0) {
-              chosenIdx = dup;
-            } else {
-              playlists.push({
-                id: `pl-${now}-${playlists.length}`,
-                title: target.title.trim(),
-                description: (target.description || '').trim(),
-                coverStyle: `gradient-0${(playlists.length % 6) + 1}`,
-                songs: [],
-                createdAt: now,
-                updatedAt: now,
-              });
-              chosenIdx = playlists.length - 1;
-              created = true;
-            }
-          } else if (target?.kind === 'existing') {
-            const t = target.title.trim().toLowerCase();
-            chosenIdx = playlists.findIndex(p => p.title.trim().toLowerCase() === t);
-            if (chosenIdx < 0) chosenIdx = playlists.findIndex(p =>
-              p.title.trim().toLowerCase().includes(t) || t.includes(p.title.trim().toLowerCase()));
-            if (chosenIdx < 0 && playlists.length > 0) chosenIdx = 0;
-          } else {
-            if (playlists.length > 0) chosenIdx = 0;
-          }
-
-          if (chosenIdx < 0) {
-            playlists.push({
-              id: `pl-${now}-0`,
-              title: '我喜欢的音乐',
-              description: '',
-              coverStyle: 'gradient-01',
-              songs: [],
-              createdAt: now,
-              updatedAt: now,
-            });
-            chosenIdx = 0;
-            created = true;
-          }
-
-          const pl = playlists[chosenIdx];
-          if (pl.songs.find(s => s.id === song.id)) {
-            return { playlistTitle: pl.title, created: false };
-          }
-          const updatedPl = { ...pl, songs: [...pl.songs, song], updatedAt: now };
-          playlists[chosenIdx] = updatedPl;
-
-          const updatedProfile = { ...profile, playlists, updatedAt: now };
-          await DB.saveCharacter({ ...targetChar, musicProfile: updatedProfile });
-          return { playlistTitle: pl.title, created };
-        } catch {
-          return null;
-        }
-      },
-    };
-  }, [current, addListeningPartner]);
 
   const value: MusicContextType = {
     cfg, setCfg,

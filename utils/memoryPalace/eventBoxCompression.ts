@@ -26,7 +26,7 @@ import { EventBoxDB, MemoryNodeDB } from './db';
 import type { LightLLMConfig } from './pipeline';
 import { vectorizeAndStore } from './vectorStore';
 import { bulkSetArchived } from './supabaseVector';
-import { safeFetchJson, extractJson } from '../safeApi';
+import { safeFetchJson } from '../safeApi';
 
 const VALID_ROOMS: MemoryRoom[] = [
     'living_room', 'bedroom', 'study', 'user_room',
@@ -55,67 +55,6 @@ interface CompressionLLMResult {
     mood: string;
 }
 
-/**
- * 字段级兜底解析：当 LLM 在 content 里塞了未转义的 ASCII "（中文输出高发，
- * 标准 JSON.parse 直接挂），按已知 schema 把六个字段一个一个抠出来。
- *
- * 策略：content 抠到下一个顶层键（name/tags/room/importance/mood）出现之前为止，
- * 其余字段用宽松正则。任何一个字段失败都视为兜底失败，让上层走原 null 路径。
- */
-function recoverCompressionFields(raw: string): Partial<CompressionLLMResult> | null {
-    if (!raw) return null;
-    const text = raw
-        .replace(/^```(?:json|JSON)?\s*\n?/gm, '')
-        .replace(/\n?```\s*$/gm, '')
-        .trim();
-
-    // 找到 content 字段值的起始引号
-    const contentStartMatch = text.match(/"content"\s*:\s*"/);
-    if (!contentStartMatch || contentStartMatch.index === undefined) return null;
-    const valueStart = contentStartMatch.index + contentStartMatch[0].length;
-
-    // content 结束的判据：紧跟着 ", "name"|"tags"|"room"|"importance"|"mood" 这种下一个顶层键
-    // 用「最后一个 " + 任意空白/逗号 + 下一个键名」的匹配，能正确跳过中间所有 ASCII "
-    const tailMatch = text.slice(valueStart).match(/"\s*,\s*"(?:name|tags|room|importance|mood)"\s*:/);
-    if (!tailMatch || tailMatch.index === undefined) return null;
-    const rawContent = text.slice(valueStart, valueStart + tailMatch.index);
-
-    // 把抠出来的 raw content 做 JSON 字符串转义还原。\\ 用占位符暂存，
-    // 避免 \" 被错误地拆成 \ + \"。残留的裸 " 不动——上层 JSON.parse 已失败，
-    // 走到这里说明 LLM 在 content 内就是塞了未转义的 "，保留即可，最终 summary 是普通字符串。
-    const BS = '\u0001';
-    const normalized = rawContent
-        .replace(/\\\\/g, BS)
-        .replace(/\\n/g, '\n')
-        .replace(/\\t/g, '\t')
-        .replace(/\\r/g, '\r')
-        .replace(/\\"/g, '"')
-        .split(BS).join('\\');
-
-    const findStr = (key: string): string | undefined => {
-        const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`));
-        return m?.[1];
-    };
-    const findNum = (key: string): number | undefined => {
-        const m = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`));
-        return m ? Number(m[1]) : undefined;
-    };
-    const findTags = (): string[] | undefined => {
-        const m = text.match(/"tags"\s*:\s*\[([^\]]*)\]/);
-        if (!m) return undefined;
-        return m[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-    };
-
-    return {
-        content: normalized,
-        name: findStr('name'),
-        tags: findTags(),
-        room: findStr('room') as MemoryRoom | undefined,
-        importance: findNum('importance'),
-        mood: findStr('mood'),
-    };
-}
-
 // ─── 压缩 LLM 调用 ─────────────────────────────────────
 
 async function callCompressionLLM(
@@ -141,17 +80,16 @@ async function callCompressionLLM(
         ? `\n## 你之前已经回忆过这件事一次，那时记下的是：\n${oldSummaryContent}\n\n后来又新增了下面这些：\n`
         : `\n## 关于这件事的零散记忆碎片：\n`;
 
-    const systemPrompt = `你是 ${charName}。下面这些记忆都属于一件事：「${box.name}」。
-请把它们整合成一段连贯的、第一人称（「我」）的回忆。
+    const systemPrompt = `你是 ${charName}。下面这些记忆都属于一件事："${box.name}"。
+请把它们整合成一段连贯的、第一人称（"我"）的回忆。
 
 **要求（严格遵守）**：
-1. **第一人称**（用「我」），从 ${charName} 的视角写。${userLabel} 用名字直接称呼。
+1. **第一人称**（用"我"），从 ${charName} 的视角写。${userLabel} 用名字直接称呼。
 2. **字数目标 ${EVENT_BOX_SUMMARY_TARGET_CHARS} 字以内，绝对上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS} 字**。紧凑、务实、不口水。
-3. **只保留关键信息**：具体人物、动作、对象、场景、转折、情绪。**去掉所有语气填充、修辞铺陈、重复感慨**（如「真是的」、「怎么说呢」、「不过话说回来」等）。事实先行。
-4. **带时间点但不冗余**：每件事标一次日期就够（「3 月 20 日…4 月 5 日…」），不要每句都重复时间。
-5. **连贯但简洁**：不套「起因/经过/结果」模板，但要让读者能按顺序看懂事情怎么发展的。
+3. **只保留关键信息**：具体人物、动作、对象、场景、转折、情绪。**去掉所有语气填充、修辞铺陈、重复感慨**（如"真是的"、"怎么说呢"、"不过话说回来"等）。事实先行。
+4. **带时间点但不冗余**：每件事标一次日期就够（"3 月 20 日…4 月 5 日…"），不要每句都重复时间。
+5. **连贯但简洁**：不套"起因/经过/结果"模板，但要让读者能按顺序看懂事情怎么发展的。
 6. **覆盖所有关键词**（这是给向量检索用的）—— 每条新增的旧记忆里出现过的具体名词、地点、人物必须在 content 里出现一次。
-7. **content 字符串内严禁使用半角双引号 \`"\`**。要引用人物原话、书名、外号、术语，一律用中文方角引号「」、《》或单引号 \`'\`。否则会破坏外层 JSON 解析、整批记忆白丢。
 
 附带输出 metadata：
 - name：5-12 字的精炼盒名
@@ -160,7 +98,7 @@ async function callCompressionLLM(
 - importance：1-10
 - mood：happy / sad / angry / anxious / tender / excited / peaceful / confused / hurt / grateful / nostalgic / neutral
 
-严格 JSON，不要 markdown 包裹（content 里的引用一律用「」/《》/'，不要用 "）：
+严格 JSON，不要 markdown 包裹：
 {
   "content": "（紧凑的第一人称回忆，${EVENT_BOX_SUMMARY_TARGET_CHARS}字内）",
   "name": "...",
@@ -191,29 +129,19 @@ async function callCompressionLLM(
                     max_tokens: 8000,
                     stream: false,
                 }),
-            },
-            2, 0, { appName: '记忆宫殿', purpose: '事件压缩' }
+            }
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
-        let parsed: any = extractJson(reply);
-        const parseFailed = !parsed || typeof parsed !== 'object';
-        const contentMissing = !parseFailed && (!parsed.content || typeof parsed.content !== 'string');
-
-        if (parseFailed || contentMissing) {
-            // 兜底：LLM 在 content 里嵌了未转义的 ASCII "（中文场景高发，破坏 JSON 解析），
-            // 按已知 schema 用正则把六个字段单独抠出来——content 抠到下一个顶层键之前为止。
-            const recovered = recoverCompressionFields(reply);
-            if (recovered && recovered.content) {
-                console.warn(`🗜️ [Compression] JSON 解析失败但字段级兜底成功（疑似 content 内含未转义 "）`);
-                parsed = recovered;
-            } else if (parseFailed) {
-                console.warn(`🗜️ [Compression] LLM 输出无法解析为 JSON，原始前 300 字: ${reply.slice(0, 300)}`);
-                return null;
-            } else {
-                console.warn(`🗜️ [Compression] LLM 输出缺少 content 字段，已解析键: ${Object.keys(parsed).join(',')}`);
-                return null;
-            }
+        const match = reply.match(/\{[\s\S]*\}/);
+        if (!match) {
+            console.warn(`🗜️ [Compression] LLM 输出无 JSON 对象，原始前 200 字: ${reply.slice(0, 200)}`);
+            return null;
+        }
+        const parsed = JSON.parse(match[0]);
+        if (!parsed.content || typeof parsed.content !== 'string') {
+            console.warn(`🗜️ [Compression] LLM 输出缺少 content 字段`);
+            return null;
         }
         // 硬截断安全网：LLM 超限时截断并追加提示，避免单盒 summary 无限膨胀
         let content = String(parsed.content);
@@ -265,7 +193,7 @@ async function compressEventBox(
     // 3. LLM 整合
     const result = await callCompressionLLM(box, oldSummaryContent, liveNodes, llmConfig, charName, userName);
     if (!result) {
-        console.error(`🗜️ [Compression] ${box.id} "${box.name}" LLM 失败，跳过本次压缩 — 活节点 ${liveNodes.length} 条仍未归档，summary 未生成/未向量化`);
+        console.warn(`🗜️ [Compression] ${box.id} LLM 失败，跳过本次压缩（活节点保留）`);
         return false;
     }
 

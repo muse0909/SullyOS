@@ -241,11 +241,7 @@ export const ContextBuilder = {
         // 5b. 记忆宫殿 (Memory Palace) — 向量检索结果
         // 仅在 includeDetailedMemories 时注入，与详细日志同级
         // buildCoreContext(false) 的调用点（情绪评估、轻量上下文等）靠月度总结即可
-        // 必须用 memoryPalaceEnabled 把关：injectMemoryPalace 在关闭时直接 return、
-        // 既不刷新也不清空 char.memoryPalaceInjection，而该字段又会被 saveCharacter
-        // 持久化。若此处不校验总开关，关闭后旧的召回结果仍会被注入进 system prompt，
-        // 表现为"宫殿已关、后台无召回，角色却还在精准复述记忆"。与下方 Buff 注入同理。
-        if (includeDetailedMemories && char.memoryPalaceEnabled) {
+        if (includeDetailedMemories) {
             const mpContext = char.memoryPalaceInjection || memoryPalaceContext;
             if (mpContext && mpContext.trim()) {
                 context += `${mpContext}\n\n`;

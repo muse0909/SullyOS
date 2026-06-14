@@ -3,9 +3,6 @@ import React from 'react';
 import { OSProvider } from './context/OSContext';
 import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
-import BuildBadge from './components/BuildBadge';
-import DevDebugPanel from './components/DevDebugPanel';
-import VRBroadcast from './components/VRBroadcast';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 
 const App: React.FC = () => {
@@ -18,26 +15,21 @@ const App: React.FC = () => {
     : { height: 'var(--app-height, 100lvh)', minHeight: 'var(--app-height, 100lvh)' };
 
   return (
-    <>
+    <div
+      className={shellClassName}
+      style={shellStyle}
+    >
       <div
-        className={shellClassName}
-        style={shellStyle}
+        className={`${useAbsoluteShell ? 'absolute' : 'fixed'} inset-0 w-full h-full z-0 bg-transparent`}
+        style={{ transform: 'translateZ(0)' }}
       >
-        <div
-          className={`${useAbsoluteShell ? 'absolute' : 'fixed'} inset-0 w-full h-full z-0 bg-transparent`}
-          style={{ transform: 'translateZ(0)' }}
-        >
-          <OSProvider>
-            <MusicProvider>
-              <PhoneShell />
-            </MusicProvider>
-          </OSProvider>
-        </div>
+        <OSProvider>
+          <MusicProvider>
+            <PhoneShell />
+          </MusicProvider>
+        </OSProvider>
       </div>
-      <BuildBadge />
-      <DevDebugPanel />
-      <VRBroadcast />
-    </>
+    </div>
   );
 };
 

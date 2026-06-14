@@ -3,24 +3,19 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { VRScheduler } from '../utils/vrWorld/scheduler';
-import { runVRSession } from '../utils/vrWorld/runSession';
-import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
+import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
-import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
-import { INSTALLED_APPS } from '../constants';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { evaluateEmotionBackground } from '../hooks/useChatAI';
-import { buildChatRequestPayload } from '../utils/chatRequestPayload';
-import { extractHtmlBlocks } from '../utils/htmlPrompt';
-import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { formatBytes } from '../utils/format';
-import { isEmotionEvalSkipped } from '../utils/devDebug';
+import { ActiveMsgRuntime } from '../utils/activeMsgRuntime';
+
+
 
 const normalizeProactiveAiContent = (raw: string): string => {
   let cleaned = raw;
@@ -33,25 +28,10 @@ const normalizeProactiveAiContent = (raw: string): string => {
 };
 
 
-type JSZipFileLike = {
-  async: (type: 'string' | 'base64') => Promise<string>;
-};
-
 type JSZipLike = {
   folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
-  file: {
-    (name: string): JSZipFileLike | null;
-    (name: string, data: string, options?: { base64?: boolean }): void;
-  };
-  generateAsync: (
-    options: {
-      type: 'blob';
-      streamFiles?: boolean;
-      compression?: string;
-      compressionOptions?: { level: number };
-    },
-    onUpdate?: (metadata: { percent: number }) => void
-  ) => Promise<Blob>;
+  file: (name: string) => { async: (type: 'string') => Promise<string> } | null;
+  generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
 };
 
 type JSZipCtorLike = {
@@ -60,52 +40,6 @@ type JSZipCtorLike = {
 };
 
 let jszipCtorPromise: Promise<JSZipCtorLike> | null = null;
-
-export const IMPORT_IN_PROGRESS_KEY = 'sullyos_import_in_progress_v1';
-
-type ImportProgressUpdate = {
-  sourceSize?: number;
-  assetDone?: number;
-  assetTotal?: number;
-  current?: string;
-  currentFile?: string;
-  currentFileSize?: number;
-  itemDone?: number;
-  itemTotal?: number;
-  error?: string;
-};
-
-let _importStartedAt: number | null = null;
-let _importSource: string | null = null;
-
-const markImportInProgress = (phase: string, source?: string, update: ImportProgressUpdate = {}) => {
-  try {
-    let startedAt = Date.now();
-    let existingSource = source || null;
-
-    if (phase === 'parsing') {
-      _importStartedAt = startedAt;
-      _importSource = existingSource;
-    } else {
-      if (_importStartedAt) startedAt = _importStartedAt;
-      if (!existingSource && _importSource) existingSource = _importSource;
-    }
-
-    localStorage.setItem(IMPORT_IN_PROGRESS_KEY, JSON.stringify({
-      startedAt,
-      updatedAt: Date.now(),
-      phase,
-      source: existingSource,
-      ...update,
-    }));
-  } catch { /* ignore */ }
-};
-
-const clearImportInProgress = () => {
-  _importStartedAt = null;
-  _importSource = null;
-  try { localStorage.removeItem(IMPORT_IN_PROGRESS_KEY); } catch { /* ignore */ }
-};
 
 const loadScript = (src: string): Promise<void> => new Promise((resolve, reject) => {
   const existing = document.querySelector(`script[data-src=\"${src}\"]`) as HTMLScriptElement | null;
@@ -152,7 +86,6 @@ const defaultRealtimeConfig: RealtimeConfig = {
   weatherCity: 'Beijing',
   newsEnabled: false,
   newsApiKey: '',
-  newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
   notionEnabled: false,
   notionApiKey: '',
   notionDatabaseId: '',
@@ -161,7 +94,6 @@ const defaultRealtimeConfig: RealtimeConfig = {
   feishuAppSecret: '',
   feishuBaseId: '',
   feishuTableId: '',
-  xhsEnabled: false,
   cacheMinutes: 30
 };
 
@@ -282,18 +214,9 @@ interface OSContextType {
   toasts: Toast[];
   addToast: (message: string, type?: Toast['type']) => void;
 
-  // 长报错弹窗：toast 一行装不下 / 手机没法开 console 时, 用 showError 弹一个
-  // 多行预览框 + 复制按钮, 方便用户把原文反馈过来。
-  errorDialog: { title: string; details: string } | null;
-  showError: (title: string, details: string) => void;
-  dismissError: () => void;
-
   // Icons
   customIcons: Record<string, string>;
   setCustomIcon: (appId: string, iconUrl: string | undefined) => void;
-
-  // Appearance Reset
-  resetAppearance: () => Promise<void>;
 
   // Global Message Signal
   lastMsgTimestamp: number; // New: Signal for Chat to refresh
@@ -629,7 +552,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [errorDialog, setErrorDialog] = useState<{ title: string; details: string } | null>(null);
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
@@ -708,14 +630,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
-  // --- API 调用记录的环境兜底：当前在哪个 App、当前角色是谁 ---
-  // 裸 fetch 调用点无法传 meta，全局拦截器记录时用这份兜底标出 App / 角色。
-  useEffect(() => {
-      const appName = INSTALLED_APPS.find(a => a.id === activeApp)?.name;
-      const char = characters.find(c => c.id === activeCharacterId);
-      setApiCallAmbientContext({ appId: activeApp, appName, charId: char?.id, charName: char?.name });
-  }, [activeApp, activeCharacterId, characters]);
-
   // --- Global Error Interception ---
   useEffect(() => {
       if (interceptorsInitialized.current) return;
@@ -723,76 +637,63 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       // 1. Monkey Patch Fetch
       const originalFetch = window.fetch;
+      const appendSystemLog = (log: SystemLog) => {
+          setSystemLogs(prev => {
+              if (prev[0]?.message === log.message && prev[0]?.detail === log.detail && prev[0]?.source === log.source) {
+                  return prev;
+              }
+              return [log, ...prev.slice(0, 49)];
+          });
+      };
+
       const patchedFetch = async (...args: [RequestInfo | URL, RequestInit?]) => {
           const [resource, config] = args;
           
           const urlStr = String(resource);
+          const isChatApi = urlStr.includes('/chat/completions') || urlStr.includes('/models');
+          const isImageApi = urlStr.includes('/images/generations');
+          const isProxyApi = urlStr.includes('/api/proxy');
+          const isUserFacingAiEndpoint = isChatApi || isImageApi || isProxyApi;
           
           try {
               const response = await originalFetch(...args);
-
-              // 「API 调用记录」统一记录入口：所有 /chat/completions（裸 fetch + safeFetchJson
-              // 内部 fetch 都会经过这里）都记一笔。meta 优先取调用方挂在 init 上的 __sullyMeta
-              // （safeFetchJson 传的精确信息），裸 fetch 没有就由 recordApiCall 用环境兜底。
-              if (urlStr.includes('/chat/completions')) {
-                  const meta = (config as any)?.__sullyMeta;
-                  const body = (config as any)?.body;
-                  const status = response.status;
-                  const ok = response.ok;
-                  // clone 出来异步读 usage，不阻塞调用方拿 response
-                  let usageClone: Response | null = null;
-                  try { usageClone = response.clone(); } catch { usageClone = null; }
-                  if (usageClone) {
-                      usageClone.text().then((t) => {
-                          let parsed: any = undefined;
-                          try { parsed = JSON.parse(t); } catch { /* 流式/非 JSON：无 usage，照样记 */ }
-                          recordApiCall({ url: urlStr, body, status, ok, response: parsed, meta });
-                      }).catch(() => recordApiCall({ url: urlStr, body, status, ok, meta }));
-                  } else {
-                      recordApiCall({ url: urlStr, body, status, ok, meta });
-                  }
-              }
-
-              if (!response.ok) {
-                  // Only log if it's likely an API call (contains chat/completions or models)
-                  if (urlStr.includes('/chat/completions') || urlStr.includes('/models')) {
-                      try {
-                          const clone = response.clone();
-                          const text = await clone.text();
-                          setSystemLogs(prev => [{
-                              id: `log-${Date.now()}`,
-                              timestamp: Date.now(),
-                              type: 'network',
-                              source: 'API Request',
-                              message: `HTTP ${response.status} Error`,
-                              detail: `URL: ${urlStr}\nResponse: ${text.substring(0, 500)}`
-                          }, ...prev.slice(0, 49)]); // Keep last 50
-                      } catch (e) {
-                          setSystemLogs(prev => [{
-                              id: `log-${Date.now()}`,
-                              timestamp: Date.now(),
-                              type: 'network',
-                              source: 'API Request',
-                              message: `HTTP ${response.status} (Unreadable Body)`,
-                              detail: `URL: ${urlStr}`
-                          }, ...prev.slice(0, 49)]);
-                      }
+              
+              if (!response.ok && !isUserFacingAiEndpoint && (response.status >= 500 || response.status === 429)) {
+                  try {
+                      const clone = response.clone();
+                      const text = await clone.text();
+                      appendSystemLog({
+                          id: `log-${Date.now()}`,
+                          timestamp: Date.now(),
+                          type: 'network',
+                          source: 'API Request',
+                          message: `HTTP ${response.status} Error`,
+                          detail: `URL: ${urlStr}\nResponse: ${text.substring(0, 500)}`
+                      });
+                  } catch (e) {
+                      appendSystemLog({
+                          id: `log-${Date.now()}`,
+                          timestamp: Date.now(),
+                          type: 'network',
+                          source: 'API Request',
+                          message: `HTTP ${response.status} (Unreadable Body)`,
+                          detail: `URL: ${urlStr}`
+                      });
                   }
               }
               return response;
           } catch (err: any) {
               // Network Failure
-              if (urlStr.includes('/chat/completions')) {
-                  recordApiCall({ url: urlStr, body: (config as any)?.body, ok: false, meta: (config as any)?.__sullyMeta });
+              if (!isUserFacingAiEndpoint) {
+                  appendSystemLog({
+                      id: `log-${Date.now()}`,
+                      timestamp: Date.now(),
+                      type: 'network',
+                      source: 'Network',
+                      message: err.message || 'Fetch Failed',
+                      detail: `URL: ${urlStr}`
+                  });
               }
-              setSystemLogs(prev => [{
-                  id: `log-${Date.now()}`,
-                  timestamp: Date.now(),
-                  type: 'network',
-                  source: 'Network',
-                  message: err.message || 'Fetch Failed',
-                  detail: `URL: ${urlStr}`
-              }, ...prev.slice(0, 49)]);
               throw err;
           }
       };
@@ -969,27 +870,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         await loadSettings();
 
-        // 用 allSettled 而非 all：早期 Promise.all 只要任意一个 store 读取 reject，
-        // 整批加载就全挂 → setCharacters / setWorldbooks 都不执行 → 角色和世界书"凭空消失"
-        // （数据其实还在 IndexedDB 里，只是没读进 state）→ Chat 渲染时 char 为 undefined 直接崩。
-        // 改成各 store 独立失败，一个坏掉不连累其余，最大限度保住用户数据。
-        const settle = async <T,>(p: Promise<T>, label: string, fallback: T): Promise<T> => {
-            try {
-                return await p;
-            } catch (e) {
-                console.error(`Data init: 读取 ${label} 失败，已降级`, e);
-                return fallback;
-            }
-        };
-
         const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs] = await Promise.all([
-            settle(DB.getAllCharacters(), 'characters', [] as CharacterProfile[]),
-            settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
-            settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
-            settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
-            settle(DB.getAllWorldbooks(), 'worldbooks', [] as Worldbook[]),
-            settle(DB.getAllNovels(), 'novels', [] as NovelBook[]),
-            settle(DB.getAllSongs(), 'songs', [] as SongSheet[])
+            DB.getAllCharacters(),
+            DB.getThemes(),
+            DB.getUserProfile(),
+            DB.getGroups(),
+            DB.getAllWorldbooks(),
+            DB.getAllNovels(),
+            DB.getAllSongs()
         ]);
 
         let finalChars = dbChars;
@@ -1116,9 +1004,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       root.style.setProperty('--primary-hue', String(h));
       root.style.setProperty('--primary-sat', `${s}%`);
       root.style.setProperty('--primary-lightness', `${l}%`);
-
-      // 桌面皮肤：写到 <html data-skin>，供全局 CSS（index.html）与组件读取。
-      root.dataset.skin = theme.skin || 'default';
   }, [theme]);
 
   // --- Update: Handle Scheduled Messages with Unread Flags & Web Notifications ---
@@ -1216,33 +1101,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              if (isVisible) {
-                  addToast(`${charName} 主动发来了消息`, 'success');
-              } else {
-                  awayProactiveCount += 1;
-              }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
+const isVisible = document.visibilityState === 'visible';
+const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
 
-              // Web Notification —— 走 Service Worker 的 showNotification（和"测试推送"
-              // 同一条链路）。页面级 `new Notification(...)` 在标签后台 / PWA / 移动端会
-              // 静默失败，必须走 SW registration 才稳定。
-              if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator && window.Notification && Notification.permission === 'granted') {
-                  const char = characters.find(c => c.id === charId);
-                  navigator.serviceWorker.ready.then(reg => {
-                      reg.showNotification(charName, {
-                          body: preview,
-                          icon: char?.avatar || './icons/icon-192.png',
-                          badge: './icons/icon-192.png',
-                          tag: `proactive-${charId}`,
-                          data: { charId, kind: 'proactive-1.0' },
-                      }).catch(() => { /* notification failed */ });
-                  }).catch(() => { /* SW not ready */ });
-              }
-          }
+if (!isChattingWithThisChar) {
+    if (isVisible) {
+        addToast(`${charName} 主动发来了消息`, 'success');
+    } else {
+        awayProactiveCount += 1;
+    }
+    setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+}
+
+// 通知逻辑移到外面，不管在不在聊天页面都弹
+if (!isVisible || !isChattingWithThisChar) {
+    void sendProactiveNativeNotification(charId, charName, preview);
+
+    if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
+        const char = characters.find(c => c.id === charId);
+        try {
+            const notif = new Notification(charName, {
+                body: preview,
+                icon: char?.avatar,
+                silent: false
+            });
+            notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
+        } catch (e) { /* notification failed */ }
+    }
+}
+
       };
 
       const onVisible = () => {
@@ -1267,24 +1154,39 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {
-          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
-          setLastMsgTimestamp(Date.now());
+    const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+    setLastMsgTimestamp(Date.now());
 
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              if (isVisible) {
-                  addToast(`${charName} 给你发了消息`, 'success');
-              } else {
-                  awayActiveMsgCount += 1;
-              }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
-              // SW push handler 已经 fire 过系统通知（不在前台时露出真实内容、在前台时
-              // silent + close 静默），这里不再补一次，避免重复弹窗。
-          }
-      };
+    const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+    const isVisible = document.visibilityState === 'visible';
+    const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
+
+    if (!isChattingWithThisChar) {
+        if (isVisible) {
+            addToast(`${charName} 发来了一条主动消息 2.0`, 'success');
+        } else {
+            awayActiveMsgCount += 1;
+        }
+        setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+    }
+
+    if (!isVisible || !isChattingWithThisChar) {
+        void sendProactiveNativeNotification(charId, charName, preview);
+
+        if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
+            const char = characters.find(c => c.id === charId);
+            try {
+                const notif = new Notification(charName, {
+                    body: preview,
+                    icon: char?.avatar,
+                    silent: false
+                });
+                notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
+            } catch (e) { /* notification failed */ }
+        }
+    }
+};
+
 
       const openHandler = (e: Event) => {
           const { charId } = (e as CustomEvent).detail as { charId?: string };
@@ -1294,63 +1196,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       const onVisible = () => {
-          if (document.visibilityState !== 'visible') return;
-          if (awayActiveMsgCount > 0) {
-              addToast(`你离开期间收到 ${awayActiveMsgCount} 条新消息`, 'success');
-              awayActiveMsgCount = 0;
-          }
-      };
-
-      // Phase 1: per-chunk UI refresh side-channel. push 路径下的 applyAssistantPostProcessing
-      // 会逐条 saveMessage + fire 'active-msg-progress'; 这里只推 lastMsgTimestamp 让
-      // Chat.tsx 的 useEffect 重新 reloadMessages, 不弹 toast / 不增加未读 / 不 resolve
-      // sendInstantPush 那条 one-shot promise (那些只在 'active-msg-received' 触发一次)。
-      const progressHandler = () => {
-          setLastMsgTimestamp(Date.now());
-      };
-
-      // 情绪 buff 落地后同步进内存 characters —— 必须是 App 级、不限当前打开的角色:
-      // instant 模式下 worker 推回 emotion_update 时用户常不在该角色聊天页 (在别的角色 /
-      // 列表 / 后台 / 还没点进去). 之前只有 Chat.tsx 里那个 `charId === activeCharacterId`
-      // 守卫的 handler 同步内存, 不匹配就直接 return —— buff 只落了 DB, 内存没更新; 而
-      // OSContext 只在启动时 getAllCharacters, 切回该角色也不重读 DB, 于是 buff "回不到前端".
-      // 更糟: 之后任一 updateCharacter 会拿旧内存合并写回 DB, 把后台刚生成的 buff 抹掉.
-      // 这里无条件按事件 charId 更新内存 (DB 已由 applyEmotionEvalRaw 写好), 顺带堵住反向覆盖.
-      const buffSyncHandler = (e: Event) => {
-          const detail = (e as CustomEvent).detail as { charId?: string; buffs?: unknown; buffInjection?: unknown };
-          const charId = detail?.charId;
-          if (!charId) return;
-          if (Array.isArray(detail.buffs)) {
-              const nextBuffs = detail.buffs as CharacterProfile['activeBuffs'];
-              const nextInjection = typeof detail.buffInjection === 'string' ? detail.buffInjection : '';
-              setCharacters(prev => prev.map(c => c.id === charId
-                  ? normalizeCharacterImpression({ ...c, activeBuffs: nextBuffs, buffInjection: nextInjection })
-                  : c));
-              return;
-          }
-          // 无 buffs 的纯刷新信号 (runPushTailPipeline 等): 从 DB 兜底重读该角色 buff.
-          DB.getAllCharacters().then(all => {
-              const updated = all.find(c => c.id === charId);
-              if (!updated) return;
-              setCharacters(prev => prev.map(c => c.id === charId
-                  ? normalizeCharacterImpression({ ...c, activeBuffs: updated.activeBuffs, buffInjection: updated.buffInjection })
-                  : c));
-          }).catch(() => {});
-      };
+    if (document.visibilityState !== 'visible') return;
+    void ActiveMsgRuntime.init();
+    if (awayActiveMsgCount > 0) {
+        addToast(`你离开期间收到 ${awayActiveMsgCount} 条主动消息 2.0`, 'success');
+        awayActiveMsgCount = 0;
+    }
+};
 
       window.addEventListener('active-msg-received', handler);
-      window.addEventListener('active-msg-progress', progressHandler);
       window.addEventListener('active-msg-open', openHandler);
-      window.addEventListener('emotion-updated', buffSyncHandler);
       document.addEventListener('visibilitychange', onVisible);
       return () => {
           window.removeEventListener('active-msg-received', handler);
-          window.removeEventListener('active-msg-progress', progressHandler);
           window.removeEventListener('active-msg-open', openHandler);
-          window.removeEventListener('emotion-updated', buffSyncHandler);
           document.removeEventListener('visibilitychange', onVisible);
       };
-  }, [sendProactiveNativeNotification]);
+  }, [characters, sendProactiveNativeNotification]);
 
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
@@ -1457,40 +1319,34 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   metadata: { proactiveHint: true, hidden: true }
               });
 
-              // 3. Build prompt & message history — 走和 useChatAI / emotion eval 同一个 helper，
-              //    保证三家拿到的"材料"完全一致；区别只在前面追加的"现在主动找用户"那条 hint。
+              // 3. Build prompt & message history
               const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
-              // 上一轮缓存的意识流独白 —— 主路径用 React state，主动消息这里用 ref Map
+              // 3a. 记忆宫殿向量召回 — 与 useChatAI 主流程一致，挂到 char.memoryPalaceInjection
+              //     buildSystemPrompt 内部 buildCoreContext 会自动读取并注入
+              await injectMemoryPalace(char, allMsgs, undefined, currentUserProfile?.name);
+
+              // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
               const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
 
-              const payload = await buildChatRequestPayload({
-                  char, userProfile: currentUserProfile!, groups: currentGroups,
-                  emojis, categories,
-                  historyMsgs: allMsgs,
-                  contextLimit: char.contextLimit || 500,
-                  realtimeConfig: currentRealtimeConfig,
-                  innerState: cachedInnerState,
-                  // 实时音乐播放状态 —— OSContext 在 MusicProvider 上层用不了 useMusic()，
-                  // 走 MusicContext 暴露的模块级快照（Provider mount 后会持续写入）
-                  musicSnapshot: loadMusicPlaybackSnapshot(),
-                  // translationConfig / mcdMiniSnap 是 chat-app 会话级 UI 状态，主动消息触发时
-                  // 不存在；保持 undefined 即可，与"用户当时根本没在 chat 界面"的语义一致
-                  htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
-                  thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
-              });
-              const systemPrompt = payload.systemPrompt;
-              const apiMessages = payload.cleanedApiMessages;
-              const fullMessages = payload.fullMessages;
+              const systemPrompt = await ChatPrompts.buildSystemPrompt(
+                  char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
+                  currentRealtimeConfig, cachedInnerState,
+              );
+              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
+              const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
-              //     角色专属情绪 API > 主 apiConfig（与记忆宫殿副 API 完全独立）
-              if (!payload.flags.promptBuildSkipped && !isEmotionEvalSkipped() && isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+              //     角色专属情绪 API > 全局 lightLLM > 主 apiConfig
+              if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                  const lightLLM = memoryPalaceConfigRef.current?.lightLLM;
                   const emotionApi = (char.emotionConfig.api?.baseUrl)
                       ? char.emotionConfig.api
-                      : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
+                      : (lightLLM && lightLLM.baseUrl)
+                          ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+                          : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
                   if (emotionApi.baseUrl && currentUserProfile) {
                       evaluateEmotionBackground(char, currentUserProfile, systemPrompt, apiMessages, emotionApi)
                           .then((innerState) => {
@@ -1500,249 +1356,85 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-              // 4. API call
-              const baseUrl = api.baseUrl.replace(/\/+$/, '');
-              const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` };
-              const reqBody: any = { model: api.model, messages: fullMessages, temperature: 0.85, stream: false };
-              // 思考链开启时显式向后端请求 extended thinking — 与 useChatAI 同步,
-              // 不同代理认不同入口,全都试一遍,代理不识别的会自动忽略
-              if (payload.flags.thinkingActive) {
-                  const m: string = reqBody.model || '';
-                  if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
-                      reqBody.model = `${m}-thinking`;
-                  }
-                  reqBody.thinking = { type: 'enabled', budget_tokens: 4000 };
-                  reqBody.reasoning_effort = 'medium';
-                  reqBody.extra_body = { ...(reqBody.extra_body || {}), thinking: { type: 'enabled', budget_tokens: 4000 } };
-              }
-              const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                  method: 'POST', headers,
-                  body: JSON.stringify(reqBody)
-              }, 2, 0, { appName: '消息', charId, charName: char.name, purpose: '主动消息' });
+            
+              // 4. Send request to AI
+              const reqBody = {
+                  model: api.model,
+                  messages: fullMessages,
+                  temperature: 0.8,
+                  max_tokens: 500,
+              };
+
+              const response = await fetch(`${api.baseUrl}/chat/completions`, {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${api.apiKey}`,
+                  },
+                  body: JSON.stringify(reqBody),
+              });
+
+              const data = await response.json();
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
-              // 思考链抽取 — 与 useChatAI 保持一致:reasoning_content 字段 + 主 content 里的 <think>/<thinking>/<thought> 块,
-              // 拼接后挂到本回合首条 assistant 消息的 metadata.thinkingChain
-              let pendingThinkingChain: string | null = null;
-              if (payload.flags.thinkingActive) {
-                  const lastReasoning = (data?.choices?.[0]?.message?.reasoning_content || '').trim();
-                  const thinkBlocks: string[] = [];
-                  const thinkPat = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi;
-                  let tm: RegExpExecArray | null;
-                  while ((tm = thinkPat.exec(aiContent)) !== null) {
-                      const t = tm[2].trim();
-                      if (t) thinkBlocks.push(t);
-                  }
-                  if (!/<\/(?:think|thinking|thought)>/i.test(aiContent)) {
-                      const openOnly = aiContent.match(/<(?:think|thinking|thought)>([\s\S]*$)/i);
-                      if (openOnly && openOnly[1].trim()) thinkBlocks.push(openOnly[1].trim());
-                  }
-                  const chain = [lastReasoning, ...thinkBlocks].filter(s => !!s).join('\n\n').trim();
-                  if (chain) pendingThinkingChain = chain;
-              }
               aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');
               aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
               aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
 
               aiContent = normalizeProactiveAiContent(aiContent);
-
-              const savedPreviewChunks: string[] = [];
-              const baseTimestamp = Date.now();
-              let offset = 0;
-              // 思考链只挂到本回合首条 assistant 消息上,避免每个气泡重复
-              const consumeThinkingMeta = (): { thinkingChain: string } | undefined => {
-                  if (!pendingThinkingChain) return undefined;
-                  const meta = { thinkingChain: pendingThinkingChain };
-                  pendingThinkingChain = null;
-                  return meta;
-              };
-
-              // HTML 卡片：在 sanitize 之前抽出 [html]...[/html] 块,与 useChatAI 保持一致。
-              // 没这一步主动消息会把整段 [html] 当纯文本落库,前端只能渲染成乱码。
-              if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
-                  const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
-                  for (const blk of blocks) {
-                      try {
-                          const meta = consumeThinkingMeta();
-                          await DB.saveMessage({
-                              charId,
-                              role: 'assistant',
-                              type: 'html_card',
-                              content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
-                              timestamp: baseTimestamp + offset,
-                              metadata: {
-                                  htmlSource: blk.html,
-                                  htmlTextPreview: blk.textPreview,
-                                  ...(meta || {}),
-                              },
-                          } as any);
-                          if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
-                          offset += 1;
-                      } catch (e) {
-                          console.error('[Proactive/HTML] 落库 html_card 失败', e);
-                      }
-                  }
-                  aiContent = cleanedContent;
-              }
-
               aiContent = ChatParser.sanitize(aiContent);
 
               if (aiContent) {
-                  // 双语翻译:沿用 useChatAI 的 <翻译><原文>..</原文><译文>..</译文></翻译> 协议,
-                  // 把每对原文/译文落成一条 text 消息,内容用 `\n%%BILINGUAL%%\n` 串联供渲染端识别。
-                  const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
+                  const responseParts = ChatParser.splitResponse(aiContent);
+                  const savedPreviewChunks: string[] = [];
+                  const baseTimestamp = Date.now();
+                  let offset = 0;
 
-                  if (hasTranslationTags) {
-                      // 表情独立抽出,放在文本之后发送
-                      const bilingualEmojis: string[] = [];
-                      let bEm;
-                      const bEmojiPat = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
-                      while ((bEm = bEmojiPat.exec(aiContent)) !== null) {
-                          const name = bEm[1].trim();
-                          if (!bilingualEmojis.includes(name)) bilingualEmojis.push(name);
-                      }
-                      aiContent = aiContent.replace(/\[\[SEND_EMOJI:\s*.*?\]\]/g, '').trim();
-
-                      const tagPattern = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>([\s\S]*?)<\/译文>\s*<\/翻译>/g;
-                      let lastIndex = 0;
-                      let tagMatch;
-                      while ((tagMatch = tagPattern.exec(aiContent)) !== null) {
-                          const textBefore = aiContent.slice(lastIndex, tagMatch.index).trim();
-                          if (textBefore) {
-                              const cleaned = ChatParser.sanitize(textBefore);
-                              if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
-                                  for (const chunk of ChatParser.chunkText(cleaned)) {
-                                      if (!chunk) continue;
-                                      const meta = consumeThinkingMeta();
-                                      await DB.saveMessage({
-                                          charId,
-                                          role: 'assistant',
-                                          type: 'text',
-                                          content: chunk,
-                                          timestamp: baseTimestamp + offset,
-                                          ...(meta ? { metadata: meta } : {}),
-                                      });
-                                      savedPreviewChunks.push(chunk);
-                                      offset += 1;
-                                  }
-                              }
-                          }
-
-                          const originalText = ChatParser.sanitize(tagMatch[1].trim());
-                          const translatedText = ChatParser.sanitize(tagMatch[2].trim());
-                          if (originalText || translatedText) {
-                              const biContent = originalText && translatedText
-                                  ? `${originalText}\n%%BILINGUAL%%\n${translatedText}`
-                                  : (originalText || translatedText);
-                              const meta = consumeThinkingMeta();
-                              await DB.saveMessage({
-                                  charId,
-                                  role: 'assistant',
-                                  type: 'text',
-                                  content: biContent,
-                                  timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
-                              });
-                              savedPreviewChunks.push(originalText || translatedText);
-                              offset += 1;
-                          }
-
-                          lastIndex = tagMatch.index + tagMatch[0].length;
-                      }
-
-                      const textAfter = aiContent.slice(lastIndex).trim();
-                      if (textAfter) {
-                          const cleaned = ChatParser.sanitize(textAfter.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim());
-                          if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
-                              for (const chunk of ChatParser.chunkText(cleaned)) {
-                                  if (!chunk) continue;
-                                  const meta = consumeThinkingMeta();
-                                  await DB.saveMessage({
-                                      charId,
-                                      role: 'assistant',
-                                      type: 'text',
-                                      content: chunk,
-                                      timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
-                                  });
-                                  savedPreviewChunks.push(chunk);
-                                  offset += 1;
-                              }
-                          }
-                      }
-
-                      for (const emojiName of bilingualEmojis) {
-                          const foundEmoji = emojis.find(e => e.name === emojiName);
+                  for (const part of responseParts) {
+                      if (part.type === 'emoji') {
+                          const foundEmoji = emojis.find(e => e.name === part.content);
                           if (foundEmoji?.url) {
-                              const meta = consumeThinkingMeta();
                               await DB.saveMessage({
                                   charId,
                                   role: 'assistant',
                                   type: 'emoji',
                                   content: foundEmoji.url,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
                               });
-                              offset += 1;
-                          }
-                      }
-                  } else {
-                      const responseParts = ChatParser.splitResponse(aiContent);
-
-                      for (const part of responseParts) {
-                          if (part.type === 'emoji') {
-                              const foundEmoji = emojis.find(e => e.name === part.content);
-                              if (foundEmoji?.url) {
-                                  const meta = consumeThinkingMeta();
-                                  await DB.saveMessage({
-                                      charId,
-                                      role: 'assistant',
-                                      type: 'emoji',
-                                      content: foundEmoji.url,
-                                      timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
-                                  });
-                              } else {
-                                  const fallbackText = `发送了表情包：${part.content}`;
-                                  const meta = consumeThinkingMeta();
-                                  await DB.saveMessage({
-                                      charId,
-                                      role: 'assistant',
-                                      type: 'text',
-                                      content: fallbackText,
-                                      timestamp: baseTimestamp + offset,
-                                      ...(meta ? { metadata: meta } : {}),
-                                  });
-                                  savedPreviewChunks.push(fallbackText);
-                              }
-                              offset += 1;
-                              continue;
-                          }
-
-                          const textChunks = ChatParser.chunkText(part.content)
-                              .map(chunk => ChatParser.sanitize(chunk))
-                              .filter(chunk => ChatParser.hasDisplayContent(chunk));
-
-                          for (const chunk of textChunks) {
-                              const meta = consumeThinkingMeta();
+                          } else {
+                              const fallbackText = `发送了表情包：${part.content}`;
                               await DB.saveMessage({
                                   charId,
                                   role: 'assistant',
                                   type: 'text',
-                                  content: chunk,
+                                  content: fallbackText,
                                   timestamp: baseTimestamp + offset,
-                                  ...(meta ? { metadata: meta } : {}),
                               });
-                              savedPreviewChunks.push(chunk);
-                              offset += 1;
+                              savedPreviewChunks.push(fallbackText);
                           }
+                          offset += 1;
+                          continue;
+                      }
+
+                      const textChunks = ChatParser.chunkText(part.content)
+                          .map(chunk => ChatParser.sanitize(chunk))
+                          .filter(chunk => ChatParser.hasDisplayContent(chunk));
+
+                      for (const chunk of textChunks) {
+                          await DB.saveMessage({
+                              charId,
+                              role: 'assistant',
+                              type: 'text',
+                              content: chunk,
+                              timestamp: baseTimestamp + offset,
+                          });
+                          savedPreviewChunks.push(chunk);
+                          offset += 1;
                       }
                   }
-              }
 
-              if (offset > 0) {
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120) || `${char.name} sent a proactive message`;
 
@@ -1769,42 +1461,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           void runProactive(charId);
       });
 
-      // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
-      const runVR = async (charId: string, room?: string, letterId?: string) => {
-          const char = charactersRef.current.find(c => c.id === charId);
-          if (!char || !char.vrState?.enabled) return;
-          if (!userProfileRef.current) return;
-          try {
-              await runVRSession({
-                  char,
-                  characters: charactersRef.current,
-                  apiConfig: apiConfigRef.current,
-                  userProfile: userProfileRef.current,
-                  groups: groupsRef.current,
-                  realtimeConfig: realtimeConfigRef.current,
-                  memoryPalaceConfig: memoryPalaceConfigRef.current,
-                  updateCharacter,
-                  forcedRoom: room as any,
-                  forcedLetterId: letterId,
-              });
-          } catch (e) {
-              console.error('[VRWorld] runVR error', e);
-          }
-      };
-      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string) => { void runVR(charId, room, letterId); });
-
-      // 以角色 vrState 为准对账调度表：调度表存 localStorage、不随备份迁移，
-      // 导入备份后角色虽 enabled 但调度表为空，这里补建/清理使其按时触发。
-      VRScheduler.reconcile(
-          charactersRef.current
-              .filter(c => c.vrState?.enabled)
-              .map(c => ({ charId: c.id, intervalMinutes: c.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN }))
-      );
-
       return () => {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
-          VRScheduler.onTrigger(() => {});
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);
@@ -1873,9 +1532,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
 
     // Logic for Font: Differentiate between Data URI (Blob) and URL (Web Font)
-    // Use `in` check so an explicit `customFont: undefined` (user-initiated reset)
-    // still triggers the reset branch — `customFont !== undefined` would skip it.
-    if ('customFont' in updates) {
+    if (customFont !== undefined) {
         if (customFont && customFont.startsWith('data:')) {
             // Blob: Save to DB, Apply
             await DB.saveAsset('custom_font_data', customFont);
@@ -2006,8 +1663,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
-  // 各角色自身的 enabled 标志保持不变。
-  // 注意：与记忆宫殿副 API（memoryPalaceConfig.lightLLM）完全独立，两者各管各的。
+  // 各角色自身的 enabled 标志保持不变。同时把同一份值写到全局 lightLLM，
+  // 让记忆宫殿轻量 LLM 与情绪 API 保持一致（两者本来就指向同一个副 API 概念）。
   const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
     setCharacters(prev => {
       const updated = prev.map(c => {
@@ -2022,6 +1679,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       });
       return updated;
     });
+    if (api && api.baseUrl) {
+      const newConfig: MemoryPalaceGlobalConfig = {
+        embedding: { ...memoryPalaceConfig.embedding },
+        lightLLM: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
+        rerank: { ...memoryPalaceConfig.rerank },
+      };
+      setMemoryPalaceConfig(newConfig);
+      localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+    }
   };
   const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
     const newConfig = { ...remoteVectorConfig, ...updates };
@@ -2188,8 +1854,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
-  const showError = (title: string, details: string) => { setErrorDialog({ title, details }); };
-  const dismissError = () => { setErrorDialog(null); };
 
   // --- APPEARANCE PRESETS ---
   const saveAppearancePreset = async (name: string) => {
@@ -2285,48 +1949,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setAppearancePresets(prev => prev.filter(p => p.id !== id));
       await DB.deleteAsset(`appearance_preset_${id}`);
       addToast('预设已删除', 'info');
-  };
-
-  // 一键还原外观：把主题、图标、壁纸、小组件、装饰、字体全部回到出厂状态。
-  // 用户在不同版本/不同备份之间反复导入时，customIcons 与 IndexedDB 里的 widget_/deco_/icon_
-  // 残留经常导致图标错乱，这里直接整体清空再写回 default。
-  // 已保存的外观预设不动，用户随时还能切回去。
-  const resetAppearance = async () => {
-      try {
-          setTheme(defaultTheme);
-          applyCustomFont(undefined);
-
-          const iconAppIds = Object.keys(customIcons);
-          setCustomIcons({});
-          for (const appId of iconAppIds) {
-              await DB.deleteAsset(`icon_${appId}`);
-          }
-
-          const allAssets = await DB.getAllAssets();
-          for (const asset of allAssets) {
-              const id = asset.id;
-              if (
-                  id === 'wallpaper' ||
-                  id === 'launcherWidgetImage' ||
-                  id === 'custom_font_data' ||
-                  id.startsWith('widget_') ||
-                  id.startsWith('deco_') ||
-                  id.startsWith('icon_')
-              ) {
-                  await DB.deleteAsset(id);
-              }
-          }
-
-          try {
-              localStorage.setItem('os_theme', JSON.stringify(defaultTheme));
-          } catch (e) {
-              console.warn('[resetAppearance] localStorage 写入失败', e);
-          }
-
-          addToast('外观已还原为初始状态', 'success');
-      } catch (e: any) {
-          addToast(e?.message || '还原失败', 'error');
-      }
   };
 
   const renameAppearancePreset = async (id: string, name: string) => {
@@ -2483,12 +2105,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
               'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
-              'handbook', 'trackers', 'tracker_entries', 'hotnews_snapshots',
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
               'daily_schedule', 'memory_batches',
-              'pixel_home_assets', 'pixel_home_layouts',
-              // 「彼方」虚拟世界各房间 store —— 早期导出清单漏了，导致备份不含房间数据
-              'vr_novels', 'vr_annotations', 'cc_custom_parts', 'vr_music', 'vr_guestbook', 'vr_letters', 'vr_settings'
+              'pixel_home_assets', 'pixel_home_layouts'
           ];
 
           if (mode === 'full') {
@@ -2498,7 +2117,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
-                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts'];
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -2539,11 +2158,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 云端配置
               cloudBackupConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               remoteVectorConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_remote_vector_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
-
-              // Instant Push
-              instantPushConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('instant_push_config_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
-              pushVapid: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('push_vapid_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
-
 
               // Memory Palace 水位线
               memoryPalaceHighWaterMarks: (mode === 'text_only' || mode === 'full') ? (() => {
@@ -2586,28 +2200,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
                   return Object.keys(map).length > 0 ? map : undefined;
               })() : undefined,
-              chatTranslateSourceLangByChar: (mode === 'text_only' || mode === 'full') ? (() => {
-                  const map: Record<string, string> = {};
-                  for (let i = 0; i < localStorage.length; i++) {
-                      const key = localStorage.key(i);
-                      if (!key || !key.startsWith('chat_translate_source_lang_')) continue;
-                      const charId = key.replace('chat_translate_source_lang_', '');
-                      const value = localStorage.getItem(key);
-                      if (charId && value) map[charId] = value;
-                  }
-                  return Object.keys(map).length > 0 ? map : undefined;
-              })() : undefined,
-              chatTranslateTargetLangByChar: (mode === 'text_only' || mode === 'full') ? (() => {
-                  const map: Record<string, string> = {};
-                  for (let i = 0; i < localStorage.length; i++) {
-                      const key = localStorage.key(i);
-                      if (!key || !key.startsWith('chat_translate_lang_')) continue;
-                      const charId = key.replace('chat_translate_lang_', '');
-                      const value = localStorage.getItem(key);
-                      if (charId && value) map[charId] = value;
-                  }
-                  return Object.keys(map).length > 0 ? map : undefined;
-              })() : undefined,
               chatArchivePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('chat_archive_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               chatActiveArchivePromptId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_active_archive_prompt_id') || undefined) : undefined,
               characterRefinePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('character_refine_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
@@ -2615,7 +2207,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // UI / 偏好
               scheduleAppTheme: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('schedule_app_theme') || undefined) : undefined,
-              handbookLifestreamDepth: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('handbook_lifestream_depth') || undefined) : undefined,
               groupchatContextLimit: (mode === 'text_only' || mode === 'full') ? (() => { const v = localStorage.getItem('groupchat_context_limit'); const n = v ? parseInt(v, 10) : NaN; return Number.isFinite(n) ? n : undefined; })() : undefined,
               browserConfig: (mode === 'text_only' || mode === 'full') ? (() => {
                   const braveKey = localStorage.getItem('browser_brave_key') || undefined;
@@ -2662,11 +2253,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const savedPresetDecos = backupData.theme.desktopDecorations
                       ?.filter(d => d.type === 'preset')
                       .map(d => ({ id: d.id, content: d.content }));
-                  const strippedTheme = stripBase64(backupData.theme) as OSTheme;
-                  backupData.theme = strippedTheme;
+                  backupData.theme = stripBase64(backupData.theme);
                   // Restore preset SVGs and remove image decorations (they have no data in text mode)
-                  if (strippedTheme.desktopDecorations && savedPresetDecos) {
-                      strippedTheme.desktopDecorations = strippedTheme.desktopDecorations
+                  if (backupData.theme.desktopDecorations && savedPresetDecos) {
+                      backupData.theme.desktopDecorations = backupData.theme.desktopDecorations
                           .map(d => {
                               const saved = savedPresetDecos.find(p => p.id === d.id);
                               return saved ? { ...d, content: saved.content } : d;
@@ -2679,7 +2269,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Stores that never contain base64 image data — skip recursive traversal
           const noImageStores = new Set([
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
-              'bank_transactions', 'scheduled_messages', 'memory_batches', 'hotnews_snapshots'
+              'bank_transactions', 'scheduled_messages', 'memory_batches'
           ]);
 
           // Chunked processObject for large arrays — yields to main thread every 200 items
@@ -2829,10 +2419,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'guidebook': backupData.guidebookSessions = processedData; break;
                   case 'scheduled_messages': backupData.scheduledMessages = processedData; break;
                   case 'life_sim': backupData.lifeSimState = Array.isArray(processedData) ? (processedData[0] || null) : (processedData || null); break;
-                  case 'handbook': backupData.handbooks = processedData; break;
-                  case 'trackers': backupData.trackers = processedData; break;
-                  case 'tracker_entries': backupData.trackerEntries = processedData; break;
-                  case 'hotnews_snapshots': backupData.hotNewsSnapshots = processedData; break;
                   case 'memory_nodes': backupData.memoryNodes = processedData; break;
                   case 'memory_vectors': backupData.memoryVectors = processedData; break;
                   case 'memory_links': backupData.memoryLinks = processedData; break;
@@ -2843,15 +2429,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'memory_batches': backupData.memoryBatches = processedData; break;
                   case 'pixel_home_assets': backupData.pixelHomeAssets = processedData; break;
                   case 'pixel_home_layouts': backupData.pixelHomeLayouts = processedData; break;
-                  // 「彼方」虚拟世界 —— 键名须与 importFullData 读取的字段对齐
-                  case 'vr_novels': backupData.vrNovels = processedData; break;
-                  case 'vr_annotations': backupData.vrAnnotations = processedData; break;
-                  case 'cc_custom_parts': backupData.customCreatorParts = processedData; break;
-                  case 'vr_letters': backupData.vrLetters = processedData; break;
-                  case 'vr_settings': backupData.vrSettings = processedData; break;
-                  // 单例 store：导入端期望单个对象（取首条），非数组
-                  case 'vr_music': backupData.vrMusicRoom = Array.isArray(processedData) ? (processedData[0] || undefined) : (processedData || undefined); break;
-                  case 'vr_guestbook': backupData.vrGuestbook = Array.isArray(processedData) ? (processedData[0] || undefined) : (processedData || undefined); break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -2872,7 +2449,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'customThemes', 'appearancePresets', 'courses', 'games', 'songs',
               'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
               'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
-              'scheduledMessages', 'handbooks', 'trackers', 'trackerEntries', 'hotNewsSnapshots',
+              'scheduledMessages',
               'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts'] as const;
 
           // Build metadata (small fields) separately
@@ -2934,72 +2511,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const importSystem = async (fileOrJson: File | string): Promise<void> => {
-      const sourceName = typeof fileOrJson === 'string' ? 'json' : fileOrJson.name;
-      const sourceSize = typeof fileOrJson === 'string'
-          ? (typeof Blob !== 'undefined' ? new Blob([fileOrJson]).size : fileOrJson.length)
-          : fileOrJson.size;
-      const restoredAssetFiles = new Set<string>();
-      let totalAssetFiles = 0;
-      let lastProgress = 0;
-      let lastCurrent = '解析备份文件';
-      let lastCurrentFile: string | undefined;
-      let lastCurrentFileSize: number | undefined;
-
-      const buildImportMessage = (headline: string, update: ImportProgressUpdate = {}) => {
-          const lines = [headline];
-          const current = update.current ?? lastCurrent;
-          const currentFile = update.currentFile ?? lastCurrentFile;
-          const currentFileSize = update.currentFileSize ?? lastCurrentFileSize;
-          if (current) lines.push(`当前部分：${current}`);
-          if (typeof update.itemTotal === 'number' && update.itemTotal > 0) {
-              lines.push(`条目：${update.itemDone || 0}/${update.itemTotal}`);
-          }
-          if (currentFile) {
-              const sizeText = formatBytes(currentFileSize);
-              lines.push(`当前文件：${currentFile}${sizeText ? ` · ${sizeText}` : ''}`);
-          }
-          if (sourceName !== 'json' && update.current === '解析备份文件') {
-              const sizeText = formatBytes(sourceSize);
-              lines.push(`备份：${sourceName}${sizeText ? ` · ${sizeText}` : ''}`);
-          }
-          return lines.join('\n');
-      };
-
-      const showImportProgress = (
-          phase: string,
-          headline: string,
-          progress: number,
-          update: ImportProgressUpdate = {}
-      ) => {
-          if (update.current !== undefined) lastCurrent = update.current;
-          if (update.currentFile !== undefined) lastCurrentFile = update.currentFile;
-          if (update.currentFileSize !== undefined) lastCurrentFileSize = update.currentFileSize;
-          lastProgress = Math.max(lastProgress, Math.min(99, Math.max(0, progress)));
-          markImportInProgress(phase, sourceName, {
-              sourceSize,
-              assetDone: restoredAssetFiles.size,
-              assetTotal: totalAssetFiles || undefined,
-              ...update,
-          });
-          setSysOperation({
-              status: 'processing',
-              message: buildImportMessage(headline, update),
-              progress: lastProgress,
-          });
-      };
-
-      const countZipAssetFiles = (zip: JSZipLike) => {
-          const files = Object.values((zip as any).files || {}) as any[];
-          return files.filter(file => file && !file.dir && typeof file.name === 'string' && file.name.startsWith('assets/')).length;
-      };
-
-      const estimateBase64Bytes = (base64: string) => {
-          const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
-          return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
-      };
-
-      showImportProgress('parsing', '正在解析备份文件...', 1, { current: '解析备份文件', sourceSize });
       try {
+          setSysOperation({ status: 'processing', message: '正在解析备份文件...', progress: 0 });
           let data: FullBackupData;
           let zip: JSZipLike | null = null;
 
@@ -3019,22 +2532,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   zip = loadedZip;
                   const dataFile = loadedZip.file("data.json");
                   if (!dataFile) throw new Error("损坏的备份包: 缺少 data.json");
-                  let jsonStr = await dataFile.async("string");
-                  totalAssetFiles = countZipAssetFiles(loadedZip);
+                  const jsonStr = await dataFile.async("string");
                   data = JSON.parse(jsonStr);
-                  jsonStr = '';
               }
           }
 
-          const hadAssetStoreBackup = data.assets !== undefined;
-          const hadCustomIconsBackup = data.customIcons !== undefined;
-          const hadAppearancePresetsBackup = data.appearancePresets !== undefined;
-
-          const restoreAssetsInPlace = async (root: any, label = '数据'): Promise<void> => {
+          // Walk the tree once to collect every "assets/<name>" reference, then
+          // decode them in parallel batches. The previous version awaited each
+          // base64 decode sequentially, which made a 42 MB backup take 5+
+          // minutes and left the UI frozen at 50% — users assumed it had
+          // hung and refreshed before the success toast / reload could fire.
+          const restoreAssetsInPlace = async (root: any): Promise<void> => {
               if (!zip) return;
 
               type Ref = { parent: any; key: string | number; filename: string };
-              const refsByFile = new Map<string, Ref[]>();
+              const refs: Ref[] = [];
               const seen = new WeakSet<object>();
               const stack: any[] = [root];
               while (stack.length) {
@@ -3046,10 +2558,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       for (let i = 0; i < node.length; i++) {
                           const v = node[i];
                           if (typeof v === 'string' && v.startsWith('assets/')) {
-                              const filename = v.slice('assets/'.length);
-                              const refs = refsByFile.get(filename) || [];
-                              refs.push({ parent: node, key: i, filename });
-                              refsByFile.set(filename, refs);
+                              refs.push({ parent: node, key: i, filename: v.split('/')[1] });
                           } else if (v && typeof v === 'object') {
                               stack.push(v);
                           }
@@ -3059,10 +2568,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
                           const v = node[k];
                           if (typeof v === 'string' && v.startsWith('assets/')) {
-                              const filename = v.slice('assets/'.length);
-                              const refs = refsByFile.get(filename) || [];
-                              refs.push({ parent: node, key: k, filename });
-                              refsByFile.set(filename, refs);
+                              refs.push({ parent: node, key: k, filename: v.split('/')[1] });
                           } else if (v && typeof v === 'object') {
                               stack.push(v);
                           }
@@ -3070,74 +2576,43 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
-              const entries = Array.from(refsByFile.entries());
-              if (entries.length === 0) return;
+              const total = refs.length;
+              if (total === 0) return;
 
-              for (const [filename, refs] of entries) {
-                  const fileInZip = zip.file(`assets/${filename}`) as (JSZipFileLike & { _data?: { compressedSize?: number; uncompressedSize?: number } }) | null;
-                  const hintedSize = fileInZip?._data?.uncompressedSize || fileInZip?._data?.compressedSize;
-                  showImportProgress('assets', '正在恢复素材...', 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
-                      current: label,
-                      currentFile: filename,
-                      currentFileSize: hintedSize,
-                      assetDone: restoredAssetFiles.size,
-                      assetTotal: totalAssetFiles || entries.length,
-                  });
-
-                  try {
-                      if (!fileInZip) {
-                          console.warn(`Missing asset in backup: assets/${filename}`);
-                          continue;
+              const BATCH = 8;
+              let done = 0;
+              for (let i = 0; i < total; i += BATCH) {
+                  const batch = refs.slice(i, i + BATCH);
+                  await Promise.all(batch.map(async ({ parent, key, filename }) => {
+                      try {
+                          const fileInZip = zip!.file(`assets/${filename}`);
+                          if (!fileInZip) return;
+                          const base64 = await fileInZip.async("base64");
+                          const ext = (filename.split('.').pop() || 'png').toLowerCase();
+                          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                              : ext === 'gif' ? 'image/gif'
+                              : ext === 'webp' ? 'image/webp'
+                              : 'image/png';
+                          parent[key] = `data:${mime};base64,${base64}`;
+                      } catch {
+                          console.warn(`Failed to restore asset: assets/${filename}`);
                       }
-                      const base64 = await fileInZip.async("base64");
-                      const ext = (filename.split('.').pop() || 'png').toLowerCase();
-                      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-                          : ext === 'gif' ? 'image/gif'
-                          : ext === 'webp' ? 'image/webp'
-                          : 'image/png';
-                      const dataUri = `data:${mime};base64,${base64}`;
-                      for (const ref of refs) {
-                          ref.parent[ref.key] = dataUri;
-                      }
-                      const decodedSize = estimateBase64Bytes(base64);
-                      restoredAssetFiles.add(filename);
-                      showImportProgress('assets', '正在恢复素材...', 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
-                          current: label,
-                          currentFile: filename,
-                          currentFileSize: decodedSize,
-                          assetDone: restoredAssetFiles.size,
-                          assetTotal: totalAssetFiles || entries.length,
-                      });
-                  } catch {
-                      console.warn(`Failed to restore asset: assets/${filename}`);
-                  }
-                  await new Promise<void>(resolve => setTimeout(resolve, 0));
+                  }));
+                  done += batch.length;
+                  const pct = 50 + Math.floor((done / total) * 40);
+                  setSysOperation({ status: 'processing', message: `正在恢复素材 ${Math.min(done, total)}/${total}...`, progress: pct });
               }
           };
 
-          showImportProgress('database', '正在写入数据库...', 50, { current: '准备写入数据库', currentFile: '' });
-          await DB.importFullData(data, {
-              beforeWrite: restoreAssetsInPlace,
-              onProgress: progress => {
-                  const sectionRatio = progress.sectionTotal > 0
-                      ? progress.sectionDone / progress.sectionTotal
-                      : 0;
-                  const itemRatio = progress.itemTotal && progress.sectionTotal > 0
-                      ? ((progress.itemDone || 0) / progress.itemTotal) / progress.sectionTotal
-                      : 0;
-                  const dbProgress = 50 + Math.floor(Math.min(1, sectionRatio + itemRatio) * 40);
-                  showImportProgress('database', '正在写入数据库...', dbProgress, {
-                      current: progress.stage === 'done' ? `${progress.label}完成` : progress.label,
-                      currentFile: '',
-                      itemDone: progress.itemDone,
-                      itemTotal: progress.itemTotal,
-                  });
-              },
-          });
+          setSysOperation({ status: 'processing', message: '正在恢复数据与素材...', progress: 50 });
+
+          if (zip) {
+              await restoreAssetsInPlace(data);
+          }
+
+          await DB.importFullData(data);
           
-          showImportProgress('settings', '正在恢复系统设置...', 92, { current: '系统设置', currentFile: '' });
           if (data.theme) {
-              await restoreAssetsInPlace(data.theme, '系统主题');
               await updateTheme(data.theme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);
@@ -3147,8 +2622,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.memoryPalaceConfig) updateMemoryPalaceConfig(data.memoryPalaceConfig); // 恢复记忆宫殿全局配置
 
           if (data.customIcons !== undefined || data.appearancePresets !== undefined) {
-              await restoreAssetsInPlace(data.customIcons, '应用图标');
-              await restoreAssetsInPlace(data.appearancePresets, '外观预设');
               const existingAssets = await DB.getAllAssets();
               if (Array.isArray(existingAssets)) {
                   for (const asset of existingAssets) {
@@ -3180,11 +2653,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.cloudBackupConfig) localStorage.setItem('os_cloud_backup_config', JSON.stringify(data.cloudBackupConfig));
           if (data.remoteVectorConfig) localStorage.setItem('os_remote_vector_config', JSON.stringify(data.remoteVectorConfig));
 
-          // Restore Instant Push
-          if (data.instantPushConfig) localStorage.setItem('instant_push_config_v1', JSON.stringify(data.instantPushConfig));
-          if (data.pushVapid) localStorage.setItem('push_vapid_v1', JSON.stringify(data.pushVapid));
-
-
           // Restore Memory Palace 水位线
           if (data.memoryPalaceHighWaterMarks) {
               for (const [charId, hwm] of Object.entries(data.memoryPalaceHighWaterMarks)) {
@@ -3215,16 +2683,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   localStorage.setItem(`chat_translate_enabled_${charId}`, enabled ? 'true' : 'false');
               }
           }
-          if (data.chatTranslateSourceLangByChar && typeof data.chatTranslateSourceLangByChar === 'object') {
-              for (const [charId, lang] of Object.entries(data.chatTranslateSourceLangByChar)) {
-                  if (typeof lang === 'string') localStorage.setItem(`chat_translate_source_lang_${charId}`, lang);
-              }
-          }
-          if (data.chatTranslateTargetLangByChar && typeof data.chatTranslateTargetLangByChar === 'object') {
-              for (const [charId, lang] of Object.entries(data.chatTranslateTargetLangByChar)) {
-                  if (typeof lang === 'string') localStorage.setItem(`chat_translate_lang_${charId}`, lang);
-              }
-          }
           if (data.chatArchivePrompts !== undefined) localStorage.setItem('chat_archive_prompts', JSON.stringify(data.chatArchivePrompts));
           if (typeof data.chatActiveArchivePromptId === 'string') localStorage.setItem('chat_active_archive_prompt_id', data.chatActiveArchivePromptId);
           if (data.characterRefinePrompts !== undefined) localStorage.setItem('character_refine_prompts', JSON.stringify(data.characterRefinePrompts));
@@ -3232,7 +2690,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           // Restore UI / 偏好
           if (typeof data.scheduleAppTheme === 'string') localStorage.setItem('schedule_app_theme', data.scheduleAppTheme);
-          if (typeof data.handbookLifestreamDepth === 'string') localStorage.setItem('handbook_lifestream_depth', data.handbookLifestreamDepth);
           if (typeof data.groupchatContextLimit === 'number') localStorage.setItem('groupchat_context_limit', String(data.groupchatContextLimit));
           if (data.browserConfig && typeof data.browserConfig === 'object') {
               if (typeof data.browserConfig.braveKey === 'string') localStorage.setItem('browser_brave_key', data.browserConfig.braveKey);
@@ -3250,7 +2707,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           
           if (data.socialAppData) {
-              await restoreAssetsInPlace(data.socialAppData, '动态设置');
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
               if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
               
@@ -3261,7 +2717,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           
           // Restore Room Custom Assets to DB (migrate old format on import)
           if (data.roomCustomAssets) {
-              await restoreAssetsInPlace(data.roomCustomAssets, '房间自定义素材');
               const migratedAssets = data.roomCustomAssets.map((a: any) => ({
                   ...a,
                   id: a.id || `asset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -3278,7 +2733,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const novelList = await DB.getAllNovels();
           const songList = await DB.getAllSongs();
           
-          if (hadAssetStoreBackup || hadCustomIconsBackup || hadAppearancePresetsBackup) {
+          if (data.assets || data.customIcons !== undefined || data.appearancePresets !== undefined) {
               const assets = await DB.getAllAssets();
               const loadedIcons: Record<string, string> = {};
               const loadedPresets: AppearancePreset[] = [];
@@ -3306,7 +2761,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (songList.length > 0) setSongs(songList);
           
           setSysOperation({ status: 'idle', message: '', progress: 100 });
-          clearImportInProgress();
           addToast('恢复成功，系统即将重启...', 'success');
           setTimeout(() => window.location.reload(), 1500);
 
@@ -3314,15 +2768,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           console.error("Import Error:", e);
           setSysOperation({ status: 'idle', message: '', progress: 0 });
           const msg = e instanceof SyntaxError ? 'JSON 格式错误' : (e.message || '未知错误');
-          markImportInProgress('error', sourceName, {
-              sourceSize,
-              current: lastCurrent,
-              currentFile: lastCurrentFile,
-              currentFileSize: lastCurrentFileSize,
-              assetDone: restoredAssetFiles.size,
-              assetTotal: totalAssetFiles || undefined,
-              error: msg,
-          });
           throw new Error(`恢复失败: ${msg}`);
       }
   };
@@ -3423,12 +2868,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     importAppearancePreset,
     toasts,
     addToast,
-    errorDialog,
-    showError,
-    dismissError,
     customIcons,
     setCustomIcon,
-    resetAppearance,
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,

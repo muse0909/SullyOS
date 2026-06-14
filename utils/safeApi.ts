@@ -6,19 +6,6 @@
  * instead of JSON responses.
  */
 
-// 同时挂两套日志：
-//   - devDebug 的 api 类目（开发者勾「API」复制 / 下载导出）
-//   - 全局 fetch 拦截器 + apiCallLog（用户在「设置 → API 调用记录」里看）
-// 后者的 meta 通过下面 safeFetchJson 的第 5 个参数挂到 __sullyMeta 上传出去。
-import { appendDevDebugApiLog, makeDebugLogger } from './devDebug';
-import { type ApiCallMeta } from './apiCallLog';
-
-const log = makeDebugLogger('api', 'SafeAPI');
-
-function isChatCompletionUrl(url: string): boolean {
-    return url.includes('/chat/completions');
-}
-
 /** Parse a fetch Response as JSON safely (text-first, then JSON.parse) */
 export async function safeResponseJson(response: Response): Promise<any> {
     const text = await response.text();
@@ -132,27 +119,42 @@ function parseSseToCompletion(raw: string): any | null {
  * 这里会给每次 attempt 起一个内部 AbortController，超时就 abort，避免提供方 stall
  * 住整个页面（用户误以为卡死，只能重新打开网页）。0 / 未传 = 不超时。
  */
+
+// CORS 代理：讯飞等不支持浏览器跨域的 API，走 Vercel 服务端转发
+async function proxyFetch(url: string, options: RequestInit): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (options.headers) {
+        const h = options.headers as Record<string, string>;
+        for (const [k, v] of Object.entries(h)) {
+            headers[k] = v;
+        }
+    }
+    const { 'Content-Type': _, ...forwardHeaders } = headers;
+    const resp = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            targetUrl: url,
+            headers: forwardHeaders,
+            body: options.body ? JSON.parse(options.body as string) : undefined,
+        }),
+    });
+    return resp;
+}
+
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
     maxRetries: number = 2,
     timeoutMs: number = 0,
-    /** 可选：补充「哪个 App / 哪个角色 / 用途」到 API 调用记录（设置 → API 调用记录）。 */
-    meta?: ApiCallMeta,
 ): Promise<any> {
     const retryableStatuses = new Set([429, 500, 502, 503, 504]);
     let lastError: Error | null = null;
-    const urlStr = String(url);
-    let lastStatus: number | undefined;
-
-    // 把 meta 挂到 RequestInit 上（浏览器忽略未知字段），交给全局 fetch 拦截器统一记录
-    // 到「API 调用记录」。这样裸 fetch 和 safeFetchJson 走同一个记录入口，不会重复计。
-    const metaOptions: RequestInit = meta ? { ...options, __sullyMeta: meta } as RequestInit : options;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         // 每次 attempt 建一个独立的 AbortController（仅用于 timeout）
         // 调用方自己的 options.signal 仍然有效，两者任一触发就 abort
-        let attemptOptions = metaOptions;
+        let attemptOptions = options;
         let timeoutHandle: any = null;
         if (timeoutMs > 0) {
             const ac = new AbortController();
@@ -165,18 +167,17 @@ export async function safeFetchJson(
                 }
                 options.signal.addEventListener('abort', () => ac.abort(), { once: true });
             }
-            attemptOptions = { ...metaOptions, signal: ac.signal };
+            attemptOptions = { ...options, signal: ac.signal };
         }
         try {
             const response = await fetch(url, attemptOptions);
             if (timeoutHandle) clearTimeout(timeoutHandle);
-            lastStatus = response.status;
 
             if (!response.ok) {
                 // For retryable status codes, retry before giving up
                 if (retryableStatuses.has(response.status) && attempt < maxRetries) {
                     const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-                    log.warn('HTTP retry', { status: response.status, attempt: attempt + 1, maxRetries, delay });
+                    console.warn(`[SafeAPI] HTTP ${response.status}, retry ${attempt + 1}/${maxRetries} in ${delay}ms...`);
                     await new Promise(r => setTimeout(r, delay));
                     continue;
                 }
@@ -187,52 +188,56 @@ export async function safeFetchJson(
                 throw new Error(`API Error ${response.status}: ${errMsg}`);
             }
 
-            const data = await safeResponseJson(response);
-            if (isChatCompletionUrl(urlStr)) {
-                appendDevDebugApiLog({
-                    url: urlStr,
-                    method: options.method,
-                    status: response.status,
-                    requestBody: options.body,
-                    response: data,
-                });
-            }
-            return data;
-        } catch (e: any) {
+            return await safeResponseJson(response);
+                       } catch (e: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
 
-            // AbortError（含 timeout）：是否重试看上层策略，先按可重试处理（网络层面）
+            // CORS 失败自动走代理（TypeError: Load failed 是典型 CORS 报错）
+            const isCorsLikely = e.name === 'TypeError' && /load failed|failed to fetch|network/i.test(e.message || '');
+            if (isCorsLikely && attempt === 0) {
+                console.log('[SafeAPI] CORS blocked, retrying via /api/proxy...');
+                try {
+                    const proxyResp = await proxyFetch(url, options);
+                    if (!proxyResp.ok) {
+                        const data = await safeResponseJson(proxyResp);
+                        const errMsg = data?.error?.message || data?.error || `HTTP ${proxyResp.status}`;
+                        throw new Error(`API Error ${proxyResp.status}: ${errMsg}`);
+                    }
+                    return await safeResponseJson(proxyResp);
+                } catch (proxyErr: any) {
+                    console.warn('[SafeAPI] Proxy also failed:', proxyErr.message);
+                    lastError = proxyErr;
+                    if (attempt < maxRetries) {
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(r => setTimeout(r, delay));
+                        continue;
+                    }
+                    throw proxyErr;
+                }
+            }
+
+            // AbortError（含 timeout）
             const isAbort = e?.name === 'AbortError' || /aborted|timeout/i.test(e?.message || '');
 
-            // Network errors (fetch itself failed) are retryable
-            if ((e?.name === 'TypeError' || isAbort) && attempt < maxRetries) {
+            if ((e.name === 'TypeError' || isAbort) && attempt < maxRetries) {
                 const delay = Math.pow(2, attempt) * 1000;
-                log.warn(isAbort ? 'Timeout/Abort retry' : 'Network error retry', { attempt: attempt + 1, maxRetries, delay, message: e?.message });
+                console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
 
-            // For HTML/parse errors on non-ok responses during retry, continue
-            if (attempt < maxRetries && e?.message?.includes('API返回了HTML')) {
+            if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
                 const delay = Math.pow(2, attempt) * 1000;
-                log.warn('HTML response retry', { attempt: attempt + 1, maxRetries, delay });
+                console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
 
-            if (isChatCompletionUrl(urlStr)) {
-                appendDevDebugApiLog({
-                    url: urlStr,
-                    method: options.method,
-                    status: lastStatus,
-                    requestBody: options.body,
-                    error: e,
-                });
-            }
             throw e;
         }
     }
+
 
     throw lastError || new Error('API请求失败');
 }
@@ -249,9 +254,9 @@ export function extractContent(data: any): string {
     const msg = data?.choices?.[0]?.message;
     let text: string = msg?.content || '';
     if (!text.trim()) text = msg?.reasoning_content || '';
-    // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
-    text = text.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
-    text = text.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
+    // Strip hidden chain-of-thought blocks
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    text = text.replace(/<think>[\s\S]*$/gi, '');
     return text.trim();
 }
 
@@ -267,56 +272,6 @@ export function extractContent(data: any): string {
  *
  * Returns parsed object on success, null on total failure.
  */
-/**
- * Walk through a JSON-ish string and re-escape `"` characters that appear inside
- * string values but weren't escaped by the LLM.
- *
- * Common with Claude when the content quotes a phrase ("还不够好" / "我爱你"等)
- * inside a string value — the inner quotes break JSON.parse because they look
- * like closing delimiters.
- *
- * Heuristic for distinguishing "real closing quote" vs "unescaped inner quote":
- *   A `"` is treated as closing iff the next non-whitespace char is one of
- *   , } ] : end-of-input. Otherwise it's an inner quote and gets \-escaped.
- */
-function escapeUnescapedInnerQuotes(text: string): string {
-    let result = '';
-    let inString = false;
-    let escaped = false;
-
-    for (let i = 0; i < text.length; i++) {
-        const ch = text[i];
-
-        if (escaped) { result += ch; escaped = false; continue; }
-        if (ch === '\\' && inString) { result += ch; escaped = true; continue; }
-
-        if (ch === '"') {
-            if (!inString) {
-                inString = true;
-                result += ch;
-                continue;
-            }
-            // We're inside a string. Look ahead to decide: closing or inner?
-            let j = i + 1;
-            while (j < text.length && /[ \t\r\n]/.test(text[j])) j++;
-            const next = j < text.length ? text[j] : '';
-            // Closing iff next meaningful char is one of , } ] : or EOF
-            if (next === '' || next === ',' || next === '}' || next === ']' || next === ':') {
-                inString = false;
-                result += ch;
-            } else {
-                // Inner unescaped quote → escape it
-                result += '\\"';
-            }
-            continue;
-        }
-
-        result += ch;
-    }
-
-    return result;
-}
-
 /**
  * Attempt to repair truncated JSON by closing open strings, arrays, and objects.
  * Handles the common case where LLM output is cut off mid-string.
@@ -418,20 +373,7 @@ export function extractJson(raw: string): any | null {
 
     try { return JSON.parse(fixed); } catch {}
 
-    // 6. Try to repair unescaped inner quotes (LLM writes naked " inside a string value).
-    // Common with Claude when the content quotes a phrase like 「埋一句"我爱你"」
-    // — the inner " breaks JSON parsing because they're not \-escaped.
-    const innerQuoteFixed = escapeUnescapedInnerQuotes(jsonStr);
-    if (innerQuoteFixed && innerQuoteFixed !== jsonStr) {
-        try { return JSON.parse(innerQuoteFixed); } catch {}
-        try {
-            return JSON.parse(innerQuoteFixed
-                .replace(/,\s*([}\]])/g, '$1')
-                .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":'));
-        } catch {}
-    }
-
-    // 7. Try to repair truncated JSON (LLM hit max_tokens)
+    // 6. Try to repair truncated JSON (LLM hit max_tokens)
     // Find the first { and attempt to close any open strings/brackets
     const firstBrace = text.indexOf('{');
     if (firstBrace >= 0) {
@@ -445,15 +387,10 @@ export function extractJson(raw: string): any | null {
                     .replace(/,\s*([}\]])/g, '$1')
                     .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":'));
             } catch {}
-            // Also try escaping inner quotes on the truncated-repaired version
-            const repairedInnerFixed = escapeUnescapedInnerQuotes(repaired);
-            if (repairedInnerFixed !== repaired) {
-                try { return JSON.parse(repairedInnerFixed); } catch {}
-            }
         }
     }
 
-    // 8. Last resort: try to extract individual JSON objects if there are multiple
+    // 7. Last resort: try to extract individual JSON objects if there are multiple
     // (AI sometimes outputs two JSON blocks, take the larger one)
     const allObjects = [...text.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)];
     if (allObjects.length > 0) {
@@ -463,14 +400,10 @@ export function extractJson(raw: string): any | null {
             try {
                 return JSON.parse(m[0].replace(/,\s*([}\]])/g, '$1'));
             } catch {}
-            try {
-                const fixedInner = escapeUnescapedInnerQuotes(m[0]);
-                return JSON.parse(fixedInner.replace(/,\s*([}\]])/g, '$1'));
-            } catch {}
         }
     }
 
-    // 9. AI sometimes wraps the expected JSON in a wrapper object like {"result": {...}}
+    // 8. AI sometimes wraps the expected JSON in a wrapper object like {"result": {...}}
     // Try to find the first nested object value and return it
     for (const m of allObjects) {
         try {

@@ -1,76 +1,14 @@
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useOS, DEFAULT_WALLPAPER } from '../context/OSContext';
-import { OSTheme, DesktopDecoration, AppearancePreset, Toast } from '../types';
+import { OSTheme, DesktopDecoration, AppearancePreset, Toast, AppID } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
-import { DB } from '../utils/db';
 import { Sparkle } from '@phosphor-icons/react';
 import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-
-// Touch-friendly long-press wrapper. `onContextMenu` alone misses iOS Safari /
-// Capacitor WebView, so we also wire pointer/touch timers to fire after ~550ms.
-// When a long-press fires, the subsequent click is suppressed.
-const LongPressArea: React.FC<{
-    onLongPress: () => void;
-    onClick?: () => void;
-    delay?: number;
-    className?: string;
-    style?: React.CSSProperties;
-    children?: React.ReactNode;
-}> = ({ onLongPress, onClick, delay = 550, className, style, children }) => {
-    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const fired = useRef(false);
-    const startPos = useRef<{ x: number; y: number } | null>(null);
-
-    const clear = useCallback(() => {
-        if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-        startPos.current = null;
-    }, []);
-
-    useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-
-    const start = (x: number, y: number) => {
-        fired.current = false;
-        startPos.current = { x, y };
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => {
-            fired.current = true;
-            onLongPress();
-        }, delay);
-    };
-    const move = (x: number, y: number) => {
-        const sp = startPos.current;
-        if (!sp) return;
-        if (Math.hypot(x - sp.x, y - sp.y) > 8) clear();
-    };
-
-    return (
-        <div
-            className={className}
-            style={style}
-            onContextMenu={(e) => { e.preventDefault(); onLongPress(); }}
-            onTouchStart={(e) => { const t = e.touches[0]; if (t) start(t.clientX, t.clientY); }}
-            onTouchMove={(e) => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }}
-            onTouchEnd={clear}
-            onTouchCancel={clear}
-            onPointerDown={(e) => { if (e.pointerType !== 'touch') start(e.clientX, e.clientY); }}
-            onPointerMove={(e) => { if (e.pointerType !== 'touch') move(e.clientX, e.clientY); }}
-            onPointerUp={clear}
-            onPointerLeave={clear}
-            onPointerCancel={clear}
-            onClick={() => {
-                if (fired.current) { fired.current = false; return; }
-                onClick?.();
-            }}
-        >
-            {children}
-        </div>
-    );
-};
 
 const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
   <img src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`} alt={alt || ''} className={className} draggable={false} />
@@ -132,72 +70,6 @@ const CHAT_LAYOUT_COMBOS: { name: string; desc: string; config: Partial<OSTheme>
     { name: 'iMessage', desc: '大圆头像+宽松气泡', config: { chatAvatarShape: 'circle', chatAvatarSize: 'large', chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious', chatHeaderStyle: 'minimal', chatInputStyle: 'rounded', chatShowTimestamp: 'always' } },
     { name: '简约模式', desc: '小头像+最简界面', config: { chatAvatarShape: 'circle', chatAvatarSize: 'small', chatBubbleStyle: 'flat', chatMessageSpacing: 'compact', chatHeaderStyle: 'minimal', chatInputStyle: 'flat', chatShowTimestamp: 'never' } },
 ];
-
-// --- 桌面整机风格（皮肤）---
-// 动森壁纸：NookPhone 同款奶油底（#F8F4E8），底部极淡草色透气。纯 CSS 渐变，让彩色图标平铺更跳。
-const ACNH_WALLPAPER = 'linear-gradient(180deg, #F8F4E8 0%, #F3EFDD 58%, #E6EECE 100%)';
-
-const DESKTOP_SKINS: { id: string; name: string; desc: string; swatch: string; config: Partial<OSTheme> }[] = [
-  {
-    id: 'animalcrossing',
-    name: '动森风格',
-    desc: 'NookPhone 彩色图标 · 草地天空 · 暖色界面',
-    swatch: 'linear-gradient(135deg,#BCE7F5 0%,#BBE38F 55%,#7CBA4C 100%)',
-    config: {
-      skin: 'animalcrossing',
-      hue: 95, saturation: 48, lightness: 56,
-      contentColor: '#725d42',
-      wallpaper: ACNH_WALLPAPER,
-      chatAvatarShape: 'rounded', chatAvatarSize: 'medium',
-      chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious',
-      chatHeaderStyle: 'default', chatInputStyle: 'rounded',
-      chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
-      chatShowTimestamp: 'hover',
-    },
-  },
-  {
-    id: 'default',
-    name: '默认风格',
-    desc: '经典 SullyOS 玻璃拟物界面',
-    swatch: 'linear-gradient(135deg,#FFDEE9 0%,#B5FFFC 100%)',
-    config: {
-      skin: 'default',
-      hue: 245, saturation: 25, lightness: 65,
-      contentColor: '#ffffff',
-      wallpaper: DEFAULT_WALLPAPER,
-    },
-  },
-];
-
-// 动森叶子贴纸：切换动森皮肤时自动撒到桌面。用 acnh-leaf- 前缀标记，便于切回时单独清掉而不动用户自己的装饰。
-const ACNH_LEAF_PREFIX = 'acnh-leaf-';
-const acnhLeafSvg = (fill: string, vein: string) => `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">`
-  + `<path d="M50 8 C78 20 88 50 78 82 C74 92 60 96 50 92 C40 96 26 92 22 82 C12 50 22 20 50 8Z" fill="${fill}"/>`
-  + `<path d="M50 14 L50 88" stroke="${vein}" stroke-width="3" fill="none" opacity="0.5"/>`
-  + `<path d="M50 35 Q66 32 74 42" stroke="${vein}" stroke-width="2" fill="none" opacity="0.4"/>`
-  + `<path d="M50 52 Q34 49 26 59" stroke="${vein}" stroke-width="2" fill="none" opacity="0.4"/></svg>`
-)}`;
-const ACNH_LEAF_VARIANTS = [
-  acnhLeafSvg('#7CBA4C', '#4d7a2a'),
-  acnhLeafSvg('#9ED25F', '#5c8a30'),
-  acnhLeafSvg('#5FAE6E', '#356b3f'),
-];
-const ACNH_LEAF_LAYOUT: { x: number; y: number; scale: number; rotation: number; opacity: number; flip?: boolean }[] = [
-  { x: 12, y: 14, scale: 0.8, rotation: -20, opacity: 0.9 },
-  { x: 86, y: 17, scale: 0.7, rotation: 30, opacity: 0.85, flip: true },
-  { x: 17, y: 80, scale: 0.9, rotation: 15, opacity: 0.9 },
-  { x: 88, y: 78, scale: 0.72, rotation: -25, opacity: 0.85 },
-  { x: 50, y: 91, scale: 0.6, rotation: 8, opacity: 0.8 },
-  { x: 82, y: 48, scale: 0.55, rotation: -40, opacity: 0.7, flip: true },
-];
-const buildAcnhLeaves = (): DesktopDecoration[] => ACNH_LEAF_LAYOUT.map((p, i) => ({
-  id: `${ACNH_LEAF_PREFIX}${i}`,
-  type: 'preset',
-  content: ACNH_LEAF_VARIANTS[i % ACNH_LEAF_VARIANTS.length],
-  x: p.x, y: p.y, scale: p.scale, rotation: p.rotation, opacity: p.opacity,
-  zIndex: 5 + i, flip: p.flip,
-}));
 
 const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<OSTheme>) => void }> = ({ theme, updateTheme }) => {
     const avatarShape = theme.chatAvatarShape || 'circle';
@@ -358,29 +230,16 @@ interface PresetManagerProps {
     onRename: (id: string, name: string) => void;
     onExport: (id: string) => Promise<Blob>;
     onImport: (file: File) => Promise<void>;
-    onReset: () => Promise<void>;
     addToast: (msg: string, type?: Toast['type']) => void;
     currentTheme: OSTheme;
 }
 
-const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, onReset, addToast, currentTheme }) => {
+const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, addToast, currentTheme }) => {
     const [newName, setNewName] = useState('');
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editName, setEditName] = useState('');
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-    const [confirmReset, setConfirmReset] = useState(false);
-    const [resetting, setResetting] = useState(false);
     const importRef = useRef<HTMLInputElement>(null);
-
-    const handleReset = async () => {
-        setResetting(true);
-        try {
-            await onReset();
-        } finally {
-            setResetting(false);
-            setConfirmReset(false);
-        }
-    };
 
     const handleSave = () => {
         const name = newName.trim() || `预设 ${new Date().toLocaleDateString('zh-CN')}`;
@@ -460,35 +319,6 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 
     return (
         <div className="space-y-5">
-            {/* One-click Reset */}
-            <section className="bg-gradient-to-br from-rose-50 to-orange-50 rounded-3xl p-5 shadow-sm border border-rose-100">
-                <div className="flex items-center gap-2 mb-2">
-                    <h2 className="text-sm font-bold text-rose-500 uppercase tracking-widest">一键还原外观</h2>
-                </div>
-                <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">
-                    把主题色、壁纸、字体、应用图标、桌面小组件、装饰贴纸全部还原成最初始状态。在不同版本之间反复导入预设导致图标错乱时使用。<br/>
-                    <span className="text-slate-400">已保存的外观预设不会被删除，随时还能切回去。</span>
-                </p>
-                {!confirmReset ? (
-                    <button onClick={() => setConfirmReset(true)}
-                        className="w-full py-2.5 bg-white text-rose-500 font-bold text-xs rounded-xl border border-rose-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                        还原为初始外观
-                    </button>
-                ) : (
-                    <div className="flex gap-2">
-                        <button onClick={handleReset} disabled={resetting}
-                            className="flex-1 py-2.5 bg-rose-500 text-white font-bold text-xs rounded-xl shadow-sm active:scale-95 transition-transform disabled:opacity-50">
-                            {resetting ? '正在还原...' : '确认还原'}
-                        </button>
-                        <button onClick={() => setConfirmReset(false)} disabled={resetting}
-                            className="flex-1 py-2.5 bg-white text-slate-500 font-bold text-xs rounded-xl border border-slate-200 active:scale-95 transition-transform disabled:opacity-50">
-                            取消
-                        </button>
-                    </div>
-                )}
-            </section>
-
             {/* Save Current */}
             <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">保存当前外观</h2>
@@ -626,17 +456,7 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 };
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance, characters, updateCharacter } = useOS();
-  // 一键还原全部「聊天白框自定义 CSS」：清掉全局 + 每个角色自带的。
-  // 兼作救援：单角色的坏 CSS 把聊天界面整崩、进不去该角色设置时，从这里一键全清即可恢复。
-  const resetAllChromeCss = () => {
-    let n = 0;
-    if (theme.chatChromeCustomCss) { updateTheme({ chatChromeCustomCss: '' }); n++; }
-    (characters || []).forEach((c: any) => {
-      if (c?.chromeCustomCss) { updateCharacter(c.id, { chromeCustomCss: '' } as any); n++; }
-    });
-    addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
-  };
+  const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset } = useOS();
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
@@ -815,49 +635,6 @@ const Appearance: React.FC = () => {
       addToast('网络字体已应用', 'success');
   };
 
-  // 切换桌面整机风格：动森模式自动撒叶子贴纸（保留用户已有装饰），切回默认时只清掉 acnh 叶子。
-  // 壁纸处理：进入动森前备份用户原壁纸（data URI 存 IndexedDB，渐变/URL 存 localStorage），
-  // 切回默认时还原，避免覆盖用户自己设的桌面壁纸。
-  const ACNH_WP_BACKUP_KEY = 'acnh_wallpaper_backup';
-  const applyDesktopSkin = async (skin: { id: string; name: string; config: Partial<OSTheme> }) => {
-      const goingAcnh = skin.id === 'animalcrossing';
-      const currentlyAcnh = (theme.skin || 'default') === 'animalcrossing';
-
-      let wallpaper: string;
-      if (goingAcnh) {
-          wallpaper = ACNH_WALLPAPER;
-          // 仅从「默认 → 动森」时备份一次，避免重复点动森把 AC 壁纸当成用户壁纸备份
-          if (!currentlyAcnh) {
-              const dbWp = await DB.getAsset('wallpaper'); // 用户若用 data URI 壁纸，真值在这
-              const cur = dbWp || theme.wallpaper || '';
-              if (cur && cur.startsWith('data:')) {
-                  await DB.saveAsset('wallpaper_user_backup', cur);
-                  localStorage.setItem(ACNH_WP_BACKUP_KEY, '__asset__');
-              } else {
-                  localStorage.setItem(ACNH_WP_BACKUP_KEY, cur);
-                  await DB.deleteAsset('wallpaper_user_backup');
-              }
-          }
-      } else {
-          // 切回默认：还原备份的用户壁纸
-          const marker = localStorage.getItem(ACNH_WP_BACKUP_KEY);
-          if (marker === '__asset__') {
-              wallpaper = (await DB.getAsset('wallpaper_user_backup')) || DEFAULT_WALLPAPER;
-          } else if (marker !== null) {
-              wallpaper = marker || DEFAULT_WALLPAPER; // 空字符串=用户原本就是默认
-          } else {
-              wallpaper = DEFAULT_WALLPAPER; // 没有备份记录（老用户首次切回）
-          }
-      }
-
-      const existing = (theme.desktopDecorations || []).filter(d => !d.id.startsWith(ACNH_LEAF_PREFIX));
-      const desktopDecorations = goingAcnh ? [...existing, ...buildAcnhLeaves()] : existing;
-      // skin.config 里写死的 wallpaper 不用，改用上面算出的（备份/还原后的）值
-      const { wallpaper: _ignored, ...restConfig } = skin.config;
-      updateTheme({ ...restConfig, wallpaper, desktopDecorations });
-      addToast(`已切换到「${skin.name}」`, 'success');
-  };
-
   const handleIconUpload = async (file: File) => {
       if (!selectedAppId) return;
       try {
@@ -882,7 +659,8 @@ const Appearance: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20">
+      <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20 overflow-x-auto no-scrollbar">
+          <button onClick={() => openApp(AppID.ThemeMaker)} className="flex-1 py-3 text-sm font-medium transition-colors text-slate-400 shrink-0">气泡工坊</button>
           <button onClick={() => setActiveTab('theme')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>系统主题</button>
           <button onClick={() => setActiveTab('icons')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
           <button onClick={() => setActiveTab('presets')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
@@ -892,47 +670,6 @@ const Appearance: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">桌面风格</h2>
-                    <p className="text-[10px] text-slate-400 mb-4">一键切换整机主题：壁纸、配色、图标外观、聊天界面全部联动改变。</p>
-                    <div className="grid grid-cols-2 gap-3">
-                        {DESKTOP_SKINS.map(skin => {
-                            const active = (theme.skin || 'default') === skin.id;
-                            return (
-                                <button
-                                    key={skin.id}
-                                    onClick={() => applyDesktopSkin(skin)}
-                                    className={`relative text-left rounded-2xl p-3 border-2 transition-all active:scale-[0.98] ${active ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200 hover:border-slate-300'}`}
-                                >
-                                    <div className="h-16 w-full rounded-xl mb-2 shadow-inner" style={{ background: skin.swatch }} />
-                                    <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                                        {skin.name}
-                                        {active && <span className="text-[9px] font-bold text-primary">· 当前</span>}
-                                    </div>
-                                    <div className="text-[9px] text-slate-400 mt-0.5 leading-snug">{skin.desc}</div>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* 动森模式专属：聊天 App 是否联动 */}
-                    {(theme.skin || 'default') === 'animalcrossing' && (
-                        <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-                            <div className="min-w-0">
-                                <div className="text-xs font-bold text-slate-700">聊天界面跟随动森</div>
-                                <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">关掉后，聊天 App 保持原来的样式</div>
-                            </div>
-                            <button
-                                onClick={() => updateTheme({ acnhChatSync: theme.acnhChatSync === false ? true : false })}
-                                className={`relative w-11 h-6 rounded-full shrink-0 transition-colors ${theme.acnhChatSync !== false ? 'bg-primary' : 'bg-slate-300'}`}
-                                aria-label="聊天界面跟随动森"
-                            >
-                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${theme.acnhChatSync !== false ? 'translate-x-5' : ''}`} />
-                            </button>
-                        </div>
-                    )}
-                </section>
-
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Preset Themes</h2>
                     <div className="flex gap-3 mb-6 overflow-x-auto no-scrollbar pb-1">
@@ -1072,10 +809,11 @@ const Appearance: React.FC = () => {
                 {/* Wallpaper Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Wallpaper</h2>
-                    <LongPressArea
+                    <div
                         className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
                         onClick={() => wallpaperInputRef.current?.click()}
-                        onLongPress={() => {
+                        onContextMenu={(e) => {
+                            e.preventDefault();
                             if (theme.wallpaper === DEFAULT_WALLPAPER) {
                                 addToast('当前已是默认壁纸', 'info');
                                 return;
@@ -1097,7 +835,7 @@ const Appearance: React.FC = () => {
                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                              <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">更换壁纸</span>
                          </div>
-                    </LongPressArea>
+                    </div>
                     <input type="file" ref={wallpaperInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWallpaperUpload(e.target.files[0])} />
                     <p className="text-center text-[10px] text-slate-400 mb-4">点击上传 / 长按恢复默认壁纸 (支持原画质)</p>
 
@@ -1130,16 +868,9 @@ const Appearance: React.FC = () => {
                             const slot = 'dsq';
                             const img = (theme.launcherWidgets || {})[slot];
                             return (
-                                <LongPressArea
-                                    className={`w-40 aspect-square rounded-2xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                <div className={`w-40 aspect-square rounded-2xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
                                     onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                    onLongPress={() => {
-                                        if (img) {
-                                            removeWidget(slot);
-                                            addToast('已移除方图', 'success');
-                                        }
-                                    }}
-                                >
+                                    onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
                                     {img ? (
                                         <>
                                             <img src={img} className="w-full h-full object-cover" />
@@ -1153,7 +884,7 @@ const Appearance: React.FC = () => {
                                             <span className="text-[10px]">方图</span>
                                         </div>
                                     )}
-                                </LongPressArea>
+                                </div>
                             );
                         })()}
                     </div>
@@ -1169,17 +900,9 @@ const Appearance: React.FC = () => {
                             {['tl', 'tr'].map(slot => {
                                 const img = (theme.launcherWidgets || {})[slot];
                                 return (
-                                    <LongPressArea
-                                        key={slot}
-                                        className={`flex-1 aspect-square rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                    <div key={slot} className={`flex-1 aspect-square rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
                                         onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                        onLongPress={() => {
-                                            if (img) {
-                                                removeWidget(slot);
-                                                addToast('已移除小组件', 'success');
-                                            }
-                                        }}
-                                    >
+                                        onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
                                         {img ? (
                                             <>
                                                 <img src={img} className="w-full h-full object-cover" />
@@ -1193,7 +916,7 @@ const Appearance: React.FC = () => {
                                                 <span className="text-[9px]">图片</span>
                                             </div>
                                         )}
-                                    </LongPressArea>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -1201,16 +924,9 @@ const Appearance: React.FC = () => {
                             const slot = 'wide';
                             const img = (theme.launcherWidgets || {})[slot];
                             return (
-                                <LongPressArea
-                                    className={`w-full h-20 rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-[0.98] ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                <div className={`w-full h-20 rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-[0.98] ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
                                     onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                    onLongPress={() => {
-                                        if (img) {
-                                            removeWidget(slot);
-                                            addToast('已移除横幅', 'success');
-                                        }
-                                    }}
-                                >
+                                    onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
                                     {img ? (
                                         <>
                                             <img src={img} className="w-full h-full object-cover" />
@@ -1224,7 +940,7 @@ const Appearance: React.FC = () => {
                                             <span className="text-[9px]">横幅</span>
                                         </div>
                                     )}
-                                </LongPressArea>
+                                </div>
                             );
                         })()}
                     </div>
@@ -1479,12 +1195,11 @@ const Appearance: React.FC = () => {
                 onRename={renameAppearancePreset}
                 onExport={exportAppearancePreset}
                 onImport={importAppearancePreset}
-                onReset={resetAppearance}
                 addToast={addToast}
                 currentTheme={theme}
             />
         ) : activeTab === 'chat' ? (
-            <ModularChatAppearanceEditor theme={theme} updateTheme={updateTheme} onResetAllChrome={resetAllChromeCss} />
+            <ModularChatAppearanceEditor theme={theme} updateTheme={updateTheme} />
         ) : null}
       </div>
     </div>

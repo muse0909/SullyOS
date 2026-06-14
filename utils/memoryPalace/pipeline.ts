@@ -12,8 +12,7 @@
  * - 保留缓冲区尾部 15% 作为下次提取的上下文衔接
  *
  * LLM 调用策略：
- * - 记忆提取 → 用 LightLLMConfig（来自 memoryPalaceConfig.lightLLM 全局副 API，
- *   与情绪 API emotionConfig.api 完全独立）
+ * - 记忆提取 → 用 LightLLMConfig（复用 emotionConfig.api 轻量副模型）
  * - 检索管线 → 纯计算，不调 LLM
  */
 
@@ -76,7 +75,7 @@ import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messag
 
 /**
  * 轻量 LLM 配置，用于记忆提取等后台任务。
- * 来源是 memoryPalaceConfig.lightLLM（全局副 API），与情绪 API（emotionConfig.api）独立。
+ * 复用 emotionConfig.api 的 { baseUrl, apiKey, model }。
  * 这样可以用便宜快速的小模型（如 DeepSeek-V2-Lite、GLM-4-Flash）
  * 而不是主聊天模型。
  */
@@ -956,137 +955,6 @@ export async function injectMemoryPalace(
     }
 }
 
-// ─── 外部摘要 / 日记一次性吞吐 ────────────────────────
-
-/**
- * 把"交换日记"一次性塞进记忆宫殿。
- * 跟 processNewMessages 用的同一套抽取 + 向量化逻辑（lightLLM 副 API、extractMemoriesFromBuffer、
- * vectorizeAndStore），但不走缓冲区/高水位机制 —— 因为日记不是普通聊天消息，
- * 是一篇独立的、用户主动触发的归档。
- *
- * 关键差异（对比 chat 自动归档）：
- *  - 时间戳来自 diary.date，不是 Date.now() —— 这样向量记忆按 createdAt 排序时
- *    日记会落在它真正发生的那天而不是归档的那天
- *  - 不动 mp_lastMsgId_ 高水位 —— 防止把后续聊天处理跳过
- *  - 不写 EventBox 跨时间链接（日记是孤立事件，绑链接需要再过一遍消息流，价值不大）
- *
- * @param char 至少要 id / name / memoryPalaceEnabled / embeddingConfig
- * @param dateStr 日记日期 YYYY-MM-DD，决定 MemoryNode.createdAt
- * @param userDiaryText 用户那页的正文
- * @param charDiaryText 角色那页的正文（可空）
- * @param lightLLMConfig 记忆宫殿副 API
- * @param userName 用户昵称
- */
-/** 一次日记归档对宫殿的具体影响, 用 status 区分各种"为什么没入宫"的情况, 供 UI 弹窗直接展示 */
-export type DiaryIngestResult =
-    | { status: 'palace_disabled' }
-    | { status: 'lightllm_missing' }
-    | { status: 'embedding_missing' }
-    | { status: 'empty_input' }
-    | { status: 'extracted_none'; stored: 0; skipped: 0 }
-    | {
-        status: 'done';
-        stored: number;
-        skipped: number;
-        nodes: { content: string; room: import('./types').MemoryRoom; importance: number; mood: string; tags: string[] }[];
-    };
-
-export async function ingestDiaryToPalace(
-    char: { id: string; name: string; memoryPalaceEnabled?: boolean; embeddingConfig?: any; systemPrompt?: string; worldview?: string },
-    dateStr: string,
-    userDiaryText: string,
-    charDiaryText: string,
-    lightLLMConfig: LightLLMConfig | null | undefined,
-    userName: string,
-): Promise<DiaryIngestResult> {
-    if (!char.memoryPalaceEnabled) return { status: 'palace_disabled' };
-    if (!lightLLMConfig?.baseUrl || !lightLLMConfig?.apiKey) {
-        console.warn(`🏰 [DiaryIngest] 跳过：lightLLM 未配置`);
-        return { status: 'lightllm_missing' };
-    }
-    const embeddingConfig = getEmbeddingConfig(char.embeddingConfig);
-    if (!embeddingConfig) {
-        console.warn(`🏰 [DiaryIngest] 跳过：embedding 配置未就绪`);
-        return { status: 'embedding_missing' };
-    }
-
-    // 构造时间戳：YYYY-MM-DD → 当地中午 12:00（避免时区把日期撇到前一天）
-    let createdAt = Date.now();
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-    if (m) {
-        const d = new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), 12, 0, 0);
-        if (!isNaN(d.getTime())) createdAt = d.getTime();
-    }
-
-    // 把日记伪装成两条 Message 喂给 extractMemoriesFromBuffer（id 给负数，不入库不冲突）
-    const fakeMessages: Message[] = [];
-    if (userDiaryText?.trim()) {
-        fakeMessages.push({
-            id: -Math.floor(Math.random() * 1e9),
-            charId: char.id,
-            role: 'user',
-            type: 'text',
-            content: `【交换日记 ${dateStr}】我今天写道：\n${userDiaryText.trim()}`,
-            timestamp: createdAt,
-        } as Message);
-    }
-    if (charDiaryText?.trim()) {
-        fakeMessages.push({
-            id: -Math.floor(Math.random() * 1e9),
-            charId: char.id,
-            role: 'assistant',
-            type: 'text',
-            content: `【交换日记 ${dateStr}】我（${char.name}）的回复日记：\n${charDiaryText.trim()}`,
-            timestamp: createdAt + 1000,
-        } as Message);
-    }
-    if (fakeMessages.length === 0) return { status: 'empty_input' };
-
-    // 角色 / 用户档案给 LLM 当上下文
-    let charContext = `[角色档案]\n名字: ${char.name}\n核心设定:\n${char.systemPrompt || '无'}\n`;
-    if (char.worldview?.trim()) charContext += `世界观: ${char.worldview}\n`;
-    charContext += `\n[用户档案]\n名字: ${userName || '用户'}\n\n[来源说明]\n这是来自【交换日记】app 的一次归档，不是普通聊天，是一篇双方各写一页的正式日记。\n`;
-
-    const extracted = await extractMemoriesFromBuffer(
-        fakeMessages,
-        char.id,
-        char.name,
-        lightLLMConfig,
-        charContext,
-        userName || '用户',
-        [], // 不喂相关记忆，避免一次归档把 LLM 拉去做跨时间纠正
-        [], // 不喂便利贴
-    );
-
-    if (extracted.memories.length === 0) {
-        console.log(`🏰 [DiaryIngest] LLM 未提取出记忆节点`);
-        return { status: 'extracted_none', stored: 0, skipped: 0 };
-    }
-
-    // 把 createdAt 改成日记日期，origin 标 system（用户主动触发的归档）
-    for (const node of extracted.memories) {
-        node.createdAt = createdAt;
-        node.lastAccessedAt = createdAt;
-        node.origin = 'system';
-    }
-
-    const remoteConfig = getRemoteVectorConfig();
-    const result = await vectorizeAndStore(extracted.memories, embeddingConfig, remoteConfig);
-    console.log(`🏰 [DiaryIngest] 日记 ${dateStr} 入宫：提取 ${extracted.memories.length} 条，存储 ${result.stored}，去重跳过 ${result.skipped}`);
-    return {
-        status: 'done',
-        stored: result.stored,
-        skipped: result.skipped,
-        nodes: extracted.memories.map(n => ({
-            content: n.content,
-            room: n.room,
-            importance: n.importance,
-            mood: n.mood,
-            tags: n.tags,
-        })),
-    };
-}
-
 // ─── 输入管线（AI 回复后，后台） ──────────────────────
 
 // ─── 高水位标记：记录每个角色处理到的最后消息 ID ────────
@@ -1109,6 +977,28 @@ export function getMemoryPalaceHighWaterMark(charId: string): number {
     return getLastProcessedId(charId);
 }
 
+// ─── 提取轮数计数（按轮触发，区别于认知消化的 50 轮） ─────────
+/** 每聊够 N 轮（1轮=用户发+AI回复）强制触发一次记忆提取，避免气泡多就被算成多条 */
+const AUTO_EXTRACT_ROUNDS = 50;
+const EXTRACT_ROUND_KEY = (charId: string) => `mp_extractRounds_${charId}`;
+
+/** 累加一轮，达到阈值返回 true（同时清零计数），调用方可据此把 force=true 传给 processNewMessages */
+export function incrementExtractRound(charId: string): boolean {
+  let current = 0;
+  try {
+    current = parseInt(localStorage.getItem(EXTRACT_ROUND_KEY(charId)) || '0', 10) + 1;
+  } catch {
+    current = 1;
+  }
+  if (current >= AUTO_EXTRACT_ROUNDS) {
+    try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), '0'); } catch {}
+    return true;
+  }
+  try { localStorage.setItem(EXTRACT_ROUND_KEY(charId), String(current)); } catch {}
+  return false;
+}
+
+
 // ─── 缓冲区配置 ─────────────────────────────────────
 
 /** 热区大小：最近 N 条消息始终留在聊天上下文，不处理 */
@@ -1117,33 +1007,6 @@ const HOT_ZONE_SIZE = 200;
 const BUFFER_THRESHOLD = 100;
 /** 处理比例：取缓冲区前 85%，保留尾部 15% 作为下次总结的上下文 */
 const PROCESS_RATIO = 0.85;
-
-/**
- * 计算当前"真正可被 pipeline 处理"的缓冲区消息数。
- *
- * 与 processNewMessages 的口径完全一致：
- *   - 只数语义相关消息（排除纯图片/语音/表情）
- *   - 排除最后 HOT_ZONE_SIZE 条（热区永远不会被处理）
- *   - 只数 id > 高水位标记的部分
- *
- * 切勿用"id > hwm"裸过滤——那会把热区的 200 条也算进未同步，
- * 导致 UI 显示的"未同步条数"远大于 pipeline 实际能处理的量
- * （表现：弹窗说有几百条未同步，点立即追平却跑不出新 hwm）。
- */
-export async function getMemoryPalaceUnprocessedBufferCount(charId: string): Promise<number> {
-    const allMessages = await DB.getMessagesByCharId(charId, true);
-    const semantic = allMessages
-        .filter(m => isMessageSemanticallyRelevant(m))
-        .sort((a, b) => a.id - b.id);
-    if (semantic.length <= HOT_ZONE_SIZE) return 0;
-    const hotZoneStartId = semantic[semantic.length - HOT_ZONE_SIZE].id;
-    const hwm = getLastProcessedId(charId);
-    let count = 0;
-    for (const m of semantic) {
-        if (m.id > hwm && m.id < hotZoneStartId) count++;
-    }
-    return count;
-}
 
 /** 并发锁：防止多次 AI 回复同时触发 processNewMessages 产生竞态 */
 const processingLocks = new Set<string>();
@@ -1163,8 +1026,6 @@ const processingLocks = new Set<string>();
 export interface PipelineResult {
     stored: number;
     skipped: number;
-    /** 本轮 pipeline 从缓冲区取出处理的消息条数（caller 用于进度展示） */
-    processedMessages?: number;
     memories: { content: string; room: string; importance: number; mood: string; tags: string[] }[];
     batches: { index: number; total: number; extracted: number; ok: boolean; error?: string }[];
     /**
@@ -1182,6 +1043,9 @@ export interface PipelineResult {
      * caller 看到这个字段就应当提示"聊天还不够，继续聊"，而不是报"LLM 提取失败"。
      */
     skipReason?: 'lock' | 'hot_zone' | 'threshold';
+      /** 真触发了提取但 0 条入库的具体原因，供 caller 给用户明确反馈 */
+  emptyReason?: 'no_extract' | 'all_dedup' | 'vectorize_fail';
+
 }
 
 /** 构造一个"软跳过"结果，统一 caller 的分支处理 */
@@ -1393,7 +1257,8 @@ export async function processNewMessages(
 
         if (memories.length === 0) {
             console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
-            return { stored: 0, skipped: 0, memories: [], batches: batchResults };
+               return { stored: 0, skipped: vectorResult.skipped, memories: [], batches: batchResults, emptyReason: vectorResult.skipped > 0 ? 'all_dedup' : 'vectorize_fail' };
+
         }
 
         console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);
@@ -1440,7 +1305,6 @@ export async function processNewMessages(
         const pipelineResult: PipelineResult = {
             stored: vectorResult.stored,
             skipped: vectorResult.skipped,
-            processedMessages: toProcess.length,
             memories: memories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
             batches: batchResults,
             autoArchive,

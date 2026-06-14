@@ -15,18 +15,9 @@ function repairTruncatedJson(raw: string): string {
   // Strip trailing comma
   s = s.replace(/,\s*$/, '');
 
-  // Close any unterminated string: count unescaped quotes.
-  // 不用后行断言 /(?<!\\)"/: iOS Safari <16.4 的 JSC 不支持, 旧设备 new RegExp 会抛
-  // "invalid group specifier name". 改成扫描器: 数每个 " 前连续反斜杠, 偶数(含0)才算未转义。
-  // 顺带修了旧写法的 bug —— 旧的把 \\" (转义反斜杠 + 真引号) 误判成已转义 (见 lookbehindFree.test.ts)。
-  let unescapedQuoteCount = 0;
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] !== '"') continue;
-    let backslashes = 0;
-    for (let j = i - 1; j >= 0 && s[j] === '\\'; j--) backslashes++;
-    if (backslashes % 2 === 0) unescapedQuoteCount++;
-  }
-  if (unescapedQuoteCount % 2 !== 0) {
+  // Close any unterminated string: count unescaped quotes
+  const unescapedQuotes = s.match(/(?<!\\)"/g);
+  if (unescapedQuotes && unescapedQuotes.length % 2 !== 0) {
     s += '"';
   }
 

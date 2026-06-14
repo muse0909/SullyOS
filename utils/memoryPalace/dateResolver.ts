@@ -169,11 +169,7 @@ export function resolveDateReferences(query: string, now: Date = new Date()): Da
     }
 
     // 7) 孤立月日：3月4号 / 12月15日 / 3/4 / 12-15（无年份）→ 最近一次出现
-    //    原本用 (?<![\d年]) 排除"前面紧跟数字或年"的情况。iOS Safari <16.4 的 JSC 不支持后行断言,
-    //    改成匹配后用 m.index 检查前一字符, 行为等价 (见 utils/lookbehindFree.test.ts)。
-    for (const m of query.matchAll(/(\d{1,2}|[一二三四五六七八九十]+)\s*月\s*(\d{1,2}|[一二三四五六七八九十]+)\s*[日号]/gu)) {
-        const idx = m.index ?? 0;
-        if (idx > 0 && /[\d年]/u.test(query[idx - 1])) continue;  // 等价于 (?<![\d年])
+    for (const m of query.matchAll(/(?<![\d年])(\d{1,2}|[一二三四五六七八九十]+)\s*月\s*(\d{1,2}|[一二三四五六七八九十]+)\s*[日号]/gu)) {
         const mm = cnNumToInt(m[1]);
         const dd = cnNumToInt(m[2]);
         if (mm && dd && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
@@ -185,10 +181,7 @@ export function resolveDateReferences(query: string, now: Date = new Date()): Da
     }
 
     // 8) 孤立月：3月 / 十二月（无年份、无后续日/号）
-    //    同 7): (?<![\d年]) 改成 m.index 检查前一字符, 避开旧 iOS 不支持的后行断言。
-    for (const m of query.matchAll(/(\d{1,2}|[一二三四五六七八九十]+)\s*月(?![\d日号份一二三四五六七八九十])/gu)) {
-        const idx = m.index ?? 0;
-        if (idx > 0 && /[\d年]/u.test(query[idx - 1])) continue;  // 等价于 (?<![\d年])
+    for (const m of query.matchAll(/(?<![\d年])(\d{1,2}|[一二三四五六七八九十]+)\s*月(?![\d日号份一二三四五六七八九十])/gu)) {
         const mm = cnNumToInt(m[1]);
         if (mm && mm >= 1 && mm <= 12) {
             const y = resolveNearestPastMonth(mm, now);

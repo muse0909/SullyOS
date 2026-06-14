@@ -19,7 +19,6 @@ export interface NewsItem {
     title: string;
     source?: string;
     url?: string;
-    desc?: string;
 }
 
 export interface SearchResult {
@@ -36,8 +35,7 @@ export interface RealtimeConfig {
 
     // 新闻配置
     newsEnabled: boolean;
-    newsApiKey?: string;    // 可选，Brave Search 回落源用
-    newsPlatforms?: string[]; // hot_news 热榜平台 key（默认主源，免鉴权），留空用内置默认
+    newsApiKey?: string;    // 可选，用于更多新闻源
 
     // Notion 配置
     notionEnabled: boolean;
@@ -57,7 +55,6 @@ export interface RealtimeConfig {
     xhsMcpConfig?: {
         enabled: boolean;
         serverUrl: string;
-        cookie?: string;        // Lite 模式：登录后的完整小红书 cookie
         loggedInNickname?: string;
         loggedInUserId?: string;
         userXsecToken?: string; // 从 feed 列表自动获取，用于 getUserProfile 等
@@ -74,12 +71,11 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     weatherCity: 'Beijing',
     newsEnabled: false,
     newsApiKey: '',
-    newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
     notionEnabled: false,
     notionApiKey: '',
     notionDatabaseId: '',
     xhsEnabled: false,
-    xhsMcpConfig: { enabled: false, serverUrl: 'https://sullymeow.ccwu.cc/api', cookie: undefined, loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
+    xhsMcpConfig: { enabled: false, serverUrl: 'http://localhost:18060/mcp', loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
     cacheMinutes: 30
 };
 
@@ -154,147 +150,6 @@ export const RealtimeContextManager = {
         }
     },
 
-    // hot_news（orz.ai）平台 key → 中文展示名。用于 source 标注，让提示词读起来自然。
-    HOTNEWS_PLATFORM_LABELS: {
-        baidu: '百度', sspai: '少数派', weibo: '微博', zhihu: '知乎', tskr: '36氪',
-        ftpojie: '吾爱破解', bilibili: 'B站', douban: '豆瓣', hupu: '虎扑', tieba: '贴吧',
-        juejin: '掘金', douyin: '抖音', vtex: 'V2EX', jinritoutiao: '今日头条',
-        stackoverflow: 'Stack Overflow', github: 'GitHub', hackernews: 'Hacker News',
-        sina_finance: '新浪财经', eastmoney: '东方财富', xueqiu: '雪球', cls: '财联社',
-        tenxunwang: '腾讯网',
-    } as Record<string, string>,
-
-    DEFAULT_HOTNEWS_PLATFORMS: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
-
-    /**
-     * 使用 hot_news（orz.ai）获取中文多平台热榜。
-     * 免鉴权、半小时刷新。浏览器端优先直连；若被 CORS 拦截则本调用返回 []，
-     * 由 fetchNews 自然回落到 Brave / Hacker News。
-     * 多平台并发拉取，每平台取前几条后 round-robin 交错合并，避免单一平台霸屏。
-     */
-    fetchHotNews: async (platforms?: string[], perPlatform = 12, total = 240): Promise<NewsItem[]> => {
-        const list = (platforms && platforms.length > 0)
-            ? platforms
-            : RealtimeContextManager.DEFAULT_HOTNEWS_PLATFORMS;
-
-        const perPlatformResults = await Promise.all(list.map(async (p): Promise<NewsItem[]> => {
-            const label = RealtimeContextManager.HOTNEWS_PLATFORM_LABELS[p] || p;
-            try {
-                const res = await fetch(`https://orz.ai/api/v1/dailynews/?platform=${encodeURIComponent(p)}`, {
-                    headers: { 'Accept': 'application/json' },
-                });
-                if (!res.ok) {
-                    console.warn(`[hot_news] ${label}(${p}) HTTP ${res.status}`);
-                    return [];
-                }
-                const data = await safeResponseJson(res);
-                const items: any[] = Array.isArray(data?.data) ? data.data : [];
-                const picked = items
-                    .filter(it => it && it.title)
-                    .slice(0, perPlatform)
-                    .map(it => {
-                        const desc = typeof it.desc === 'string' ? it.desc.replace(/\s+/g, ' ').trim() : '';
-                        return { title: String(it.title), source: label, url: it.url, desc: desc || undefined };
-                    });
-                const withDesc = picked.filter(x => x.desc).length;
-                console.log(`[hot_news] ${label}(${p}) ✓ 取 ${picked.length}/${items.length} 条（含简介 ${withDesc} 条）`);
-                return picked;
-            } catch (e: any) {
-                console.warn(`[hot_news] ${label}(${p}) ✗ 拉取失败（多半是 CORS / 网络）:`, e?.message || e);
-                return [];
-            }
-        }));
-
-        // round-robin 交错：第1名各平台轮一遍，再第2名……保证各平台都有露出
-        const merged: NewsItem[] = [];
-        for (let rank = 0; rank < perPlatform; rank++) {
-            for (const arr of perPlatformResults) {
-                if (arr[rank]) merged.push(arr[rank]);
-            }
-        }
-        const final = merged.slice(0, total);
-
-        // ── F12 探针：看角色这次到底召回了哪些热点 ──
-        try {
-            console.groupCollapsed(`%c[hot_news] 召回 ${final.length} 条 · 平台[${list.join(', ')}]`, 'color:#2563eb;font-weight:bold');
-            if (final.length > 0 && typeof console.table === 'function') {
-                console.table(final.map((n, i) => ({ '#': i + 1, 平台: n.source, 标题: n.title, 链接: n.url || '' })));
-            } else if (final.length === 0) {
-                console.warn('[hot_news] 一条都没召回 → fetchNews 将回落到 Brave / Hacker News');
-            }
-            console.groupEnd();
-        } catch { /* 探针挂了也不影响主流程 */ }
-
-        return final;
-    },
-
-    // 一天分 6 段（每 4 小时）：0-4 凌晨 / 4-8 清晨 / 8-12 上午 / 12-16 午后 / 16-20 傍晚 / 20-24 夜间。slot = floor(hour/4)
-    getHotNewsSlot: (d: Date = new Date()): { id: string; date: string; slot: number; label: string } => {
-        const slot = Math.min(5, Math.floor(d.getHours() / 4));
-        const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const label = ['凌晨', '清晨', '上午', '午后', '傍晚', '夜间'][slot];
-        return { id: `${date}#${slot}`, date, slot, label };
-    },
-
-    // 同一时段并发只真正发一次请求（群聊 / 多角色同时回复时复用同一 Promise）
-    _hotNewsInFlight: new Map<string, Promise<NewsItem[]>>(),
-
-    /**
-     * 分时段热点：每天每时段最多拉一次，持久化在 IndexedDB，全角色共享。
-     * - 本时段已有快照且平台集一致 → 直接复用，不发请求
-     * - 否则拉一次并存快照；拉失败则退回最近一次快照（且不写本时段，下次会重试）
-     */
-    getSlottedHotNews: async (config: RealtimeConfig): Promise<NewsItem[]> => {
-        const { id, date, slot, label } = RealtimeContextManager.getHotNewsSlot();
-        const platforms = (config.newsPlatforms && config.newsPlatforms.length > 0)
-            ? config.newsPlatforms
-            : RealtimeContextManager.DEFAULT_HOTNEWS_PLATFORMS;
-        const samePlatforms = (a: string[] = [], b: string[] = []) =>
-            a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
-
-        // 1. 命中本时段快照（平台一致）→ 复用
-        try {
-            const snap = await DB.getHotNewsSnapshot(id);
-            if (snap && snap.items?.length > 0 && samePlatforms(snap.platforms, platforms)) {
-                const mins = Math.round((Date.now() - snap.fetchedAt) / 60000);
-                console.log(`%c[hot_news] 命中今日${label}快照（${snap.items.length} 条，${mins} 分钟前拉的）`, 'color:#16a34a');
-                return snap.items;
-            }
-        } catch { /* 读快照失败就当没有，继续去拉 */ }
-
-        // 2. in-flight 锁：本时段已有在飞请求就复用
-        const inflight = RealtimeContextManager._hotNewsInFlight.get(id);
-        if (inflight) return inflight;
-
-        const job = (async (): Promise<NewsItem[]> => {
-            console.log(`%c[hot_news] 触发今日${label}拉取…`, 'color:#2563eb;font-weight:bold');
-            const items = await RealtimeContextManager.fetchHotNews(platforms);
-            if (items.length > 0) {
-                try {
-                    await DB.saveHotNewsSnapshot({ id, date, slot, slotLabel: label, items, platforms, fetchedAt: Date.now() });
-                    DB.pruneHotNewsSnapshots(12).catch(() => {});
-                } catch { /* 存快照失败不影响返回 */ }
-                return items;
-            }
-            // 拉取失败 → 退回最近一次快照（不写本时段，下条消息会再试）
-            try {
-                const latest = await DB.getLatestHotNewsSnapshot();
-                if (latest && latest.items?.length > 0) {
-                    console.warn(`[hot_news] ${label}拉取失败，复用最近快照（${latest.date} ${latest.slotLabel}，${latest.items.length} 条）`);
-                    return latest.items;
-                }
-            } catch { /* ignore */ }
-            return [];
-        })();
-
-        RealtimeContextManager._hotNewsInFlight.set(id, job);
-        try {
-            return await job;
-        } finally {
-            RealtimeContextManager._hotNewsInFlight.delete(id);
-        }
-    },
-
     /**
      * 使用 Brave Search API 获取新闻（通过自建 Cloudflare Worker 代理）
      */
@@ -335,42 +190,35 @@ export const RealtimeContextManager = {
 
     /**
      * 获取热点新闻
-     * 优先级: hot_news 分时段快照（默认主源，每天每时段最多拉一次）> Brave Search API > Hacker News
+     * 优先级: Brave Search API > Hacker News
      */
     fetchNews: async (config: RealtimeConfig): Promise<NewsItem[]> => {
         if (!config.newsEnabled) {
             return [];
         }
 
-        // 1. 默认主源：hot_news 分时段持久化快照（全角色共享，自带 IndexedDB 缓存与 in-flight 锁）
-        const slotted = await RealtimeContextManager.getSlottedHotNews(config);
-        if (slotted.length > 0) {
-            return slotted;
-        }
-
-        // ── 回落源用内存缓存兜一下，避免降级态下每条消息都打 Brave/HN ──
         const now = Date.now();
         const cacheMs = config.cacheMinutes * 60 * 1000;
+
+        // 检查缓存
         if (newsCache.data.length > 0 && (now - newsCache.timestamp) < cacheMs) {
             return newsCache.data;
         }
 
         let news: NewsItem[] = [];
 
-        // 2. 回落：Brave Search API（需 key，走 Worker 代理）
+        // 1. 优先使用 Brave Search API（如果配置了）
         if (config.newsApiKey) {
             news = await RealtimeContextManager.fetchBraveNews(config.newsApiKey);
             if (news.length > 0) {
-                console.log(`%c[hot_news] 本次新闻源 = Brave 回落（${news.length} 条）`, 'color:#d97706;font-weight:bold');
                 newsCache = { data: news, timestamp: now };
                 return news;
             }
         }
 
-        // 3. 兜底：Hacker News（英文但稳定，无CORS限制）
+        // 2. 备用：Hacker News（英文但稳定，无CORS限制）
         news = await RealtimeContextManager.fetchBackupNews();
         if (news.length > 0) {
-            console.log(`%c[hot_news] 本次新闻源 = Hacker News 兜底（${news.length} 条，英文）`, 'color:#dc2626;font-weight:bold');
             newsCache = { data: news, timestamp: now };
         }
         return news;
@@ -541,66 +389,30 @@ export const RealtimeContextManager = {
             }
         }
 
-        // 4. 新闻热点（背景认知）
-        //    完整快照存 IndexedDB 给「热点」App；这里每轮随机抽 5 条打散注入，控 token + 保持新鲜感。
+        // 4. 新闻热点
         if (config.newsEnabled) {
             const news = await RealtimeContextManager.fetchNews(config);
             if (news.length > 0) {
-                // Fisher–Yates 打散后抽前 5（每轮回复都重新 roll，平台全混）
-                const pool = [...news];
-                for (let i = pool.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [pool[i], pool[j]] = [pool[j], pool[i]];
-                }
-                const picks = pool.slice(0, 5);
-                const newsLines: string[] = [];
-                newsLines.push('');
-                newsLines.push(`📰 【最近真实发生的热点 · 你的背景知识】`);
-                newsLines.push(`（以下是现实里真实在发生 / 被热议的事，是你认知的一部分，不是必须播报的清单。`);
-                newsLines.push(`拿捏分寸：当对方明显在放松、闲着打发时间、话头也淡下来时，可以自然地挑一两条你感兴趣的聊起来、活跃下气氛；`);
-                newsLines.push(`但如果对方正在说一件明确的事 / 在认真聊某个话题 / 带着情绪，就别硬插热点，安静当背景知识就好。）`);
-                picks.forEach((n) => {
-                    const source = n.source ? `（${n.source}）` : '';
-                    let line = `- ${n.title}${source}`;
-                    if (n.desc && n.desc !== n.title) {
-                        line += `：${n.desc}`;
-                    }
-                    newsLines.push(line);
+                parts.push('');
+                parts.push(`📰 【你刚刷到的热搜/新闻】`);
+                parts.push(`（这些是真实的热点话题，你可以主动和用户聊这些）`);
+                news.forEach((n, i) => {
+                    const source = n.source ? ` [${n.source}]` : '';
+                    parts.push(`${i + 1}. ${n.title}${source}`);
                 });
-                newsLines.push('');
-                newsLines.push(`若你想主动把其中某条当作"新闻卡片"分享给对方，可单独输出一行：[[NEWS_CARD: 来源|标题]]（标题照抄上面的）。它会以卡片形式呈现，然后你再就此展开聊。别滥用，自然就好。`);
-
-                // ── F12 探针：本轮真正注入 prompt 的热点 + 文本量（评估 token 用）──
-                try {
-                    const block = newsLines.join('\n');
-                    const pickDesc = picks.filter(n => n.desc).length;
-                    const poolDesc = news.filter(n => n.desc).length;
-                    console.groupCollapsed(`%c[hot_news] 本轮注入 prompt：${picks.length} 条热点（带简介 ${pickDesc}）· ${block.length} 字（池子共 ${news.length} 条，带简介 ${poolDesc}）`, 'color:#7c3aed;font-weight:bold');
-                    if (typeof console.table === 'function') {
-                        console.table(picks.map((n, i) => ({ '#': i + 1, 平台: n.source || '', 标题: n.title, 简介: n.desc || '—' })));
-                    }
-                    console.log(block);
-                    console.groupEnd();
-                } catch { /* 探针不影响主流程 */ }
-
-                parts.push(...newsLines);
             }
         }
 
-        // 5. 行为指令（按已开启的能力裁剪，避免注入无关项 + 与新闻块去重）
+        // 5. 行为指令（强调）
         parts.push('');
         parts.push(`### 【如何使用这些信息】`);
-        const tips: string[] = [];
-        tips.push(`这些信息都是真实的，可以直接引用；如果对方问"你怎么知道的"，就说你刚刷到 / 刚看到的。`);
-        if (config.weatherEnabled) {
-            tips.push(`天气是真实的，可以自然地关心对方（"外面在下雨，带伞了吗？"）。`);
-        }
-        tips.push(`别假装不知道这些，这是你真能感知到的外部世界。`);
-        tips.forEach((t, i) => parts.push(`${i + 1}. ${t}`));
+        parts.push(`1. 这些信息是真实的，你可以直接引用（比如"我看到今天热搜有xxx"）`);
+        parts.push(`2. 天气是真实的，可以主动关心用户（"外面在下雨，你带伞了吗？"）`);
+        parts.push(`3. 新闻是真实的，可以主动聊起（"诶你看到xxx的新闻了吗？我觉得..."）`);
+        parts.push(`4. 如果用户问你"你怎么知道的"，可以说你刚刷到的/刚看到的`);
+        parts.push(`5. 不要假装不知道这些信息，这是你真的能感知到的外部世界`);
 
-        const fullContext = parts.join('\n');
-        console.log(`%c[hot_news] 实时感知整段注入 ${fullContext.length} 字（含时间/天气/热点/指令）`, 'color:#7c3aed');
-        return fullContext;
+        return parts.join('\n');
     },
 
     /**
@@ -1481,56 +1293,7 @@ function parseMarkdownToNotionBlocks(content: string, mood?: string, characterNa
         });
     }
 
-    return normalizeBlocksForNotion(blocks);
-}
-
-// Notion API 硬限制：单个 rich_text content ≤ 2000 字符；单次 POST children ≤ 100。
-// 留点 buffer 防 emoji / 双字节边界拼接。
-const NOTION_MAX_RICH_TEXT_LEN = 1900;
-const NOTION_MAX_CHILDREN = 100;
-
-function splitRichTextItem(item: any): any[] {
-    const content = item?.text?.content;
-    if (typeof content !== 'string' || content.length <= NOTION_MAX_RICH_TEXT_LEN) return [item];
-    const chunks: any[] = [];
-    for (let i = 0; i < content.length; i += NOTION_MAX_RICH_TEXT_LEN) {
-        chunks.push({
-            ...item,
-            text: { ...item.text, content: content.slice(i, i + NOTION_MAX_RICH_TEXT_LEN) }
-        });
-    }
-    return chunks;
-}
-
-function normalizeBlocksForNotion(blocks: any[]): any[] {
-    // 1. 每个 block 的 rich_text 切 2000 字符
-    const safe = blocks.map(block => {
-        const payload = block[block.type];
-        if (payload && Array.isArray(payload.rich_text)) {
-            const split: any[] = [];
-            for (const item of payload.rich_text) split.push(...splitRichTextItem(item));
-            return { ...block, [block.type]: { ...payload, rich_text: split } };
-        }
-        return block;
-    });
-
-    // 2. 总 block 数限制 100；超出截断并附提示
-    if (safe.length <= NOTION_MAX_CHILDREN) return safe;
-    const truncated = safe.slice(0, NOTION_MAX_CHILDREN - 1);
-    truncated.push({
-        object: 'block',
-        type: 'callout',
-        callout: {
-            rich_text: [{
-                type: 'text',
-                text: { content: `（日记内容过长，已截断 ${safe.length - (NOTION_MAX_CHILDREN - 1)} 个段落）` },
-                annotations: { italic: true, color: 'gray' }
-            }],
-            icon: { emoji: '✂️' },
-            color: 'gray_background'
-        }
-    });
-    return truncated;
+    return blocks;
 }
 
 // ============================================

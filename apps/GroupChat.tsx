@@ -187,11 +187,6 @@ const GroupChat: React.FC = () => {
     /** 群记忆宫殿"提取中"状态文本——非空时显示顶部胶囊状态条 */
     const [groupPalaceStatus, setGroupPalaceStatus] = useState<string>('');
 
-    // ref 出最新 characters，让 finally 里跑的群记忆宫殿能读到"用户刚关掉某个成员宫殿"
-    // 的最新状态——闭包里的 characters 还是发消息那一刻捕获的旧值，会让关闭后还触发一次
-    const charactersRef = useRef(characters);
-    charactersRef.current = characters;
-
     // Token 统计 — 对齐私聊 ChatHeader 的 token badge
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
@@ -731,51 +726,14 @@ ${recentPrivate || '(暂无私聊)'}
             }
 
             // 3. Group History (uses configurable context limit)
-            // image 的 content 是 base64（processImage 压的 JPEG），emoji 是图床 URL——
-            // 都不能当文本内联进 prompt：base64 图片会把群上下文撑爆，URL 则是纯噪声。
-            // 卡片等富类型同理只留占位符。但导演要能"看见"图才能合理反应，所以仿照
-            // 私聊 buildMessageHistory 的做法：把最近 N 张图片走结构化 image_url 字段
-            // 附在 user 消息里，文本里用 [图片#k] 占位互相对齐。
-            const recentMsgsWindow = currentMsgs.slice(-contextLimit);
-            const MAX_ATTACHED_IMAGES = 3;
-            const validImageWindowIdx: number[] = [];
-            recentMsgsWindow.forEach((m, i) => {
-                if (m.type === 'image') {
-                    const url = typeof m.content === 'string' ? m.content.trim() : '';
-                    if (/^(data:|https?:\/\/)/i.test(url)) validImageWindowIdx.push(i);
-                }
-            });
-            const attachedSet = new Set(validImageWindowIdx.slice(-MAX_ATTACHED_IMAGES));
-            const attachedImages: { tag: number; url: string }[] = [];
-            const recentGroupMsgs = recentMsgsWindow.map((m, i) => {
+            const recentGroupMsgs = currentMsgs.slice(-contextLimit).map(m => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
                 }
-                const rawText = typeof m.content === 'string' ? m.content : '';
-                let content: string;
-                if (m.type === 'image') {
-                    if (attachedSet.has(i)) {
-                        const tag = attachedImages.length + 1;
-                        attachedImages.push({ tag, url: rawText.trim() });
-                        content = `[图片#${tag}]`;
-                    } else {
-                        content = '[图片]';
-                    }
-                } else if (m.type === 'emoji') {
-                    content = '[表情包]';
-                } else if (m.type === 'transfer') {
-                    content = `[发红包: ${m.metadata?.amount}]`;
-                } else if (/^(data:|https?:\/\/)/i.test(rawText.trim())) {
-                    content = '[媒体]';
-                } else {
-                    content = rawText;
-                }
+                const content = m.type === 'image' ? '[图片]' : m.type === 'emoji' ? `[表情包: ${m.content}]` : m.type === 'transfer' ? `[发红包: ${m.metadata?.amount}]` : m.content;
                 return `${name}: ${content}`;
             }).join('\n');
-            const attachedImagesNote = attachedImages.length > 0
-                ? `\n（本轮附带 ${attachedImages.length} 张最近的图片，对应记录里的 [图片#1] ~ [图片#${attachedImages.length}]。请基于实际图片内容自然反应，不要无视，也不要瞎猜没附上的旧图。）\n`
-                : '';
 
             // NEW: Build Categorized Emoji Context (filtered by group member visibility)
             const emojiContextStr = (() => {
@@ -812,7 +770,6 @@ ${recentPrivate || '(暂无私聊)'}
 当前场景：大家正在群里聊天。
 最近聊天记录：
 ${recentGroupMsgs}
-${attachedImagesNote}
 
 ### 任务：生成一段精彩的群聊互动 (Conversation Flow)
 请作为导演，接管所有角色，让群聊**自然地流动起来**。
@@ -880,20 +837,12 @@ ${attachedImagesNote}
 ]
 `;
 
-            // 当本轮有要附带的图片时，user 消息走结构化 content（text + image_url），
-            // 否则保持原来的纯文本，避免对不支持多模态字段的端点产生兼容问题。
-            const userMessageContent: any = attachedImages.length > 0
-                ? [
-                    { type: 'text', text: prompt },
-                    ...attachedImages.map(img => ({ type: 'image_url', image_url: { url: img.url } })),
-                  ]
-                : prompt;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: "user", content: userMessageContent }],
+                    messages: [{ role: "user", content: prompt }],
                     temperature: 0.9, // High creativity for banter
                     max_tokens: 8000
                 })
@@ -1010,15 +959,7 @@ ${attachedImagesNote}
 
                     // Fallback: split on spaces between CJK characters (中文里空格=AI想换行)
                     if (chunks.length <= 1 && textContent.trim().length > 50) {
-                        // No lookbehind (?<=): iOS Safari <16.4 JSC doesn't support it; old
-                        // devices throw "invalid group specifier name" at new RegExp. Capture the
-                        // left char (full punct set) + zero-width lookahead on the right (Han only),
-                        // mark split points with \x01, restore left char via $1. Left/right sets
-                        // differ, so they can't be merged. Byte-equivalent (see lookbehindFree.test.ts).
-                        const SPLIT = String.fromCharCode(1);
-                        chunks = textContent
-                            .replace(/([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/g, `$1${SPLIT}`)
-                            .split(SPLIT)
+                        chunks = textContent.split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
                             .map(c => c.trim())
                             .filter(c => c.length > 0);
                     }
@@ -1050,10 +991,7 @@ ${attachedImagesNote}
             // groupMembers 在 try 块内声明，这里在 finally 重新解析
             if (activeGroup) {
                 const groupForPalace = activeGroup;
-                // 读 ref 拿最新 characters，否则群里有成员在回复中途被用户关掉 palace
-                // 时，下面这一次还是会按"那时还有人启用"的旧状态去触发 LLM 提取
-                const liveCharacters = charactersRef.current;
-                const membersForPalace = liveCharacters.filter(c => groupForPalace.members.includes(c.id));
+                const membersForPalace = characters.filter(c => groupForPalace.members.includes(c.id));
                 const hasAnyEnabled = membersForPalace.some(m => m.memoryPalaceEnabled);
                 if (hasAnyEnabled) {
                     processGroupNewMessages(
@@ -1092,11 +1030,8 @@ ${attachedImagesNote}
     if (view === 'list') {
         return (
             <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                {/* safe-top spacer 透明 + backdrop-blur，下方容器/list bubbles 透出+模糊（跟 iOS 系统 status bar 一致），避免 header 白 bg 在刘海下铺一条突兀白带 */}
-                <div className="shrink-0 z-10 sticky top-0">
-                    <div className="bg-transparent backdrop-blur-xl" style={{ height: 'var(--safe-top)' }} />
-                    <div className="bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 h-20">
-                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+                <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
+                    <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
                     <span className="font-medium text-slate-700 text-lg tracking-wide pl-2">群聊列表</span>
@@ -1104,9 +1039,8 @@ ${attachedImagesNote}
                     <button onClick={() => { setModalType('create'); setSelectedMembers(new Set()); setTempGroupName(''); }} className="p-2 -mr-2 text-violet-500 bg-violet-50 hover:bg-violet-100 rounded-full transition-colors">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                     </button>
-                    </div>
                 </div>
-
+                
                 <div className="p-4 space-y-3 overflow-y-auto">
                     {groups.map(g => (
                         <div key={g.id} onClick={() => { setActiveGroup(g); setView('chat'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 active:scale-[0.98] transition-all cursor-pointer group hover:bg-violet-50/30">
@@ -1195,10 +1129,8 @@ ${attachedImagesNote}
                 </div>
             )}
 
-            {/* Header — safe-top spacer 透明 + backdrop-blur 自适应容器色，跟 iOS status bar 一致 */}
-            <div className="shrink-0 z-30 sticky top-0 transition-all">
-            <div className="bg-transparent backdrop-blur-xl" style={{ height: 'var(--safe-top)' }} />
-            <div className="bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shadow-sm h-24">
+            {/* Header */}
+            <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm transition-all">
                 {selectionMode ? (
                     <div className="flex items-center justify-between w-full">
                         <button onClick={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }} className="text-sm font-bold text-slate-500 px-2 py-1">取消</button>
@@ -1249,7 +1181,6 @@ ${attachedImagesNote}
                         </button>
                     </div>
                 )}
-            </div>
             </div>
 
             {/* Messages Area */}
@@ -1319,13 +1250,13 @@ ${attachedImagesNote}
                         </button>
 
                         {/* Input Field Container */}
-                        <div className="flex-1 min-w-0 overflow-hidden bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
+                        <div className="flex-1 bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
                             <textarea 
                                 rows={1} 
                                 value={input} 
                                 onChange={e => setInput(e.target.value)} 
                                 onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(input); }}} 
-                                className="flex-1 min-w-0 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1"
+                                className="flex-1 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1" 
                                 placeholder="Message..." 
                                 style={{ height: 'auto', minHeight: '24px' }} 
                             />
@@ -1342,7 +1273,7 @@ ${attachedImagesNote}
                         {input.trim() ? (
                             <button 
                                 onClick={() => handleSendMessage(input)} 
-                                className="h-9 px-4 shrink-0 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
+                                className="h-9 px-4 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
                             >
                                 发送
                             </button>
@@ -1472,7 +1403,7 @@ ${attachedImagesNote}
                              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${preserveContext ? 'bg-violet-500 border-violet-500' : 'bg-slate-100 border-slate-300'}`}>
                                  {preserveContext && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
                              </div>
-                             <span className="text-xs text-slate-600">清空时保留最后10条记录 (维持语境)</span>
+                             <span className="text-xs text-slate-600">清空时保留最后200条记录 (维持语境)</span>
                         </div>
 
                         <div className="flex gap-2">
@@ -1497,6 +1428,12 @@ ${attachedImagesNote}
                             复制文字
                         </button>
                     )}
+                         {selectedMessage?.content && selectedMessage?.type !== 'text' && (
+                        <button onClick={handleSaveImageMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            保存图片
+                        </button>
+                    )}
+                   
                     {selectedMessage?.type === 'text' && (
                         <button onClick={handleStartEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             修改内容

@@ -52,23 +52,6 @@ export function normalizeMessageContent(
                 ).join('；') || '';
                 return `[白色情人节默契测验] ${userName}完成了${charName}出的白色情人节测验，答对${card.score}/${card.total}题，${passedStr}。${questionsText}${card.finalDialogue ? `。${charName}最终评价：${card.finalDialogue}` : ''}`;
             }
-            if (card?.type === 'diary_card') {
-                const uName = card.userName || userName;
-                const userTextPart = (card.userText || '').trim();
-                const charTextPart = (card.charText || '').trim();
-                const userBlock = userTextPart ? `${uName}写道：「${userTextPart}」` : `${uName}那页是空的`;
-                const charBlock = charTextPart ? `${charName}回道：「${charTextPart}」` : `${charName}那页是空的`;
-                return `[交换日记 ${card.date || ''}] ${uName}和${charName}今天通过【交换日记】交换了一篇日记。${userBlock} ${charBlock}`;
-            }
-            if (card?.type === 'like520_card') {
-                // 520 特别活动：那个"小小的下午"+ char 给 user 的信。信的内容是这次活动的母题落点，
-                // 归档 / 月度总结 / 向量召回都应该读到它，否则只是一个"[系统卡片]"占位会让前后文断层。
-                const letter = (typeof card.letter === 'string' && card.letter.trim()) ? card.letter.trim() : '';
-                const titlePart = card.title ? `结局「${card.title}」。` : '';
-                const descPart = card.description ? `${card.description} ` : '';
-                const letterPart = letter ? ` ${charName}写给${userName}的信原文：${letter}` : '';
-                return `[520 特别活动] ${charName}和${userName}一起度过了"小小的下午"——${charName}"变小了"的版本被${userName}照顾着，最后${charName}对${userName}说了真心话，并写了一封信。${titlePart}${descPart}${letterPart}`;
-            }
             // 其它结算卡类型（songwriting/study/lifesim 日常 等）：如果有 summary/content 字段优先用
             if (typeof card?.summary === 'string' && card.summary.trim()) return `[系统卡片] ${card.summary.trim()}`;
             return '[系统卡片]';
@@ -108,27 +91,6 @@ export function normalizeMessageContent(
             return `[音乐卡片] ${charName}${action}：${songDesc}`;
         }
         return '[音乐卡片]';
-    }
-
-    // TRPG 跑团片段：从 TRPG 游戏里多选转发到聊天的剧情。必须翻成完整可读文本，
-    // 让上下文 / 归档 / palace 都能读到"和用户一起玩游戏时发生了什么"，并标明来自 TRPG。
-    if (type === 'trpg_card') {
-        const t = msg.metadata?.trpg as {
-            gameTitle?: string;
-            userName?: string;
-            partyNames?: string[];
-            excerpt?: Array<{ speaker?: string; text?: string }>;
-        } | undefined;
-        if (t) {
-            const others = (t.partyNames || []).filter(n => n && n !== charName);
-            const withPart = others.length ? `（和${others.join('、')}）` : '';
-            const lines = (t.excerpt || [])
-                .map(e => `${e.speaker || ''}: ${(e.text || '').replace(/\s*\n+\s*/g, ' ').trim()}`)
-                .filter(s => s.trim() !== ':')
-                .join('\n');
-            return `[TRPG游戏片段] 这是${charName}和${t.userName || userName}${withPart}一起玩《${t.gameTitle || 'TRPG'}》跑团时的一段剧情（从游戏里转发到聊天，相当于你们一起玩游戏的共同回忆）：\n${lines}`;
-        }
-        return '[TRPG游戏片段]';
     }
 
     // 默认：text / 未知类型 → 用 content
@@ -173,5 +135,5 @@ export function isMessageSemanticallyRelevant(msg: Message): boolean {
     const type = msg.type as string;
     if (type === 'image' || type === 'emoji' || type === 'voice') return false;
     // 有内容或有结构化 metadata 才算
-    return !!(msg.content?.trim() || msg.metadata?.scoreCard || msg.metadata?.amount || msg.metadata?.song || msg.metadata?.trpg);
+    return !!(msg.content?.trim() || msg.metadata?.scoreCard || msg.metadata?.amount || msg.metadata?.song);
 }

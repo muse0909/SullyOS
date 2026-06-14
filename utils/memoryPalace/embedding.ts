@@ -18,38 +18,20 @@ export async function getEmbedding(text: string, config: EmbeddingConfig): Promi
 }
 
 /**
- * 批量文本向量化（一次最多 10 条，超出自动分批）
+ * 批量文本向量化（一次最多 20 条，超出自动分批）
  * 返回 Float32Array[] — 比 number[][] 节省约 50% 内存
  */
 export async function getEmbeddings(texts: string[], config: EmbeddingConfig): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
 
-    // DashScope（Qwen 官端）的 text-embedding-v3/v4、Qwen3-Embedding 单次 batch
-    // 硬上限是 10 条，超过直接 400 InvalidParameter。取 10 作为通用安全值：
-    // 硅基流动等 bge 系列用 10 也照常工作，纯按 token 计费不受影响。
-    const BATCH_SIZE = 10;
-    // 多批并行发送，避免拆批后变成串行多往返拖慢检索（尤其硅基用户本来一次
-    // 就发完）。但限制并发数，防止「重建全部记忆」(上百批) 一次性轰出去触发
-    // 服务商限流 / 429。检索通常就 1~2 批 → 全并行 ≈ 1 个往返。
-    const MAX_CONCURRENCY = 5;
-
-    // 先按顺序切成 ≤BATCH_SIZE 的块（顺序很重要：调用方按下标取向量）
-    const chunks: string[][] = [];
-    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        chunks.push(texts.slice(i, i + BATCH_SIZE));
-    }
-
+    const BATCH_SIZE = 20;
     const results: Float32Array[] = [];
-    // 每次并行跑 MAX_CONCURRENCY 个块；块间顺序、块内顺序都严格保持
-    for (let i = 0; i < chunks.length; i += MAX_CONCURRENCY) {
-        const window = chunks.slice(i, i + MAX_CONCURRENCY);
-        const windowResults = await Promise.all(
-            window.map(chunk => callEmbeddingAPI(chunk, config)),
-        );
-        // Promise.all 保序：windowResults[j] 对应 window[j]，按序展开
-        for (const batchResult of windowResults) {
-            results.push(...batchResult.map(v => new Float32Array(v)));
-        }
+
+    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+        const batch = texts.slice(i, i + BATCH_SIZE);
+        const batchResults = await callEmbeddingAPI(batch, config);
+        // 转为 Float32Array
+        results.push(...batchResults.map(v => new Float32Array(v)));
     }
 
     return results;

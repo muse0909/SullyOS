@@ -45,8 +45,6 @@ interface CartLine {
 
 interface OrderContext {
     orderType: 1 | 2;
-    /** 业务类型: 1 到店自取 / 2 麦乐送。query-meals / calculate-price / create-order 现在都必填 (MCP v1.0.4) */
-    beType?: 1 | 2;
     storeCode: string;
     storeName?: string;
     beCode?: string;
@@ -128,7 +126,7 @@ const ModeStep: React.FC<{ onPick: (t: 1 | 2) => void }> = ({ onPick }) => (
 
 // ========== Step 2: 选地址 / 门店 ==========
 
-interface AddressItem { addressId: string; storeCode?: string; beCode?: string; fullAddress?: string; storeName?: string; phone?: string; contactName?: string; }
+interface AddressItem { addressId: string; storeCode: string; beCode: string; fullAddress?: string; storeName?: string; phone?: string; contactName?: string; }
 interface StoreItem { storeCode: string; beCode?: string; storeName: string; address?: string; distance?: any; }
 
 const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => void; onBack: () => void }> = ({ orderType, onPick, onBack }) => {
@@ -136,12 +134,6 @@ const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => v
     const [err, setErr] = useState<string | null>(null);
     const [addresses, setAddresses] = useState<AddressItem[]>([]);
     const [stores, setStores] = useState<StoreItem[]>([]);
-    // 外送二级页: MCP v1.0.4 起 delivery-query-addresses 不再返回 storeCode/beCode,
-    // 选完地址后必须再调 delivery-query-stores 拿可配送门店的 storeCode + beCode。
-    const [pickedAddr, setPickedAddr] = useState<AddressItem | null>(null);
-    const [deliveryStores, setDeliveryStores] = useState<StoreItem[]>([]);
-    const [dsLoading, setDsLoading] = useState(false);
-    const [dsErr, setDsErr] = useState<string | null>(null);
 
     const reload = async () => {
         setLoading(true); setErr(null);
@@ -166,76 +158,10 @@ const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => v
         }
     };
 
-    const finishDelivery = (addr: AddressItem, s: StoreItem) => {
-        onPick({
-            orderType: 2,
-            beType: 2,
-            storeCode: s.storeCode,
-            beCode: s.beCode,
-            addressId: addr.addressId,
-            addressLabel: addr.fullAddress,
-            storeName: s.storeName,
-        });
-    };
-
-    // 外送: 选了一个地址 → 用 delivery-query-stores 拉这个地址可配送的门店
-    const loadDeliveryStores = async (addr: AddressItem) => {
-        setPickedAddr(addr);
-        setDsLoading(true); setDsErr(null); setDeliveryStores([]);
-        try {
-            const r = await callMcdTool('delivery-query-stores', { addressId: addr.addressId, beType: 2 });
-            if (!r.success) throw new Error(r.error || '拉取可配送门店失败');
-            const list = (Array.isArray(r.data) ? r.data : (r.data?.stores || r.data?.list || [])) as StoreItem[];
-            const arr = (list || []).filter((s: StoreItem) => s?.storeCode);
-            setDeliveryStores(arr);
-            // 只有一家可配送门店时直接进菜单, 省一次点击
-            if (arr.length === 1) finishDelivery(addr, arr[0]);
-        } catch (e: any) {
-            setDsErr(e?.message || String(e));
-        } finally {
-            setDsLoading(false);
-        }
-    };
-
     useEffect(() => { reload(); /* eslint-disable-next-line */ }, [orderType]);
 
     if (loading) return <Spinner label={orderType === 2 ? '正在拉取你的收货地址...' : '正在拉取收藏门店...'} />;
     if (err) return <ErrorBox msg={err} onRetry={reload} />;
-
-    // 外送二级页: 已选地址 → 展示该地址可配送门店列表
-    if (orderType === 2 && pickedAddr) {
-        return (
-            <div className="px-3 py-3 space-y-2">
-                <div className="flex items-center justify-between mb-1">
-                    <button onClick={() => { setPickedAddr(null); setDeliveryStores([]); setDsErr(null); }} className="text-[12px] text-yellow-700 active:scale-95">‹ 换地址</button>
-                    <div className="text-[13px] font-bold text-yellow-900">选配送门店</div>
-                    <div className="w-12" />
-                </div>
-                <div className="text-[11px] text-slate-500 px-1 line-clamp-2">📍 {pickedAddr.fullAddress}</div>
-                {dsLoading ? <Spinner label="正在查可配送门店..." />
-                : dsErr ? <ErrorBox msg={dsErr} onRetry={() => loadDeliveryStores(pickedAddr)} />
-                : deliveryStores.length === 0 ? (
-                    <div className="text-center py-8 text-[12px] text-slate-500 leading-relaxed">
-                        这个地址附近暂时没有可配送的门店。<br />换个地址试试。
-                    </div>
-                ) : deliveryStores.map((s: StoreItem) => (
-                    <button
-                        key={s.storeCode}
-                        onClick={() => finishDelivery(pickedAddr, s)}
-                        className="w-full p-3 rounded-xl bg-white border border-yellow-200 active:scale-[0.99] active:bg-yellow-50 transition text-left"
-                    >
-                        <div className="flex items-start gap-2">
-                            <span className="text-xl shrink-0 mt-0.5">🏪</span>
-                            <div className="flex-1 min-w-0">
-                                <div className="font-bold text-[13px] text-slate-800 truncate">{s.storeName}</div>
-                                {s.address && <div className="text-[11px] text-slate-600 line-clamp-2 leading-snug mt-0.5">{s.address}</div>}
-                            </div>
-                        </div>
-                    </button>
-                ))}
-            </div>
-        );
-    }
 
     return (
         <div className="px-3 py-3 space-y-2">
@@ -252,7 +178,14 @@ const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => v
                 ) : addresses.map((a: AddressItem) => (
                     <button
                         key={a.addressId}
-                        onClick={() => loadDeliveryStores(a)}
+                        onClick={() => onPick({
+                            orderType: 2,
+                            storeCode: a.storeCode,
+                            beCode: a.beCode,
+                            addressId: a.addressId,
+                            addressLabel: a.fullAddress,
+                            storeName: a.storeName,
+                        })}
                         className="w-full p-3 rounded-xl bg-white border border-yellow-200 active:scale-[0.99] active:bg-yellow-50 transition text-left"
                     >
                         <div className="flex items-start gap-2">
@@ -263,8 +196,8 @@ const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => v
                                     {a.phone && <span className="text-[10px] text-slate-500 font-normal ml-1.5">{a.phone}</span>}
                                 </div>
                                 <div className="text-[11px] text-slate-600 line-clamp-2 leading-snug mt-0.5">{a.fullAddress}</div>
+                                {a.storeName && <div className="text-[10px] text-yellow-700 mt-0.5">配送门店: {a.storeName}</div>}
                             </div>
-                            <span className="text-yellow-700 text-sm shrink-0 mt-1">›</span>
                         </div>
                     </button>
                 ))
@@ -278,7 +211,6 @@ const AddressStep: React.FC<{ orderType: 1 | 2; onPick: (ctx: OrderContext) => v
                         key={s.storeCode}
                         onClick={() => onPick({
                             orderType: 1,
-                            beType: 1,
                             storeCode: s.storeCode,
                             storeName: s.storeName,
                         })}
@@ -331,7 +263,6 @@ const MenuStep: React.FC<{
         setLoading(true); setErr(null);
         try {
             const args: any = { storeCode: ctx.storeCode, orderType: ctx.orderType };
-            if (ctx.beType) args.beType = ctx.beType;
             if (ctx.orderType === 2 && ctx.beCode) args.beCode = ctx.beCode;
             const r = await callMcdTool('query-meals', args);
             if (!r.success) throw new Error(r.error || '拉取菜单失败');
@@ -345,7 +276,7 @@ const MenuStep: React.FC<{
         }
     };
 
-    useEffect(() => { reload(); /* eslint-disable-next-line */ }, [ctx.storeCode, ctx.orderType, ctx.beCode, ctx.beType]);
+    useEffect(() => { reload(); /* eslint-disable-next-line */ }, [ctx.storeCode, ctx.orderType, ctx.beCode]);
 
     const cats = data?.categories || [];
     const mealMap = data?.meals || {};
@@ -468,11 +399,10 @@ const CouponPicker: React.FC<{
     storeCode: string;
     beCode?: string;
     orderType: 1 | 2;
-    beType?: 1 | 2;
     selected: Set<string>;
     onToggle: (c: CouponEntry) => void;
     onClose: () => void;
-}> = ({ storeCode, beCode, orderType, beType, selected, onToggle, onClose }) => {
+}> = ({ storeCode, beCode, orderType, selected, onToggle, onClose }) => {
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [coupons, setCoupons] = useState<CouponEntry[]>([]);
@@ -483,7 +413,6 @@ const CouponPicker: React.FC<{
         setLoading(true); setErr(null);
         try {
             const args: any = { storeCode, orderType };
-            if (beType) args.beType = beType;
             if (orderType === 2 && beCode) args.beCode = beCode;
             const r = await callMcdTool('query-store-coupons', args);
             if (!r.success) throw new Error(r.error || '拉取优惠券失败');
@@ -520,10 +449,10 @@ const CouponPicker: React.FC<{
         }
     };
 
-    useEffect(() => { reload(); /* eslint-disable-next-line */ }, [storeCode, beCode, orderType, beType]);
+    useEffect(() => { reload(); /* eslint-disable-next-line */ }, [storeCode, beCode, orderType]);
 
     return (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={onClose}>
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center" onClick={onClose}>
             <div
                 className="bg-gradient-to-b from-yellow-50 to-amber-50 w-full sm:max-w-md rounded-t-2xl shadow-2xl flex flex-col"
                 style={{ maxHeight: '70vh' }}
@@ -643,7 +572,6 @@ const ReviewStep: React.FC<{
             orderType: ctx.orderType,
             items: buildItemsForCalc(),
         };
-        if (ctx.beType) args.beType = ctx.beType;
         if (ctx.orderType === 2 && ctx.beCode) args.beCode = ctx.beCode;
         callMcdTool('calculate-price', args).then((r: any) => {
             if (cancelled) return;
@@ -657,7 +585,7 @@ const ReviewStep: React.FC<{
         });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cartHash, couponsHash, ctx.storeCode, ctx.orderType, ctx.beCode, ctx.beType]);
+    }, [cartHash, couponsHash, ctx.storeCode, ctx.orderType, ctx.beCode]);
 
     const handleOrder = async () => {
         if (!lines.length) return;
@@ -667,7 +595,6 @@ const ReviewStep: React.FC<{
             orderType: ctx.orderType,
             items: buildItemsForCalc(),
         };
-        if (ctx.beType) args.beType = ctx.beType;
         if (ctx.orderType === 2) {
             if (ctx.beCode) args.beCode = ctx.beCode;
             if (ctx.addressId) args.addressId = ctx.addressId;
@@ -800,7 +727,6 @@ const ReviewStep: React.FC<{
                     storeCode={ctx.storeCode}
                     beCode={ctx.beCode}
                     orderType={ctx.orderType}
-                    beType={ctx.beType}
                     selected={new Set(selectedCoupons.keys())}
                     onToggle={(c: CouponEntry) => {
                         setSelectedCoupons((prev: Map<string, CouponEntry>) => {
@@ -1294,7 +1220,7 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={onClose}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" onClick={onClose}>
             <style>{`
                 .mcd-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
                 .mcd-scroll::-webkit-scrollbar-track { background: transparent; }

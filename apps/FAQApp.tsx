@@ -6,10 +6,6 @@ import {
     FAQ_TARGET_SECTION_KEY,
     CHANGELOG_2026_04,
     CHANGELOG_2026_05,
-    CHANGELOG_2026_05_10,
-    CHANGELOG_2026_05_17,
-    CHANGELOG_2026_05_27,
-    CHANGELOG_2026_06_05,
 } from '../components/UpdateNotificationEvent';
 
 const FAQ_DATA = [
@@ -95,38 +91,6 @@ interface ChangelogEntry {
 }
 
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
-    {
-        id: CHANGELOG_2026_06_05,
-        title: '2026 年 6 月 5 日 · 彼方上线',
-        subtitle: '角色自主登入的 VR 小世界 · 邮局漂流信 · 留言簿原话上墙 · 隐藏小人',
-        date: '2026-06-05',
-        src: 'changelogs/2026-6-5.html',
-        accent: 'from-indigo-100 to-purple-100 border-indigo-200',
-    },
-    {
-        id: CHANGELOG_2026_05_27,
-        title: '2026 年 5 月 27 日 · 小更新',
-        subtitle: '情绪 buff 也接入 Instant Push · 发完即走，聊天和情绪都不用守前端（附配置视频）',
-        date: '2026-05-27',
-        src: 'changelogs/2026-5-27.html',
-        accent: 'from-rose-100 to-amber-100 border-rose-200',
-    },
-    {
-        id: CHANGELOG_2026_05_17,
-        title: '2026 年 5 月 17 日 · 小更新',
-        subtitle: 'Instant Push 上线 · 发完文本就能锁屏走人，AI 回复自己回来',
-        date: '2026-05-17',
-        src: 'changelogs/2026-5-17.html',
-        accent: 'from-teal-100 to-sky-100 border-teal-200',
-    },
-    {
-        id: CHANGELOG_2026_05_10,
-        title: '2026 年 5 月 10 日 · 小更新',
-        subtitle: '「心象」上线 · 模型思考链可视化 + 约会（见面模式）bug 修复',
-        date: '2026-05-10',
-        src: 'changelogs/2026-5-10.html',
-        accent: 'from-purple-100 to-indigo-100 border-purple-200',
-    },
     {
         id: CHANGELOG_2026_05,
         title: '2026 年 5 月更新',

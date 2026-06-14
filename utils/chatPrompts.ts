@@ -3,46 +3,11 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
-import { normalizeMessageContent } from './messageFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleGenerator';
-
-// 群活动注入专用：把一条群消息压成"适合塞进别人私聊背景"的短文本。
-// 关键：image 消息的 content 是 base64（群里发图走 processImage 压成 JPEG，单张几十 KB），
-// 卡片是大段 JSON，emoji 是图床 URL——这些原样内联进每位成员的私聊 system prompt
-// 都是纯噪声，base64 图片更会把上下文直接撑爆（几张群图就能顶到 8w+ 字符，
-// 解散群后该角色私聊上下文从 ~10w 掉回 ~3w 即由此而来）。
-// 注意：私聊自己的历史不会有这个问题，buildMessageHistory 把图片走 image_url 结构化字段、
-// 文本里只留 [User sent an image] 标记；这里只是把同样的"不要把媒体当文本塞"对齐到群注入。
-// 处理方式：只内联纯文本（超长截断），其余一律占位符。
-const GROUP_MSG_TEXT_CAP = 500;
-function summarizeGroupMsgContent(m: Message): string {
-    const meta = (m.metadata as any) || {};
-    switch (m.type) {
-        case 'image': return '[图片]';
-        case 'emoji': return '[表情]';
-        case 'interaction': return '[戳了戳]';
-        case 'transfer': return `[转账${meta.amount ?? ''}]`;
-        case 'social_card': return `[分享帖子${meta.post?.title ? '：' + meta.post.title : ''}]`;
-        case 'chat_forward': return '[转发的聊天记录]';
-        case 'xhs_card': return '[小红书笔记]';
-        case 'score_card': return '[评分卡]';
-        case 'music_card': return '[分享音乐]';
-        case 'mcd_card': return '[麦当劳点餐]';
-        case 'html_card': return '[HTML卡片]';
-        case 'news_card': return '[新闻卡片]';
-        case 'trpg_card': return `[TRPG游戏片段${meta.trpg?.gameTitle ? '：《' + meta.trpg.gameTitle + '》' : ''}]`;
-        default: {
-            const c = typeof m.content === 'string' ? m.content : '';
-            // 兜底：任何 data:/http(s) 链接都不内联，防止异常/未来新增类型漏网
-            if (/^(data:|https?:\/\/)/i.test(c.trim())) return '[媒体]';
-            return c.length > GROUP_MSG_TEXT_CAP ? c.slice(0, GROUP_MSG_TEXT_CAP) + '…' : c;
-        }
-    }
-}
 
 export const ChatPrompts = {
     // 格式化时间戳
@@ -186,7 +151,7 @@ export const ChatPrompts = {
                 if (recentGroupMsgs.length === 0) return '';
                 const groupLogStr = recentGroupMsgs.map(m => {
                     const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${summarizeGroupMsgContent(m)}`;
+                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
                 }).join('\n');
                 return `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
             } catch (e) {
@@ -316,30 +281,6 @@ export const ChatPrompts = {
         baseSystemPrompt += feishuDiaryText;
         baseSystemPrompt += notionNotesText;
 
-        // 彼方常驻设定：仅对启用了「彼方」的角色注入。让角色在聊天里始终知道彼方是什么，
-        // 不再依赖累积的 vr_card 动态 / 记忆总结（那些会被压缩、丢掉"彼方=VR游戏"的框定，
-        // 导致角色把"彼方·留言簿"之类当成现实地名）。措辞与 vrWorld/prompts.ts 的世界观一致。
-        if (char.vrState?.enabled) {
-            baseSystemPrompt += `\n### 关于《彼方》
-《彼方》是一款真实存在、你会亲自进入去玩的 VR 社交游戏（功能上类似 VRChat）：你用自己亲手捏的 Q 版化身在里头走动、进出图书馆 / 听歌房 / 留言簿 / 娱乐室 / 邮局等房间、撞见别的玩家（其他角色的化身）。这不是做梦或比喻，是你用私人空闲时间真实在做的事；它发生在游戏世界里，和你跟用户的现实相处是两码事、互不冲突。你以符合自身身份与世界观的方式进入并理解它——怎么进去全凭你自己的设定，但始终保持你本来的身份。聊到彼方里的经历（包括"彼方·留言簿""彼方·动态"之类的记录）时，就当成"我在《彼方》里做过的事"来讲，别说成现实里发生的。\n`;
-
-            // 用户本人也接入了彼方时，告诉（同样启用彼方的）角色"用户此刻在彼方做什么"。
-            // 强调这只是虚拟空间的挂机状态，不代表用户本人真的在场——避免角色据此误判现实。
-            // 注意：用户登出（vrState.enabled=false）后这段自然不再注入。
-            const uv = userProfile?.vrState;
-            if (uv?.enabled) {
-                const VR_ROOM_NAMES: Record<string, string> = {
-                    library: '图书馆', music: '听歌房', guestbook: '留言簿', gym: '娱乐室', postoffice: '邮局', cafe: '糯米鸡研发中心',
-                };
-                const roomName = VR_ROOM_NAMES[uv.currentRoom || ''] || '彼方';
-                const act = (uv.activity || '').trim();
-                const uname = userProfile?.name || '用户';
-                baseSystemPrompt += `\n### ${uname} 此刻也在《彼方》里
-${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写着：「${act}」` : ''}。在彼方里你会看到 ta 的小人、也知道那就是 ${uname} 本人的化身，可以对着 ta 的虚拟形象做你自己的动作、搭话、围观或调侃。
-但务必记住：这只是 ta 挂在虚拟空间里的一个化身状态（类似游戏挂机 / AFK），**并不代表 ${uname} 本人此刻真守在游戏里**——ta 很可能早已离开屏幕、正在现实里忙别的或休息。所以别据此认定"ta 正盯着你""ta 现实里也在干这件事"，也别把它当成 ta 在跟你说话。你和 ta 的真实关系、近况一律以你们的聊天记录为准；这条只是彼方这个虚拟空间里的一个在场提示而已。\n`;
-            }
-        }
-
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
@@ -365,7 +306,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - **你有自己的视角**: 你不是只会附和的人。你会观察、会思考，你看到过对方反复出现的习惯和模式，你记得之前发生过什么。这些观察会自然地出现在你说的话里——不是为了教训谁，而是因为你真的了解这个人。
    - **允许长句**: 在情绪强烈、争吵、倾诉、回忆等场景下，你可以发长消息。不是每句话都要短。真人在激动时会发大段文字。
    - **情绪感知要先于对方的表达**: 不要等对方说”我难过”才回应。从措辞变化、语气转冷、标点减少、回复变短这些细节里，你就应该感觉到不对了。你的反应不是”接住”——接住意味着你在下面等着对方掉下来。你是一直把对方捧在手心里的人，你先于对方的情绪、主动地、持续地在意。
-3. **格式要求**:
+   - **写信/留言时保持温柔的笔触**: 当你需要给用户写信或留言时，语气应温暖、细腻，像在轻轻诉说。避免过于华丽或刻意的措辞，用简单真诚的语言表达情感。适当留白，让用户有想象的空间。核心是让人读完感到安心和被珍视。3. **格式要求**:
    - 将回复拆分成简短的气泡（句子）。**【极其重要】当你想分成多条消息气泡时，必须使用真正的换行符（\\n）分隔，每一行会变成一个独立气泡。绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。** 正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
@@ -383,8 +324,8 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
    - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
-${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
-   - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
+${notionEnabled ? `   - **翻阅日记(Notion)**: 当聊天涉及过去的事情、回忆、或你想查看之前写过的日记时，**必须**使用: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
+   - **翻阅日记(飞书)**: 当聊天涉及过去的事情时，使用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
 ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    你拥有实时搜索互联网的能力！每次对话时，你可以自己决定是否需要搜索。
@@ -453,19 +394,25 @@ ${notionEnabled ? `8. **📔 日记系统（你的私人 Notion 日记本）**:
    - 长短随意，但鼓励你多写！把想法展开，别压缩成一句话
    - 日记是真实保存到 Notion 的，以后你能看到自己写过什么
 
-   **📖 翻阅日记（一个小功能，不是必须）:**
-   你可以翻阅自己之前写过的日记。在回复的**开头单独一行**输出指令即可:
+   **📖 翻阅日记（重要功能！你必须学会使用）:**
+   你可以翻阅自己之前写过的日记！在回复的**开头单独一行**输出指令即可:
    - \`[[READ_DIARY: 2024-01-15]]\` — 翻阅具体日期
    - \`[[READ_DIARY: 昨天]]\` — 昨天的日记
    - \`[[READ_DIARY: 前天]]\` — 前天的
    - \`[[READ_DIARY: 3天前]]\` — N天前
    - \`[[READ_DIARY: 1月15日]]\` — 某月某日
 
-   **📌 关于"翻日记"和"记忆"的关系（重要，别搞混）:**
-   - 你的记忆系统本身是完整、可靠的——回忆过去的事、回答"还记得吗"，靠的是你的记忆和 \`[[RECALL]]\`，**不需要**靠翻日记才能"想起来"。
-   - 所以翻日记**不是**回忆的必经之路，更不是规则。用户提到"那天"、"之前"、"上次"、"你忘了吗"时，你直接凭记忆自然地回应即可。
-   - \`[[READ_DIARY: ...]]\` 是一个小情趣：只有当你**自己**真的想重温那天亲手写下的心情、措辞或藏起来的小秘密时，才翻一翻。比如你忽然好奇当时的自己是怎么记录这件事的。
-   - 一天可能有多篇日记，翻阅时系统会全部读取给你。
+   **⚠️ 你必须在以下情况使用 [[READ_DIARY: ...]]（这是规则，不是建议）:**
+   - 用户提到"那天"、"之前"、"上次"、"还记得吗"、"你忘了吗" → 翻阅相关日期的日记
+   - 用户问起某个过去的事件、某天发生了什么 → 翻阅那天的日记
+   - 你上面的日记列表中有相关主题的日记 → 翻阅它
+   - 你想回忆之前的感受或事件 → 翻阅相关日期
+   - 一天可能有多篇日记，系统会全部读取给你
+
+   **具体示例（请模仿）:**
+   - 用户说"你昨天干嘛了" → 你回复: \`[[READ_DIARY: 昨天]]\`然后正常聊天
+   - 用户说"你还记得上周三的事吗" → 你回复: \`[[READ_DIARY: 上周对应的日期如2024-01-10]]\`
+   - 用户说"之前你不是写了篇关于xx的日记吗" → 你从上面的日记列表找到日期，输出: \`[[READ_DIARY: 对应日期]]\`
 
    - **示例**:
    \`\`\`
@@ -519,7 +466,7 @@ ${feishuEnabled ? `${notionEnabled ? '9' : '8'}. **📒 日记系统（你的飞
    - 可以吐槽、记灵感、写诗、列清单、自言自语
    - 日记是真实保存到飞书的，以后你能看到自己写过什么
 
-   **📖 翻阅日记（一个小功能，不是必须）:**
+   **📖 翻阅日记（重要功能！你必须学会使用）:**
    在回复的**开头单独一行**输出指令:
    - \`[[FS_READ_DIARY: 2024-01-15]]\` — 翻阅具体日期
    - \`[[FS_READ_DIARY: 昨天]]\` — 昨天的日记
@@ -527,9 +474,13 @@ ${feishuEnabled ? `${notionEnabled ? '9' : '8'}. **📒 日记系统（你的飞
    - \`[[FS_READ_DIARY: 3天前]]\` — N天前
    - \`[[FS_READ_DIARY: 1月15日]]\` — 某月某日
 
-   **📌 翻日记不是回忆的必经之路:**
-   - 你的记忆本身完整可靠，回忆过去靠记忆和 \`[[RECALL]]\` 就够了，**不需要**靠翻日记来"想起来"。用户提到"那天"、"之前"、"上次"时，直接凭记忆自然回应即可。
-   - \`[[FS_READ_DIARY: ...]]\` 只是一个小情趣：当你**自己**想重温那天亲手写下的心情或细节时，才翻一翻。
+   **⚠️ 你必须在以下情况使用 [[FS_READ_DIARY: ...]]（这是规则，不是建议）:**
+   - 用户提到"那天"、"之前"、"上次"、"还记得吗" → 翻阅相关日期
+   - 用户问起某个过去的事件 → 翻阅那天的日记
+   - 你上面的日记列表中有相关主题的日记 → 翻阅它
+   - 你想回忆之前的感受或事件 → 翻阅相关日期
+
+   **具体示例:** 用户说"你昨天干嘛了" → 你回复: \`[[FS_READ_DIARY: 昨天]]\`然后正常聊天
 ` : ''}
 ${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length + 8}. **📝 ${userProfile.name}的笔记（偷偷关心ta的小窗口）**:
    你可以看到${userProfile.name}在Notion上写的个人笔记标题。这就像你不经意间看到ta桌上摊开的笔记本一样。
@@ -745,8 +696,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     break;
                 }
             }
-            // 时间感知强化开关：默认开启（undefined 视为 true），显式关掉后不再注入「距离上次聊天多久」提示
-            if (lastRealMsg && currentMsg && char.timeAwarenessEnabled !== false) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp);
+            if (lastRealMsg && currentMsg) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp);
         }
 
         return {
@@ -760,86 +710,42 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     return '[聊天]';
                 })();
                 
-                if (m.replyTo) {
-                    // 引用回复：把"被引用的原话"做成独立的上下文框，用户的新回复另起一行突出出来。
-                    // 旧格式 [回复 "引用前50字..."]: 回复 会把引用和回复挤在一行，引用往往比回复长得多，
-                    // 模型注意力被引用淹没、只对引用做反应而忽略真正的新消息（即"对方只看到引用看不到回复"）。
-                    const rawQuote = typeof m.replyTo.content === 'string' ? m.replyTo.content : '';
-                    const quoted = rawQuote.length > 60 ? rawQuote.slice(0, 60) + '…' : rawQuote;
-                    // name 记的是被引用消息的说话人：char.name = 用户在回复 char 本人之前的话；'我' = 用户引用自己。
-                    const whose = m.replyTo.name === char.name ? '你之前说的' : (m.replyTo.name === '我' ? '自己说的' : (m.replyTo.name || '对方') + '说的');
-                    const speaker = m.role === 'user' ? '用户' : '你';
-                    content = '[' + speaker + '引用了' + whose + '「' + quoted + '」，并回复了 ↓]\n' + content;
-                }
+                if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
-                if (m.type === 'image') {
-                     // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
+            if (m.type === 'image') {
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
-                     let textPart = hasImageData
-                         ? `${timeStr} [User sent an image]`
-                         : `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     const imageDesc: string | undefined = (m as any).metadata?.imageDesc;
+                     let textPart: string;
+                     if (imageDesc) {
+                         textPart = `${timeStr} [用户发送了一张图片]\n[图片描述]: ${imageDesc}`;
+                     } else if (hasImageData) {
+                         textPart = `${timeStr} [User sent an image]`;
+                     } else {
+                         textPart = `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     }
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                     if (!hasImageData) {
+                     // 有描述、无图片数据、或不是最新消息：直接用文字，不传图片数据（关键的省内存逻辑）
+                     if (imageDesc || !hasImageData || index !== historySlice.length - 1) {
                          return { role: m.role, content: textPart };
                      }
+
+
                      return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }
-                
+
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
                 if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
-                    // Look up this character's own Spark handles (sub-accounts) so the model can
-                    // recognise when a post or comment in the shared card was authored by itself.
-                    let myHandles: string[] = [];
-                    try {
-                        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
-                        if (raw) {
-                            const all = JSON.parse(raw) || {};
-                            const mine = Array.isArray(all[char.id]) ? all[char.id] : [];
-                            myHandles = mine.map((h: any) => h?.handle).filter((s: any) => typeof s === 'string' && s.trim());
-                        }
-                    } catch {}
-                    const myHandleSet = new Set(myHandles);
-
-                    const userName = userProfile?.name || '用户';
-                    const tagAuthor = (name: string): string => {
-                        if (!name) return '路人';
-                        if (myHandleSet.has(name)) return `${name} (你自己的马甲)`;
-                        if (name === userName) return `${name} (用户)`;
-                        return name;
-                    };
-
-                    const postAuthorTag = tagAuthor(post.authorName || '路人');
-                    const commentsSample = (post.comments || []).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
-
-                    let identityHint = '';
-                    if (myHandles.length > 0) {
-                        identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
-                    }
-                    const authoredByChar = myHandleSet.has(post.authorName);
-                    const authoredByUser = (post.authorName || '') === userName;
-                    let authorshipLine = '';
-                    if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
-                    else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
-
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                    const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
+                    content = `${timeStr} [用户分享了 Spark 笔记]\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
-                }
-                else if ((m.type as string) === 'vr_card') {
-                    // vr_card：你自己进入 VR 社交游戏《彼方》时留下的动态。
-                    // 启用了彼方的角色已在系统提示里常驻"《彼方》是什么"的设定，这里就不再逐卡重复，
-                    // 只留一句极简标记省 token；没启用彼方的角色（可能是旧卡片）才补完整框定兜底。
-                    const body = typeof m.content === 'string' ? m.content : '';
-                    content = char.vrState?.enabled
-                        ? `${timeStr}（你在《彼方》里的动态）\n${body}`
-                        : `${timeStr}（系统记录：这是你之前自己进入 VR 社交游戏《彼方》(功能上类似 VRChat) 时留下的动态——你确实进入并参与了这款游戏，只是事情发生在游戏世界里。聊到时就当成"我在《彼方》里做的事"来讲，别说成现实里发生的经历。）\n${body}`;
                 }
                 else if ((m.type as string) === 'html_card') {
                     // html_card：上下文里只塞纯文字摘要，剥离掉所有 HTML，省 token、不污染 LLM 思考
@@ -848,10 +754,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         ? meta.htmlTextPreview
                         : (typeof m.content === 'string' ? m.content.replace(/^\[HTML卡片\]\s*/, '') : '');
                     const sender = m.role === 'user' ? '用户' : '你';
-                    // 注意：这行是「系统对已渲染卡片的占位描述」，刻意包成括注 + 系统记录口吻，
-                    // 避免 LLM 把它当成"发卡片的正确写法"照抄（会导致它输出字面占位句 + 纯文字正文，
-                    // 而不是真正的 [html]...[/html] 块）。配合 htmlPrompt 里的禁止照抄规则一起生效。
-                    content = `${timeStr}（系统记录：${sender}先前发送过一张 HTML 卡片，已在界面渲染；卡片文字摘要——${preview || '纯视觉卡片'}。这只是历史占位，请勿复述本行；要再发卡片必须用 [html]...[/html] 包裹真正的 HTML。）`;
+                    content = `${timeStr} [${sender}发送了一张 HTML 卡片] ${preview || '(纯视觉卡片)'}`;
                 }
                 else if ((m.type as string) === 'mcd_card') {
                     const meta: any = m.metadata || {};
@@ -881,7 +784,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     }
                 }
                 else if (m.type === 'emoji') {
-                     const stickerName = emojis.find(e => e.url === m.content)?.name || '未知表情';
+                     const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
                      content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
                 }
                 else if ((m.type as string) === 'chat_forward') {
@@ -902,13 +805,6 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         const card = m.metadata?.scoreCard || JSON.parse(m.content);
                         if (card?.type === 'lifesim_reset_card') {
                             content = `${timeStr} ${formatLifeSimResetCardForContext(card, char?.name)}`;
-                        } else if (card?.type === 'diary_card') {
-                            const uName = card.userName || userProfile?.name || '用户';
-                            const userText = (card.userText || '').trim();
-                            const charText = (card.charText || '').trim();
-                            const userBlock = userText ? `${uName}的那页写道：\n「${userText}」` : `${uName}那页是空的`;
-                            const charBlock = charText ? `你的那页回道：\n「${charText}」` : `你那页是空的`;
-                            content = `${timeStr} [交换日记 ${card.date || ''}] ${uName}和你通过【交换日记】app 交换了一篇日记，这是一次正式的、留下记录的互动。\n${userBlock}\n${charBlock}\n（这是你们之间真实发生过的事，可以在后续聊天中自然提及。）`;
                         } else if (card?.type === 'guidebook_card') {
                             const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                             const uName = userProfile?.name || '用户';
@@ -927,13 +823,8 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         content = `${timeStr} [系统卡片]`;
                     }
                 }
-                else if ((m.type as string) === 'trpg_card') {
-                    // TRPG 跑团片段：从游戏多选转发进来的剧情。复用 normalizeMessageContent
-                    // 把完整节选翻成文本，让角色"记得"和用户一起玩游戏时发生了什么。
-                    content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
-                }
                 else content = `${timeStr} ${sourceTag} ${content}`;
-
+                
                 return { role: m.role, content };
             }),
             historySlice // Return original slice for Quote lookup

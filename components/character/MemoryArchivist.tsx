@@ -293,7 +293,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     )}
                 </div>
                 
-                <div className="flex items-center justify-between px-1">
+               <div className="flex items-center justify-between sticky z-30 py-2 -mx-5 pl-6 pr-5" style={{ top: '0rem', background: 'linear-gradient(to bottom, #f8fafc, #f8fafc)' }}>
+
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
                     <div className="flex gap-2">
                         {isManageMode && selectedIds.size > 0 && <button onClick={(e) => { e.stopPropagation(); requestDelete(); }} className="text-[10px] bg-red-500 text-white px-3 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform">删除 ({selectedIds.size})</button>}

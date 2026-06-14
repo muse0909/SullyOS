@@ -1,5 +1,4 @@
 import ApiLogPanel from "../components/settings/ApiLogPanel";
-import { useApiLogStore } from "../hooks/useApiLogStore";
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
@@ -14,13 +13,45 @@ import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled a
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { useApiLogStore } from '../hooks/useApiLogStore';
+
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
         <span className="text-slate-500 shrink-0">{label}</span>
         <span className={`text-right ${bad ? 'text-rose-600 font-medium' : 'text-slate-700'}`}>{value}</span>
     </div>
 );
+
+const SettingsSection: React.FC<{
+  id?: string; icon: React.ReactNode; title: string; subtitle: string;
+  statusText?: string; statusColor?: string; children: React.ReactNode;
+}> = ({ icon, title, subtitle, statusText, statusColor, children }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setIsOpen(v => !v)}
+        className="w-full flex items-center gap-3 px-4 py-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-slate-100 shadow-sm active:scale-[0.98] transition-all"
+      >
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center text-lg shrink-0">
+          {icon}
+        </div>
+        <div className="flex-1 text-left min-w-0">
+          <div className="text-sm font-bold text-slate-800">{title}</div>
+          <div className="text-[11px] text-slate-400 truncate">{subtitle}</div>
+        </div>
+        {statusText && (
+          <span className={`text-[10px] font-semibold mr-1 ${statusColor || 'text-slate-400'}`}>
+            {statusText}
+          </span>
+        )}
+        <svg className={`w-4 h-4 text-slate-300 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+      {isOpen && <div className="mt-2 px-1 animate-fadeIn">{children}</div>}
+    </div>
+  );
+};
 
 const Settings: React.FC = () => {
   const {
@@ -135,40 +166,6 @@ const [ttsStatusMsg, setTtsStatusMsg] = useState('');
   const [ppTestBusy, setPpTestBusy] = useState(false);
   const [ppResetBusy, setPpResetBusy] = useState(false);
 
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const toggleSection = (id: string) => setExpandedSection(prev => prev === id ? null : id);
-
-  const SettingsSection: React.FC<{
-    id: string; icon: React.ReactNode; title: string; subtitle: string;
-    statusText?: string; statusColor?: string; children: React.ReactNode;
-  }> = ({ id, icon, title, subtitle, statusText, statusColor, children }) => {
-    const isOpen = expandedSection === id;
-    return (
-      <div className="mb-3">
-        <button
-          onClick={() => toggleSection(id)}
-          className="w-full flex items-center gap-3 px-4 py-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-slate-100 shadow-sm active:scale-[0.98] transition-all"
-        >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center text-lg shrink-0">
-            {icon}
-          </div>
-          <div className="flex-1 text-left min-w-0">
-            <div className="text-sm font-bold text-slate-800">{title}</div>
-            <div className="text-[11px] text-slate-400 truncate">{subtitle}</div>
-          </div>
-          {statusText && (
-            <span className={`text-[10px] font-semibold mr-1 ${statusColor || 'text-slate-400'}`}>
-              {statusText}
-            </span>
-          )}
-          <svg className={`w-4 h-4 text-slate-300 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
-        {isOpen && <div className="mt-2 px-1 animate-fadeIn">{children}</div>}
-      </div>
-    );
-  };
 
   // 模型选择 Modal 的过滤 + 公共前缀（memo 掉，避免每次 Settings 重渲染都重算）
   const modelPickerView = useMemo(() => {
@@ -398,8 +395,6 @@ const handleSaveTts = () => {
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
-
-
 
   const fetchModels = async () => {
     if (!localUrl) { setStatusMsg('请先填写 URL'); return; }
@@ -1009,7 +1004,7 @@ const handleSaveTts = () => {
     <input
         type="password"
         value={(apiConfig as any)?.imgbbApiKey || ''}
-onChange={(e) => updateApiConfig({ ...apiConfig, imgbbApiKey: e.target.value })}
+onChange={(e) => setLocalImgbbApiKey(e.target.value)}
         placeholder="imgbb.com 注册后免费获取"
         className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border-slate-200"
     />
@@ -1026,7 +1021,7 @@ onChange={(e) => updateApiConfig({ ...apiConfig, imgbbApiKey: e.target.value })}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
   <div className="flex items-center gap-2 mb-4">
     <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
         <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
       </svg>
     </div>

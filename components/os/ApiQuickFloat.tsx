@@ -118,9 +118,7 @@ const ApiQuickFloat: React.FC = () => {
   const [showImageKey, setShowImageKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
 
-  const [openMainSection, setOpenMainSection] = useState(true);
-  const [openImageSection, setOpenImageSection] = useState(false);
-  const [openVisionSection, setOpenVisionSection] = useState(false);
+  const [openSection, setOpenSection] = useState<QuickPresetKind | null>(null);
 
   const [showMainModelPicker, setShowMainModelPicker] = useState(false);
   const [showImageModelPicker, setShowImageModelPicker] = useState(false);
@@ -195,6 +193,10 @@ const ApiQuickFloat: React.FC = () => {
       dragRef.current.moved = false;
       return;
     }
+    setOpenSection(null);
+    setShowMainModelPicker(false);
+    setShowImageModelPicker(false);
+    setShowVisionModelPicker(false);
     setShowPanel(true);
   };
 
@@ -270,6 +272,10 @@ const ApiQuickFloat: React.FC = () => {
     });
     addToast('API 配置已保存', 'success');
     setShowPanel(false);
+  };
+
+  const toggleSection = (section: QuickPresetKind) => {
+    setOpenSection((prev) => (prev === section ? null : section));
   };
 
   const loadPreset = (preset: ApiPreset, kind: QuickPresetKind) => {
@@ -393,10 +399,10 @@ const ApiQuickFloat: React.FC = () => {
                 icon={<Gear size={18} weight="bold" />}
                 title="API 设置"
                 subtitle="主 AI 通道"
-                isOpen={openMainSection}
-                onToggle={() => setOpenMainSection((value) => !value)}
+                isOpen={openSection === 'main'}
+                onToggle={() => toggleSection('main')}
               >
-                <section className="bg-white/80 rounded-3xl p-4 shadow-sm border border-white/50 space-y-4">
+                <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
                   {mainApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
@@ -511,10 +517,10 @@ const ApiQuickFloat: React.FC = () => {
                 icon={<ImageSquare size={18} weight="bold" />}
                 title="生图"
                 subtitle="独立生图通道"
-                isOpen={openImageSection}
-                onToggle={() => setOpenImageSection((value) => !value)}
+                isOpen={openSection === 'image'}
+                onToggle={() => toggleSection('image')}
               >
-                <section className="bg-white/80 rounded-3xl p-4 shadow-sm border border-white/50 space-y-4">
+                <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
                   {imageApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
@@ -629,10 +635,10 @@ const ApiQuickFloat: React.FC = () => {
                 icon={<Eye size={18} weight="bold" />}
                 title="识图"
                 subtitle="独立识图通道"
-                isOpen={openVisionSection}
-                onToggle={() => setOpenVisionSection((value) => !value)}
+                isOpen={openSection === 'vision'}
+                onToggle={() => toggleSection('vision')}
               >
-                <section className="bg-white/80 rounded-3xl p-4 shadow-sm border border-white/50 space-y-4">
+                <section className="bg-sky-50/80 rounded-3xl p-4 shadow-sm border border-sky-100/80 space-y-4">
                   {visionApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>

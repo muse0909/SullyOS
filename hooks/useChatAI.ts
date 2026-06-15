@@ -51,6 +51,16 @@ const IMAGE_GENERATION_TOOL = {
   },
 };
 
+const getToolCalls = (data: any): any[] => {
+    const msg = data?.choices?.[0]?.message || {};
+    return msg.tool_calls || data?.choices?.[0]?.tool_calls || [];
+};
+
+const parseToolArguments = (tool: any): any => {
+    const raw = tool?.function?.arguments ?? tool?.arguments;
+    return typeof raw === 'string' ? (raw ? JSON.parse(raw) : {}) : (raw || {});
+};
+
 // ─── 情绪评估（副API，fire & forget）───
 
 function buildEmotionEvalPrompt(
@@ -1048,7 +1058,7 @@ const toolsList: any[] = [];
 if (mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (apiConfig.imageBaseUrl && apiConfig.imageApiKey && apiConfig.imageModel) {
+if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 if (toolsList.length > 0) {
@@ -1060,17 +1070,20 @@ if (toolsList.length > 0) {
                 method: 'POST', headers,
                 body: JSON.stringify(baseReqBody)
             });
+            if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
+                console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
+            }
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
 
             // 3.4 麦当劳小程序 propose_cart_items UI 钩子工具循环
             //     不调 MCP, 只把模型的 args 作为 mcd_card kind=proposal 落库, 让小程序聊天面板渲染
             //     成"+加进购物车"卡片。返回 ack 给模型继续走它的文字 reply。
-            if (mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+            if (mcdMiniOpen && getToolCalls(data).length) {
                 const MAX_PROPOSE_LOOPS = 3;
                 let loopMessages = [...fullMessages];
                 for (let it = 0; it < MAX_PROPOSE_LOOPS; it++) {
-                    const toolCalls = data.choices?.[0]?.message?.tool_calls;
+                    const toolCalls = getToolCalls(data);
                     if (!toolCalls || !toolCalls.length) break;
                     loopMessages.push({
                         role: 'assistant',
@@ -1081,8 +1094,7 @@ if (toolsList.length > 0) {
                         const fname: string = tc.function?.name || '';
                         let args: any = {};
                         try {
-                            const raw = tc.function?.arguments ?? tc.arguments;
-                            args = typeof raw === 'string' ? (raw ? JSON.parse(raw) : {}) : (raw || {});
+                            args = parseToolArguments(tc);
                         } catch (e) {
                             console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
                         }
@@ -1162,15 +1174,15 @@ if (toolsList.length > 0) {
                     });
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
                     // 第二轮跳过 (我们已经禁用了 tools)
-                    if (!data.choices?.[0]?.message?.tool_calls?.length) break;
+                    if (!getToolCalls(data).length) break;
                 }
             }
 
                       
           // 3.5 生图工具 generate_image 处理
-if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
-    const toolCalls = data.choices[0].message.tool_calls;
-    const imgCall = toolCalls.find((tc: any) => tc.function?.name === 'generate_image');
+if (!mcdMiniOpen && getToolCalls(data).length) {
+    const toolCalls = getToolCalls(data);
+    const imgCall = toolCalls.find((tc: any) => (tc.function?.name || tc.name || '').trim() === 'generate_image');
 
     if (imgCall) {
         let imgPrompt = '';
@@ -1178,20 +1190,19 @@ if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
         let imageGenError = '';
 
         try {
-            const raw = imgCall.function?.arguments ?? imgCall.arguments;
-            const args = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+            const args = parseToolArguments(imgCall);
             imgPrompt = args.prompt || '';
         } catch (e) {
             console.warn('🎨 [ImageGen] prompt 解析失败:', e);
             imageGenError = '生图参数解析失败';
         }
 
-        if (!apiConfig.imageBaseUrl || !apiConfig.imageApiKey || !apiConfig.imageModel) {
+        if (!effectiveApi.imageBaseUrl || !effectiveApi.imageApiKey || !effectiveApi.imageModel) {
             imageGenError = '生图 API 配置不完整，请检查生图地址、Key 和模型是否都已填写';
             console.warn('🎨 [ImageGen] 配置不完整:', {
-                hasBaseUrl: !!apiConfig.imageBaseUrl,
-                hasKey: !!apiConfig.imageApiKey,
-                hasModel: !!apiConfig.imageModel,
+                hasBaseUrl: !!effectiveApi.imageBaseUrl,
+                hasKey: !!effectiveApi.imageApiKey,
+                hasModel: !!effectiveApi.imageModel,
             });
         }
 
@@ -1204,14 +1215,14 @@ if (!mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
             try {
-                const imgResponse = await fetch(`${normalizeApiUrl(apiConfig.imageBaseUrl)}/images/generations`, {
+                const imgResponse = await fetch(`${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiConfig.imageApiKey}`,
+                        'Authorization': `Bearer ${effectiveApi.imageApiKey}`,
                     },
                     body: JSON.stringify({
-                        model: apiConfig.imageModel,
+                        model: effectiveApi.imageModel,
                         prompt: imgPrompt,
                         n: 1,
                         size: '1024x1536',

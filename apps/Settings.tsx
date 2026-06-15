@@ -60,14 +60,15 @@ const VisibleKeyInput: React.FC<{
 );
 
 const SettingsSection: React.FC<{
-  id?: string; icon: React.ReactNode; title: string; subtitle: string;
+  id: string; icon: React.ReactNode; title: string; subtitle: string;
   statusText?: string; statusColor?: string; children: React.ReactNode;
-}> = ({ icon, title, subtitle, statusText, statusColor, children }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  isOpen: boolean;
+  onToggle: (id: string) => void;
+}> = ({ id, icon, title, subtitle, statusText, statusColor, children, isOpen, onToggle }) => {
   return (
     <div className="mb-3">
       <button
-        onClick={() => setIsOpen(v => !v)}
+        onClick={() => onToggle(id)}
         className="w-full flex items-center gap-3 px-4 py-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-slate-100 shadow-sm active:scale-[0.98] transition-all"
       >
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center text-lg shrink-0">
@@ -133,6 +134,7 @@ const Settings: React.FC = () => {
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
+  const [openSectionId, setOpenSectionId] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
   const [modelTarget, setModelTarget] = useState<SettingsModelTarget>('main');
@@ -724,6 +726,10 @@ const handleSaveTts = () => {
       setShowResetConfirm(false);
   };
 
+  const toggleSection = (id: string) => {
+      setOpenSectionId((prev) => prev === id ? null : id);
+  };
+
   // 保存实时感知配置
   const handleSaveRealtimeConfig = () => {
       updateRealtimeConfig({
@@ -904,7 +910,7 @@ const handleSaveTts = () => {
       <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-3">
 
         {/* 1 - ZIP 备份 */}
-        <SettingsSection id="zipBackup" icon="💾" title="ZIP 备份" subtitle="导出/导入数据·格式化系统">
+        <SettingsSection id="zipBackup" icon="💾" title="ZIP 备份" subtitle="导出/导入数据·格式化系统" isOpen={openSectionId === 'zipBackup'} onToggle={toggleSection}>
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
               <div className="p-2 bg-blue-100 rounded-xl text-blue-600">
@@ -950,7 +956,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 2 - 云端备份 */}
-        <SettingsSection id="cloudBackup" icon="☁️" title="云端备份" subtitle="GitHub / WebDAV">
+        <SettingsSection id="cloudBackup" icon="☁️" title="云端备份" subtitle="GitHub / WebDAV" isOpen={openSectionId === 'cloudBackup'} onToggle={toggleSection}>
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
               <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
@@ -1030,7 +1036,7 @@ const handleSaveTts = () => {
 
         {/* 3 - API 配置 */}
         <SettingsSection id="api" icon="🔗" title="API 配置" subtitle="主 AI 连接·深度沉浸模式"
-          statusText={apiConfig.baseUrl ? '' : '未配置'} statusColor="text-slate-400">
+          statusText={apiConfig.baseUrl ? '' : '未配置'} statusColor="text-slate-400" isOpen={openSectionId === 'api'} onToggle={toggleSection}>
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
              <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -1106,7 +1112,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 4 - 识图配置 */}
-        <SettingsSection id="secondaryApi" icon="🖼️" title="识图配置" subtitle="独立识图通道">
+        <SettingsSection id="secondaryApi" icon="🖼️" title="识图配置" subtitle="独立识图通道" isOpen={openSectionId === 'secondaryApi'} onToggle={toggleSection}>
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -1168,7 +1174,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 5 - 语音 TTS */}
-        <SettingsSection id="tts" icon="🔊" title="语音合成" subtitle="MiniMax / ElevenLabs·通话声线">
+        <SettingsSection id="tts" icon="🔊" title="语音合成" subtitle="MiniMax / ElevenLabs·通话声线" isOpen={openSectionId === 'tts'} onToggle={toggleSection}>
 <section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
   <div className="flex items-center justify-between mb-4">
     <div className="flex items-center gap-2">
@@ -1231,12 +1237,12 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 6 - 语音识别 STT */}
-        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="Groq / 硅基流动 STT">
+        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="Groq / 硅基流动 STT" isOpen={openSectionId === 'stt'} onToggle={toggleSection}>
           <div className="py-6 text-center text-xs text-slate-400">语音识别使用 Groq Whisper，通话时自动启用，无需额外配置。</div>
         </SettingsSection>
 
         {/* 7 - 生图服务 */}
-        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="NAI / OpenAI·分离风格"
+        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="NAI / OpenAI·分离风格" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
           statusText={apiConfig.imageBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-4">
@@ -1287,7 +1293,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 8 - 其他 API */}
-        <SettingsSection id="proactive" icon="🤖" title="其他API" subtitle="MiniMax / Replicate·独立API">
+        <SettingsSection id="proactive" icon="🤖" title="其他API" subtitle="MiniMax / Replicate·独立API" isOpen={openSectionId === 'proactive'} onToggle={toggleSection}>
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -1360,7 +1366,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 9 - 实时感知 */}
-        <SettingsSection id="realtime" icon="🌐" title="实时感知" subtitle="天气 / 资讯 / 微博热搜 / 笔记与日程"
+        <SettingsSection id="realtime" icon="🌐" title="实时感知" subtitle="天气 / 资讯 / 微博热搜 / 笔记与日程" isOpen={openSectionId === 'realtime'} onToggle={toggleSection}
           statusText={(rtWeatherEnabled || rtNewsEnabled) ? '' : '未开启'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-4">
@@ -1386,7 +1392,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 10 - 消息加速 */}
-        <SettingsSection id="proactivePush" icon="🔔" title="消息加速" subtitle="主动消息频率·推送通知">
+        <SettingsSection id="proactivePush" icon="🔔" title="消息加速" subtitle="主动消息频率·推送通知" isOpen={openSectionId === 'proactivePush'} onToggle={toggleSection}>
         {ppAvailable && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-3">
@@ -1431,7 +1437,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 11 - API 请求账本 */}
-        <SettingsSection id="apiLog" icon="📋" title="API 请求账本" subtitle="本地调试日志·脱敏导出">
+        <SettingsSection id="apiLog" icon="📋" title="API 请求账本" subtitle="本地调试日志·脱敏导出" isOpen={openSectionId === 'apiLog'} onToggle={toggleSection}>
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <ApiLogPanel />
           </section>

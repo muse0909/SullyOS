@@ -61,7 +61,20 @@ function parseSseToCompletion(raw: string): any | null {
     let finishReason: string | null = null;
     let firstChunk: any = null;
     let usage: any = undefined;
+    const toolCalls: any[] = [];
     let gotAnyChunk = false;
+
+    const ensureToolCall = (index: number) => {
+        if (!toolCalls[index]) {
+            toolCalls[index] = {
+                index,
+                id: '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+            };
+        }
+        return toolCalls[index];
+    };
 
     // 按行切，逐行找 "data: " 开头（允许 \r\n、空行分隔）
     const lines = raw.split(/\r?\n/);
@@ -82,6 +95,18 @@ function parseSseToCompletion(raw: string): any | null {
         if (choice.delta) {
             if (typeof choice.delta.content === 'string') assembled += choice.delta.content;
             if (choice.delta.role) role = choice.delta.role;
+            if (Array.isArray(choice.delta.tool_calls)) {
+                for (const tc of choice.delta.tool_calls) {
+                    const idx = typeof tc?.index === 'number' ? tc.index : toolCalls.length;
+                    const target = ensureToolCall(idx);
+                    if (tc?.id) target.id = tc.id;
+                    if (tc?.type) target.type = tc.type;
+                    if (tc?.function?.name) target.function.name = tc.function.name;
+                    if (typeof tc?.function?.arguments === 'string') {
+                        target.function.arguments += tc.function.arguments;
+                    }
+                }
+            }
         }
         // message 路径（一次性 SSE，不常见但兼容）
         else if (choice.message) {
@@ -89,6 +114,12 @@ function parseSseToCompletion(raw: string): any | null {
                 assembled += choice.message.content;
             }
             if (choice.message.role) role = choice.message.role;
+            if (Array.isArray(choice.message.tool_calls)) {
+                toolCalls.splice(0, toolCalls.length, ...choice.message.tool_calls);
+            }
+        }
+        if (Array.isArray(choice.tool_calls)) {
+            toolCalls.splice(0, toolCalls.length, ...choice.tool_calls);
         }
         if (choice.finish_reason) finishReason = choice.finish_reason;
     }
@@ -96,6 +127,13 @@ function parseSseToCompletion(raw: string): any | null {
     if (!gotAnyChunk) return null;
 
     // 合成兼容结构
+    const message: any = { role, content: assembled };
+    if (toolCalls.length > 0) {
+        message.tool_calls = toolCalls
+            .filter(Boolean)
+            .map(({ index, ...rest }) => rest);
+    }
+
     return {
         id: firstChunk?.id || 'sse-assembled',
         object: 'chat.completion',
@@ -103,7 +141,7 @@ function parseSseToCompletion(raw: string): any | null {
         model: firstChunk?.model || '',
         choices: [{
             index: 0,
-            message: { role, content: assembled },
+            message,
             finish_reason: finishReason,
         }],
         usage: usage || firstChunk?.usage,

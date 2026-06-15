@@ -803,11 +803,11 @@ const Chat: React.FC = () => {
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                addToast('图床上传失败，图片已替换为占位图', 'error');
-                await handleSendText(PLACEHOLDER, 'image');
+                addToast('图床上传失败，已改为直接发送原图', 'error');
+                await handleSendText(base64, 'image');
             } catch {
-                addToast('图床上传失败，图片已替换为占位图', 'error');
-                await handleSendText(PLACEHOLDER, 'image');
+                addToast('图床上传失败，已改为直接发送原图', 'error');
+                await handleSendText(base64, 'image');
             }
             return;
         }

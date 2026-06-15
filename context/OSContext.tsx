@@ -180,7 +180,7 @@ interface OSContextType {
   
   // API Presets
   apiPresets: ApiPreset[];
-  addApiPreset: (name: string, config: APIConfig) => void;
+  addApiPreset: (name: string, config: APIConfig, kind?: ApiPreset['kind']) => void;
   removeApiPreset: (id: string) => void;
 
   // 实时配置 (天气、新闻、Notion等)
@@ -1695,7 +1695,7 @@ if (!isVisible || !isChattingWithThisChar) {
     localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
   };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
-  const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const addApiPreset = (name: string, config: APIConfig, kind?: ApiPreset['kind']) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config, ...(kind ? { kind } : {}) }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
   const addCharacter = async () => {

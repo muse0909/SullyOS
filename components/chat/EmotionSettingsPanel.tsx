@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { CharacterProfile, ApiPreset, APIConfig, CharacterBuff } from '../../types';
+import { safeResponseJson } from '../../utils/safeApi';
 
 interface EmotionSettingsPanelProps {
     char: CharacterProfile;
     apiPresets: ApiPreset[];
-    addApiPreset: (name: string, config: APIConfig) => void;
+    addApiPreset: (name: string, config: APIConfig, kind?: ApiPreset['kind']) => void;
     onSave: (config: NonNullable<CharacterProfile['emotionConfig']>) => void;
     onClearBuffs: () => void;
 }
@@ -31,6 +32,10 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
     const [showSavePreset, setShowSavePreset] = useState(false);
     const [newPresetName, setNewPresetName] = useState('');
     const [dirty, setDirty] = useState(false);
+    const [showKey, setShowKey] = useState(false);
+    const [isLoadingModels, setIsLoadingModels] = useState(false);
+    const [statusMsg, setStatusMsg] = useState('');
+    const emotionPresets = apiPresets.filter(preset => preset.kind === 'emotion');
 
     // Sync form state from character
     useEffect(() => {
@@ -52,9 +57,42 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
 
     const handleSavePreset = () => {
         if (!newPresetName.trim()) return;
-        addApiPreset(newPresetName.trim(), { baseUrl: url, apiKey: key, model });
+        addApiPreset(newPresetName.trim(), { baseUrl: url, apiKey: key, model }, 'emotion');
         setNewPresetName('');
         setShowSavePreset(false);
+    };
+
+    const fetchModels = async () => {
+        if (!url.trim()) {
+            setStatusMsg('请先填写 URL');
+            return;
+        }
+        setIsLoadingModels(true);
+        setStatusMsg('正在连接...');
+        try {
+            const res = await fetch(`${url.trim().replace(/\/+$/, '')}/models`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${key.trim()}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await safeResponseJson(res);
+            const list = data.data || data.models || [];
+            if (Array.isArray(list) && list.length > 0) {
+                const nextModel = list[0]?.id || list[0];
+                if (typeof nextModel === 'string') setModel(nextModel);
+                setStatusMsg(`获取到 ${list.length} 个模型，已填入第一个`);
+                setDirty(true);
+            } else {
+                setStatusMsg('格式不兼容');
+            }
+        } catch (error: any) {
+            setStatusMsg(`连接失败: ${error?.message || '未知错误'}`);
+        } finally {
+            setIsLoadingModels(false);
+        }
     };
 
     const handleSave = () => {
@@ -89,11 +127,11 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
             )}
 
             {/* Preset chips */}
-            {apiPresets.length > 0 && (
+            {emotionPresets.length > 0 && (
                 <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
                     <div className="flex gap-2 flex-wrap">
-                        {apiPresets.map(preset => (
+                        {emotionPresets.map(preset => (
                             <button
                                 key={preset.id}
                                 onClick={() => loadPreset(preset)}
@@ -151,16 +189,24 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                 </div>
                 <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                    <input
-                        type="password"
-                        value={key}
-                        onChange={e => { setKey(e.target.value); setDirty(true); }}
-                        placeholder="sk-..."
-                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
-                    />
+                    <div className="relative">
+                        <input
+                            type={showKey ? 'text' : 'password'}
+                            value={key}
+                            onChange={e => { setKey(e.target.value); setDirty(true); }}
+                            placeholder="sk-..."
+                            className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 pr-20 text-sm font-mono focus:bg-white transition-all"
+                        />
+                        <button type="button" onClick={() => setShowKey(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100">
+                            {showKey ? '隐藏' : '显示'}
+                        </button>
+                    </div>
                 </div>
                 <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Model</label>
+                    <div className="flex items-center justify-between mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
+                        <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] font-bold text-pink-500">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+                    </div>
                     <input
                         type="text"
                         value={model}
@@ -169,6 +215,7 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                         className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
                     />
                 </div>
+                {statusMsg ? <div className="text-[11px] text-slate-400 pl-1">{statusMsg}</div> : null}
 
                 <button
                     onClick={handleSave}

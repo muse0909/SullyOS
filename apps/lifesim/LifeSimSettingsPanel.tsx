@@ -36,6 +36,7 @@ const LifeSimSettingsPanel: React.FC<{
     const [useIndependentApi, setUseIndependentApi] = useState(useIndependentApiConfig);
     const [draft, setDraft] = useState<LifeSimApiDraft>(EMPTY_API_DRAFT);
     const [isSaving, setIsSaving] = useState(false);
+    const mainApiPresets = apiPresets.filter(preset => !preset.kind || preset.kind === 'main');
 
     useEffect(() => {
         setUseIndependentApi(useIndependentApiConfig);
@@ -218,13 +219,13 @@ const LifeSimSettingsPanel: React.FC<{
 
                     {useIndependentApi && (
                         <>
-                            {apiPresets.length > 0 && (
+                            {mainApiPresets.length > 0 && (
                                 <div style={{ marginBottom: 8 }}>
                                     <div style={{ fontSize: 9, fontWeight: 700, color: '#7b7289', marginBottom: 5 }}>
                                         预设
                                     </div>
                                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                                        {apiPresets.map(preset => (
+                                        {mainApiPresets.map(preset => (
                                             <button
                                                 key={preset.id}
                                                 onClick={() => handleLoadPreset(preset)}

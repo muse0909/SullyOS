@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
-import { CharacterBuff, CharacterProfile } from '../../types';
+import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
 
 interface TokenBreakdown {
     prompt: number;
@@ -26,7 +26,7 @@ interface ChatHeaderShellProps {
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
     onTriggerAI: () => void;
-    apiPresets?: { id: string; name: string; config: any }[];
+    apiPresets?: ApiPreset[];
     currentApiName?: string;
     onSwitchPreset?: (preset: any) => void;
     onShowCharsPanel: () => void;

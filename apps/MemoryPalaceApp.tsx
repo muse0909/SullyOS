@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
+import { safeResponseJson } from '../utils/safeApi';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
@@ -394,7 +395,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>('picker');
@@ -494,6 +495,10 @@ export default function MemoryPalaceApp() {
     const [lightSaved, setLightSaved] = useState(false);
     const [testingLight, setTestingLight] = useState(false);
     const [lightTestResult, setLightTestResult] = useState<string | null>(null);
+    const [showLightKey, setShowLightKey] = useState(false);
+    const [showLightModelList, setShowLightModelList] = useState(false);
+    const [loadingLightModels, setLoadingLightModels] = useState(false);
+    const [lightModelStatus, setLightModelStatus] = useState('');
 
     // Rerank 配置（全局；cross-encoder 二次排序，独立于主召回的可选增强通道）
     const [rrEnabled, setRrEnabled] = useState(!!memoryPalaceConfig.rerank?.enabled);
@@ -591,6 +596,7 @@ export default function MemoryPalaceApp() {
     // 判断是否已配置（使用全局配置）
     const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
     const hasLightApi = !!(memoryPalaceConfig.lightLLM.baseUrl && memoryPalaceConfig.lightLLM.apiKey);
+    const lightPresets = apiPresets.filter(preset => preset.kind === 'memoryPalaceLight');
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -901,11 +907,56 @@ export default function MemoryPalaceApp() {
             apiKey: lightKey.trim(),
             model: lightModel.trim(),
         };
+        updateMemoryPalaceConfig({ lightLLM: api });
         // 一次性写到全局 lightLLM + 所有角色的 emotionConfig.api
         // （各角色 enabled 标志保持不变；记忆宫殿轻量 LLM 与情绪 API 共用一份配置）
         syncEmotionApiToAllCharacters(api);
         setLightSaved(true);
         setTimeout(() => setLightSaved(false), 2000);
+    };
+
+    const handleSaveLightPreset = () => {
+        const name = window.prompt('预设名称', '记忆宫殿副 API')?.trim();
+        if (!name) return;
+        addApiPreset(name, {
+            baseUrl: lightUrl.trim(),
+            apiKey: lightKey.trim(),
+            model: lightModel.trim(),
+        }, 'memoryPalaceLight');
+        addToast('副 API 预设已保存', 'success');
+    };
+
+    const fetchLightModels = async () => {
+        if (!lightUrl.trim()) {
+            setLightModelStatus('请先填写 URL');
+            return;
+        }
+        setLoadingLightModels(true);
+        setLightModelStatus('正在连接...');
+        try {
+            const response = await fetch(`${lightUrl.trim().replace(/\/+$/, '')}/models`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${lightKey.trim()}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            const data = await safeResponseJson(response);
+            const list = data.data || data.models || [];
+            if (!Array.isArray(list)) throw new Error('Bad format');
+            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            setAvailableModels(models);
+            if (models.length > 0 && !models.includes(lightModel)) setLightModel(models[0]);
+            setShowLightModelList(models.length > 0);
+            setLightModelStatus(`获取到 ${models.length} 个模型`);
+        } catch (error) {
+            console.error(error);
+            setLightModelStatus('模型获取失败');
+            setShowLightModelList(false);
+        } finally {
+            setLoadingLightModels(false);
+        }
     };
 
     const handleSwitchChar = (id: string) => {
@@ -2187,15 +2238,33 @@ export default function MemoryPalaceApp() {
                     </div>
 
                     {/* API 预设快速填充 */}
-                    {apiPresets.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <label className={labelClass} style={{ marginBottom: 0 }}>从预设导入</label>
+                        <button
+                            onClick={handleSaveLightPreset}
+                            style={{
+                                padding: '5px 10px',
+                                borderRadius: 8,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                border: '1px solid #86efac',
+                                background: 'white',
+                                color: '#166534',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            保存为预设
+                        </button>
+                    </div>
+                    {lightPresets.length > 0 && (
                         <div style={{ marginBottom: 10 }}>
-                            <label className={labelClass}>从预设导入</label>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {apiPresets.map(p => (
+                                {lightPresets.map(p => (
                                     <button key={p.id} onClick={() => {
                                         setLightUrl(p.config.baseUrl);
                                         setLightKey(p.config.apiKey);
                                         setLightModel(p.config.model);
+                                        setLightTestResult(null);
                                     }} style={{
                                         padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
                                         border: '1px solid #bbf7d0', background: 'white', color: '#166534',
@@ -2216,13 +2285,83 @@ export default function MemoryPalaceApp() {
                         </div>
                         <div>
                             <label className={labelClass}>API KEY</label>
-                            <input type="password" value={lightKey} onChange={e => setLightKey(e.target.value)}
-                                placeholder="sk-..." className={inputClass} />
+                            <div style={{ position: 'relative' }}>
+                                <input type={showLightKey ? 'text' : 'password'} value={lightKey} onChange={e => setLightKey(e.target.value)}
+                                    placeholder="sk-..." className={`${inputClass} pr-20`} />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLightKey(v => !v)}
+                                    style={{
+                                        position: 'absolute',
+                                        right: 8,
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        border: 'none',
+                                        background: 'transparent',
+                                        color: '#64748b',
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    {showLightKey ? '隐藏' : '显示'}
+                                </button>
+                            </div>
                         </div>
                         <div>
-                            <label className={labelClass}>MODEL</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <label className={labelClass} style={{ marginBottom: 0 }}>MODEL</label>
+                                <button
+                                    type="button"
+                                    onClick={fetchLightModels}
+                                    disabled={loadingLightModels}
+                                    style={{
+                                        border: 'none',
+                                        background: 'transparent',
+                                        color: '#16a34a',
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        cursor: loadingLightModels ? 'default' : 'pointer',
+                                        opacity: loadingLightModels ? 0.6 : 1,
+                                    }}
+                                >
+                                    {loadingLightModels ? '获取中...' : '刷新模型列表'}
+                                </button>
+                            </div>
                             <input type="text" value={lightModel} onChange={e => setLightModel(e.target.value)}
                                 placeholder="deepseek-ai/DeepSeek-V2.5" className={inputClass} />
+                            {showLightModelList && availableModels.length > 0 && (
+                                <div style={{ marginTop: 8, maxHeight: 160, overflowY: 'auto', background: 'rgba(255,255,255,0.72)', border: '1px solid #d1fae5', borderRadius: 12, padding: 6 }}>
+                                    {availableModels.map(modelName => (
+                                        <button
+                                            key={modelName}
+                                            onClick={() => {
+                                                setLightModel(modelName);
+                                                setShowLightModelList(false);
+                                            }}
+                                            style={{
+                                                width: '100%',
+                                                textAlign: 'left',
+                                                padding: '8px 10px',
+                                                borderRadius: 8,
+                                                border: 'none',
+                                                background: modelName === lightModel ? '#dcfce7' : 'transparent',
+                                                color: modelName === lightModel ? '#166534' : '#475569',
+                                                fontSize: 11,
+                                                fontFamily: 'monospace',
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            {modelName}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            {lightModelStatus && (
+                                <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4, paddingLeft: 4 }}>
+                                    {lightModelStatus}
+                                </div>
+                            )}
                             <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
                                 推荐: deepseek-ai/DeepSeek-V2.5 · Qwen/Qwen2.5-7B-Instruct · GLM-4-Flash
                             </div>

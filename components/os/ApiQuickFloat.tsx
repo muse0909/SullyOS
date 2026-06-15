@@ -298,11 +298,11 @@ const ApiQuickFloat: React.FC = () => {
     [apiPresets]
   );
   const imageApiPresets = useMemo(
-    () => apiPresets.filter((preset) => preset.kind === 'image'),
+    () => apiPresets.filter((preset) => !preset.kind || preset.kind === 'image'),
     [apiPresets]
   );
   const visionApiPresets = useMemo(
-    () => apiPresets.filter((preset) => preset.kind === 'vision'),
+    () => apiPresets.filter((preset) => !preset.kind || preset.kind === 'vision'),
     [apiPresets]
   );
 

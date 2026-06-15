@@ -135,7 +135,6 @@ const Settings: React.FC = () => {
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
-  const [presetKind, setPresetKind] = useState<PresetKind>('main');
   const [modelTarget, setModelTarget] = useState<SettingsModelTarget>('main');
   const [showMainKey, setShowMainKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
@@ -368,7 +367,7 @@ const Settings: React.FC = () => {
   const presetsByKind = useMemo(() => {
       const byKind = (kind: PresetKind) => apiPresets.filter(preset => {
           if (kind === 'main') return !preset.kind || preset.kind === 'main';
-          return preset.kind === kind;
+          return !preset.kind || preset.kind === kind;
       });
       return {
           main: byKind('main'),
@@ -427,57 +426,30 @@ const Settings: React.FC = () => {
           addToast('请输入预设名称', 'error');
           return;
       }
-      if (presetKind === 'vision') {
-        addApiPreset(newPresetName, {
-          baseUrl: localVisionUrl,
-          apiKey: localVisionKey,
-          model: localVisionModel,
-          visionBaseUrl: localVisionUrl,
-          visionApiKey: localVisionKey,
-          visionModel: localVisionModel,
-          imgbbApiKey: localImgbbApiKey,
-        }, 'vision');
-      } else if (presetKind === 'image') {
-        addApiPreset(newPresetName, {
-          baseUrl: localImageUrl,
-          apiKey: localImageKey,
-          model: localImageModel,
-          imageBaseUrl: localImageUrl,
-          imageApiKey: localImageKey,
-          imageModel: localImageModel,
-        }, 'image');
-      } else if (presetKind === 'tts') {
-        addApiPreset(newPresetName, {
-          baseUrl: localVolinkTtsBaseUrl,
-          apiKey: localVolinkTtsApiKey,
-          model: localVolinkTtsModel,
-          ttsProvider: localTtsProvider,
-          volinkTtsBaseUrl: localVolinkTtsBaseUrl,
-          volinkTtsApiKey: localVolinkTtsApiKey,
-          volinkTtsVoice: localVolinkTtsVoice,
-          volinkTtsModel: localVolinkTtsModel,
-        }, 'tts');
-      } else if (presetKind === 'other') {
-        addApiPreset(newPresetName, {
-          baseUrl: '',
-          apiKey: '',
-          model: '',
-          minimaxApiKey: localMiniMaxKey,
-          minimaxGroupId: localMiniMaxGroupId,
-          minimaxRegion: localMiniMaxRegion,
-          aceStepApiKey: localAceStepKey,
-        }, 'other');
-      } else {
-        addApiPreset(newPresetName, {
-          baseUrl: localUrl,
-          apiKey: localKey,
-          model: localModel,
-          stream: localStream,
-          temperature: localTemperature,
-        }, 'main');
-      }
+      addApiPreset(newPresetName, {
+        baseUrl: localUrl,
+        apiKey: localKey,
+        model: localModel,
+        stream: localStream,
+        temperature: localTemperature,
+        visionBaseUrl: localVisionUrl,
+        visionApiKey: localVisionKey,
+        visionModel: localVisionModel,
+        imgbbApiKey: localImgbbApiKey,
+        imageBaseUrl: localImageUrl,
+        imageApiKey: localImageKey,
+        imageModel: localImageModel,
+        ttsProvider: localTtsProvider,
+        volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+        volinkTtsApiKey: localVolinkTtsApiKey,
+        volinkTtsVoice: localVolinkTtsVoice,
+        volinkTtsModel: localVolinkTtsModel,
+        minimaxApiKey: localMiniMaxKey,
+        minimaxGroupId: localMiniMaxGroupId,
+        minimaxRegion: localMiniMaxRegion,
+        aceStepApiKey: localAceStepKey,
+      });
       setNewPresetName('');
-      setPresetKind('main');
       setShowPresetModal(false);
       addToast('预设已保存', 'success');
   };
@@ -1146,7 +1118,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
                 </div>
-                <button onClick={() => { setPresetKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1207,7 +1179,7 @@ const handleSaveTts = () => {
     </div>
     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">语音 TTS</h2>
     </div>
-    <button onClick={() => { setPresetKind('tts'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+    <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
       保存为预设
     </button>
   </div>
@@ -1276,7 +1248,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
                 </div>
-                <button onClick={() => { setPresetKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1326,7 +1298,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
                 </div>
-                <button onClick={() => { setPresetKind('other'); setShowPresetModal(true); }} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1550,7 +1522,7 @@ const handleSaveTts = () => {
 
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
-          <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><div><label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">预设类型</label><div className="grid grid-cols-3 gap-2">{([{ key: 'main', label: '主 API' }, { key: 'vision', label: '识图' }, { key: 'image', label: '生图' }, { key: 'tts', label: '语音' }, { key: 'other', label: '其他 API' }] as const).map(item => (<button key={item.key} type="button" onClick={() => setPresetKind(item.key)} className={`py-2 rounded-xl text-xs font-bold border transition-all ${presetKind === item.key ? 'bg-primary text-white border-primary' : 'bg-white text-slate-600 border-slate-200'}`}>{item.label}</button>))}</div></div></div>
+          <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><p className="text-[11px] text-slate-400 px-1">当前所有 API 配置都会一起保存。</p></div>
       </Modal>
 
       {/* 强制导出 Modal */}

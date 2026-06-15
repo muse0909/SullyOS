@@ -3534,6 +3534,7 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
 // 520 弹窗内嵌的 API 配置面板 —— 配完直接传送进活动，不再绕去设置 App
 const Like520InlineApiSetup: React.FC<{ onDone: () => void; onBack: () => void }> = ({ onDone, onBack }) => {
     const { apiConfig, updateApiConfig, addToast, availableModels, setAvailableModels, apiPresets } = useOS();
+    const mainApiPresets = useMemo(() => apiPresets.filter(preset => !preset.kind || preset.kind === 'main'), [apiPresets]);
 
     const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
     const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -3636,11 +3637,11 @@ const Like520InlineApiSetup: React.FC<{ onDone: () => void; onBack: () => void }
                 </div>
 
                 <div className="px-6 py-4 space-y-4 overflow-y-auto no-scrollbar flex-1">
-                    {apiPresets.length > 0 && (
+                    {mainApiPresets.length > 0 && (
                         <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">我的预设</label>
                             <div className="flex gap-2 flex-wrap">
-                                {apiPresets.map(preset => (
+                                {mainApiPresets.map(preset => (
                                     <button
                                         key={preset.id}
                                         onClick={() => loadPreset(preset)}

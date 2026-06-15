@@ -139,6 +139,11 @@ const onClick = (e: React.MouseEvent) => {
     return q ? availableModels.filter(m => m.toLowerCase().includes(q)) : availableModels;
   }, [modelFilter, availableModels]);
 
+  const mainApiPresets = useMemo(
+    () => apiPresets.filter(preset => !preset.kind || preset.kind === 'main'),
+    [apiPresets]
+  );
+
 
 
   if (isLocked || !isDataLoaded) return null;
@@ -194,11 +199,11 @@ const onClick = (e: React.MouseEvent) => {
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               {/* 预设区 */}
-              {apiPresets.length > 0 && (
+              {mainApiPresets.length > 0 && (
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
                   <div className="flex gap-2 flex-wrap">
-                    {apiPresets.map(preset => {
+                    {mainApiPresets.map(preset => {
                       const active = preset.config.baseUrl === apiConfig.baseUrl &&
                                      preset.config.apiKey === apiConfig.apiKey &&
                                      preset.config.model === apiConfig.model;

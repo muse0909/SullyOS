@@ -2559,6 +2559,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
     const [presetsOpen, setPresetsOpen] = useState(false);   // 折叠「保存的预设」长列表
+    const mainApiPresets = useMemo(() => apiPresets.filter(preset => !preset.kind || preset.kind === 'main'), [apiPresets]);
 
     useEffect(() => {
         void getVRApi().then(setVr);
@@ -2625,18 +2626,18 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                     </div>
                     {follow && <span className="text-[10px] text-sky-300 font-bold shrink-0">✓ 使用中</span>}
                 </button>
-                {apiPresets.length === 0 ? (
+                {mainApiPresets.length === 0 ? (
                     <p className="text-[10.5px] text-white/35 px-1 py-1.5">「设置」里还没有保存的 API 预设。去设置里保存几个模型，这里就能选。</p>
                 ) : (() => {
-                    const activePreset = apiPresets.find(p => sameAs(p.config));
-                    const shown = presetsOpen ? apiPresets : (activePreset ? [activePreset] : []);
+                    const activePreset = mainApiPresets.find(p => sameAs(p.config));
+                    const shown = presetsOpen ? mainApiPresets : (activePreset ? [activePreset] : []);
                     return (
                         <>
                             <button onClick={() => setPresetsOpen(o => !o)}
                                 className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 mb-1.5 text-left active:bg-white/5"
                                 style={{ border: '1px solid rgba(255,255,255,.07)' }}>
                                 <span className="text-[10.5px] text-white/55">保存的预设</span>
-                                <span className="text-[9.5px] text-white/35 rounded-full px-1.5 leading-tight" style={{ background: 'rgba(255,255,255,.08)' }}>{apiPresets.length}</span>
+                                <span className="text-[9.5px] text-white/35 rounded-full px-1.5 leading-tight" style={{ background: 'rgba(255,255,255,.08)' }}>{mainApiPresets.length}</span>
                                 {!presetsOpen && activePreset && <span className="text-[9.5px] text-sky-300/70 truncate">当前 · {activePreset.name}</span>}
                                 <span className="ml-auto text-[10px] text-white/40">{presetsOpen ? '收起' : '展开'}</span>
                             </button>

@@ -13,12 +13,50 @@ import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled a
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
+import type { ApiPreset } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
         <span className="text-slate-500 shrink-0">{label}</span>
         <span className={`text-right ${bad ? 'text-rose-600 font-medium' : 'text-slate-700'}`}>{value}</span>
     </div>
+);
+
+const KEY_INPUT_CLASS = "w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 pr-20 text-sm font-mono focus:bg-white transition-all";
+
+type PresetKind = NonNullable<ApiPreset['kind']>;
+type SettingsModelTarget = 'main' | 'vision' | 'image' | 'tts';
+
+const VisibleKeyInput: React.FC<{
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  visible: boolean;
+  onToggle: () => void;
+  hint?: React.ReactNode;
+  className?: string;
+}> = ({ label, value, onChange, placeholder, visible, onToggle, hint, className }) => (
+  <div className="group">
+    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">{label}</label>
+    <div className="relative">
+      <input
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={className || KEY_INPUT_CLASS}
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100"
+      >
+        {visible ? '隐藏' : '显示'}
+      </button>
+    </div>
+    {hint ? <div className="text-[11px] text-slate-400 mt-1 pl-1">{hint}</div> : null}
+  </div>
 );
 
 const SettingsSection: React.FC<{
@@ -70,19 +108,20 @@ const Settings: React.FC = () => {
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
-const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
-const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
-const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
-const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
+  const [localImgbbApiKey, setLocalImgbbApiKey] = useState(apiConfig.imgbbApiKey || '');
+  const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
+  const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
+  const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
+  const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
-    const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'volink'>(apiConfig.ttsProvider || 'minimax');
-const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.volinkTtsBaseUrl || '');
-const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
-const [localVolinkTtsVoice, setLocalVolinkTtsVoice] = useState(apiConfig.volinkTtsVoice || '');
-const [localVolinkTtsModel, setLocalVolinkTtsModel] = useState(apiConfig.volinkTtsModel || '');
-const [ttsStatusMsg, setTtsStatusMsg] = useState('');
+  const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'volink'>(apiConfig.ttsProvider || 'minimax');
+  const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.volinkTtsBaseUrl || '');
+  const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
+  const [localVolinkTtsVoice, setLocalVolinkTtsVoice] = useState(apiConfig.volinkTtsVoice || '');
+  const [localVolinkTtsModel, setLocalVolinkTtsModel] = useState(apiConfig.volinkTtsModel || '');
+  const [ttsStatusMsg, setTtsStatusMsg] = useState('');
     
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
@@ -96,6 +135,15 @@ const [ttsStatusMsg, setTtsStatusMsg] = useState('');
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
+  const [presetKind, setPresetKind] = useState<PresetKind>('main');
+  const [modelTarget, setModelTarget] = useState<SettingsModelTarget>('main');
+  const [showMainKey, setShowMainKey] = useState(false);
+  const [showVisionKey, setShowVisionKey] = useState(false);
+  const [showImgbbKey, setShowImgbbKey] = useState(false);
+  const [showImageKey, setShowImageKey] = useState(false);
+  const [showVolinkKey, setShowVolinkKey] = useState(false);
+  const [showMiniMaxKey, setShowMiniMaxKey] = useState(false);
+  const [showAceStepKey, setShowAceStepKey] = useState(false);
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
@@ -288,6 +336,7 @@ const [ttsStatusMsg, setTtsStatusMsg] = useState('');
   const [testingApi, setTestingApi] = useState(false);
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
   const [imageStatusMsg, setImageStatusMsg] = useState('');
+  const [ttsModelStatusMsg, setTtsModelStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -296,6 +345,13 @@ const [ttsStatusMsg, setTtsStatusMsg] = useState('');
       setLocalUrl(apiConfig.baseUrl);
       setLocalKey(apiConfig.apiKey);
       setLocalModel(apiConfig.model);
+      setLocalVisionUrl(apiConfig.visionBaseUrl || '');
+      setLocalVisionKey(apiConfig.visionApiKey || '');
+      setLocalVisionModel(apiConfig.visionModel || '');
+      setLocalImgbbApiKey(apiConfig.imgbbApiKey || '');
+      setLocalImageUrl(apiConfig.imageBaseUrl || '');
+      setLocalImageKey(apiConfig.imageApiKey || '');
+      setLocalImageModel(apiConfig.imageModel || '');
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -303,13 +359,59 @@ const [ttsStatusMsg, setTtsStatusMsg] = useState('');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
       setLocalTtsProvider(apiConfig.ttsProvider || 'minimax');
-setLocalVolinkTtsBaseUrl(apiConfig.volinkTtsBaseUrl || '');
-setLocalVolinkTtsApiKey(apiConfig.volinkTtsApiKey || '');
-setLocalVolinkTtsVoice(apiConfig.volinkTtsVoice || '');
-setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
+      setLocalVolinkTtsBaseUrl(apiConfig.volinkTtsBaseUrl || '');
+      setLocalVolinkTtsApiKey(apiConfig.volinkTtsApiKey || '');
+      setLocalVolinkTtsVoice(apiConfig.volinkTtsVoice || '');
+      setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
   }, [apiConfig]);
 
-  const loadPreset = (preset: typeof apiPresets[0]) => {
+  const presetsByKind = useMemo(() => {
+      const byKind = (kind: PresetKind) => apiPresets.filter(preset => {
+          if (kind === 'main') return !preset.kind || preset.kind === 'main';
+          return preset.kind === kind;
+      });
+      return {
+          main: byKind('main'),
+          vision: byKind('vision'),
+          image: byKind('image'),
+          tts: byKind('tts'),
+          other: byKind('other'),
+      };
+  }, [apiPresets]);
+
+  const loadPreset = (preset: typeof apiPresets[0], kind: PresetKind = 'main') => {
+      if (kind === 'vision') {
+          setLocalVisionUrl(preset.config.visionBaseUrl || preset.config.baseUrl || '');
+          setLocalVisionKey(preset.config.visionApiKey || preset.config.apiKey || '');
+          setLocalVisionModel(preset.config.visionModel || preset.config.model || '');
+          setLocalImgbbApiKey(preset.config.imgbbApiKey || '');
+          addToast(`已加载识图预设: ${preset.name}`, 'info');
+          return;
+      }
+      if (kind === 'image') {
+          setLocalImageUrl(preset.config.imageBaseUrl || preset.config.baseUrl || '');
+          setLocalImageKey(preset.config.imageApiKey || preset.config.apiKey || '');
+          setLocalImageModel(preset.config.imageModel || preset.config.model || '');
+          addToast(`已加载生图预设: ${preset.name}`, 'info');
+          return;
+      }
+      if (kind === 'tts') {
+          setLocalTtsProvider(preset.config.ttsProvider || 'volink');
+          setLocalVolinkTtsBaseUrl(preset.config.volinkTtsBaseUrl || preset.config.baseUrl || '');
+          setLocalVolinkTtsApiKey(preset.config.volinkTtsApiKey || preset.config.apiKey || '');
+          setLocalVolinkTtsVoice(preset.config.volinkTtsVoice || '');
+          setLocalVolinkTtsModel(preset.config.volinkTtsModel || preset.config.model || '');
+          addToast(`已加载语音预设: ${preset.name}`, 'info');
+          return;
+      }
+      if (kind === 'other') {
+          setLocalMiniMaxKey(preset.config.minimaxApiKey || '');
+          setLocalMiniMaxGroupId(preset.config.minimaxGroupId || '');
+          setLocalMiniMaxRegion(preset.config.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
+          setLocalAceStepKey(preset.config.aceStepApiKey || '');
+          addToast(`已加载其他 API 预设: ${preset.name}`, 'info');
+          return;
+      }
       setLocalUrl(preset.config.baseUrl);
       setLocalKey(preset.config.apiKey);
       setLocalModel(preset.config.model);
@@ -325,14 +427,57 @@ setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
           addToast('请输入预设名称', 'error');
           return;
       }
-      addApiPreset(newPresetName, {
-        baseUrl: localUrl,
-        apiKey: localKey,
-        model: localModel,
-        stream: localStream,
-        temperature: localTemperature,
-      });
+      if (presetKind === 'vision') {
+        addApiPreset(newPresetName, {
+          baseUrl: localVisionUrl,
+          apiKey: localVisionKey,
+          model: localVisionModel,
+          visionBaseUrl: localVisionUrl,
+          visionApiKey: localVisionKey,
+          visionModel: localVisionModel,
+          imgbbApiKey: localImgbbApiKey,
+        }, 'vision');
+      } else if (presetKind === 'image') {
+        addApiPreset(newPresetName, {
+          baseUrl: localImageUrl,
+          apiKey: localImageKey,
+          model: localImageModel,
+          imageBaseUrl: localImageUrl,
+          imageApiKey: localImageKey,
+          imageModel: localImageModel,
+        }, 'image');
+      } else if (presetKind === 'tts') {
+        addApiPreset(newPresetName, {
+          baseUrl: localVolinkTtsBaseUrl,
+          apiKey: localVolinkTtsApiKey,
+          model: localVolinkTtsModel,
+          ttsProvider: localTtsProvider,
+          volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+          volinkTtsApiKey: localVolinkTtsApiKey,
+          volinkTtsVoice: localVolinkTtsVoice,
+          volinkTtsModel: localVolinkTtsModel,
+        }, 'tts');
+      } else if (presetKind === 'other') {
+        addApiPreset(newPresetName, {
+          baseUrl: '',
+          apiKey: '',
+          model: '',
+          minimaxApiKey: localMiniMaxKey,
+          minimaxGroupId: localMiniMaxGroupId,
+          minimaxRegion: localMiniMaxRegion,
+          aceStepApiKey: localAceStepKey,
+        }, 'other');
+      } else {
+        addApiPreset(newPresetName, {
+          baseUrl: localUrl,
+          apiKey: localKey,
+          model: localModel,
+          stream: localStream,
+          temperature: localTemperature,
+        }, 'main');
+      }
       setNewPresetName('');
+      setPresetKind('main');
       setShowPresetModal(false);
       addToast('预设已保存', 'success');
   };
@@ -356,6 +501,7 @@ setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
+      imgbbApiKey: localImgbbApiKey,
     });
     setVisionStatusMsg('识图配置已保存'); 
     setTimeout(() => setVisionStatusMsg(''), 2000); 
@@ -396,15 +542,15 @@ const handleSaveTts = () => {
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
 
-  const fetchModels = async () => {
-    if (!localUrl) { setStatusMsg('请先填写 URL'); return; }
+  const fetchModelsFor = async (target: SettingsModelTarget, url: string, key: string, setMessage: (message: string) => void) => {
+    if (!url) { setMessage('请先填写 URL'); return; }
     setIsLoadingModels(true);
-    setStatusMsg('正在连接...');
+    setMessage('正在连接...');
     try {
-        const baseUrl = localUrl.replace(/\/+$/, '');
+        const baseUrl = url.replace(/\/+$/, '');
         const response = await fetch(`${baseUrl}/models`, {
             method: 'GET',
-            headers: { 'Authorization': `Bearer ${localKey}`, 'Content-Type': 'application/json' }
+            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
         });
         if (!response.ok) throw new Error(`Status ${response.status}`);
         const data = await safeResponseJson(response);
@@ -413,17 +559,25 @@ const handleSaveTts = () => {
         if (Array.isArray(list)) {
             const models = list.map((m: any) => m.id || m);
             setAvailableModels(models);
-            if (models.length > 0 && !models.includes(localModel)) setLocalModel(models[0]);
-            setStatusMsg(`获取到 ${models.length} 个模型`);
+            if (models.length > 0) {
+              if (target === 'main' && !models.includes(localModel)) setLocalModel(models[0]);
+              if (target === 'vision' && !models.includes(localVisionModel)) setLocalVisionModel(models[0]);
+              if (target === 'image' && !models.includes(localImageModel)) setLocalImageModel(models[0]);
+              if (target === 'tts' && !models.includes(localVolinkTtsModel)) setLocalVolinkTtsModel(models[0]);
+            }
+            setModelTarget(target);
+            setMessage(`获取到 ${models.length} 个模型`);
             setShowModelModal(true); // Open selector immediately
-        } else { setStatusMsg('格式不兼容'); }
+        } else { setMessage('格式不兼容'); }
     } catch (error: any) {
         console.error(error);
-        setStatusMsg('连接失败');
+        setMessage('连接失败');
     } finally {
         setIsLoadingModels(false);
     }
   };
+
+  const fetchModels = async () => fetchModelsFor('main', localUrl, localKey, setStatusMsg);
 
   const handleExport = async (mode: 'text_only' | 'media_only' | 'full') => {
       try {
@@ -919,13 +1073,13 @@ const handleSaveTts = () => {
                     保存为预设
                 </button>
             </div>
-            {apiPresets.length > 0 && (
+            {presetsByKind.main.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
                     <div className="flex gap-2 flex-wrap">
-                        {apiPresets.map(preset => (
+                        {presetsByKind.main.map(preset => (
                             <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-                                <span onClick={() => loadPreset(preset)} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-primary mr-2">{preset.name}</span>
+                                <span onClick={() => loadPreset(preset, 'main')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-primary mr-2">{preset.name}</span>
                                 <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
                                 </button>
@@ -939,10 +1093,7 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
                     <input type="text" value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                 </div>
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                    <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                </div>
+                <VisibleKeyInput label="Key" value={localKey} onChange={setLocalKey} placeholder="sk-..." visible={showMainKey} onToggle={() => setShowMainKey(v => !v)} />
                 <div className="pt-1">
                     <button type="button" onClick={() => setShowApiAdvanced(v => !v)} className="text-[10px] text-slate-300 hover:text-slate-400 transition-colors flex items-center gap-1 pl-1 active:scale-95">
                         <span>高级（不建议修改）</span>
@@ -985,7 +1136,8 @@ const handleSaveTts = () => {
         {/* 4 - 识图配置 */}
         <SettingsSection id="secondaryApi" icon="🖼️" title="识图配置" subtitle="独立识图通道">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
                 <div className="p-2 bg-blue-100/50 rounded-xl text-blue-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
@@ -993,23 +1145,50 @@ const handleSaveTts = () => {
                     </svg>
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
+                </div>
+                <button onClick={() => { setPresetKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    保存为预设
+                </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">当检测到图片时，系统将自动切换到此通道。支持 Gemini / GPT-4o / Claude 3.5 等。</p>
+            {presetsByKind.vision.length > 0 && (
+                <div className="mb-4">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>
+                    <div className="flex gap-2 flex-wrap">
+                        {presetsByKind.vision.map(preset => (
+                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
+                                <span onClick={() => loadPreset(preset, 'vision')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-blue-500 mr-2">{preset.name}</span>
+                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
             <div className="space-y-4">
                 <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型 URL</label><input type="text" value={localVisionUrl} onChange={(e) => setLocalVisionUrl(e.target.value)} placeholder="例如: https://api.openai.com/v1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-                <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型 Key</label><input type="password" value={localVisionKey} onChange={(e) => setLocalVisionKey(e.target.value)} placeholder="填入该地址对应的 API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-                <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识图模型名字 (Model)</label><input type="text" value={localVisionModel} onChange={(e) => setLocalVisionModel(e.target.value)} placeholder="例如: gemini-1.5-flash" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-                <div className="group">
-    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">图床 imgbb API Key</label>
-    <input
-        type="password"
-        value={(apiConfig as any)?.imgbbApiKey || ''}
-onChange={(e) => setLocalImgbbApiKey(e.target.value)}
-        placeholder="imgbb.com 注册后免费获取"
-        className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border-slate-200"
-    />
-    <p className="text-[10px] text-slate-300 mt-1 pl-1">配置后发图自动上传图床转 URL，解决卡顿</p>
-</div>
+                <VisibleKeyInput label="识图模型 Key" value={localVisionKey} onChange={setLocalVisionKey} placeholder="填入该地址对应的 API Key" visible={showVisionKey} onToggle={() => setShowVisionKey(v => !v)} />
+                <div className="pt-1">
+                    <div className="flex justify-between items-center mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">识图模型名字 (Model)</label>
+                        <button onClick={() => fetchModelsFor('vision', localVisionUrl, localVisionKey, setVisionStatusMsg)} disabled={isLoadingModels} className="text-[10px] text-blue-500 font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+                    </div>
+                    <button onClick={() => { setModelTarget('vision'); setShowModelModal(true); }} title={localVisionModel || 'Select Model...'} className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm">
+                        <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}><bdi style={{ direction: 'ltr' }}>{localVisionModel || 'Select Model...'}</bdi></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+                    </button>
+                </div>
+                <VisibleKeyInput
+                    label="图床 imgbb API Key"
+                    value={localImgbbApiKey}
+                    onChange={setLocalImgbbApiKey}
+                    placeholder="imgbb.com 注册后免费获取"
+                    visible={showImgbbKey}
+                    onToggle={() => setShowImgbbKey(v => !v)}
+                    hint="配置后发图自动上传图床转 URL，解决卡顿"
+                    className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
+                />
                 <button onClick={handleSaveVisionApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2">{visionStatusMsg || '保存识图配置'}</button>
                 <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
             </div>
@@ -1018,16 +1197,36 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
 
         {/* 5 - 语音 TTS */}
         <SettingsSection id="tts" icon="🔊" title="语音合成" subtitle="MiniMax / ElevenLabs·通话声线">
-        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
-  <div className="flex items-center gap-2 mb-4">
+<section className="bg-white/80 rounded-3xl p-5 shadow-sm border-white/50">
+  <div className="flex items-center justify-between mb-4">
+    <div className="flex items-center gap-2">
     <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
         <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
       </svg>
     </div>
     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">语音 TTS</h2>
+    </div>
+    <button onClick={() => { setPresetKind('tts'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+      保存为预设
+    </button>
   </div>
   <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 回复自动转语音。选择服务商后填写对应配置，角色页可单独设置声音 ID。</p>
+  {presetsByKind.tts.length > 0 && (
+    <div className="mb-4">
+      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">语音预设</label>
+      <div className="flex gap-2 flex-wrap">
+        {presetsByKind.tts.map(preset => (
+          <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
+            <span onClick={() => loadPreset(preset, 'tts')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-purple-500 mr-2">{preset.name}</span>
+            <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )}
   <div className="space-y-4">
     <div className="group">
       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">TTS 服务商</label>
@@ -1039,9 +1238,20 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
     {localTtsProvider === 'minimax' && (<div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3"><p className="text-[11px] text-slate-500 leading-relaxed">使用下方「其他 API」里的 MiniMax Key / Group ID / 服务器配置。角色声音 ID 在角色编辑页设置。</p></div>)}
     {localTtsProvider === 'volink' && (<>
         <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Volink Base URL</label><input type="text" value={localVolinkTtsBaseUrl} onChange={(e) => setLocalVolinkTtsBaseUrl(e.target.value)} placeholder="https://api.volink.ai（留空用默认）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-        <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Volink API Key</label><input type="password" value={localVolinkTtsApiKey} onChange={(e) => setLocalVolinkTtsApiKey(e.target.value)} placeholder="Volink API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
+        <VisibleKeyInput label="Volink API Key" value={localVolinkTtsApiKey} onChange={setLocalVolinkTtsApiKey} placeholder="Volink API Key" visible={showVolinkKey} onToggle={() => setShowVolinkKey(v => !v)} />
         <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">默认声音 ID</label><input type="text" value={localVolinkTtsVoice} onChange={(e) => setLocalVolinkTtsVoice(e.target.value)} placeholder="从 Volink 账户复制声音 ID" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /><p className="text-[11px] text-slate-400 mt-1 pl-1">角色单独设置了声音 ID 时优先用角色的，否则用这里的默认值。</p></div>
-        <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">模型 (可选)</label><input type="text" value={localVolinkTtsModel} onChange={(e) => setLocalVolinkTtsModel(e.target.value)} placeholder="tts-1（留空用默认）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /><p className="text-[11px] text-slate-400 mt-1 pl-1">例如 tts-1、tts-1-hd、gpt-4o-mini-tts，具体看 Volink 账户支持的模型。</p></div>
+        <div className="group">
+          <div className="flex justify-between items-center mb-1.5 pl-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">模型 (可选)</label>
+            <button onClick={() => fetchModelsFor('tts', localVolinkTtsBaseUrl, localVolinkTtsApiKey, setTtsModelStatusMsg)} disabled={isLoadingModels} className="text-[10px] text-purple-500 font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+          </div>
+          <button onClick={() => { setModelTarget('tts'); setShowModelModal(true); }} title={localVolinkTtsModel || 'Select Model...'} className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm">
+            <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}><bdi style={{ direction: 'ltr' }}>{localVolinkTtsModel || 'tts-1（留空用默认）'}</bdi></span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+          </button>
+          <p className="text-[11px] text-slate-400 mt-1 pl-1">例如 tts-1、tts-1-hd、gpt-4o-mini-tts，具体看 Volink 账户支持的模型。</p>
+          {ttsModelStatusMsg ? <p className="text-[10px] text-slate-400 mt-1 pl-1">{ttsModelStatusMsg}</p> : null}
+        </div>
       </>)}
   </div>
   <button onClick={handleSaveTts} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-4">{ttsStatusMsg || '保存语音配置'}</button>
@@ -1057,19 +1267,48 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
         <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="NAI / OpenAI·分离风格"
           statusText={apiConfig.imageBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
                 <div className="p-2 bg-purple-100/50 rounded-xl text-purple-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                         <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
                     </svg>
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
+                </div>
+                <button onClick={() => { setPresetKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    保存为预设
+                </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。支持 GPT Image / DALL·E 3 等图像生成模型。</p>
+            {presetsByKind.image.length > 0 && (
+                <div className="mb-4">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
+                    <div className="flex gap-2 flex-wrap">
+                        {presetsByKind.image.map(preset => (
+                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
+                                <span onClick={() => loadPreset(preset, 'image')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-purple-500 mr-2">{preset.name}</span>
+                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
             <div className="space-y-4">
                 <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型 URL</label><input type="text" value={localImageUrl} onChange={(e) => setLocalImageUrl(e.target.value)} placeholder="例如: https://api.openai.com/v1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-                <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型 Key</label><input type="password" value={localImageKey} onChange={(e) => setLocalImageKey(e.target.value)} placeholder="填入该地址对应的 API Key" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
-                <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图模型名字 (Model)</label><input type="text" value={localImageModel} onChange={(e) => setLocalImageModel(e.target.value)} placeholder="例如: gpt-image-1" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /></div>
+                <VisibleKeyInput label="生图模型 Key" value={localImageKey} onChange={setLocalImageKey} placeholder="填入该地址对应的 API Key" visible={showImageKey} onToggle={() => setShowImageKey(v => !v)} />
+                <div className="group">
+                    <div className="flex justify-between items-center mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">生图模型名字 (Model)</label>
+                        <button onClick={() => fetchModelsFor('image', localImageUrl, localImageKey, setImageStatusMsg)} disabled={isLoadingModels} className="text-[10px] text-purple-500 font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+                    </div>
+                    <button onClick={() => { setModelTarget('image'); setShowModelModal(true); }} title={localImageModel || 'Select Model...'} className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm">
+                        <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}><bdi style={{ direction: 'ltr' }}>{localImageModel || 'Select Model...'}</bdi></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+                    </button>
+                </div>
                 <button onClick={handleSaveImageApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-2">{imageStatusMsg || '保存生图配置'}</button>
             </div>
         </section>
@@ -1078,15 +1317,35 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
         {/* 8 - 其他 API */}
         <SettingsSection id="proactive" icon="🤖" title="其他API" subtitle="MiniMax / Replicate·独立API">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
                 <div className="p-2 bg-amber-100/50 rounded-xl text-amber-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
                     </svg>
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
+                </div>
+                <button onClick={() => { setPresetKind('other'); setShowPresetModal(true); }} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    保存为预设
+                </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。</p>
+            {presetsByKind.other.length > 0 && (
+                <div className="mb-4">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">其他 API 预设</label>
+                    <div className="flex gap-2 flex-wrap">
+                        {presetsByKind.other.map(preset => (
+                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
+                                <span onClick={() => loadPreset(preset, 'other')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-amber-500 mr-2">{preset.name}</span>
+                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
             <div className="space-y-4">
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>
@@ -1096,14 +1355,17 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">{localMiniMaxRegion === 'overseas' ? '海外站（api.minimax.io）— 请使用海外账号签发的 Key。' : '国服（api.minimaxi.com）— 默认，适配国内账号。'}</p>
                 </div>
-                <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label><input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /><p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p></div>
+                <VisibleKeyInput label="MiniMax Key (可选)" value={localMiniMaxKey} onChange={setLocalMiniMaxKey} placeholder="MiniMax API Secret（留空则复用 Key）" visible={showMiniMaxKey} onToggle={() => setShowMiniMaxKey(v => !v)} hint="电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。" />
                 <div className="group"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label><input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /><p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p></div>
                 <div className="group">
                     <div className="flex items-center justify-between mb-1.5 pl-1">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">写歌 · Replicate Token (可选)</label>
                         <button type="button" onClick={() => setShowAceStepGuide(v => !v)} className="text-[10px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all flex items-center gap-1">{showAceStepGuide ? '收起' : '怎么拿？'}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 transition-transform ${showAceStepGuide ? 'rotate-180' : ''}`}><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg></button>
                     </div>
-                    <input type="password" value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <div className="relative">
+                      <input type={showAceStepKey ? 'text' : 'password'} value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 pr-20 text-sm font-mono focus:bg-white transition-all" />
+                      <button type="button" onClick={() => setShowAceStepKey(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100">{showAceStepKey ? '隐藏' : '显示'}</button>
+                    </div>
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">填了之后写歌 App 的歌词页能一键调 ACE-Step 出真人声整首歌（约 ¥0.1/首，走 sfworker 代理免梯子）。</p>
                     {showAceStepGuide && (
                         <div className="mt-3 rounded-2xl overflow-hidden border border-rose-200/60 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 shadow-sm animate-slide-down">
@@ -1272,17 +1534,23 @@ onChange={(e) => setLocalImgbbApiKey(e.target.value)}
         {(() => {
             const { filtered, commonPrefix } = modelPickerView;
             return (<div className="space-y-3 p-1">
-                    <div className="flex gap-2"><input type="text" value={localModel} onChange={(e) => setLocalModel(e.target.value)} placeholder="手动输入模型名称..." className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all" /><button onClick={() => setShowModelModal(false)} className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all">确定</button></div>
+                    <div className="flex gap-2"><input type="text" value={modelTarget === 'vision' ? localVisionModel : modelTarget === 'image' ? localImageModel : modelTarget === 'tts' ? localVolinkTtsModel : localModel} onChange={(e) => {
+                      const value = e.target.value;
+                      if (modelTarget === 'vision') setLocalVisionModel(value);
+                      else if (modelTarget === 'image') setLocalImageModel(value);
+                      else if (modelTarget === 'tts') setLocalVolinkTtsModel(value);
+                      else setLocalModel(value);
+                    }} placeholder="手动输入模型名称..." className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all" /><button onClick={() => setShowModelModal(false)} className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all">确定</button></div>
                     {availableModels.length > 0 && (<div className="relative"><input type="text" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} placeholder={`🔍 搜索 ${availableModels.length} 个模型...`} className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-primary focus:bg-white transition-all" />{modelFilter && (<button onClick={() => setModelFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs px-2">×</button>)}</div>)}
                     {commonPrefix && (<div className="text-[10px] text-slate-400 px-1 flex items-center gap-1 flex-wrap"><span>共同前缀:</span><code className="font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded break-all">{commonPrefix}</code><span className="text-slate-300">(下方已弱化显示)</span></div>)}
-                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">{filtered.length > 0 ? filtered.map(m => { const suffix = commonPrefix && m.startsWith(commonPrefix) ? m.slice(commonPrefix.length) : m; const selected = m === localModel; return (<button key={m} onClick={() => { setLocalModel(m); setShowModelModal(false); }} title={m} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}><span className="break-all min-w-0 flex-1 leading-relaxed">{commonPrefix && suffix !== m && (<span className={selected ? 'text-primary/40 font-normal' : 'text-slate-400 font-normal'}>{commonPrefix}</span>)}<span>{suffix}</span></span>{selected && <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0"></div>}</button>); }) : (<div className="text-center text-slate-400 py-8 text-xs">{availableModels.length === 0 ? '列表为空，可手动输入或点击"刷新模型列表"拉取' : `没有匹配 "${modelFilter}" 的模型`}</div>)}</div>
+                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">{filtered.length > 0 ? filtered.map(m => { const suffix = commonPrefix && m.startsWith(commonPrefix) ? m.slice(commonPrefix.length) : m; const currentModel = modelTarget === 'vision' ? localVisionModel : modelTarget === 'image' ? localImageModel : modelTarget === 'tts' ? localVolinkTtsModel : localModel; const selected = m === currentModel; return (<button key={m} onClick={() => { if (modelTarget === 'vision') setLocalVisionModel(m); else if (modelTarget === 'image') setLocalImageModel(m); else if (modelTarget === 'tts') setLocalVolinkTtsModel(m); else setLocalModel(m); setShowModelModal(false); }} title={m} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}><span className="break-all min-w-0 flex-1 leading-relaxed">{commonPrefix && suffix !== m && (<span className={selected ? 'text-primary/40 font-normal' : 'text-slate-400 font-normal'}>{commonPrefix}</span>)}<span>{suffix}</span></span>{selected && <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0"></div>}</button>); }) : (<div className="text-center text-slate-400 py-8 text-xs">{availableModels.length === 0 ? '列表为空，可手动输入或点击"刷新模型列表"拉取' : `没有匹配 "${modelFilter}" 的模型`}</div>)}</div>
                 </div>);
         })()}
       </Modal>
 
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
-          <div className="space-y-2"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /></div>
+          <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><div><label className="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">预设类型</label><div className="grid grid-cols-3 gap-2">{([{ key: 'main', label: '主 API' }, { key: 'vision', label: '识图' }, { key: 'image', label: '生图' }, { key: 'tts', label: '语音' }, { key: 'other', label: '其他 API' }] as const).map(item => (<button key={item.key} type="button" onClick={() => setPresetKind(item.key)} className={`py-2 rounded-xl text-xs font-bold border transition-all ${presetKind === item.key ? 'bg-primary text-white border-primary' : 'bg-white text-slate-600 border-slate-200'}`}>{item.label}</button>))}</div></div></div>
       </Modal>
 
       {/* 强制导出 Modal */}

@@ -225,6 +225,7 @@ export interface ApiPreset {
   id: string;
   name: string;
   config: APIConfig;
+  kind?: 'main' | 'vision' | 'image' | 'tts' | 'other' | 'emotion' | 'memoryPalaceLight';
 }
 
 export interface CharacterBuff {

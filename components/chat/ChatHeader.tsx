@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
-import { CharacterProfile, CharacterBuff } from '../../types';
+import { CharacterProfile, CharacterBuff, ApiPreset } from '../../types';
 
 interface TokenBreakdown {
     prompt: number;
@@ -24,7 +24,7 @@ interface ChatHeaderProps {
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
     onTriggerAI: () => void;
-        apiPresets?: { id: string; name: string; config: any }[];
+    apiPresets?: ApiPreset[];
     currentApiName?: string;
     onSwitchPreset?: (preset: any) => void;
     onShowCharsPanel: () => void;
@@ -74,6 +74,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
     chromeStyle = 'soft',
 }) => {
     const buffs: CharacterBuff[] = activeCharacter.activeBuffs || [];
+    const mainApiPresets = apiPresets.filter(preset => !preset.kind || preset.kind === 'main');
     const [openBuff, setOpenBuff] = useState<CharacterBuff | null>(null);
     const [isBuffListExpanded, setIsBuffListExpanded] = useState(false);
     const [confirmDeleteBuff, setConfirmDeleteBuff] = useState<CharacterBuff | null>(null);
@@ -263,10 +264,10 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
     </button>
     <div id="api-preset-panel" className="hidden absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-2 z-50">
         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">切换 API</div>
-        {apiPresets.length === 0 ? (
+        {mainApiPresets.length === 0 ? (
             <div className="text-xs text-slate-400 px-2 py-3 text-center">暂无预设</div>
         ) : (
-            apiPresets.map(preset => (
+            mainApiPresets.map(preset => (
                 <button
                     key={preset.id}
                     onClick={() => {

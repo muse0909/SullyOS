@@ -109,7 +109,7 @@ interface ChatModalsProps {
     onForceVectorize?: () => void;
     // Emotion (embedded under schedule modal, synced on/off with scheduleStyle)
     apiPresets?: ApiPreset[];
-    onAddApiPreset?: (name: string, config: APIConfig) => void;
+    onAddApiPreset?: (name: string, config: APIConfig, kind?: ApiPreset['kind']) => void;
     onSaveEmotion?: (config: NonNullable<CharacterProfile['emotionConfig']>) => void;
     onClearBuffs?: () => void;
 }

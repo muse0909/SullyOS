@@ -16,6 +16,8 @@ interface DateSettingsProps {
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const { updateCharacter, addToast, customThemes } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const defaultBubbleOpacity = char.dateDefaultBubbleOpacity ?? 0.15;
+    const defaultBubbleFontSize = char.dateDefaultBubbleFontSize ?? 14;
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
@@ -547,6 +549,46 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
       )}
     </div>
     <p className="text-xs text-slate-400 mt-1">从气泡工坊选择已保存的预设。</p>
+    <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-100 p-3 space-y-4">
+      <button
+        onClick={() => updateCharacter(char.id, { dateLongformBubblePresetId: undefined })}
+        className={`w-full px-4 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 text-left ${
+          !char.dateLongformBubblePresetId
+            ? 'border-primary bg-white text-slate-800 shadow-sm'
+            : 'border-slate-200 bg-white/70 text-slate-600'
+        }`}
+      >
+        默认磨玻璃气泡
+      </button>
+      <div>
+        <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-2">
+          <span>磨玻璃透明度</span>
+          <span>{Math.round(defaultBubbleOpacity * 100)}%</span>
+        </div>
+        <input
+          type="range"
+          min="5"
+          max="45"
+          value={Math.round(defaultBubbleOpacity * 100)}
+          onChange={(e) => updateCharacter(char.id, { dateDefaultBubbleOpacity: Number(e.target.value) / 100 })}
+          className="w-full accent-primary"
+        />
+      </div>
+      <div>
+        <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-2">
+          <span>字体大小</span>
+          <span>{defaultBubbleFontSize}px</span>
+        </div>
+        <input
+          type="range"
+          min="12"
+          max="20"
+          value={defaultBubbleFontSize}
+          onChange={(e) => updateCharacter(char.id, { dateDefaultBubbleFontSize: Number(e.target.value) })}
+          className="w-full accent-primary"
+        />
+      </div>
+    </div>
     <div className="mt-4">
       {customThemes && customThemes.length > 0 ? (
         <div className="flex flex-wrap gap-2">

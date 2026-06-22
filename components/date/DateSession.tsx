@@ -127,6 +127,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     
     // Interaction State
     const [input, setInput] = useState('');
+    const [lastSentInput, setLastSentInput] = useState('');
     const [showInputBox, setShowInputBox] = useState(false);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const [showModeSwitch, setShowModeSwitch] = useState(false);
@@ -454,9 +455,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleSend = async () => {
-        if (!input.trim() || isTyping) return;
-        const text = input.trim();
+        const text = input.trim() || lastSentInput.trim();
+        if (!text || isTyping) return;
         setInput('');
+        setLastSentInput(text);
         setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
@@ -666,6 +668,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                     const isUser = msg.role === 'user';
                     const useBubble = longformTheme === 'long-bubble';
                     const bubbleStyle = char.dateBubbleThemeStyle || 'dark';
+                    const defaultBubbleOpacity = char.dateDefaultBubbleOpacity ?? 0.15;
+                    const defaultBubbleFontSize = char.dateDefaultBubbleFontSize ?? 14;
+                    const defaultBubbleStyle: React.CSSProperties = {
+                      backgroundColor: `rgba(255,255,255,${defaultBubbleOpacity})`,
+                      color: bubbleStyle === 'light' ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
+                      border: `1px solid rgba(255,255,255,${Math.min(defaultBubbleOpacity + 0.05, 0.35)})`,
+                      backdropFilter: 'blur(12px)',
+                      WebkitBackdropFilter: 'blur(12px)',
+                      fontSize: `${defaultBubbleFontSize}px`,
+                    };
                     
                     // 获取气泡预设样式（如果已选择）- AI和用户都获取
                     let bubblePresetStyle: any = null;
@@ -695,10 +707,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                           )}
                           <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
                             <div
-                              className={`px-5 py-4 text-sm leading-relaxed shadow-sm rounded-3xl ${bubblePresetStyle ? '' : 'bg-white/15 text-white/90 backdrop-blur-md border border-white/20'}`}
+                              className={`px-5 py-4 leading-relaxed shadow-sm rounded-3xl ${bubblePresetStyle ? '' : ''}`}
                               style={{
                                 wordBreak: 'break-word',
                                 whiteSpace: 'pre-wrap',
+                                ...(!bubblePresetStyle ? defaultBubbleStyle : {}),
                                 ...(bubblePresetStyle ? {
                                   backgroundColor: isUser
                                     ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
@@ -711,6 +724,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                   opacity: bubblePresetStyle.opacity ?? 1,
                                   backdropFilter: 'blur(12px)',
                                   WebkitBackdropFilter: 'blur(12px)',
+                                  fontSize: `${defaultBubbleFontSize}px`,
                                 } : {})
                               }}
                             >
@@ -719,7 +733,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                           </div>
                           {isUser && (
                             <div className="w-8 h-8 rounded-full shrink-0 bg-slate-300 flex items-center justify-center text-xs text-slate-600 self-start mt-1">
-                              我
+                              {userProfile.avatar ? (
+                                <img src={userProfile.avatar} alt="" className="w-full h-full rounded-full object-cover" />
+                              ) : '我'}
                             </div>
                           )}
                         </div>
@@ -740,10 +756,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onMouseLeave={handleMsgTouchEnd}
                       >
                         <div
-                          className={`px-5 py-4 rounded-3xl text-sm leading-relaxed shadow-sm ${bubblePresetStyle ? '' : 'bg-white/15 text-white/95 backdrop-blur-md border border-white/20'}`}
+                          className={`px-5 py-4 rounded-3xl leading-relaxed shadow-sm ${bubblePresetStyle ? '' : ''}`}
                           style={{
                             wordBreak: 'break-word',
                             whiteSpace: 'pre-wrap',
+                            ...(!bubblePresetStyle ? defaultBubbleStyle : {}),
                             ...(bubblePresetStyle ? {
                               backgroundColor: isUser
                                 ? (bubblePresetStyle.userBgColor || bubblePresetStyle.backgroundColor || 'rgba(255,255,255,0.15)')
@@ -756,6 +773,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                               opacity: bubblePresetStyle.opacity ?? 1,
                               backdropFilter: 'blur(12px)',
                               WebkitBackdropFilter: 'blur(12px)',
+                              fontSize: `${defaultBubbleFontSize}px`,
                             } : {})
                           }}
                         >
@@ -1003,16 +1021,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}
+                    enterKeyHint="enter"
                     className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-2 text-white placeholder:text-white/30"
                     style={{ maxHeight: '88px', overflowY: 'auto' }}
                   />
                   <button
                     onClick={handleSend}
-                    disabled={!input.trim() || isTyping}
+                    disabled={(!input.trim() && !lastSentInput.trim()) || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">

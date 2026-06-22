@@ -189,7 +189,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '视觉主题' : '长文主题'}</span>
+                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '主题设置'}</span>
                     <div className="w-8"></div>
                 </div>
                 <div className="flex gap-2">
@@ -235,7 +235,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                       {(char.dateLongformTheme || 'half-novel') === 'half-novel' ? (
                         <>
                           <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[85%]">
-                            这是半小说式的气泡预览效果，背景渐变淡出...
+                            这是半屏小说的气泡预览效果，背景渐变淡出...
                           </div>
                           <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2 text-white/90 text-xs max-w-[70%] ml-auto">
                             用户消息预览
@@ -246,7 +246,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                           <div className="flex gap-2 items-start">
                             <div className="w-6 h-6 rounded-full bg-slate-400 shrink-0" />
                             <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[80%]">
-                              长文气泡式预览，头像在顶部显示...
+                              长文气泡预览，头像在顶部显示...
                             </div>
                           </div>
                           <div className="flex gap-2 items-start justify-end">
@@ -521,7 +521,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
-        半小说式
+        半屏小说
       </button>
       <button
         onClick={() => updateCharacter(char.id, { dateLongformTheme: 'long-bubble' })}
@@ -531,7 +531,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
-        长文气泡式
+        长文气泡
       </button>
     </div>
   </section>

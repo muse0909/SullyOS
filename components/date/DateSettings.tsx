@@ -189,7 +189,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '主题设置'}</span>
+                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '主题设置' : ''}</span>
                     <div className="w-8"></div>
                 </div>
                 <div className="flex gap-2">

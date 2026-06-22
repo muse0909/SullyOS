@@ -878,6 +878,10 @@ export interface CharacterProfile {
   
   dateBackground?: string;
   dateBubbleThemeStyle?: 'light' | 'dark'; // 长文气泡主题（亮色/暗色）
+  dateLongformTheme?: 'half-novel' | 'long-bubble';
+  dateLongformBubblePresetId?: string;
+  dateDefaultBubbleOpacity?: number;
+  dateDefaultBubbleFontSize?: number;
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)

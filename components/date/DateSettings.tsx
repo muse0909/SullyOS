@@ -16,6 +16,16 @@ interface DateSettingsProps {
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const { updateCharacter, addToast, customThemes } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const defaultBubbleOpacity = char.dateDefaultBubbleOpacity ?? 0.15;
+    const defaultBubbleFontSize = char.dateDefaultBubbleFontSize ?? 14;
+    const defaultPreviewBubbleStyle: React.CSSProperties = {
+        backgroundColor: `rgba(255,255,255,${defaultBubbleOpacity})`,
+        color: 'rgba(255,255,255,0.92)',
+        border: `1px solid rgba(255,255,255,${Math.min(defaultBubbleOpacity + 0.05, 1)})`,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        fontSize: `${defaultBubbleFontSize}px`,
+    };
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
@@ -187,7 +197,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '视觉主题' : '长文主题'}</span>
+                    <span className="font-bold text-slate-700">{settingsTab === 'visual' ? '' : '主题设置'}</span>
                     <div className="w-8"></div>
                 </div>
                 <div className="flex gap-2">
@@ -232,10 +242,12 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     >
                       {(char.dateLongformTheme || 'half-novel') === 'half-novel' ? (
                         <>
-                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[85%]">
-                            这是半小说式的气泡预览效果，背景渐变淡出...
+                          <div className="rounded-2xl px-4 py-3 max-w-[85%]"
+                            style={defaultPreviewBubbleStyle}>
+                            这是半屏小说的气泡预览效果，背景渐变淡出...
                           </div>
-                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2 text-white/90 text-xs max-w-[70%] ml-auto">
+                          <div className="rounded-2xl px-4 py-2 max-w-[70%] ml-auto"
+                            style={defaultPreviewBubbleStyle}>
                             用户消息预览
                           </div>
                         </>
@@ -243,12 +255,14 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         <>
                           <div className="flex gap-2 items-start">
                             <div className="w-6 h-6 rounded-full bg-slate-400 shrink-0" />
-                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[80%]">
-                              长文气泡式预览，头像在顶部显示...
+                            <div className="rounded-2xl px-4 py-3 max-w-[80%]"
+                              style={defaultPreviewBubbleStyle}>
+                              长文气泡预览，头像在顶部显示...
                             </div>
                           </div>
                           <div className="flex gap-2 items-start justify-end">
-                            <div className="bg-primary/80 rounded-2xl px-4 py-2 text-white text-xs max-w-[70%]">
+                            <div className="rounded-2xl px-4 py-2 max-w-[70%]"
+                              style={defaultPreviewBubbleStyle}>
                               用户消息预览
                             </div>
                             <div className="w-6 h-6 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-[8px] text-slate-600">我</div>
@@ -519,7 +533,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
-        半小说式
+        半屏小说
       </button>
       <button
         onClick={() => updateCharacter(char.id, { dateLongformTheme: 'long-bubble' })}
@@ -529,7 +543,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
-        长文气泡式
+        长文气泡
       </button>
     </div>
   </section>
@@ -547,6 +561,46 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
       )}
     </div>
     <p className="text-xs text-slate-400 mt-1">从气泡工坊选择已保存的预设。</p>
+    <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-100 p-3 space-y-4">
+      <button
+        onClick={() => updateCharacter(char.id, { dateLongformBubblePresetId: undefined })}
+        className={`w-full px-4 py-3 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 text-left ${
+          !char.dateLongformBubblePresetId
+            ? 'border-primary bg-white text-slate-800 shadow-sm'
+            : 'border-slate-200 bg-white/70 text-slate-600'
+        }`}
+      >
+        默认磨玻璃气泡
+      </button>
+      <div>
+        <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-2">
+          <span>磨玻璃透明度</span>
+          <span>{Math.round(defaultBubbleOpacity * 100)}%</span>
+        </div>
+        <input
+          type="range"
+          min="1"
+          max="100"
+          value={Math.round(defaultBubbleOpacity * 100)}
+          onChange={(e) => updateCharacter(char.id, { dateDefaultBubbleOpacity: Number(e.target.value) / 100 })}
+          className="w-full accent-primary"
+        />
+      </div>
+      <div>
+        <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-2">
+          <span>字体大小</span>
+          <span>{defaultBubbleFontSize}px</span>
+        </div>
+        <input
+          type="range"
+          min="12"
+          max="20"
+          value={defaultBubbleFontSize}
+          onChange={(e) => updateCharacter(char.id, { dateDefaultBubbleFontSize: Number(e.target.value) })}
+          className="w-full accent-primary"
+        />
+      </div>
+    </div>
     <div className="mt-4">
       {customThemes && customThemes.length > 0 ? (
         <div className="flex flex-wrap gap-2">

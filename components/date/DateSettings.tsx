@@ -18,6 +18,14 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const defaultBubbleOpacity = char.dateDefaultBubbleOpacity ?? 0.15;
     const defaultBubbleFontSize = char.dateDefaultBubbleFontSize ?? 14;
+    const defaultPreviewBubbleStyle: React.CSSProperties = {
+        backgroundColor: `rgba(255,255,255,${defaultBubbleOpacity})`,
+        color: 'rgba(255,255,255,0.92)',
+        border: `1px solid rgba(255,255,255,${Math.min(defaultBubbleOpacity + 0.05, 1)})`,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        fontSize: `${defaultBubbleFontSize}px`,
+    };
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
@@ -234,10 +242,12 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     >
                       {(char.dateLongformTheme || 'half-novel') === 'half-novel' ? (
                         <>
-                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[85%]">
+                          <div className="rounded-2xl px-4 py-3 max-w-[85%]"
+                            style={defaultPreviewBubbleStyle}>
                             这是半屏小说的气泡预览效果，背景渐变淡出...
                           </div>
-                          <div className="bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2 text-white/90 text-xs max-w-[70%] ml-auto">
+                          <div className="rounded-2xl px-4 py-2 max-w-[70%] ml-auto"
+                            style={defaultPreviewBubbleStyle}>
                             用户消息预览
                           </div>
                         </>
@@ -245,12 +255,14 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         <>
                           <div className="flex gap-2 items-start">
                             <div className="w-6 h-6 rounded-full bg-slate-400 shrink-0" />
-                            <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 text-white/90 text-xs max-w-[80%]">
+                            <div className="rounded-2xl px-4 py-3 max-w-[80%]"
+                              style={defaultPreviewBubbleStyle}>
                               长文气泡预览，头像在顶部显示...
                             </div>
                           </div>
                           <div className="flex gap-2 items-start justify-end">
-                            <div className="bg-primary/80 rounded-2xl px-4 py-2 text-white text-xs max-w-[70%]">
+                            <div className="rounded-2xl px-4 py-2 max-w-[70%]"
+                              style={defaultPreviewBubbleStyle}>
                               用户消息预览
                             </div>
                             <div className="w-6 h-6 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-[8px] text-slate-600">我</div>
@@ -567,8 +579,8 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         </div>
         <input
           type="range"
-          min="5"
-          max="45"
+          min="1"
+          max="100"
           value={Math.round(defaultBubbleOpacity * 100)}
           onChange={(e) => updateCharacter(char.id, { dateDefaultBubbleOpacity: Number(e.target.value) / 100 })}
           className="w-full accent-primary"

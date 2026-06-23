@@ -8,10 +8,9 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
-import { processImage } from '../utils/file';
+import { processImage, saveRemoteImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
-import { saveRemoteImage } from '../utils/saveRemoteImage';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;

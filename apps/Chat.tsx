@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
-import { processImage } from '../utils/file';
+import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
@@ -21,7 +21,6 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { saveRemoteImage } from '../utils/saveRemoteImage';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 

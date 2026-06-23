@@ -197,7 +197,6 @@ const Settings: React.FC = () => {
   const [openSectionId, setOpenSectionId] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
-  const [presetSaveKind, setPresetSaveKind] = useState<PresetKind>('main');
   const [modelTarget, setModelTarget] = useState<SettingsModelTarget>('main');
   const [showMainKey, setShowMainKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
@@ -428,44 +427,38 @@ const Settings: React.FC = () => {
       setLocalVolinkTtsModel(apiConfig.volinkTtsModel || '');
   }, [apiConfig]);
 
-  const presetsByKind = useMemo(() => {
-      const byKind = (kind: PresetKind) => apiPresets.filter(preset => {
-          if (kind === 'main') return preset.kind === 'main';
-          return preset.kind === kind;
-      });
-      return {
-          main: byKind('main'),
-          vision: byKind('vision'),
-          image: byKind('image'),
-          tts: byKind('tts'),
-          other: byKind('other'),
-      };
-  }, [apiPresets]);
+  const sharedApiPresets = useMemo(() => apiPresets, [apiPresets]);
 
   const loadPreset = (preset: typeof apiPresets[0], kind: PresetKind = 'main') => {
     const c = preset.config;
     if (kind === 'vision') {
-      setLocalVisionUrl(c.visionBaseUrl || '');
-      setLocalVisionKey(c.visionApiKey || '');
-      setLocalVisionModel(c.visionModel || '');
+      const visionBaseUrl = c.visionBaseUrl || c.baseUrl || '';
+      const visionApiKey = c.visionApiKey || c.apiKey || '';
+      const visionModel = c.visionModel || c.model || '';
+      setLocalVisionUrl(visionBaseUrl);
+      setLocalVisionKey(visionApiKey);
+      setLocalVisionModel(visionModel);
       setLocalImgbbApiKey(c.imgbbApiKey || '');
       updateApiConfig({
-        visionBaseUrl: c.visionBaseUrl || '',
-        visionApiKey: c.visionApiKey || '',
-        visionModel: c.visionModel || '',
+        visionBaseUrl,
+        visionApiKey,
+        visionModel,
         imgbbApiKey: c.imgbbApiKey || '',
       });
       addToast(`已加载识图预设: ${preset.name}`, 'info');
       return;
     }
     if (kind === 'image') {
-      setLocalImageUrl(c.imageBaseUrl || '');
-      setLocalImageKey(c.imageApiKey || '');
-      setLocalImageModel(c.imageModel || '');
+      const imageBaseUrl = c.imageBaseUrl || c.baseUrl || '';
+      const imageApiKey = c.imageApiKey || c.apiKey || '';
+      const imageModel = c.imageModel || c.model || '';
+      setLocalImageUrl(imageBaseUrl);
+      setLocalImageKey(imageApiKey);
+      setLocalImageModel(imageModel);
       updateApiConfig({
-        imageBaseUrl: c.imageBaseUrl || '',
-        imageApiKey: c.imageApiKey || '',
-        imageModel: c.imageModel || '',
+        imageBaseUrl,
+        imageApiKey,
+        imageModel,
       });
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
@@ -500,16 +493,18 @@ const Settings: React.FC = () => {
       addToast(`已加载其他 API 预设: ${preset.name}`, 'info');
       return;
     }
-    // main
-    setLocalUrl(c.baseUrl || '');
-    setLocalKey(c.apiKey || '');
-    setLocalModel(c.model || '');
+    const baseUrl = c.baseUrl || c.imageBaseUrl || c.visionBaseUrl || '';
+    const apiKey = c.apiKey || c.imageApiKey || c.visionApiKey || '';
+    const model = c.model || c.imageModel || c.visionModel || '';
+    setLocalUrl(baseUrl);
+    setLocalKey(apiKey);
+    setLocalModel(model);
     setLocalStream(c.stream === true);
     setLocalTemperature(typeof c.temperature === 'number' ? c.temperature : 0.85);
     updateApiConfig({
-      baseUrl: c.baseUrl || '',
-      apiKey: c.apiKey || '',
-      model: c.model || '',
+      baseUrl,
+      apiKey,
+      model,
       stream: c.stream === true,
       temperature: typeof c.temperature === 'number' ? c.temperature : 0.85,
     });
@@ -521,56 +516,31 @@ const Settings: React.FC = () => {
       addToast('请输入预设名称', 'error');
       return;
     }
-    let config: APIConfig;
-    switch (presetSaveKind) {
-      case 'vision':
-        config = {
-          baseUrl: '', apiKey: '', model: '',
-          visionBaseUrl: localVisionUrl,
-          visionApiKey: localVisionKey,
-          visionModel: localVisionModel,
-          imgbbApiKey: localImgbbApiKey,
-        };
-        break;
-      case 'image':
-        config = {
-          baseUrl: '', apiKey: '', model: '',
-          imageBaseUrl: localImageUrl,
-          imageApiKey: localImageKey,
-          imageModel: localImageModel,
-        };
-        break;
-      case 'tts':
-        config = {
-          baseUrl: '', apiKey: '', model: '',
-          ttsProvider: localTtsProvider,
-          volinkTtsBaseUrl: localVolinkTtsBaseUrl,
-          volinkTtsApiKey: localVolinkTtsApiKey,
-          volinkTtsVoice: localVolinkTtsVoice,
-          volinkTtsModel: localVolinkTtsModel,
-        };
-        break;
-      case 'other':
-        config = {
-          baseUrl: '', apiKey: '', model: '',
-          minimaxApiKey: localMiniMaxKey,
-          minimaxGroupId: localMiniMaxGroupId,
-          minimaxRegion: localMiniMaxRegion,
-          aceStepApiKey: localAceStepKey,
-        };
-        break;
-      case 'main':
-      default:
-        config = {
-          baseUrl: localUrl,
-          apiKey: localKey,
-          model: localModel,
-          stream: localStream,
-          temperature: localTemperature,
-        };
-        break;
-    }
-    addApiPreset(newPresetName, config, presetSaveKind);
+    const config: APIConfig = {
+      ...apiConfig,
+      baseUrl: localUrl,
+      apiKey: localKey,
+      model: localModel,
+      stream: localStream,
+      temperature: localTemperature,
+      visionBaseUrl: localVisionUrl,
+      visionApiKey: localVisionKey,
+      visionModel: localVisionModel,
+      imgbbApiKey: localImgbbApiKey,
+      imageBaseUrl: localImageUrl,
+      imageApiKey: localImageKey,
+      imageModel: localImageModel,
+      ttsProvider: localTtsProvider,
+      volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+      volinkTtsApiKey: localVolinkTtsApiKey,
+      volinkTtsVoice: localVolinkTtsVoice,
+      volinkTtsModel: localVolinkTtsModel,
+      minimaxApiKey: localMiniMaxKey,
+      minimaxGroupId: localMiniMaxGroupId,
+      minimaxRegion: localMiniMaxRegion,
+      aceStepApiKey: localAceStepKey,
+    };
+    addApiPreset(newPresetName, config);
     setNewPresetName('');
     setShowPresetModal(false);
     addToast('预设已保存', 'success');
@@ -1167,15 +1137,15 @@ const handleSaveTts = () => {
                     </div>
                     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 配置</h2>
                 </div>
-                <button onClick={() => { setPresetSaveKind('main'); setShowPresetModal(true); }} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
-            {presetsByKind.main.length > 0 && (
+            {sharedApiPresets.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
                     <div className="flex gap-2 flex-wrap">
-                        {presetsByKind.main.map(preset => (
+                        {sharedApiPresets.map(preset => (
                             <PresetChip
                                 key={preset.id}
                                 preset={preset}
@@ -1248,16 +1218,16 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
                 </div>
-                <button onClick={() => { setPresetSaveKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">当检测到图片时，系统将自动切换到此通道。支持 Gemini / GPT-4o / Claude 3.5 等。</p>
-            {presetsByKind.vision.length > 0 && (
+            {sharedApiPresets.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>
                     <div className="flex gap-2 flex-wrap">
-                        {presetsByKind.vision.map(preset => (
+                        {sharedApiPresets.map(preset => (
                             <PresetChip
                                 key={preset.id}
                                 preset={preset}
@@ -1313,16 +1283,16 @@ const handleSaveTts = () => {
     </div>
     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">语音 TTS</h2>
     </div>
-    <button onClick={() => { setPresetSaveKind('tts'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+    <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
       保存为预设
     </button>
   </div>
   <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 回复自动转语音。选择服务商后填写对应配置，角色页可单独设置声音 ID。</p>
-  {presetsByKind.tts.length > 0 && (
+  {sharedApiPresets.length > 0 && (
     <div className="mb-4">
       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">语音预设</label>
       <div className="flex gap-2 flex-wrap">
-        {presetsByKind.tts.map(preset => (
+        {sharedApiPresets.map(preset => (
           <PresetChip
             key={preset.id}
             preset={preset}
@@ -1386,16 +1356,16 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
                 </div>
-                <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。支持 GPT Image / DALL·E 3 等图像生成模型。</p>
-            {presetsByKind.image.length > 0 && (
+            {sharedApiPresets.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
                     <div className="flex gap-2 flex-wrap">
-                        {presetsByKind.image.map(preset => (
+                        {sharedApiPresets.map(preset => (
                             <PresetChip
                                 key={preset.id}
                                 preset={preset}
@@ -1440,16 +1410,16 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
                 </div>
-                <button onClick={() => { setPresetSaveKind('other'); setShowPresetModal(true); }} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。</p>
-            {presetsByKind.other.length > 0 && (
+            {sharedApiPresets.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">其他 API 预设</label>
                     <div className="flex gap-2 flex-wrap">
-                        {presetsByKind.other.map(preset => (
+                        {sharedApiPresets.map(preset => (
                             <PresetChip
                                 key={preset.id}
                                 preset={preset}

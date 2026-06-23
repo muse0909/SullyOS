@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
-import { processImage } from '../utils/file';
+import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
@@ -1584,22 +1584,11 @@ if (keepN > 0) {
            const handleSaveImageMessage = async () => {
         if (!selectedMessage?.content) return;
 
-        try {
-            const res = await fetch(selectedMessage.content);
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
+        const result = await saveRemoteImage(selectedMessage.content);
 
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `image_${Date.now()}.png`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            URL.revokeObjectURL(url);
-            addToast('图片已开始保存', 'success');
-        } catch (e) {
-            window.open(selectedMessage.content, '_blank');
+        if (result.ok) {
+            addToast(result.mode === 'native-share' ? '已打开系统保存面板' : '图片已开始保存', 'success');
+        } else {
             addToast('已打开原图，请长按保存', 'info');
         }
 

@@ -8,7 +8,7 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
-import { processImage } from '../utils/file';
+import { processImage, saveRemoteImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
 
@@ -325,6 +325,21 @@ const GroupChat: React.FC = () => {
         setModalType('none');
         setSelectedMessage(null);
         addToast('已复制到剪贴板', 'success');
+    };
+
+    const handleSaveImageMessage = async () => {
+        if (!selectedMessage?.content) return;
+
+        const result = await saveRemoteImage(selectedMessage.content);
+
+        if (result.ok) {
+            addToast(result.mode === 'native-share' ? '已打开系统保存面板' : '图片已开始保存', 'success');
+        } else {
+            addToast('已打开原图，请长按保存', 'info');
+        }
+
+        setModalType('none');
+        setSelectedMessage(null);
     };
 
     const handleEnterSelectionMode = () => {

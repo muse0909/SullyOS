@@ -336,27 +336,39 @@ const ApiQuickFloat: React.FC = () => {
   };
 
   const loadPreset = (preset: ApiPreset, kind: QuickPresetKind) => {
+    const c = preset.config;
     if (kind === 'image') {
-      setLocalImageUrl(preset.config.imageBaseUrl || preset.config.baseUrl || '');
-      setLocalImageKey(preset.config.imageApiKey || preset.config.apiKey || '');
-      setLocalImageModel(preset.config.imageModel || preset.config.model || '');
+      setLocalImageUrl(c.imageBaseUrl || '');
+      setLocalImageKey(c.imageApiKey || '');
+      setLocalImageModel(c.imageModel || '');
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
     }
     if (kind === 'vision') {
-      setLocalVisionUrl(preset.config.visionBaseUrl || preset.config.baseUrl || '');
-      setLocalVisionKey(preset.config.visionApiKey || preset.config.apiKey || '');
-      setLocalVisionModel(preset.config.visionModel || preset.config.model || '');
+      setLocalVisionUrl(c.visionBaseUrl || '');
+      setLocalVisionKey(c.visionApiKey || '');
+      setLocalVisionModel(c.visionModel || '');
       addToast(`已加载识图预设: ${preset.name}`, 'info');
       return;
     }
-    setLocalUrl(preset.config.baseUrl || preset.config.imageBaseUrl || preset.config.visionBaseUrl || '');
-    setLocalKey(preset.config.apiKey || preset.config.imageApiKey || preset.config.visionApiKey || '');
-    setLocalModel(preset.config.model || preset.config.imageModel || preset.config.visionModel || '');
+    setLocalUrl(c.baseUrl || '');
+    setLocalKey(c.apiKey || '');
+    setLocalModel(c.model || '');
     addToast(`已加载 API 预设: ${preset.name}`, 'info');
   };
 
-  const sharedApiPresets = useMemo(() => apiPresets, [apiPresets]);
+  const mainApiPresets = useMemo(
+    () => apiPresets.filter((preset) => preset.kind === 'main'),
+    [apiPresets]
+  );
+  const imageApiPresets = useMemo(
+    () => apiPresets.filter((preset) => preset.kind === 'image'),
+    [apiPresets]
+  );
+  const visionApiPresets = useMemo(
+    () => apiPresets.filter((preset) => preset.kind === 'vision'),
+    [apiPresets]
+  );
 
   const filteredMainModels = useMemo(() => {
     const query = mainModelFilter.trim().toLowerCase();
@@ -376,16 +388,16 @@ const ApiQuickFloat: React.FC = () => {
   const isPresetActive = (preset: ApiPreset, kind: QuickPresetKind) => {
     if (kind === 'image') {
       return (
-        (preset.config.imageBaseUrl || preset.config.baseUrl || '') === localImageUrl &&
-        (preset.config.imageApiKey || preset.config.apiKey || '') === localImageKey &&
-        (preset.config.imageModel || preset.config.model || '') === localImageModel
+        (preset.config.imageBaseUrl || '') === localImageUrl &&
+        (preset.config.imageApiKey || '') === localImageKey &&
+        (preset.config.imageModel || '') === localImageModel
       );
     }
     if (kind === 'vision') {
       return (
-        (preset.config.visionBaseUrl || preset.config.baseUrl || '') === localVisionUrl &&
-        (preset.config.visionApiKey || preset.config.apiKey || '') === localVisionKey &&
-        (preset.config.visionModel || preset.config.model || '') === localVisionModel
+        (preset.config.visionBaseUrl || '') === localVisionUrl &&
+        (preset.config.visionApiKey || '') === localVisionKey &&
+        (preset.config.visionModel || '') === localVisionModel
       );
     }
     return (
@@ -449,11 +461,11 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('main')}
               >
                 <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
-                  {sharedApiPresets.length > 0 ? (
+                  {mainApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
                       <div className="flex gap-2 flex-wrap">
-                        {sharedApiPresets.map((preset) => {
+                        {mainApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'main');
                           return (
                             <PresetChip
@@ -564,11 +576,11 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
-                  {sharedApiPresets.length > 0 ? (
+                  {imageApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
                       <div className="flex gap-2 flex-wrap">
-                        {sharedApiPresets.map((preset) => {
+                        {imageApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'image');
                           return (
                             <PresetChip
@@ -679,11 +691,11 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('vision')}
               >
                 <section className="bg-sky-50/80 rounded-3xl p-4 shadow-sm border border-sky-100/80 space-y-4">
-                  {sharedApiPresets.length > 0 ? (
+                  {visionApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>
                       <div className="flex gap-2 flex-wrap">
-                        {sharedApiPresets.map((preset) => {
+                        {visionApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'vision');
                           return (
                             <PresetChip

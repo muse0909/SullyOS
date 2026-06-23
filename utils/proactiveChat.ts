@@ -6,7 +6,8 @@
  *  2. The SW keeps timers for all active schedules and posts 'proactive-trigger'
  *     with the relevant charId.
  *  3. The main thread receives the trigger and runs the normal AI flow.
- *  4. If the app was backgrounded, visibility-change catch-up fires any overdue roles.
+ *  4. A schedule becomes due only after the user has not contacted that
+ *     character for the full interval.
  *  5. If the optional Cloudflare Worker accelerator is configured (see
  *     `utils/proactivePushConfig.ts`), `start`/`stop` also register/unregister
  *     a Web Push wake-up schedule on the Worker.  The Worker's cron sends a
@@ -157,6 +158,12 @@ function handleSWMessage(e: MessageEvent) {
   // messages back-to-back.
   const now = Date.now();
   const lastFire = getLastFireTime(charId);
+  const elapsed = now - lastFire;
+  if (lastFire <= 0 || elapsed < schedule.intervalMs) {
+    schedulePreciseTimer();
+    return;
+  }
+
   const minGap = Math.min(60_000, schedule.intervalMs * 0.1);
   if (lastFire > 0 && now - lastFire < minGap) {
     console.log(`[ProactiveChat] Ignoring duplicate trigger for ${charId} (fired ${Math.round((now - lastFire) / 1000)}s ago)`);
@@ -316,6 +323,22 @@ export const ProactiveChat = {
     }
 
     console.log(`[ProactiveChat] Started: ${charId}, every ${clamped}min`);
+  },
+
+  /** Reset the waiting window when the user contacts a character. */
+  markUserContact(charId: string, ts = Date.now()) {
+    if (!loadSchedules()[charId]) return;
+    setLastFireTime(charId, ts);
+    syncSchedulesToSW();
+    postToSW({ type: 'proactive-reset', charId });
+
+    if (isPushConfigReady(loadPushConfig())) {
+      const schedule = loadSchedules()[charId];
+      if (schedule) void registerScheduleOnWorker(charId, schedule.intervalMs);
+    }
+
+    schedulePreciseTimer();
+    console.log(`[ProactiveChat] User contact reset timer: ${charId}`);
   },
 
   /**

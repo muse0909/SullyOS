@@ -1258,6 +1258,12 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
+          if (activeAppRef.current === AppID.Date) {
+              console.log(`🔕 [Proactive/Global] Skipped for ${charId}: date app active`);
+              drainQueuedProactive();
+              return;
+          }
+
           // Read from refs to always get latest values
           const currentCharacters = charactersRef.current;
           const currentApiConfig = apiConfigRef.current;

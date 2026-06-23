@@ -20,6 +20,7 @@ import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
+import { ProactiveChat } from '../utils/proactiveChat';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -727,6 +728,7 @@ const Chat: React.FC = () => {
         }
 
         await DB.saveMessage(msgPayload);
+        ProactiveChat.markUserContact(char.id);
 
         // Detect XHS link in user text and create xhs_card via MCP
         if (type === 'text') {
@@ -745,6 +747,7 @@ const Chat: React.FC = () => {
                             content: note.title || '小红书笔记',
                             metadata: { xhsNote: note }
                         });
+                        ProactiveChat.markUserContact(char.id);
                     }
                 } catch (e) {
                     console.warn('XHS link fetch via MCP failed:', e);
@@ -906,6 +909,7 @@ const Chat: React.FC = () => {
             content,
             metadata: { mcdCardKind: 'cart', mcdCartItems: items },
         } as any);
+        ProactiveChat.markUserContact(char.id);
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
@@ -921,6 +925,7 @@ const Chat: React.FC = () => {
             content,
             metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
         } as any);
+        ProactiveChat.markUserContact(char.id);
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
@@ -937,6 +942,7 @@ const Chat: React.FC = () => {
             content: trimmed,
             metadata: { fromMcdMiniApp: true },
         } as any);
+        ProactiveChat.markUserContact(char.id);
         const recent = await DB.getRecentMessagesByCharId(char.id, 200);
         setMessages(recent);
         triggerAI(recent);
@@ -982,6 +988,7 @@ const Chat: React.FC = () => {
                 mcdOrderContext: ctx,
             },
         } as any);
+        ProactiveChat.markUserContact(char.id);
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
@@ -1712,6 +1719,7 @@ if (keepN > 0) {
             type: 'chat_forward' as MessageType,
             content: JSON.stringify(forwardData),
         });
+        ProactiveChat.markUserContact(targetCharId);
 
         // Also save a copy in the current chat so the user can see what they forwarded
         const targetChar = characters.find(c => c.id === targetCharId);
@@ -2344,7 +2352,7 @@ if (keepN > 0) {
                         updateCharacter(char.id, { proactiveConfig: config });
                         if (config.enabled) {
                             startProactiveChat(config.intervalMinutes);
-                            addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
+                            addToast(`已启动主动消息，用户安静满 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}后才会主动发`, 'success');
                         } else {
                             stopProactiveChat();
                             addToast('已关闭主动消息', 'info');

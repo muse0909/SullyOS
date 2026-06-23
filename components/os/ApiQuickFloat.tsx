@@ -6,6 +6,7 @@ import type { ApiPreset } from '../../types';
 
 const POS_KEY = 'sullyos_api_quickfloat_pos_v1';
 const BALL_SIZE = 40;
+const PRESET_LONG_PRESS_MS = 550;
 
 type QuickModelTarget = 'main' | 'image' | 'vision';
 type QuickPresetKind = 'main' | 'image' | 'vision';
@@ -68,6 +69,61 @@ const QuickSection: React.FC<{
     {isOpen ? <div className="mt-2 px-1">{children}</div> : null}
   </div>
 );
+
+const PresetChip: React.FC<{
+  preset: ApiPreset;
+  active?: boolean;
+  activeClassName: string;
+  idleClassName: string;
+  textActiveClassName: string;
+  textIdleClassName: string;
+  onLoad: () => void;
+  onRequestDelete: () => void;
+}> = ({ preset, active = false, activeClassName, idleClassName, textActiveClassName, textIdleClassName, onLoad, onRequestDelete }) => {
+  const timerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+  const [pressing, setPressing] = useState(false);
+
+  const clearPress = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPressing(false);
+  };
+
+  useEffect(() => () => clearPress(), []);
+
+  return (
+    <button
+      type="button"
+      title="点击加载，长按删除"
+      onPointerDown={() => {
+        clearPress();
+        longPressedRef.current = false;
+        setPressing(true);
+        timerRef.current = window.setTimeout(() => {
+          longPressedRef.current = true;
+          setPressing(false);
+          onRequestDelete();
+        }, PRESET_LONG_PRESS_MS);
+      }}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onClick={() => {
+        if (longPressedRef.current) {
+          longPressedRef.current = false;
+          return;
+        }
+        onLoad();
+      }}
+      className={`rounded-lg px-3 py-1.5 text-xs font-medium border shadow-sm transition-all ${active ? activeClassName : idleClassName} ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
+    >
+      {preset.name}
+    </button>
+  );
+};
 
 const ApiQuickFloat: React.FC = () => {
   const {
@@ -132,6 +188,7 @@ const ApiQuickFloat: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState('');
   const [imageStatusMsg, setImageStatusMsg] = useState('');
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
+  const [presetPendingDelete, setPresetPendingDelete] = useState<ApiPreset | null>(null);
 
   useEffect(() => {
     setLocalUrl(apiConfig.baseUrl);
@@ -410,20 +467,17 @@ const ApiQuickFloat: React.FC = () => {
                         {mainApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'main');
                           return (
-                            <div
+                            <PresetChip
                               key={preset.id}
-                              className={`flex items-center border rounded-lg pl-3 pr-1 py-1 shadow-sm ${active ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}
-                            >
-                              <span
-                                onClick={() => loadPreset(preset, 'main')}
-                                className={`text-xs font-medium cursor-pointer mr-2 ${active ? 'text-emerald-600' : 'text-slate-600 hover:text-primary'}`}
-                              >
-                                {preset.name}
-                              </span>
-                              <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                <X size={10} />
-                              </button>
-                            </div>
+                              preset={preset}
+                              active={active}
+                              activeClassName="bg-emerald-50 border-emerald-200"
+                              idleClassName="bg-white border-slate-200"
+                              textActiveClassName="text-emerald-600"
+                              textIdleClassName="text-slate-600 hover:text-primary"
+                              onLoad={() => loadPreset(preset, 'main')}
+                              onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                           );
                         })}
                       </div>
@@ -528,20 +582,17 @@ const ApiQuickFloat: React.FC = () => {
                         {imageApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'image');
                           return (
-                            <div
+                            <PresetChip
                               key={preset.id}
-                              className={`flex items-center border rounded-lg pl-3 pr-1 py-1 shadow-sm ${active ? 'bg-violet-50 border-violet-200' : 'bg-white border-slate-200'}`}
-                            >
-                              <span
-                                onClick={() => loadPreset(preset, 'image')}
-                                className={`text-xs font-medium cursor-pointer mr-2 ${active ? 'text-violet-600' : 'text-slate-600 hover:text-violet-500'}`}
-                              >
-                                {preset.name}
-                              </span>
-                              <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                <X size={10} />
-                              </button>
-                            </div>
+                              preset={preset}
+                              active={active}
+                              activeClassName="bg-violet-50 border-violet-200"
+                              idleClassName="bg-white border-slate-200"
+                              textActiveClassName="text-violet-600"
+                              textIdleClassName="text-slate-600 hover:text-violet-500"
+                              onLoad={() => loadPreset(preset, 'image')}
+                              onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                           );
                         })}
                       </div>
@@ -646,20 +697,17 @@ const ApiQuickFloat: React.FC = () => {
                         {visionApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'vision');
                           return (
-                            <div
+                            <PresetChip
                               key={preset.id}
-                              className={`flex items-center border rounded-lg pl-3 pr-1 py-1 shadow-sm ${active ? 'bg-sky-50 border-sky-200' : 'bg-white border-slate-200'}`}
-                            >
-                              <span
-                                onClick={() => loadPreset(preset, 'vision')}
-                                className={`text-xs font-medium cursor-pointer mr-2 ${active ? 'text-sky-600' : 'text-slate-600 hover:text-sky-500'}`}
-                              >
-                                {preset.name}
-                              </span>
-                              <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                <X size={10} />
-                              </button>
-                            </div>
+                              preset={preset}
+                              active={active}
+                              activeClassName="bg-sky-50 border-sky-200"
+                              idleClassName="bg-white border-slate-200"
+                              textActiveClassName="text-sky-600"
+                              textIdleClassName="text-slate-600 hover:text-sky-500"
+                              onLoad={() => loadPreset(preset, 'vision')}
+                              onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                           );
                         })}
                       </div>
@@ -766,6 +814,31 @@ const ApiQuickFloat: React.FC = () => {
               to { transform: translateY(0); opacity: 1; }
             }
           `}</style>
+        </div>
+      ) : null}
+
+      {presetPendingDelete ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" onClick={() => setPresetPendingDelete(null)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl">
+            <div className="text-base font-bold text-slate-700">删除预设</div>
+            <div className="mt-2 text-sm text-slate-500">确认删除预设“{presetPendingDelete.name}”？</div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button onClick={() => setPresetPendingDelete(null)} className="py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold">
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  removeApiPreset(presetPendingDelete.id);
+                  addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
+                  setPresetPendingDelete(null);
+                }}
+                className="py-3 rounded-2xl bg-red-500 text-white font-bold"
+              >
+                删除
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </>

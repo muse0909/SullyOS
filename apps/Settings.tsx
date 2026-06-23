@@ -13,7 +13,7 @@ import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled a
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import type { ApiPreset } from '../types';
+import type { ApiPreset, APIConfig } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
@@ -23,6 +23,7 @@ const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ la
 );
 
 const KEY_INPUT_CLASS = "w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 pr-20 text-sm font-mono focus:bg-white transition-all";
+const PRESET_LONG_PRESS_MS = 550;
 
 type PresetKind = NonNullable<ApiPreset['kind']>;
 type SettingsModelTarget = 'main' | 'vision' | 'image' | 'tts';
@@ -92,6 +93,65 @@ const SettingsSection: React.FC<{
   );
 };
 
+const PresetChip: React.FC<{
+  preset: ApiPreset;
+  active?: boolean;
+  activeClassName: string;
+  idleClassName: string;
+  textActiveClassName: string;
+  textIdleClassName: string;
+  onLoad: () => void;
+  onRequestDelete: () => void;
+}> = ({ preset, active = false, activeClassName, idleClassName, textActiveClassName, textIdleClassName, onLoad, onRequestDelete }) => {
+  const timerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+  const [pressing, setPressing] = useState(false);
+
+  const clearPress = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPressing(false);
+  }, []);
+
+  const handlePointerDown = useCallback(() => {
+    clearPress();
+    longPressedRef.current = false;
+    setPressing(true);
+    timerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      setPressing(false);
+      onRequestDelete();
+    }, PRESET_LONG_PRESS_MS);
+  }, [clearPress, onRequestDelete]);
+
+  const handleClick = useCallback(() => {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    onLoad();
+  }, [onLoad]);
+
+  useEffect(() => () => clearPress(), [clearPress]);
+
+  return (
+    <button
+      type="button"
+      title="点击加载，长按删除"
+      onPointerDown={handlePointerDown}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onClick={handleClick}
+      className={`rounded-lg px-3 py-1.5 text-xs font-medium border shadow-sm transition-all ${active ? activeClassName : idleClassName} ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
+    >
+      {preset.name}
+    </button>
+  );
+};
+
 const Settings: React.FC = () => {
   const {
       apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels,
@@ -137,6 +197,7 @@ const Settings: React.FC = () => {
   const [openSectionId, setOpenSectionId] = useState<string | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
+  const [presetSaveKind, setPresetSaveKind] = useState<PresetKind>('main');
   const [modelTarget, setModelTarget] = useState<SettingsModelTarget>('main');
   const [showMainKey, setShowMainKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
@@ -156,6 +217,7 @@ const Settings: React.FC = () => {
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showGithubModal, setShowGithubModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
+  const [presetPendingDelete, setPresetPendingDelete] = useState<ApiPreset | null>(null);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
   const [cloudTestResult, setCloudTestResult] = useState<string>('');
   const [cloudTesting, setCloudTesting] = useState(false);
@@ -368,8 +430,8 @@ const Settings: React.FC = () => {
 
   const presetsByKind = useMemo(() => {
       const byKind = (kind: PresetKind) => apiPresets.filter(preset => {
-          if (kind === 'main') return !preset.kind || preset.kind === 'main';
-          return !preset.kind || preset.kind === kind;
+          if (kind === 'main') return preset.kind === 'main';
+          return preset.kind === kind;
       });
       return {
           main: byKind('main'),
@@ -381,79 +443,137 @@ const Settings: React.FC = () => {
   }, [apiPresets]);
 
   const loadPreset = (preset: typeof apiPresets[0], kind: PresetKind = 'main') => {
-      if (kind === 'vision') {
-          setLocalVisionUrl(preset.config.visionBaseUrl || preset.config.baseUrl || '');
-          setLocalVisionKey(preset.config.visionApiKey || preset.config.apiKey || '');
-          setLocalVisionModel(preset.config.visionModel || preset.config.model || '');
-          setLocalImgbbApiKey(preset.config.imgbbApiKey || '');
-          addToast(`已加载识图预设: ${preset.name}`, 'info');
-          return;
-      }
-      if (kind === 'image') {
-          setLocalImageUrl(preset.config.imageBaseUrl || preset.config.baseUrl || '');
-          setLocalImageKey(preset.config.imageApiKey || preset.config.apiKey || '');
-          setLocalImageModel(preset.config.imageModel || preset.config.model || '');
-          addToast(`已加载生图预设: ${preset.name}`, 'info');
-          return;
-      }
-      if (kind === 'tts') {
-          setLocalTtsProvider(preset.config.ttsProvider || 'volink');
-          setLocalVolinkTtsBaseUrl(preset.config.volinkTtsBaseUrl || preset.config.baseUrl || '');
-          setLocalVolinkTtsApiKey(preset.config.volinkTtsApiKey || preset.config.apiKey || '');
-          setLocalVolinkTtsVoice(preset.config.volinkTtsVoice || '');
-          setLocalVolinkTtsModel(preset.config.volinkTtsModel || preset.config.model || '');
-          addToast(`已加载语音预设: ${preset.name}`, 'info');
-          return;
-      }
-      if (kind === 'other') {
-          setLocalMiniMaxKey(preset.config.minimaxApiKey || '');
-          setLocalMiniMaxGroupId(preset.config.minimaxGroupId || '');
-          setLocalMiniMaxRegion(preset.config.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
-          setLocalAceStepKey(preset.config.aceStepApiKey || '');
-          addToast(`已加载其他 API 预设: ${preset.name}`, 'info');
-          return;
-      }
-      setLocalUrl(preset.config.baseUrl);
-      setLocalKey(preset.config.apiKey);
-      setLocalModel(preset.config.model);
-      setLocalStream(preset.config.stream === true);
-      setLocalTemperature(typeof preset.config.temperature === 'number' ? preset.config.temperature : 0.85);
-      // MiniMax / AceStep settings are NOT overwritten by presets — typically one user
-      // has only one MiniMax / Replicate account regardless of which LLM preset they use.
-      addToast(`已加载配置: ${preset.name}`, 'info');
+    const c = preset.config;
+    if (kind === 'vision') {
+      setLocalVisionUrl(c.visionBaseUrl || '');
+      setLocalVisionKey(c.visionApiKey || '');
+      setLocalVisionModel(c.visionModel || '');
+      setLocalImgbbApiKey(c.imgbbApiKey || '');
+      updateApiConfig({
+        visionBaseUrl: c.visionBaseUrl || '',
+        visionApiKey: c.visionApiKey || '',
+        visionModel: c.visionModel || '',
+        imgbbApiKey: c.imgbbApiKey || '',
+      });
+      addToast(`已加载识图预设: ${preset.name}`, 'info');
+      return;
+    }
+    if (kind === 'image') {
+      setLocalImageUrl(c.imageBaseUrl || '');
+      setLocalImageKey(c.imageApiKey || '');
+      setLocalImageModel(c.imageModel || '');
+      updateApiConfig({
+        imageBaseUrl: c.imageBaseUrl || '',
+        imageApiKey: c.imageApiKey || '',
+        imageModel: c.imageModel || '',
+      });
+      addToast(`已加载生图预设: ${preset.name}`, 'info');
+      return;
+    }
+    if (kind === 'tts') {
+      setLocalTtsProvider(c.ttsProvider || 'volink');
+      setLocalVolinkTtsBaseUrl(c.volinkTtsBaseUrl || '');
+      setLocalVolinkTtsApiKey(c.volinkTtsApiKey || '');
+      setLocalVolinkTtsVoice(c.volinkTtsVoice || '');
+      setLocalVolinkTtsModel(c.volinkTtsModel || '');
+      updateApiConfig({
+        ttsProvider: c.ttsProvider || 'volink',
+        volinkTtsBaseUrl: c.volinkTtsBaseUrl || '',
+        volinkTtsApiKey: c.volinkTtsApiKey || '',
+        volinkTtsVoice: c.volinkTtsVoice || '',
+        volinkTtsModel: c.volinkTtsModel || '',
+      });
+      addToast(`已加载语音预设: ${preset.name}`, 'info');
+      return;
+    }
+    if (kind === 'other') {
+      setLocalMiniMaxKey(c.minimaxApiKey || '');
+      setLocalMiniMaxGroupId(c.minimaxGroupId || '');
+      setLocalMiniMaxRegion(c.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
+      setLocalAceStepKey(c.aceStepApiKey || '');
+      updateApiConfig({
+        minimaxApiKey: c.minimaxApiKey || '',
+        minimaxGroupId: c.minimaxGroupId || '',
+        minimaxRegion: c.minimaxRegion === 'overseas' ? 'overseas' : 'domestic',
+        aceStepApiKey: c.aceStepApiKey || '',
+      });
+      addToast(`已加载其他 API 预设: ${preset.name}`, 'info');
+      return;
+    }
+    // main
+    setLocalUrl(c.baseUrl || '');
+    setLocalKey(c.apiKey || '');
+    setLocalModel(c.model || '');
+    setLocalStream(c.stream === true);
+    setLocalTemperature(typeof c.temperature === 'number' ? c.temperature : 0.85);
+    updateApiConfig({
+      baseUrl: c.baseUrl || '',
+      apiKey: c.apiKey || '',
+      model: c.model || '',
+      stream: c.stream === true,
+      temperature: typeof c.temperature === 'number' ? c.temperature : 0.85,
+    });
+    addToast(`已加载配置: ${preset.name}`, 'info');
   };
 
   const handleSavePreset = () => {
-      if (!newPresetName.trim()) {
-          addToast('请输入预设名称', 'error');
-          return;
-      }
-      addApiPreset(newPresetName, {
-        baseUrl: localUrl,
-        apiKey: localKey,
-        model: localModel,
-        stream: localStream,
-        temperature: localTemperature,
-        visionBaseUrl: localVisionUrl,
-        visionApiKey: localVisionKey,
-        visionModel: localVisionModel,
-        imgbbApiKey: localImgbbApiKey,
-        imageBaseUrl: localImageUrl,
-        imageApiKey: localImageKey,
-        imageModel: localImageModel,
-        ttsProvider: localTtsProvider,
-        volinkTtsBaseUrl: localVolinkTtsBaseUrl,
-        volinkTtsApiKey: localVolinkTtsApiKey,
-        volinkTtsVoice: localVolinkTtsVoice,
-        volinkTtsModel: localVolinkTtsModel,
-        minimaxApiKey: localMiniMaxKey,
-        minimaxGroupId: localMiniMaxGroupId,
-        minimaxRegion: localMiniMaxRegion,
-        aceStepApiKey: localAceStepKey,
-      });
-      setNewPresetName('');
-      setShowPresetModal(false);
-      addToast('预设已保存', 'success');
+    if (!newPresetName.trim()) {
+      addToast('请输入预设名称', 'error');
+      return;
+    }
+    let config: APIConfig;
+    switch (presetSaveKind) {
+      case 'vision':
+        config = {
+          baseUrl: '', apiKey: '', model: '',
+          visionBaseUrl: localVisionUrl,
+          visionApiKey: localVisionKey,
+          visionModel: localVisionModel,
+          imgbbApiKey: localImgbbApiKey,
+        };
+        break;
+      case 'image':
+        config = {
+          baseUrl: '', apiKey: '', model: '',
+          imageBaseUrl: localImageUrl,
+          imageApiKey: localImageKey,
+          imageModel: localImageModel,
+        };
+        break;
+      case 'tts':
+        config = {
+          baseUrl: '', apiKey: '', model: '',
+          ttsProvider: localTtsProvider,
+          volinkTtsBaseUrl: localVolinkTtsBaseUrl,
+          volinkTtsApiKey: localVolinkTtsApiKey,
+          volinkTtsVoice: localVolinkTtsVoice,
+          volinkTtsModel: localVolinkTtsModel,
+        };
+        break;
+      case 'other':
+        config = {
+          baseUrl: '', apiKey: '', model: '',
+          minimaxApiKey: localMiniMaxKey,
+          minimaxGroupId: localMiniMaxGroupId,
+          minimaxRegion: localMiniMaxRegion,
+          aceStepApiKey: localAceStepKey,
+        };
+        break;
+      case 'main':
+      default:
+        config = {
+          baseUrl: localUrl,
+          apiKey: localKey,
+          model: localModel,
+          stream: localStream,
+          temperature: localTemperature,
+        };
+        break;
+    }
+    addApiPreset(newPresetName, config, presetSaveKind);
+    setNewPresetName('');
+    setShowPresetModal(false);
+    addToast('预设已保存', 'success');
   };
 
     const handleSaveApi = () => {
@@ -1047,7 +1167,7 @@ const handleSaveTts = () => {
                     </div>
                     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 配置</h2>
                 </div>
-                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => { setPresetSaveKind('main'); setShowPresetModal(true); }} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1056,12 +1176,16 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
                     <div className="flex gap-2 flex-wrap">
                         {presetsByKind.main.map(preset => (
-                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-                                <span onClick={() => loadPreset(preset, 'main')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-primary mr-2">{preset.name}</span>
-                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                                </button>
-                            </div>
+                            <PresetChip
+                                key={preset.id}
+                                preset={preset}
+                                activeClassName="bg-emerald-50 border-emerald-200"
+                                idleClassName="bg-white border-slate-200"
+                                textActiveClassName="text-emerald-600"
+                                textIdleClassName="text-slate-600 hover:text-primary"
+                                onLoad={() => loadPreset(preset, 'main')}
+                                onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -1124,7 +1248,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
                 </div>
-                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => { setPresetSaveKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1134,12 +1258,16 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>
                     <div className="flex gap-2 flex-wrap">
                         {presetsByKind.vision.map(preset => (
-                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-                                <span onClick={() => loadPreset(preset, 'vision')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-blue-500 mr-2">{preset.name}</span>
-                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                                </button>
-                            </div>
+                            <PresetChip
+                                key={preset.id}
+                                preset={preset}
+                                activeClassName="bg-blue-50 border-blue-200"
+                                idleClassName="bg-white border-slate-200"
+                                textActiveClassName="text-blue-600"
+                                textIdleClassName="text-slate-600 hover:text-blue-500"
+                                onLoad={() => loadPreset(preset, 'vision')}
+                                onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -1185,7 +1313,7 @@ const handleSaveTts = () => {
     </div>
     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">语音 TTS</h2>
     </div>
-    <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+    <button onClick={() => { setPresetSaveKind('tts'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
       保存为预设
     </button>
   </div>
@@ -1195,12 +1323,16 @@ const handleSaveTts = () => {
       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">语音预设</label>
       <div className="flex gap-2 flex-wrap">
         {presetsByKind.tts.map(preset => (
-          <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-            <span onClick={() => loadPreset(preset, 'tts')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-purple-500 mr-2">{preset.name}</span>
-            <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-            </button>
-          </div>
+          <PresetChip
+            key={preset.id}
+            preset={preset}
+            activeClassName="bg-purple-50 border-purple-200"
+            idleClassName="bg-white border-slate-200"
+            textActiveClassName="text-purple-600"
+            textIdleClassName="text-slate-600 hover:text-purple-500"
+            onLoad={() => loadPreset(preset, 'tts')}
+            onRequestDelete={() => setPresetPendingDelete(preset)}
+          />
         ))}
       </div>
     </div>
@@ -1254,7 +1386,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
                 </div>
-                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1264,12 +1396,16 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
                     <div className="flex gap-2 flex-wrap">
                         {presetsByKind.image.map(preset => (
-                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-                                <span onClick={() => loadPreset(preset, 'image')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-purple-500 mr-2">{preset.name}</span>
-                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                                </button>
-                            </div>
+                            <PresetChip
+                                key={preset.id}
+                                preset={preset}
+                                activeClassName="bg-purple-50 border-purple-200"
+                                idleClassName="bg-white border-slate-200"
+                                textActiveClassName="text-purple-600"
+                                textIdleClassName="text-slate-600 hover:text-purple-500"
+                                onLoad={() => loadPreset(preset, 'image')}
+                                onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -1304,7 +1440,7 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
                 </div>
-                <button onClick={() => setShowPresetModal(true)} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                <button onClick={() => { setPresetSaveKind('other'); setShowPresetModal(true); }} className="text-[10px] bg-amber-100 text-amber-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
                     保存为预设
                 </button>
             </div>
@@ -1314,12 +1450,16 @@ const handleSaveTts = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">其他 API 预设</label>
                     <div className="flex gap-2 flex-wrap">
                         {presetsByKind.other.map(preset => (
-                            <div key={preset.id} className="flex items-center bg-white border border-slate-200 rounded-lg pl-3 pr-1 py-1 shadow-sm">
-                                <span onClick={() => loadPreset(preset, 'other')} className="text-xs font-medium text-slate-600 cursor-pointer hover:text-amber-500 mr-2">{preset.name}</span>
-                                <button onClick={() => removeApiPreset(preset.id)} className="p-1 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 transition-colors">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                                </button>
-                            </div>
+                            <PresetChip
+                                key={preset.id}
+                                preset={preset}
+                                activeClassName="bg-amber-50 border-amber-200"
+                                idleClassName="bg-white border-slate-200"
+                                textActiveClassName="text-amber-600"
+                                textIdleClassName="text-slate-600 hover:text-amber-500"
+                                onLoad={() => loadPreset(preset, 'other')}
+                                onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
                         ))}
                     </div>
                 </div>
@@ -1529,6 +1669,34 @@ const handleSaveTts = () => {
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
           <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><p className="text-[11px] text-slate-400 px-1">当前所有 API 配置都会一起保存。</p></div>
+      </Modal>
+      <Modal
+        isOpen={!!presetPendingDelete}
+        title="删除预设"
+        onClose={() => setPresetPendingDelete(null)}
+        footer={
+        <div className="flex gap-3">
+          <button
+            onClick={() => setPresetPendingDelete(null)}
+            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => {
+              if (!presetPendingDelete) return;
+              removeApiPreset(presetPendingDelete.id);
+              addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
+              setPresetPendingDelete(null);
+            }}
+            className="flex-1 py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+          >
+            删除
+          </button>
+        </div>
+        }
+      >
+        <div className="text-sm text-slate-500 px-1">确认删除预设“{presetPendingDelete?.name || ''}”？</div>
       </Modal>
 
       {/* 强制导出 Modal */}

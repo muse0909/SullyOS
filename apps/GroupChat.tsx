@@ -11,6 +11,7 @@ import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
+import { saveRemoteImage } from '../utils/saveRemoteImage';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -325,6 +326,21 @@ const GroupChat: React.FC = () => {
         setModalType('none');
         setSelectedMessage(null);
         addToast('已复制到剪贴板', 'success');
+    };
+
+    const handleSaveImageMessage = async () => {
+        if (!selectedMessage?.content) return;
+
+        const result = await saveRemoteImage(selectedMessage.content);
+
+        if (result.ok) {
+            addToast(result.mode === 'native-share' ? '已打开系统保存面板' : '图片已开始保存', 'success');
+        } else {
+            addToast('已打开原图，请长按保存', 'info');
+        }
+
+        setModalType('none');
+        setSelectedMessage(null);
     };
 
     const handleEnterSelectionMode = () => {

@@ -21,6 +21,7 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { saveRemoteImage } from '../utils/saveRemoteImage';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -1584,22 +1585,11 @@ if (keepN > 0) {
            const handleSaveImageMessage = async () => {
         if (!selectedMessage?.content) return;
 
-        try {
-            const res = await fetch(selectedMessage.content);
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
+        const result = await saveRemoteImage(selectedMessage.content);
 
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `image_${Date.now()}.png`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            URL.revokeObjectURL(url);
-            addToast('图片已开始保存', 'success');
-        } catch (e) {
-            window.open(selectedMessage.content, '_blank');
+        if (result.ok) {
+            addToast(result.mode === 'native-share' ? '已打开系统保存面板' : '图片已开始保存', 'success');
+        } else {
             addToast('已打开原图，请长按保存', 'info');
         }
 

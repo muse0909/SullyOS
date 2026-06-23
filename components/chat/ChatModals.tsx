@@ -4,7 +4,7 @@ import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
-import { saveRemoteImage } from '../../utils/saveRemoteImage';
+import { saveRemoteImage } from '../../utils/file';
 
 interface ChatModalsProps {
     modalType: string;

@@ -111,6 +111,12 @@ function upsertProactive(config) {
   proactiveTimers.set(config.charId, timer);
 }
 
+function resetProactiveTimer(charId) {
+  const config = proactiveSchedules.get(charId);
+  if (!config) return;
+  upsertProactive(config);
+}
+
 function syncProactive(configs) {
   const nextIds = new Set((configs || []).map(config => config.charId));
 
@@ -155,6 +161,11 @@ self.addEventListener('message', (event) => {
       break;
     case 'proactive-sync':
       syncProactive(event.data.configs || []);
+      break;
+    case 'proactive-reset':
+      if (event.data.charId) {
+        resetProactiveTimer(event.data.charId);
+      }
       break;
   }
 });

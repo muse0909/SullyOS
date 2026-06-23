@@ -104,6 +104,12 @@ function upsertProactive(config: { charId: string; intervalMs: number }) {
   proactiveTimers.set(config.charId, timer);
 }
 
+function resetProactiveTimer(charId: string) {
+  const config = proactiveSchedules.get(charId);
+  if (!config) return;
+  upsertProactive(config);
+}
+
 function syncProactive(configs: Array<{ charId: string; intervalMs: number }>) {
   const nextIds = new Set((configs || []).map((config) => config.charId));
 
@@ -244,6 +250,11 @@ sw.addEventListener('message', (event: ExtendableMessageEvent) => {
       break;
     case 'proactive-sync':
       syncProactive(event.data.configs || []);
+      break;
+    case 'proactive-reset':
+      if (event.data.charId) {
+        resetProactiveTimer(event.data.charId);
+      }
       break;
   }
 });

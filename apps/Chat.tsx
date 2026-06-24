@@ -573,11 +573,20 @@ const Chat: React.FC = () => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
             if (detail?.charId === activeCharacterId) {
+                if (detail.buffs || detail.emotionHistory || detail.buffInjection !== undefined) {
+                    updateCharacter(detail.charId, {
+                        activeBuffs: detail.buffs,
+                        emotionHistory: detail.emotionHistory,
+                        buffInjection: detail.buffInjection,
+                    });
+                    return;
+                }
                 // Reload all characters to pick up updated activeBuffs / buffInjection
                 DB.getAllCharacters().then(all => {
                     const updated = all.find(c => c.id === activeCharacterId);
                     if (updated) updateCharacter(updated.id, {
                         activeBuffs: updated.activeBuffs,
+                        emotionHistory: updated.emotionHistory,
                         buffInjection: updated.buffInjection
                     });
                 }).catch(() => {});
@@ -2025,8 +2034,8 @@ if (keepN > 0) {
                     });
                 }}
                 onClearBuffs={() => {
-                    updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });
-                    addToast('情绪状态已清除', 'info');
+                    updateCharacter(char.id, { activeBuffs: [], emotionHistory: [], buffInjection: '' });
+                    addToast('心声历史已清除', 'info');
                 }}
              />
              
@@ -2047,10 +2056,17 @@ if (keepN > 0) {
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
+                    const currentHistory = char.emotionHistory || [];
                     const newBuffs = currentBuffs.filter(b => b.id !== buffId);
-                    const newInjection = '';
-                    updateCharacter(char.id, { activeBuffs: newBuffs, buffInjection: newInjection });
-                    addToast('已删除该情绪状态', 'info');
+                    const newHistory = currentHistory.filter(b => b.id !== buffId);
+                    const latest = newBuffs[0] || newHistory[0];
+                    const newInjection = latest?.innerState || latest?.label || '';
+                    updateCharacter(char.id, {
+                        activeBuffs: latest ? [latest] : [],
+                        emotionHistory: newHistory,
+                        buffInjection: newInjection,
+                    });
+                    addToast('已删除该条心声', 'info');
                 }}
                 headerStyle={osTheme.chatHeaderStyle}
                 avatarShape={osTheme.chatAvatarShape}

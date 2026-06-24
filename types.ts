@@ -232,10 +232,12 @@ export interface CharacterBuff {
   id: string;
   name: string;      // internal key, e.g. 'reconciliation_fragile'
   label: string;     // display text, e.g. '脆弱的和好'
-  intensity: 1 | 2 | 3;
+  intensity?: 1 | 2 | 3;
   emoji?: string;
   color?: string;    // hex, e.g. '#f87171'
   description?: string;  // 用户可读的简短说明（给用户看的，不是给AI的）
+  innerState?: string;
+  createdAt?: number;
 }
 
 // 实时上下文配置 - 让AI角色感知真实世界
@@ -961,6 +963,7 @@ export interface CharacterProfile {
   // 情绪Buff系统
   activeMsg2Config?: ActiveMsg2CharacterConfig;
   activeBuffs?: CharacterBuff[];
+  emotionHistory?: CharacterBuff[];
   buffInjection?: string;   // 注入到systemPrompt的叙事型情绪底色描述
   emotionConfig?: {
     enabled: boolean;

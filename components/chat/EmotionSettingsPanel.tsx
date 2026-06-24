@@ -11,17 +11,7 @@ interface EmotionSettingsPanelProps {
     onClearBuffs: () => void;
 }
 
-const normalizeIntensity = (n: number | undefined | null): 1 | 2 | 3 => {
-    const parsed = Number.isFinite(n) ? Math.round(Number(n)) : 2;
-    if (parsed <= 1) return 1;
-    if (parsed >= 3) return 3;
-    return 2;
-};
-
-const INTENSITY_DOTS = (n: number | undefined | null) => {
-    const safe = normalizeIntensity(n);
-    return '●'.repeat(safe) + '○'.repeat(3 - safe);
-};
+const getBuffText = (buff: CharacterBuff) => buff.innerState || buff.label || '';
 
 const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
     char, apiPresets, addApiPreset, onSave, onClearBuffs
@@ -112,7 +102,7 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                 <div className="text-xs font-bold text-slate-700 mb-1">🎭 情绪 / 意识流 API</div>
                 <div className="text-[11px] text-slate-500 leading-relaxed space-y-1">
                     <p>
-                        原版情绪 buff 就在这里。与日程<b>强制同步</b>：日程开 → 自动启用；日程关 → 一起停。
+                        心声就在这里。与日程<b>强制同步</b>：日程开 → 自动启用；日程关 → 一起停。
                     </p>
                     <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
                         ⚙️ 下方不填 = 自动用主 API。想细腻点就填个 <b>Claude 系列</b>模型。
@@ -230,11 +220,11 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                 </button>
             </div>
 
-            {/* Current buffs */}
+            {/* Current inner state */}
             {buffs.length > 0 ? (
                 <div>
                     <div className="flex items-center justify-between mb-2">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">当前情绪状态</label>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">当前心声</label>
                         <button onClick={onClearBuffs} className="text-xs text-slate-400 hover:text-red-400 transition-colors">清除</button>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -249,15 +239,14 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                                 }}
                             >
                                 {buff.emoji && <span>{buff.emoji}</span>}
-                                <span>{buff.label}</span>
-                                <span className="opacity-60">{INTENSITY_DOTS(buff.intensity)}</span>
+                                <span>{getBuffText(buff)}</span>
                             </div>
                         ))}
                     </div>
                 </div>
             ) : scheduleOn ? (
                 <div className="text-xs text-slate-400 text-center py-2">
-                    暂无情绪状态 — 发几条消息后会自动生成
+                    暂无心声 — 发消息后会自动生成
                 </div>
             ) : null}
         </div>

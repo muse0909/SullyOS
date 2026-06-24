@@ -8,8 +8,6 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
-import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
-import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -1344,23 +1342,7 @@ if (!isVisible || !isChattingWithThisChar) {
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
-              // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
-              //     角色专属情绪 API > 全局 lightLLM > 主 apiConfig
-              if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
-                  const lightLLM = memoryPalaceConfigRef.current?.lightLLM;
-                  const emotionApi = (char.emotionConfig.api?.baseUrl)
-                      ? char.emotionConfig.api
-                      : (lightLLM && lightLLM.baseUrl)
-                          ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
-                          : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
-                  if (emotionApi.baseUrl && currentUserProfile) {
-                      evaluateEmotionBackground(char, currentUserProfile, systemPrompt, apiMessages, emotionApi)
-                          .then((innerState) => {
-                              if (innerState) proactiveInnerStateRef.current.set(charId, innerState);
-                          })
-                          .catch(() => {});
-                  }
-              }
+              // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 
             
               // 4. Send request to AI

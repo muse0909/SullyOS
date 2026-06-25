@@ -798,7 +798,7 @@ export const useChatAI = ({
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
                     : '你是生活系角色，innerState 的重心是你自己的生活和感受，不必每次都以用户为中心。';
-                systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"innerState":"...","emoji":"..."}</emotion>\n\n字段要求：\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 label、description、intensity\n- 正文和 <emotion> 块之间不要有多余说明`;
+                systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- label：2-10字，短标签，像头像栏上的小心情贴纸，不要写完整句子\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 description\n- 正文和 <emotion> 块之间不要有多余说明`;
             }
 
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
@@ -1353,14 +1353,20 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         if (typeof emotionData.innerState === 'string' && emotionData.innerState.trim()) {
                             const now = Date.now();
                             const innerState = emotionData.innerState.trim();
+                            const label = (typeof emotionData.label === 'string' && emotionData.label.trim())
+                                ? emotionData.label.trim().slice(0, 12)
+                                : innerState.slice(0, 10);
+                            const rawIntensity = Number(emotionData.intensity);
+                            const intensity: 1 | 2 | 3 = rawIntensity === 2 || rawIntensity === 3 ? rawIntensity : 1;
                             const newBuff: CharacterBuff = {
                                 id: `inner_state_${now}`,
                                 name: `inner_state_${now}`,
-                                label: innerState,
+                                label,
                                 innerState,
+                                intensity,
                                 emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
                                 createdAt: now,
-                                color: '#8b5cf6',
+                                color: intensity === 3 ? '#874F64' : intensity === 2 ? '#965F6E' : '#9B6E6A',
                             };
                             const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
                             const updatedChar: CharacterProfile = {

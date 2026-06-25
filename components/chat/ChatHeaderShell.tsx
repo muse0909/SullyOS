@@ -39,7 +39,19 @@ interface ChatHeaderShellProps {
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
 }
 
-const getBuffText = (buff: CharacterBuff) => buff.innerState || buff.label || '';
+const MACARON_BUFF_STYLES = {
+    1: { bg: '#F5EAE9', border: '#E9D2D0', text: '#9B6E6A' },
+    2: { bg: '#F4E0E4', border: '#E7C3CC', text: '#965F6E' },
+    3: { bg: '#EED4DD', border: '#DCAEBE', text: '#874F64' },
+} as const;
+
+const getBuffLabel = (buff: CharacterBuff) => buff.label || buff.innerState || '';
+const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label || '';
+
+const getBuffStyle = (buff: CharacterBuff) => {
+    const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
+    return MACARON_BUFF_STYLES[intensity];
+};
 
 const formatEmotionTime = (timestamp?: number) => {
     if (!timestamp) return '旧记录';
@@ -60,7 +72,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     tokenBreakdown,
     onClose,
     onTriggerAI,
-        apiPresets = [],
+    apiPresets = [],
     currentApiName = '',
     onSwitchPreset,
     onShowCharsPanel,
@@ -75,22 +87,15 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const buffs: CharacterBuff[] = activeCharacter.activeBuffs || [];
     const emotionHistory: CharacterBuff[] = activeCharacter.emotionHistory || buffs;
     const latestBuff = buffs[0] || emotionHistory[0] || null;
-    const [openBuff, setOpenBuff] = useState<CharacterBuff | null>(null);
     const [isBuffListExpanded, setIsBuffListExpanded] = useState(false);
     const [confirmDeleteBuff, setConfirmDeleteBuff] = useState<CharacterBuff | null>(null);
-    const cardRef = useRef<HTMLDivElement>(null);
     const buffPanelRef = useRef<HTMLDivElement>(null);
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const toggleBuff = (buff: CharacterBuff) => {
-        setOpenBuff((prev) => (prev?.id === buff.id ? null : buff));
-    };
 
     const handleLongPressStart = (buff: CharacterBuff) => {
         longPressTimerRef.current = setTimeout(() => {
             longPressTimerRef.current = null;
             setConfirmDeleteBuff(buff);
-            setOpenBuff(null);
         }, 600);
     };
 
@@ -108,24 +113,25 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         setConfirmDeleteBuff(null);
     };
 
+    const handleDeleteFromHistory = (buff: CharacterBuff) => {
+        if (onDeleteBuff) onDeleteBuff(buff.id);
+    };
+
     useEffect(() => {
-        if (!openBuff && !isBuffListExpanded) return;
+        if (!isBuffListExpanded) return;
         const handler = (e: MouseEvent) => {
             const target = e.target as Node;
-            const clickedInsideCard = !!cardRef.current?.contains(target);
             const clickedInsideBuffPanel = !!buffPanelRef.current?.contains(target);
-            if (!clickedInsideCard && !clickedInsideBuffPanel) {
-                setOpenBuff(null);
+            if (!clickedInsideBuffPanel) {
                 setIsBuffListExpanded(false);
             }
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
-    }, [openBuff, isBuffListExpanded]);
+    }, [isBuffListExpanded]);
 
     useEffect(() => {
         setIsBuffListExpanded(false);
-        setOpenBuff(null);
     }, [activeCharacter.id, latestBuff?.id]);
 
     const isDarkHeader = headerStyle === 'discord';
@@ -182,23 +188,25 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const renderBuffRow = (centered: boolean) => {
         if (!latestBuff) return null;
-        const text = getBuffText(latestBuff);
+        const label = getBuffLabel(latestBuff);
+        const innerState = getBuffInnerState(latestBuff);
+        const style = getBuffStyle(latestBuff);
         return (
             <div className={`relative w-full min-w-0 max-w-full ${centered ? 'flex justify-center' : ''}`}>
                 <button
-                    onClick={(e) => { e.stopPropagation(); setIsBuffListExpanded((prev) => !prev); setOpenBuff(null); }}
+                    onClick={(e) => { e.stopPropagation(); setIsBuffListExpanded((prev) => !prev); }}
                     onTouchStart={(e) => { e.stopPropagation(); handleLongPressStart(latestBuff); }}
                     onTouchEnd={handleLongPressEnd}
                     onTouchCancel={handleLongPressEnd}
                     onMouseDown={(e) => { if (e.button === 0) handleLongPressStart(latestBuff); }}
                     onMouseUp={handleLongPressEnd}
                     onMouseLeave={handleLongPressEnd}
-                    className="shrink-0 max-w-full truncate text-[10px] leading-none px-2 py-1 rounded-full font-bold border cursor-pointer transition-colors select-none"
-                    style={{ color: latestBuff.color || '#db2777', borderColor: `${latestBuff.color || '#db2777'}60`, background: `${latestBuff.color || '#db2777'}30` }}
-                    title={text}
+                    className="shrink-0 max-w-full truncate text-[10px] leading-none px-2.5 py-1 rounded-full font-bold border cursor-pointer transition-colors select-none shadow-[0_1px_4px_rgba(120,80,90,0.12)]"
+                    style={{ color: style.text, borderColor: style.border, background: style.bg }}
+                    title={innerState}
                 >
                     {latestBuff.emoji ? `${latestBuff.emoji} ` : ''}
-                    {text}
+                    {label}
                 </button>
             </div>
         );
@@ -349,50 +357,48 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             )}
 
             {isBuffListExpanded && emotionHistory.length > 0 && (
-                <div ref={buffPanelRef} className="absolute top-full left-4 right-4 mt-1 bg-white rounded-xl shadow-lg border border-slate-200 p-3 z-40">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">心声历史</div>
-                    <div className="max-h-56 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                        <div className="space-y-1.5">
-                            {emotionHistory.map((buff) => (
-                                <button
-                                    key={`panel-${buff.id}`}
-                                    onClick={(e) => { e.stopPropagation(); toggleBuff(buff); }}
-                                    onTouchStart={(e) => { e.stopPropagation(); handleLongPressStart(buff); }}
-                                    onTouchEnd={handleLongPressEnd}
-                                    onTouchCancel={handleLongPressEnd}
-                                    onMouseDown={(e) => { if (e.button === 0) handleLongPressStart(buff); }}
-                                    onMouseUp={handleLongPressEnd}
-                                    onMouseLeave={handleLongPressEnd}
-                                    className="w-full text-left px-2 py-1.5 rounded-lg border cursor-pointer transition-colors select-none hover:bg-slate-50"
-                                    style={{ color: buff.color || '#db2777', borderColor: `${buff.color || '#db2777'}40`, background: `${buff.color || '#db2777'}10` }}
-                                >
-                                    <div className="mb-0.5 text-[9px] font-semibold opacity-60">{formatEmotionTime(buff.createdAt)}</div>
-                                    <div className="text-[11px] leading-snug font-bold line-clamp-2">
-                                        {buff.emoji ? `${buff.emoji} ` : ''}
-                                        {getBuffText(buff)}
+                <div ref={buffPanelRef} className="absolute top-full left-4 right-4 mt-1 rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur-xl z-40">
+                    <div className="max-h-[58vh] overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        <div className="space-y-3">
+                            {emotionHistory.map((buff) => {
+                                const style = getBuffStyle(buff);
+                                return (
+                                    <div
+                                        key={`panel-${buff.id}`}
+                                        className="rounded-2xl border p-3 shadow-sm select-none"
+                                        style={{ borderColor: style.border, background: style.bg, color: style.text }}
+                                    >
+                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                            <div className="text-[10px] font-semibold opacity-70">{formatEmotionTime(buff.createdAt)}</div>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
+                                                className="shrink-0 rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95"
+                                                style={{ color: style.text, border: `1px solid ${style.border}` }}
+                                            >
+                                                删除
+                                            </button>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); }}
+                                            className="mb-2 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none shadow-[0_1px_4px_rgba(120,80,90,0.1)]"
+                                            style={{ borderColor: style.border, color: style.text }}
+                                            title={getBuffInnerState(buff)}
+                                        >
+                                            <span className="truncate">
+                                                {buff.emoji ? `${buff.emoji} ` : ''}
+                                                {getBuffLabel(buff)}
+                                            </span>
+                                        </button>
+                                        <div className="text-[12px] leading-relaxed font-medium text-slate-700/90">
+                                            {getBuffInnerState(buff)}
+                                        </div>
                                     </div>
-                                </button>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
-                </div>
-            )}
-
-            {openBuff && (
-                <div ref={cardRef} className="absolute top-full left-4 right-4 mt-1 bg-white rounded-xl shadow-lg border border-slate-200 p-3 z-50">
-                    <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold" style={{ color: openBuff.color || '#db2777' }}>
-                                {openBuff.emoji ? `${openBuff.emoji} ` : ''}
-                                心声
-                            </span>
-                            <span className="text-[10px] font-semibold text-slate-400">{formatEmotionTime(openBuff.createdAt)}</span>
-                        </div>
-                        <button onClick={() => setOpenBuff(null)} className="text-slate-300 hover:text-slate-500 text-lg leading-none px-1">
-                            {'\u00d7'}
-                        </button>
-                    </div>
-                    <p className="text-sm text-slate-600 leading-relaxed">{getBuffText(openBuff)}</p>
                 </div>
             )}
 
@@ -405,7 +411,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             </div>
                             <div className="font-bold text-slate-800 text-sm">删除心声</div>
                             <div className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                确定要删除“{getBuffText(confirmDeleteBuff)}”吗？
+                                确定要删除“{getBuffLabel(confirmDeleteBuff)}”吗？
                                 <br />
                                 对应的提示也会一起移除。
                             </div>

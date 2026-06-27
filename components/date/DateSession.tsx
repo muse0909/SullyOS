@@ -5,7 +5,7 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
-import FullScreenInput from '../common/FullScreenInput';
+import FullScreenEditor from '../common/FullScreenEditor';
 import { CornersOut } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
@@ -1112,8 +1112,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                 </div>
             </Modal>
 
-            {/* 全屏输入弹窗 */}
-            <FullScreenInput
+            {/* 全屏编辑器 v2 - 见面输入（受控 value/onChange 直接写 tempInput；onConfirm 走 confirmFullInput） */}
+            <FullScreenEditor
                 isOpen={showFullInput}
                 title="见面输入"
                 value={tempInput}
@@ -1122,8 +1122,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                 onConfirm={confirmFullInput}
                 onSend={sendFromFullInput}
                 placeholder="输入对话..."
-                confirmText="完成"
-                sendButtonText="发送"
             />
         </div>
     );

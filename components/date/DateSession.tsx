@@ -455,16 +455,23 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleSend = async () => {
-        const text = input.trim() || lastSentInput.trim();
-        if (!text || isTyping) return;
+        if (isTyping) return;
+        const trimmed = input.trim();
+        // 空内容：不发请求，直接触发重 roll（如果有可重 roll 的消息）
+        if (!trimmed) {
+            if (canReroll) {
+                await handleRerollClick();
+            }
+            return;
+        }
         setInput('');
-        setLastSentInput(text);
+        setLastSentInput(trimmed);
         setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
-            const aiContent = await onSendMessage(text);
+            const aiContent = await onSendMessage(trimmed);
             // Parse new content
             const items = parseDialogue(aiContent, 'normal');
             setDialogueBatch(items);
@@ -1030,7 +1037,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                   />
                   <button
                     onClick={handleSend}
-                    disabled={(!input.trim() && !lastSentInput.trim()) || isTyping}
+                    disabled={(!input.trim() && !canReroll) || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">

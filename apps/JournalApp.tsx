@@ -873,12 +873,12 @@ Structure:
             {/* 全屏输入弹窗 - 日记主输入 */}
             <FullScreenInput
                 isOpen={showFullDiaryInput}
-                title={side === 'user' ? '我的日记' : '角色回复'}
-                value={page.text}
-                onChange={v => updatePage({ text: v }, side)}
+                title={activeTab === 'user' ? '我的日记' : '角色回复'}
+                value={activeTab === 'user' ? (currentEntry?.userPage.text || '') : (currentEntry?.charPage.text || '')}
+                onChange={v => updatePage({ text: v }, activeTab)}
                 onClose={() => setShowFullDiaryInput(false)}
                 onConfirm={() => setShowFullDiaryInput(false)}
-                placeholder={side === 'user' ? '记录今天发生的事情...' : '等待回复...'}
+                placeholder={activeTab === 'user' ? '记录今天发生的事情...' : '等待回复...'}
                 confirmText="完成"
             />
         </div>

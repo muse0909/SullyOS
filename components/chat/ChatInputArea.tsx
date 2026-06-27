@@ -5,7 +5,7 @@ import { ShareNetwork, Trash, Copy } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
-import FullScreenInput from '../common/FullScreenInput';
+import FullScreenEditor from '../common/FullScreenEditor';
 
 interface ChatInputAreaProps {
     input: string;
@@ -637,8 +637,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 </div>
             )}
 
-            {/* 全屏输入弹窗 */}
-            <FullScreenInput
+            {/* 全屏编辑器（v2 整个全屏 + 设置） */}
+            <FullScreenEditor
                 isOpen={showFullInput}
                 title="聊天输入"
                 value={tempInput}

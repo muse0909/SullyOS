@@ -10,7 +10,8 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
 import { processImage, saveRemoteImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
-import { UsersThree } from '@phosphor-icons/react';
+import { UsersThree, CornersOut } from '@phosphor-icons/react';
+import FullScreenInput from '../components/common/FullScreenInput';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -184,6 +185,25 @@ const GroupChat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+
+    // --- 全屏输入状态 ---
+    const [showFullInput, setShowFullInput] = useState(false);
+    const [tempInput, setTempInput] = useState('');
+    const openFullInput = () => {
+        setTempInput(input);
+        setShowFullInput(true);
+    };
+    const confirmFullInput = () => {
+        setInput(tempInput);
+        setShowFullInput(false);
+    };
+    const sendFromFullInput = () => {
+        const text = tempInput.trim();
+        if (!text || isTyping) return;
+        setInput(text);
+        setShowFullInput(false);
+        setTimeout(() => handleSendMessage(text), 0);
+    };
     /** 群记忆宫殿"提取中"状态文本——非空时显示顶部胶囊状态条 */
     const [groupPalaceStatus, setGroupPalaceStatus] = useState<string>('');
 
@@ -1257,11 +1277,21 @@ ${recentGroupMsgs}
                 ) : (
                     <div className="p-2 flex items-end gap-2">
                         {/* Plus / Actions Button */}
-                        <button 
+                        <button
                             onClick={() => { setShowActions(!showActions); setShowEmojiPicker(false); }}
                             className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform ${showActions ? 'bg-slate-300 rotate-45' : 'bg-transparent hover:bg-slate-200'}`}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                        </button>
+
+                        {/* 全屏输入按钮 */}
+                        <button
+                            onClick={openFullInput}
+                            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform bg-transparent hover:bg-slate-200 text-slate-600"
+                            title="全屏输入"
+                            aria-label="全屏输入"
+                        >
+                            <CornersOut className="w-5 h-5" weight="bold" />
                         </button>
 
                         {/* Input Field Container */}
@@ -1479,6 +1509,20 @@ ${recentGroupMsgs}
                     <input type="number" value={transferAmount} onChange={e => setTransferAmount(e.target.value)} placeholder="金额" className="w-full px-4 py-4 bg-slate-100 rounded-2xl text-center text-2xl font-bold outline-none text-slate-800 placeholder:text-slate-300" autoFocus />
                 </div>
             </Modal>
+
+            {/* 全屏输入弹窗 */}
+            <FullScreenInput
+                isOpen={showFullInput}
+                title="群聊输入"
+                value={tempInput}
+                onChange={setTempInput}
+                onClose={() => setShowFullInput(false)}
+                onConfirm={confirmFullInput}
+                onSend={sendFromFullInput}
+                placeholder="Message..."
+                confirmText="完成"
+                sendButtonText="发送"
+            />
 
         </div>
     );

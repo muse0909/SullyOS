@@ -5,6 +5,8 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
+import FullScreenInput from '../common/FullScreenInput';
+import { CornersOut } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -131,6 +133,25 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [showInputBox, setShowInputBox] = useState(false);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const [showModeSwitch, setShowModeSwitch] = useState(false);
+
+    // --- 全屏输入状态 ---
+    const [showFullInput, setShowFullInput] = useState(false);
+    const [tempInput, setTempInput] = useState('');
+    const openFullInput = () => {
+        setTempInput(input);
+        setShowFullInput(true);
+    };
+    const confirmFullInput = () => {
+        setInput(tempInput);
+        setShowFullInput(false);
+    };
+    const sendFromFullInput = () => {
+        const text = tempInput.trim();
+        if (!text || isTyping) return;
+        setInput(text);
+        setShowFullInput(false);
+        setTimeout(() => handleSend(), 0);
+    };
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -1025,6 +1046,14 @@ const DateSession: React.FC<DateSessionProps> = ({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
                   </button>
+                  <button
+                    onClick={openFullInput}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 shrink-0 bg-white/15 text-white/70 hover:bg-white/25"
+                    title="全屏输入"
+                    aria-label="全屏输入"
+                  >
+                    <CornersOut className="w-4 h-4" weight="bold" />
+                  </button>
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -1082,6 +1111,20 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <button onClick={() => { onDeleteMessage(selectedMessage!); setModalType('none'); }} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl">删除记录</button>
                 </div>
             </Modal>
+
+            {/* 全屏输入弹窗 */}
+            <FullScreenInput
+                isOpen={showFullInput}
+                title="见面输入"
+                value={tempInput}
+                onChange={setTempInput}
+                onClose={() => setShowFullInput(false)}
+                onConfirm={confirmFullInput}
+                onSend={sendFromFullInput}
+                placeholder="输入对话..."
+                confirmText="完成"
+                sendButtonText="发送"
+            />
         </div>
     );
 };

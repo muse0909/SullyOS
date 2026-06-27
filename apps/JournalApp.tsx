@@ -869,18 +869,6 @@ Structure:
                     <p className="text-sm text-slate-600">确定要删除这个贴纸素材吗？(不会影响已使用的日记)</p>
                 </div>
             </Modal>
-
-            {/* 全屏输入弹窗 - 日记主输入 */}
-            <FullScreenInput
-                isOpen={showFullDiaryInput}
-                title={activeTab === 'user' ? '我的日记' : '角色回复'}
-                value={activeTab === 'user' ? (currentEntry?.userPage.text || '') : (currentEntry?.charPage.text || '')}
-                onChange={v => updatePage({ text: v }, activeTab)}
-                onClose={() => setShowFullDiaryInput(false)}
-                onConfirm={() => setShowFullDiaryInput(false)}
-                placeholder={activeTab === 'user' ? '记录今天发生的事情...' : '等待回复...'}
-                confirmText="完成"
-            />
         </div>
     );
 };

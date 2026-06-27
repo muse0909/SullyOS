@@ -7,10 +7,10 @@ interface FullScreenEditorProps {
     title?: string;
     value: string;
     onChange: (v: string) => void;
-    onClose: () => void;     // 取消
+    onClose?: () => void;    // 取消（保留接口，UI 不再渲染；为兼容旧调用）
     onConfirm: () => void;   // 返回 = 保存
     placeholder?: string;
-    onSend?: () => void;
+    onSend?: () => void;     // 发送（保留接口，UI 不再渲染；为兼容旧调用）
     sendButtonText?: string;
     confirmText?: string;
 }
@@ -23,8 +23,11 @@ interface FullScreenEditorProps {
  * 行为：
  * - 左上 ← 返回 = 关闭并保存（onConfirm）
  * - 右上 ⚙ 设置 = 抽屉式设置面板
- * - 取消 = 关闭不保存
- * - 完成 / 发送 = 关闭并保存
+ * - 设置（背景图 / 透明度 / 字体大小 / 字体颜色）自动持久化到 localStorage，
+ *   下次打开还在，不用每次重新设置。
+ *
+ * 底部按钮（取消/发送/完成）已移除——只需要点左上返回即可保存。
+ * 保留 onClose/onSend prop 接口仅为兼容旧调用方，UI 上不再渲染。
  */
 const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
     isOpen,
@@ -39,11 +42,42 @@ const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
     confirmText = '完成',
 }) => {
     const [showSettings, setShowSettings] = useState(false);
-    // 设置（每次打开重置，暂不持久化；后续按需加 IndexedDB）
-    const [bgImage, setBgImage] = useState<string | null>(null);
-    const [bgOverlayOpacity, setBgOverlayOpacity] = useState(85); // 0-100, 遮罩不透明度（值越大背景越被遮盖）
-    const [fontSize, setFontSize] = useState(16);
-    const [fontColor, setFontColor] = useState('#1e293b');
+
+    // 设置（从 localStorage 读取，每次变化自动写回——下次打开还在）
+    const SETTINGS_KEY = 'sully:fullscreen-editor-settings';
+    const loadSettings = () => {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (!raw) return null;
+            const s = JSON.parse(raw);
+            // 基础校验：避免脏数据导致运行时崩
+            return {
+                bgImage: typeof s.bgImage === 'string' ? s.bgImage : null,
+                bgOverlayOpacity: typeof s.bgOverlayOpacity === 'number' ? s.bgOverlayOpacity : 85,
+                fontSize: typeof s.fontSize === 'number' ? s.fontSize : 16,
+                fontColor: typeof s.fontColor === 'string' ? s.fontColor : '#1e293b',
+            };
+        } catch {
+            return null;
+        }
+    };
+    const initialSettings = loadSettings();
+    const [bgImage, setBgImage] = useState<string | null>(initialSettings?.bgImage ?? null);
+    const [bgOverlayOpacity, setBgOverlayOpacity] = useState(initialSettings?.bgOverlayOpacity ?? 85);
+    const [fontSize, setFontSize] = useState(initialSettings?.fontSize ?? 16);
+    const [fontColor, setFontColor] = useState(initialSettings?.fontColor ?? '#1e293b');
+
+    // 设置变化时自动持久化（localStorage 满则降级静默失败，避免大图阻塞）
+    useEffect(() => {
+        try {
+            localStorage.setItem(
+                SETTINGS_KEY,
+                JSON.stringify({ bgImage, bgOverlayOpacity, fontSize, fontColor })
+            );
+        } catch {
+            /* QuotaExceeded 等错误静默忽略——大图场景下次打开会回退到默认 */
+        }
+    }, [bgImage, bgOverlayOpacity, fontSize, fontColor]);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -146,31 +180,6 @@ const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
                     style={{ color: fontColor, fontSize: `${fontSize}px` }}
                     className="flex-1 w-full px-6 py-4 bg-transparent resize-none focus:outline-none no-scrollbar leading-relaxed placeholder:text-slate-400"
                 />
-
-                {/* 底部：按钮（无边框，居中） */}
-                <div className="h-16 px-4 flex items-center justify-center gap-3 shrink-0">
-                    <button
-                        onClick={onClose}
-                        className="px-6 h-11 bg-white/70 backdrop-blur text-slate-500 font-medium rounded-full active:scale-95 transition-transform"
-                    >
-                        取消
-                    </button>
-                    {onSend && (
-                        <button
-                            onClick={onSend}
-                            disabled={!value.trim()}
-                            className="px-7 h-11 bg-white/70 backdrop-blur text-primary font-medium rounded-full active:scale-95 transition-transform disabled:opacity-40"
-                        >
-                            {sendButtonText}
-                        </button>
-                    )}
-                    <button
-                        onClick={onConfirm}
-                        className="px-8 h-11 bg-primary text-white font-medium rounded-full shadow-lg active:scale-95 transition-transform"
-                    >
-                        {confirmText}
-                    </button>
-                </div>
             </div>
 
             {/* 设置抽屉（右侧滑出） */}

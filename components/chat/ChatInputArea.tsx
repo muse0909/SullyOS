@@ -1,10 +1,11 @@
 
 import React, { useRef, useState } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, CornersOut } from '@phosphor-icons/react';
 import { ShareNetwork, Trash, Copy } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
+import FullScreenInput from '../common/FullScreenInput';
 
 interface ChatInputAreaProps {
     input: string;
@@ -76,6 +77,26 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const actionsSwipeStart = useRef<{ x: number; y: number } | null>(null);
     const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
+
+    // --- 全屏输入状态 ---
+    const [showFullInput, setShowFullInput] = useState(false);
+    const [tempInput, setTempInput] = useState('');
+    const openFullInput = () => {
+        setTempInput(input);
+        setShowFullInput(true);
+    };
+    const confirmFullInput = () => {
+        setInput(tempInput);
+        setShowFullInput(false);
+    };
+    const sendFromFullInput = () => {
+        const text = tempInput.trim();
+        if (!text || isTyping) return;
+        setInput(text); // 同步给原 input（保持状态一致）
+        setShowFullInput(false);
+        // 触发 onSend 是在父组件里通过 onSend prop，所以用 setTimeout 0 等状态更新
+        setTimeout(() => onSend(), 0);
+    };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -350,6 +371,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
+                    <button
+                        onClick={openFullInput}
+                        className={actionButtonClass}
+                        title="全屏输入"
+                        aria-label="全屏输入"
+                    >
+                        <CornersOut className="w-5 h-5" weight="bold" />
+                    </button>
                     <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <textarea 
                             ref={textareaRef}
@@ -607,6 +636,20 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     )}
                 </div>
             )}
+
+            {/* 全屏输入弹窗 */}
+            <FullScreenInput
+                isOpen={showFullInput}
+                title="聊天输入"
+                value={tempInput}
+                onChange={setTempInput}
+                onClose={() => setShowFullInput(false)}
+                onConfirm={confirmFullInput}
+                onSend={sendFromFullInput}
+                placeholder="输入消息..."
+                confirmText="完成"
+                sendButtonText="发送"
+            />
         </div>
     );
 };

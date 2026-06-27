@@ -3,7 +3,7 @@ import { useOS } from '../context/OSContext';
 import { Worldbook } from '../types';
 import Modal from '../components/os/Modal';
 import { DiamondsFour, BookOpen, CornersOut } from '@phosphor-icons/react';
-import FullScreenInput from '../components/common/FullScreenInput';
+import FullScreenEditor from '../components/common/FullScreenEditor';
 
 const WorldbookApp: React.FC = () => {
     const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
@@ -177,8 +177,8 @@ const WorldbookApp: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 全屏输入弹窗 */}
-                <FullScreenInput
+                {/* 全屏编辑器 v2 - 世界书设定内容（受控 value/onChange 直接写 tempContent） */}
+                <FullScreenEditor
                     isOpen={showFullContent}
                     title={`世界书设定${tempTitle ? ` - ${tempTitle}` : ''}`}
                     value={tempContent}
@@ -186,7 +186,6 @@ const WorldbookApp: React.FC = () => {
                     onClose={() => setShowFullContent(false)}
                     onConfirm={() => setShowFullContent(false)}
                     placeholder="在此输入详细的设定内容，支持 Markdown 格式..."
-                    confirmText="完成"
                 />
             </div>
         );

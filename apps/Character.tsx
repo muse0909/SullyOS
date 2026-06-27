@@ -4,7 +4,7 @@ import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
 import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, CornersOut } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
-import FullScreenInput from '../components/common/FullScreenInput';
+import FullScreenEditor from '../components/common/FullScreenEditor';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -1367,8 +1367,8 @@ ${isInitialGeneration ? `
             </div>
         </Modal>
 
-        {/* 全屏输入弹窗 - 核心指令 */}
-        <FullScreenInput
+        {/* 全屏编辑器 v2 - 核心指令（受控 value/onChange 直接写 formData） */}
+        <FullScreenEditor
             isOpen={showFullSystemPrompt}
             title="核心指令 (System Prompt)"
             value={formData?.systemPrompt || ''}
@@ -1376,11 +1376,10 @@ ${isInitialGeneration ? `
             onClose={() => setShowFullSystemPrompt(false)}
             onConfirm={() => setShowFullSystemPrompt(false)}
             placeholder="设定..."
-            confirmText="完成"
         />
 
-        {/* 全屏输入弹窗 - 世界观 */}
-        <FullScreenInput
+        {/* 全屏编辑器 v2 - 世界观 */}
+        <FullScreenEditor
             isOpen={showFullWorldview}
             title="世界观 / 设定补充"
             value={formData?.worldview || ''}
@@ -1388,7 +1387,6 @@ ${isInitialGeneration ? `
             onClose={() => setShowFullWorldview(false)}
             onConfirm={() => setShowFullWorldview(false)}
             placeholder="在这个世界里，魔法是存在的..."
-            confirmText="完成"
         />
     </div>
   );

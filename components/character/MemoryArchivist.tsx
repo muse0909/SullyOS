@@ -4,7 +4,7 @@ import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
 import { DEFAULT_REFINE_PROMPTS } from '../../components/chat/ChatConstants';
 import { CornersOut } from '@phosphor-icons/react';
-import FullScreenInput from '../common/FullScreenInput';
+import FullScreenEditor from '../common/FullScreenEditor';
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
@@ -481,8 +481,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 </div>
             </Modal>
 
-            {/* 全屏输入弹窗 - 编辑记忆 */}
-            <FullScreenInput
+            {/* 全屏编辑器 v2 - 编辑记忆（受控 value/onChange 直接写 editMemory） */}
+            <FullScreenEditor
                 isOpen={showFullEditMemory}
                 title={editMemory ? `编辑记忆 - ${editMemory.date}` : '编辑记忆'}
                 value={editMemory?.summary || ''}
@@ -490,11 +490,10 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 onClose={() => setShowFullEditMemory(false)}
                 onConfirm={() => setShowFullEditMemory(false)}
                 placeholder="记忆摘要..."
-                confirmText="完成"
             />
 
-            {/* 全屏输入弹窗 - 编辑核心记忆 */}
-            <FullScreenInput
+            {/* 全屏编辑器 v2 - 编辑核心记忆 */}
+            <FullScreenEditor
                 isOpen={showFullEditCore}
                 title={editingCore ? `编辑核心记忆 - ${editingCore.year}年${editingCore.month}月` : '编辑核心记忆'}
                 value={editingCore?.content || ''}
@@ -502,7 +501,6 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 onClose={() => setShowFullEditCore(false)}
                 onConfirm={() => setShowFullEditCore(false)}
                 placeholder="核心记忆内容..."
-                confirmText="完成"
             />
         </div>
     );

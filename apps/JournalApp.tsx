@@ -8,8 +8,7 @@ import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
-import { Sparkle, CornersOut } from '@phosphor-icons/react';
-import FullScreenInput from '../components/common/FullScreenInput';
+import { Sparkle } from '@phosphor-icons/react';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -56,8 +55,7 @@ const JournalApp: React.FC = () => {
     const [showStickerPanel, setShowStickerPanel] = useState(false);
     const [activeTab, setActiveTab] = useState<'user' | 'char'>('user'); // View Tab
     const [hideCharStickers, setHideCharStickers] = useState(false); // Toggle to hide char stickers
-    // --- 全屏输入状态 ---
-    const [showFullDiaryInput, setShowFullDiaryInput] = useState(false);
+
     
     // Sticker Interaction State
     const [draggingSticker, setDraggingSticker] = useState<string | null>(null);
@@ -510,19 +508,9 @@ Structure:
                         <span className={`text-xs font-bold uppercase tracking-widest opacity-50 ${style.text}`}>
                             {side === 'user' ? 'MY DIARY' : 'REPLY'}
                         </span>
-                        <div className="flex items-center gap-2">
-                            <span className={`text-[10px] opacity-40 font-mono ${style.text}`}>
-                                {currentEntry?.date}
-                            </span>
-                            <button
-                                onClick={() => setShowFullDiaryInput(true)}
-                                className="w-7 h-7 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center transition-colors active:scale-90 opacity-60 hover:opacity-100"
-                                title="全屏输入"
-                                aria-label="全屏输入"
-                            >
-                                <CornersOut className="w-3.5 h-3.5" weight="bold" />
-                            </button>
-                        </div>
+                        <span className={`text-[10px] opacity-40 font-mono ${style.text}`}>
+                            {currentEntry?.date}
+                        </span>
                     </div>
 
                     <textarea 

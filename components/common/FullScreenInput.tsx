@@ -129,11 +129,11 @@ const FullScreenInput: React.FC<FullScreenInputProps> = ({
                     className="flex-1 w-full px-6 py-5 text-base leading-relaxed resize-none focus:outline-none bg-slate-50 text-slate-800 placeholder:text-slate-400 no-scrollbar"
                 />
 
-                {/* 底部：按钮区 */}
-                <div className="h-16 px-4 flex items-center justify-end border-t border-slate-100 shrink-0 gap-3 bg-white">
+                {/* 底部：按钮区（居中 + 三个按钮统一胶囊样式） */}
+                <div className="h-16 px-4 flex items-center justify-center border-t border-slate-100 shrink-0 gap-3 bg-white">
                     <button
                         onClick={onClose}
-                        className="px-6 h-11 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+                        className="px-6 h-11 bg-white text-slate-500 font-bold rounded-full border border-slate-200 active:scale-95 transition-transform"
                     >
                         取消
                     </button>

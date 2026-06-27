@@ -3,6 +3,8 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
 import { DEFAULT_REFINE_PROMPTS } from '../../components/chat/ChatConstants';
+import { CornersOut } from '@phosphor-icons/react';
+import FullScreenInput from '../common/FullScreenInput';
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
@@ -61,6 +63,10 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [isManageMode, setIsManageMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
+
+    // --- 全屏输入状态 ---
+    const [showFullEditMemory, setShowFullEditMemory] = useState(false);
+    const [showFullEditCore, setShowFullEditCore] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
 
@@ -379,7 +385,26 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             {viewState.level === 'month' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">本月记忆 (点击眼睛图标激活详细回忆)</h3></div>{renderMemories()}</>}
 
             <Modal isOpen={!!editMemory} title="编辑记忆" onClose={() => setEditMemory(null)} footer={<button onClick={() => { if(editMemory) onUpdateMemory(editMemory.id, editMemory.summary); setEditMemory(null); }} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存修改</button>}>
-                {editMemory && <div className="space-y-3"><div className="text-xs text-slate-400">日期: {editMemory.date}</div><textarea value={editMemory.summary} onChange={e => setEditMemory({...editMemory, summary: e.target.value})} className="w-full h-40 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary"/></div>}
+                {editMemory && (
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs text-slate-400">日期: {editMemory.date}</div>
+                            <button
+                                onClick={() => setShowFullEditMemory(true)}
+                                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 flex items-center justify-center transition-colors active:scale-90"
+                                title="全屏输入"
+                                aria-label="全屏输入"
+                            >
+                                <CornersOut className="w-3.5 h-3.5" weight="bold" />
+                            </button>
+                        </div>
+                        <textarea
+                            value={editMemory.summary}
+                            onChange={e => setEditMemory({...editMemory, summary: e.target.value})}
+                            className="w-full h-40 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary"
+                        />
+                    </div>
+                )}
             </Modal>
             
             <Modal isOpen={showDeleteConfirm} title="确认删除" onClose={() => setShowDeleteConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button><button onClick={performDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">确认删除</button></div>}>
@@ -400,10 +425,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             >
                 {editingCore && (
                     <div className="space-y-2">
-                        <div className="text-xs text-slate-400">{editingCore.year}年{editingCore.month}月</div>
-                        <textarea 
-                            value={editingCore.content} 
-                            onChange={e => setEditingCore({...editingCore, content: e.target.value})} 
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs text-slate-400">{editingCore.year}年{editingCore.month}月</div>
+                            <button
+                                onClick={() => setShowFullEditCore(true)}
+                                className="w-7 h-7 rounded-full bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 flex items-center justify-center transition-colors active:scale-90"
+                                title="全屏输入"
+                                aria-label="全屏输入"
+                            >
+                                <CornersOut className="w-3.5 h-3.5" weight="bold" />
+                            </button>
+                        </div>
+                        <textarea
+                            value={editingCore.content}
+                            onChange={e => setEditingCore({...editingCore, content: e.target.value})}
                             className="w-full h-48 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary leading-relaxed"
                         />
                     </div>
@@ -445,6 +480,30 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     </div>
                 </div>
             </Modal>
+
+            {/* 全屏输入弹窗 - 编辑记忆 */}
+            <FullScreenInput
+                isOpen={showFullEditMemory}
+                title={editMemory ? `编辑记忆 - ${editMemory.date}` : '编辑记忆'}
+                value={editMemory?.summary || ''}
+                onChange={(v) => editMemory && setEditMemory({ ...editMemory, summary: v })}
+                onClose={() => setShowFullEditMemory(false)}
+                onConfirm={() => setShowFullEditMemory(false)}
+                placeholder="记忆摘要..."
+                confirmText="完成"
+            />
+
+            {/* 全屏输入弹窗 - 编辑核心记忆 */}
+            <FullScreenInput
+                isOpen={showFullEditCore}
+                title={editingCore ? `编辑核心记忆 - ${editingCore.year}年${editingCore.month}月` : '编辑核心记忆'}
+                value={editingCore?.content || ''}
+                onChange={(v) => editingCore && setEditingCore({ ...editingCore, content: v })}
+                onClose={() => setShowFullEditCore(false)}
+                onConfirm={() => setShowFullEditCore(false)}
+                placeholder="核心记忆内容..."
+                confirmText="完成"
+            />
         </div>
     );
 };

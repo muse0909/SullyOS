@@ -2,8 +2,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
-import { SlidersHorizontal, SpeakerHigh, Books, BookOpen } from '@phosphor-icons/react';
+import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, CornersOut } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
+import FullScreenInput from '../components/common/FullScreenInput';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -76,6 +77,9 @@ const Character: React.FC = () => {
 
   const [importText, setImportText] = useState('');
   const [exportText, setExportText] = useState('');
+  // --- 全屏输入状态 ---
+  const [showFullSystemPrompt, setShowFullSystemPrompt] = useState(false);
+  const [showFullWorldview, setShowFullWorldview] = useState(false);
   const [isProcessingMemory, setIsProcessingMemory] = useState(false);
   const [importStatus, setImportStatus] = useState('');
 
@@ -1002,18 +1006,38 @@ ${isInitialGeneration ? `
                                </div>
                            </div>
                            
-                           <div>
-                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">核心指令 (System Prompt)</label>
-                               <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" placeholder="设定..." />
-                           </div>
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">核心指令 (System Prompt)</label>
+                                    <button
+                                        onClick={() => setShowFullSystemPrompt(true)}
+                                        className="w-6 h-6 rounded-full bg-slate-100 hover:bg-primary/10 text-slate-400 hover:text-primary flex items-center justify-center transition-colors active:scale-90"
+                                        title="全屏输入"
+                                        aria-label="全屏输入"
+                                    >
+                                        <CornersOut className="w-3 h-3" weight="bold" />
+                                    </button>
+                                </div>
+                                <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" placeholder="设定..." />
+                            </div>
 
-                           <div>
-                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
-                               <textarea 
-                                    value={formData.worldview || ''} 
-                                    onChange={(e) => handleChange('worldview', e.target.value)} 
-                                    className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" 
-                                    placeholder="在这个世界里，魔法是存在的..." 
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">世界观 / 设定补充 (Worldview & Lore)</label>
+                                    <button
+                                        onClick={() => setShowFullWorldview(true)}
+                                        className="w-6 h-6 rounded-full bg-slate-100 hover:bg-primary/10 text-slate-400 hover:text-primary flex items-center justify-center transition-colors active:scale-90"
+                                        title="全屏输入"
+                                        aria-label="全屏输入"
+                                    >
+                                        <CornersOut className="w-3 h-3" weight="bold" />
+                                    </button>
+                                </div>
+                                <textarea
+                                    value={formData.worldview || ''}
+                                    onChange={(e) => handleChange('worldview', e.target.value)}
+                                    className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all"
+                                    placeholder="在这个世界里，魔法是存在的..."
                                 />
                            </div>
 
@@ -1342,6 +1366,30 @@ ${isInitialGeneration ? `
                 </p>
             </div>
         </Modal>
+
+        {/* 全屏输入弹窗 - 核心指令 */}
+        <FullScreenInput
+            isOpen={showFullSystemPrompt}
+            title="核心指令 (System Prompt)"
+            value={formData?.systemPrompt || ''}
+            onChange={v => formData && handleChange('systemPrompt', v)}
+            onClose={() => setShowFullSystemPrompt(false)}
+            onConfirm={() => setShowFullSystemPrompt(false)}
+            placeholder="设定..."
+            confirmText="完成"
+        />
+
+        {/* 全屏输入弹窗 - 世界观 */}
+        <FullScreenInput
+            isOpen={showFullWorldview}
+            title="世界观 / 设定补充"
+            value={formData?.worldview || ''}
+            onChange={v => formData && handleChange('worldview', v)}
+            onClose={() => setShowFullWorldview(false)}
+            onConfirm={() => setShowFullWorldview(false)}
+            placeholder="在这个世界里，魔法是存在的..."
+            confirmText="完成"
+        />
     </div>
   );
 };

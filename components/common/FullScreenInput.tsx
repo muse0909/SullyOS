@@ -38,6 +38,9 @@ interface FullScreenInputProps {
  *     onConfirm={confirmFull}
  *     placeholder="输入消息..."
  *   />
+ *
+ * 底部按钮（取消/发送/完成）已移除——关闭靠顶部 X，点外部，或 Esc 键；
+ * 保存靠 Ctrl/Cmd+Enter（或关闭弹窗时由 onClose 调用方决定是否回写）。
  */
 const FullScreenInput: React.FC<FullScreenInputProps> = ({
     isOpen,
@@ -77,8 +80,8 @@ const FullScreenInput: React.FC<FullScreenInputProps> = ({
                 onClose();
                 return;
             }
-            // Ctrl/Cmd + Enter = 完成
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            // Ctrl/Cmd + Enter = 完成（保存）
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 onConfirm();
                 return;
@@ -128,31 +131,6 @@ const FullScreenInput: React.FC<FullScreenInputProps> = ({
                     maxLength={maxLength}
                     className="flex-1 w-full px-6 py-5 text-base leading-relaxed resize-none focus:outline-none bg-slate-50 text-slate-800 placeholder:text-slate-400 no-scrollbar"
                 />
-
-                {/* 底部：按钮区（居中 + 三个按钮统一胶囊样式） */}
-                <div className="h-16 px-4 flex items-center justify-center border-t border-slate-100 shrink-0 gap-3 bg-white">
-                    <button
-                        onClick={onClose}
-                        className="px-6 h-11 bg-white text-slate-500 font-bold rounded-full border border-slate-200 active:scale-95 transition-transform"
-                    >
-                        取消
-                    </button>
-                    {onSend && (
-                        <button
-                            onClick={onSend}
-                            disabled={!value.trim()}
-                            className="px-7 h-11 bg-white text-primary font-bold rounded-full border border-primary/30 active:scale-95 transition-transform disabled:opacity-40"
-                        >
-                            {sendButtonText}
-                        </button>
-                    )}
-                    <button
-                        onClick={onConfirm}
-                        className="px-8 h-11 bg-primary text-white font-bold rounded-full shadow-lg active:scale-95 transition-transform"
-                    >
-                        {confirmText}
-                    </button>
-                </div>
             </div>
         </div>
     );

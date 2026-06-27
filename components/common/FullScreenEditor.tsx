@@ -229,7 +229,7 @@ const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
                                     }}
                                     className="leading-relaxed whitespace-pre-wrap break-words"
                                 >
-                                    {value || placeholder || '在这里写点什么...'}
+                                    输入消息···
                                 </p>
                             </div>
                         </div>

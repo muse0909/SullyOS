@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, GearSix, X, Trash, Image as ImageIcon } from '@phosphor-icons/react';
 
 interface FullScreenEditorProps {
@@ -88,10 +89,16 @@ const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
 
     if (!isOpen) return null;
 
-    return (
+    // 用 Portal 挂到 body，绕过父容器的 transform/overflow 干扰
+    // （iOS PWA 模式下 App.tsx 用了 translateZ(0)，会让 fixed 变 absolute）
+    return createPortal(
         <div
-            className="fixed inset-0 z-[300] flex flex-col"
-            style={{ backgroundColor: '#f8fafc' }}
+            className="fixed inset-0 z-[9999] flex flex-col"
+            style={{
+                backgroundColor: '#f8fafc',
+                paddingTop: 'env(safe-area-inset-top, 0px)',
+                paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            }}
         >
             {/* 背景图（如果有） */}
             {bgImage && (
@@ -324,7 +331,8 @@ const FullScreenEditor: React.FC<FullScreenEditorProps> = ({
                     </div>
                 </div>
             )}
-        </div>
+        </div>,
+        document.body
     );
 };
 

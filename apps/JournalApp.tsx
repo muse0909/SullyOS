@@ -55,6 +55,7 @@ const JournalApp: React.FC = () => {
     const [showStickerPanel, setShowStickerPanel] = useState(false);
     const [activeTab, setActiveTab] = useState<'user' | 'char'>('user'); // View Tab
     const [hideCharStickers, setHideCharStickers] = useState(false); // Toggle to hide char stickers
+
     
     // Sticker Interaction State
     const [draggingSticker, setDraggingSticker] = useState<string | null>(null);

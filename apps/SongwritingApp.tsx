@@ -28,6 +28,8 @@ import {
 import { C as MusicC, Sparkle, CrossStar, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
+import { CornersOut } from '@phosphor-icons/react';
+import FullScreenEditor from '../components/common/FullScreenEditor';
 import {
     Check, PencilSimple,
     Sparkle as SparkleP, Butterfly, Feather, Lightning, MicrophoneStage,
@@ -81,6 +83,8 @@ const SongwritingApp: React.FC = () => {
 
     // Navigation
     const [view, setView] = useState<'shelf' | 'create' | 'partner' | 'write' | 'preview'>('shelf');
+    // --- 全屏输入状态 ---
+    const [showFullSongInput, setShowFullSongInput] = useState(false);
     const [activeSong, setActiveSong] = useState<SongSheet | null>(null);
 
     // Create Form State
@@ -2944,6 +2948,14 @@ const SongwritingApp: React.FC = () => {
                             }}
                         />
                         <button
+                            onClick={() => setShowFullSongInput(true)}
+                            className="w-10 h-10 rounded-lg flex items-center justify-center active:scale-95 transition-all shrink-0 bg-stone-100 hover:bg-stone-200 text-stone-500"
+                            title="全屏输入"
+                            aria-label="全屏输入"
+                        >
+                            <CornersOut className="w-4 h-4" weight="bold" />
+                        </button>
+                        <button
                             onClick={handleSend}
                             disabled={isTyping || !inputText.trim()}
                             className={`w-10 h-10 rounded-lg flex items-center justify-center active:scale-95 transition-all shrink-0 ${inputText.trim() ? 'bg-stone-700 text-stone-50' : 'bg-stone-200 text-stone-400'}`}
@@ -2971,6 +2983,23 @@ const SongwritingApp: React.FC = () => {
                         )}
                     </div>
                 </Modal>
+
+                {/* 全屏编辑器 v2 - 写歌主输入（受控 value/onChange 直接写 inputText；onSend 走底部发送快捷键） */}
+                <FullScreenEditor
+                    isOpen={showFullSongInput}
+                    title="写歌输入"
+                    value={inputText}
+                    onChange={setInputText}
+                    onClose={() => setShowFullSongInput(false)}
+                    onConfirm={() => setShowFullSongInput(false)}
+                    onSend={() => {
+                        if (inputText.trim() && !isTyping) {
+                            handleSend();
+                            setShowFullSongInput(false);
+                        }
+                    }}
+                    placeholder="写下一句词，或直接点「聊聊」聊创作……"
+                />
             </div>
         );
     }

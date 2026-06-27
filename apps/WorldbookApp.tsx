@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook } from '../types';
 import Modal from '../components/os/Modal';
-import { DiamondsFour, BookOpen } from '@phosphor-icons/react';
+import { DiamondsFour, BookOpen, CornersOut } from '@phosphor-icons/react';
+import FullScreenEditor from '../components/common/FullScreenEditor';
 
 const WorldbookApp: React.FC = () => {
     const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
@@ -18,6 +19,9 @@ const WorldbookApp: React.FC = () => {
     const [tempContent, setTempContent] = useState('');
     const [tempCategory, setTempCategory] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+    // --- 全屏输入状态 ---
+    const [showFullContent, setShowFullContent] = useState(false);
 
     // Grouping Logic
     const groupedBooks = useMemo(() => {
@@ -152,16 +156,37 @@ const WorldbookApp: React.FC = () => {
                         </div>
 
                         <div>
-                            <label className="text-xs font-bold text-slate-400 uppercase mb-2 block tracking-wider">设定内容 (Content)</label>
-                            <textarea 
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">设定内容 (Content)</label>
+                                <button
+                                    onClick={() => setShowFullContent(true)}
+                                    className="w-7 h-7 rounded-full bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 flex items-center justify-center transition-colors active:scale-90"
+                                    title="全屏输入"
+                                    aria-label="全屏输入"
+                                >
+                                    <CornersOut className="w-3.5 h-3.5" weight="bold" />
+                                </button>
+                            </div>
+                            <textarea
                                 value={tempContent}
                                 onChange={e => setTempContent(e.target.value)}
-                                placeholder="在此输入详细的设定内容，支持 Markdown 格式..." 
+                                placeholder="在此输入详细的设定内容，支持 Markdown 格式..."
                                 className="w-full h-80 bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-700 leading-relaxed resize-none outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all font-mono"
                             />
                         </div>
                     </div>
                 </div>
+
+                {/* 全屏编辑器 v2 - 世界书设定内容（受控 value/onChange 直接写 tempContent） */}
+                <FullScreenEditor
+                    isOpen={showFullContent}
+                    title={`世界书设定${tempTitle ? ` - ${tempTitle}` : ''}`}
+                    value={tempContent}
+                    onChange={setTempContent}
+                    onClose={() => setShowFullContent(false)}
+                    onConfirm={() => setShowFullContent(false)}
+                    placeholder="在此输入详细的设定内容，支持 Markdown 格式..."
+                />
             </div>
         );
     }

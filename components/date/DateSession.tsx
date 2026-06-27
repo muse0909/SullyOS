@@ -5,6 +5,8 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
+import FullScreenEditor from '../common/FullScreenEditor';
+import { CornersOut } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -131,6 +133,25 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [showInputBox, setShowInputBox] = useState(false);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const [showModeSwitch, setShowModeSwitch] = useState(false);
+
+    // --- 全屏输入状态 ---
+    const [showFullInput, setShowFullInput] = useState(false);
+    const [tempInput, setTempInput] = useState('');
+    const openFullInput = () => {
+        setTempInput(input);
+        setShowFullInput(true);
+    };
+    const confirmFullInput = () => {
+        setInput(tempInput);
+        setShowFullInput(false);
+    };
+    const sendFromFullInput = () => {
+        const text = tempInput.trim();
+        if (!text || isTyping) return;
+        setInput(text);
+        setShowFullInput(false);
+        setTimeout(() => handleSend(), 0);
+    };
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -455,16 +476,23 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleSend = async () => {
-        const text = input.trim() || lastSentInput.trim();
-        if (!text || isTyping) return;
+        if (isTyping) return;
+        const trimmed = input.trim();
+        // 空内容：不发请求，直接触发重 roll（如果有可重 roll 的消息）
+        if (!trimmed) {
+            if (canReroll) {
+                await handleRerollClick();
+            }
+            return;
+        }
         setInput('');
-        setLastSentInput(text);
+        setLastSentInput(trimmed);
         setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
-            const aiContent = await onSendMessage(text);
+            const aiContent = await onSendMessage(trimmed);
             // Parse new content
             const items = parseDialogue(aiContent, 'normal');
             setDialogueBatch(items);
@@ -1018,6 +1046,14 @@ const DateSession: React.FC<DateSessionProps> = ({
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
                   </button>
+                  <button
+                    onClick={openFullInput}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 shrink-0 bg-white/15 text-white/70 hover:bg-white/25"
+                    title="全屏输入"
+                    aria-label="全屏输入"
+                  >
+                    <CornersOut className="w-4 h-4" weight="bold" />
+                  </button>
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -1030,7 +1066,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                   />
                   <button
                     onClick={handleSend}
-                    disabled={(!input.trim() && !lastSentInput.trim()) || isTyping}
+                    disabled={(!input.trim() && !canReroll) || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">
@@ -1075,6 +1111,18 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <button onClick={() => { onDeleteMessage(selectedMessage!); setModalType('none'); }} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl">删除记录</button>
                 </div>
             </Modal>
+
+            {/* 全屏编辑器 v2 - 见面输入（受控 value/onChange 直接写 tempInput；onConfirm 走 confirmFullInput） */}
+            <FullScreenEditor
+                isOpen={showFullInput}
+                title="见面输入"
+                value={tempInput}
+                onChange={setTempInput}
+                onClose={() => setShowFullInput(false)}
+                onConfirm={confirmFullInput}
+                onSend={sendFromFullInput}
+                placeholder="输入对话..."
+            />
         </div>
     );
 };

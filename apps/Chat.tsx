@@ -2058,12 +2058,13 @@ if (keepN > 0) {
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
                 editEmojiNewName={editEmojiNewName} setEditEmojiNewName={setEditEmojiNewName} onEditEmojiConfirm={handleEditEmoji}
-                reorderList={reorderList} onSaveReorder={handleSaveReorder} onCancelReorder={handleCancelReorder} onMoveEmoji={(idx, dir) => {
+                reorderList={reorderList} onSaveReorder={handleSaveReorder} onCancelReorder={handleCancelReorder} onMoveEmoji={(from, to) => {
+                    if (from === to) return;
                     setReorderList(prev => {
-                        const target = dir === 'up' ? idx - 1 : idx + 1;
-                        if (target < 0 || target >= prev.length) return prev;
+                        if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
                         const next = [...prev];
-                        [next[idx], next[target]] = [next[target], next[idx]];
+                        const [moved] = next.splice(from, 1);
+                        next.splice(to, 0, moved);
                         return next.map((e, i) => ({ ...e, order: i }));
                     });
                 }}

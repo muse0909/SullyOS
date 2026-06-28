@@ -75,7 +75,7 @@ interface ChatModalsProps {
     reorderList: { name: string; url: string; categoryId?: string; order?: number }[];
     onSaveReorder: () => void;
     onCancelReorder: () => void;
-    onMoveEmoji: (idx: number, dir: 'up' | 'down') => void;
+    onMoveEmoji: (from: number, to: number) => void;
     // Category Visibility
     allCharacters?: CharacterProfile[];
     onSaveCategoryVisibility?: (categoryId: string, allowedCharacterIds: string[] | undefined) => void;
@@ -159,6 +159,127 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
+
+    // --- Emoji Reorder 拖拽排序 state ---
+    // 用 position: fixed 浮层让被拖动项脱离文档流，避免 reorder 时 DOM 位置变化造成的视觉跳跃
+    const reorderListRef = useRef<HTMLDivElement>(null);
+    const reorderItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const dragStartPointerYRef = useRef<number>(0);
+    const dragOffsetYRef = useRef<number>(0); // 长按启动时手指相对 item.top 的偏移
+    const isDraggingRef = useRef<boolean>(false);
+    const scrollRafRef = useRef<number | null>(null);
+    const scrollDirRef = useRef<-1 | 0 | 1>(0);
+    const [draggingName, setDraggingName] = useState<string | null>(null);
+    const [draggingStyle, setDraggingStyle] = useState<{ left: number; top: number; width: number } | null>(null);
+
+    const clearLongPress = () => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+
+    const startAutoScroll = (dir: -1 | 0 | 1) => {
+        scrollDirRef.current = dir;
+        if (scrollRafRef.current !== null) return;
+        const tick = () => {
+            const el = reorderListRef.current;
+            if (!el || scrollDirRef.current === 0) {
+                scrollRafRef.current = null;
+                return;
+            }
+            const speed = scrollDirRef.current * 6;
+            el.scrollTop += speed;
+            scrollRafRef.current = requestAnimationFrame(tick);
+        };
+        scrollRafRef.current = requestAnimationFrame(tick);
+    };
+    const stopAutoScroll = () => {
+        scrollDirRef.current = 0;
+        if (scrollRafRef.current !== null) {
+            cancelAnimationFrame(scrollRafRef.current);
+            scrollRafRef.current = null;
+        }
+    };
+
+    const handleReorderPointerDown = (name: string, e: React.MouseEvent | React.TouchEvent) => {
+        // 如果点在 ↑↓ 按钮上，不进入拖拽（让按钮 onClick 生效）
+        const target = e.target as HTMLElement;
+        if (target.closest('button')) return;
+
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        dragStartPointerYRef.current = clientY;
+
+        longPressTimerRef.current = setTimeout(() => {
+            const itemEl = reorderItemRefs.current.get(name);
+            if (!itemEl) return;
+            const rect = itemEl.getBoundingClientRect();
+            dragOffsetYRef.current = clientY - rect.top;
+            isDraggingRef.current = true;
+            setDraggingName(name);
+            setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
+            // 触觉反馈（如果浏览器支持）
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                (navigator as any).vibrate?.(30);
+            }
+        }, 300);
+    };
+
+    const handleReorderPointerMove = (e: React.MouseEvent | React.TouchEvent) => {
+        if (!isDraggingRef.current || !draggingName) {
+            // 移动 > 10px 取消长按计时
+            if (longPressTimerRef.current) {
+                const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+                if (Math.abs(clientY - dragStartPointerYRef.current) > 10) clearLongPress();
+            }
+            return;
+        }
+        e.preventDefault();
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+        // 1) 更新拖动浮层位置（position: fixed 跟随手指，不受 DOM 变化影响）
+        setDraggingStyle(prev => prev ? { ...prev, top: clientY - dragOffsetYRef.current } : prev);
+
+        // 2) 自动滚动：靠近顶部/底部阈值区
+        const container = reorderListRef.current;
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            const THRESHOLD = 60;
+            if (clientY - rect.top < THRESHOLD) startAutoScroll(-1);
+            else if (rect.bottom - clientY < THRESHOLD) startAutoScroll(1);
+            else stopAutoScroll();
+        }
+
+        // 3) 计算落点 target index
+        if (!container) return;
+        const currentIdx = reorderList.findIndex(it => it.name === draggingName);
+        if (currentIdx === -1) return;
+        const items = reorderList
+            .map(it => reorderItemRefs.current.get(it.name))
+            .filter((el): el is HTMLDivElement => !!el);
+        let target = currentIdx;
+        for (let i = 0; i < items.length; i++) {
+            const r = items[i].getBoundingClientRect();
+            if (clientY < r.top + r.height / 2) {
+                target = i;
+                break;
+            }
+        }
+        if (target !== currentIdx) {
+            onMoveEmoji(currentIdx, target);
+        }
+    };
+
+    const handleReorderPointerUp = () => {
+        clearLongPress();
+        if (isDraggingRef.current) {
+            isDraggingRef.current = false;
+            setDraggingName(null);
+            setDraggingStyle(null);
+            stopAutoScroll();
+        }
+    };
 
     const openVisibilityModal = () => {
         if (selectedCategory) {
@@ -654,34 +775,90 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 isOpen={modalType === 'emoji-reorder'} title="调整表情包顺序" onClose={onCancelReorder}
                 footer={<><button onClick={onCancelReorder} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onSaveReorder} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
             >
-                <div className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1">
+                <p className="text-xs text-slate-400 text-center pb-2">长按表情包 0.3s 后可拖动；贴近顶部/底部会自动滚动</p>
+                <div
+                    ref={reorderListRef}
+                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 touch-none select-none"
+                    onMouseMove={handleReorderPointerMove}
+                    onTouchMove={handleReorderPointerMove}
+                    onMouseUp={handleReorderPointerUp}
+                    onTouchEnd={handleReorderPointerUp}
+                    onMouseLeave={handleReorderPointerUp}
+                >
                     {reorderList.length === 0 ? (
                         <p className="text-center text-sm text-slate-400 py-6">当前分类下没有表情包</p>
-                    ) : reorderList.map((e, idx) => (
-                        <div key={e.name} className="flex items-center gap-3 bg-slate-50 rounded-2xl px-3 py-2">
+                    ) : reorderList.map((e, idx) => {
+                        const isDragging = draggingName === e.name;
+                        // 拖动中的项脱离列表，在 fixed 浮层渲染；原位置留虚线占位
+                        if (isDragging) {
+                            return (
+                                <div
+                                    key={e.name}
+                                    className="h-14 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50"
+                                />
+                            );
+                        }
+                        return (
+                            <div
+                                key={e.name}
+                                ref={(el) => {
+                                    if (el) reorderItemRefs.current.set(e.name, el);
+                                    else reorderItemRefs.current.delete(e.name);
+                                }}
+                                onMouseDown={(ev) => handleReorderPointerDown(e.name, ev)}
+                                onTouchStart={(ev) => handleReorderPointerDown(e.name, ev)}
+                                data-reorder-item
+                                className="flex items-center gap-3 bg-slate-50 rounded-2xl px-3 py-2 cursor-grab active:bg-slate-100"
+                            >
+                                {/* 拖拽手柄图标，提示用户可拖动 */}
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5h.008v.008H8.25V4.5Zm0 7.5h.008v.008H8.25V12Zm0 7.5h.008v.008H8.25V19.5Zm7.5-15h.008v.008h-.008V4.5Zm0 7.5h.008v.008h-.008V12Zm0 7.5h.008v.008h-.008V19.5Z" />
+                                </svg>
+                                <img src={e.url} className="w-10 h-10 object-contain rounded-lg shrink-0 pointer-events-none" />
+                                <span className="flex-1 text-sm text-slate-700 truncate font-medium pointer-events-none">{e.name}</span>
+                                <div className="flex flex-col gap-0.5 shrink-0">
+                                    <button
+                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx - 1); }}
+                                        disabled={idx === 0}
+                                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === 0 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
+                                        aria-label="上移"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
+                                    </button>
+                                    <button
+                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx + 1); }}
+                                        disabled={idx === reorderList.length - 1}
+                                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === reorderList.length - 1 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
+                                        aria-label="下移"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+                {/* 拖动浮层（position: fixed 脱离 reorderList 文档流，跟随手指不抖动） */}
+                {draggingName && draggingStyle && (() => {
+                    const e = reorderList.find(it => it.name === draggingName);
+                    if (!e) return null;
+                    return (
+                        <div
+                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing"
+                            style={{
+                                left: draggingStyle.left,
+                                top: draggingStyle.top,
+                                width: draggingStyle.width,
+                            }}
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5h.008v.008H8.25V4.5Zm0 7.5h.008v.008H8.25V12Zm0 7.5h.008v.008H8.25V19.5Zm7.5-15h.008v.008h-.008V4.5Zm0 7.5h.008v.008h-.008V12Zm0 7.5h.008v.008h-.008V19.5Z" />
+                            </svg>
                             <img src={e.url} className="w-10 h-10 object-contain rounded-lg shrink-0" />
                             <span className="flex-1 text-sm text-slate-700 truncate font-medium">{e.name}</span>
-                            <div className="flex flex-col gap-0.5 shrink-0">
-                                <button
-                                    onClick={() => onMoveEmoji(idx, 'up')}
-                                    disabled={idx === 0}
-                                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === 0 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
-                                    aria-label="上移"
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
-                                </button>
-                                <button
-                                    onClick={() => onMoveEmoji(idx, 'down')}
-                                    disabled={idx === reorderList.length - 1}
-                                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === reorderList.length - 1 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
-                                    aria-label="下移"
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-                                </button>
-                            </div>
                         </div>
-                    ))}
-                </div>
+                    );
+                })()}
             </Modal>
 
             {/* Delete Category Modal */}

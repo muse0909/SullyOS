@@ -368,27 +368,27 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-3 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
-                        <div className="mb-2.5 text-center">
+                        <div className="mb-2 text-center">
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
-                        {/* 心声列表：卡片间距加大，整体缩小 */}
+                        {/* 心声列表：卡片间距紧凑，整体往中间缩 */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            <div className="space-y-3">
+                            <div className="space-y-2">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (
                                         <div
                                             key={`panel-${buff.id}`}
-                                            className="rounded-2xl border p-3 shadow-sm select-none"
+                                            className="rounded-2xl border p-2.5 shadow-sm select-none"
                                             style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                         >
                                             {/* 第一行：日期 + 删除（按日程黄色框规则：字同色系） */}
-                                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                                            <div className="mb-1 flex items-center justify-between gap-3">
                                                 <div className="text-[10px] font-bold" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
@@ -400,12 +400,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                 </button>
                                             </div>
                                             {/* 日期下分割线（用 buff 边框色淡化版） */}
-                                            <div className="mb-1.5 h-px" style={{ backgroundColor: `${style.border}80` }} />
+                                            <div className="mb-1 h-px" style={{ backgroundColor: `${style.border}80` }} />
                                             {/* 小标签 chip：保持小标签形态（胶囊 + 半透白 + 小字） */}
                                             <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); }}
-                                                className="mb-1.5 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none"
+                                                className="mb-1 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none"
                                                 style={{ borderColor: style.border, color: style.text }}
                                                 title={getBuffInnerState(buff)}
                                             >
@@ -415,7 +415,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                 </span>
                                             </button>
                                             {/* 正文（大标签内字：buff 同色系深色，不要黑色） */}
-                                            <div className="text-[11px] leading-relaxed font-medium" style={{ color: style.text }}>
+                                            <div className="text-[11px] leading-snug font-medium" style={{ color: style.text }}>
                                                 {getBuffInnerState(buff)}
                                             </div>
                                         </div>

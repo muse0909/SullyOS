@@ -1,7 +1,7 @@
 # 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行
 
 **日期**：2026-06-28  
-**涉及 commit**：`6d36218`
+**涉及 commit**：`6d36218` `5de6751`
 
 ## 改了什么
 
@@ -31,6 +31,14 @@
 3. **排序 modal 的列表是临时 state，不是直接从 `emojis` 读取**：避免每次渲染都从全部表情里过滤，且移动操作能立即反馈。保存时才调 `DB.reorderEmojis` 写回。
 4. **textarea 自动撑高的依赖是 `input`**：所以从 FullScreenEditor 全屏编辑器同步回来时也会触发（input prop 变化）。iOS Standalone 下因为字号 16px 不会被放大。
 5. **手机端不拖拽**：暮色明确选了 ↑↓ 按钮方案。如果以后想加拖拽，要单独处理 iOS/Android 兼容。
+
+## 修复（5de6751）
+
+暮色测出来"调整顺序点不进去"——长按表情包 → 弹菜单 → 点"调整顺序"按钮没反应。看了代码逻辑都对，怀疑是跨组件回调链 (`onOpenEmojiReorder` prop → `onPanelAction` switch → setReorderList + setModalType) 某一环在某些渲染时序下没生效。
+
+**重构方案**：用 `useEffect` 监听 `modalType === 'emoji-reorder'`，modalType 一变就自动从当前分类拷贝 emojis 到 `reorderList`。这样 ChatModals 的"调整顺序"按钮只需要 `setModalType('emoji-reorder')` 一个调用，少绕一层。
+
+同时清理：dead code `case 'move-emoji-up'` / `'move-emoji-down'` 在 handlePanelAction 里没用上（实际走的是 `onMoveEmoji` prop），一起删了。`onOpenEmojiReorder` prop 也不再需要。
 
 ## 备注
 

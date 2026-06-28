@@ -389,6 +389,14 @@ const Chat: React.FC = () => {
         }
     };
 
+    // 进入"调整顺序" modal 时，根据当前激活分类拷贝一份 emoji 列表到 reorderList。
+    // 用 useEffect 而非 panel action 链，避开跨组件回调的链路问题。
+    useEffect(() => {
+        if (modalType !== 'emoji-reorder') return;
+        const filtered = emojis.filter(e => (e.categoryId || 'default') === activeCategory);
+        setReorderList(filtered.map((e, i) => ({ ...e, order: i })));
+    }, [modalType, emojis, activeCategory]);
+
     // Hydrate voice data from IndexedDB for currently visible messages.
     // Voice URLs are stored as blob: URLs that become invalid whenever the
     // component unmounts — persisting the raw blob and rebuilding the URL on
@@ -866,33 +874,6 @@ const Chat: React.FC = () => {
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
             case 'emoji-options': setSelectedEmoji(payload); setEditEmojiNewName(payload?.name || ''); setModalType('emoji-options'); break;
-            case 'open-emoji-reorder': {
-                // 进入排序 modal：拷贝当前分类的表情包列表（已按 order 排好）
-                const filtered = emojis.filter(e => (e.categoryId || 'default') === activeCategory);
-                setReorderList(filtered.map((e, i) => ({ ...e, order: i })));
-                setModalType('emoji-reorder');
-                break;
-            }
-            case 'move-emoji-up': {
-                const idx = payload;
-                setReorderList(prev => {
-                    if (idx <= 0 || idx >= prev.length) return prev;
-                    const next = [...prev];
-                    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                    return next.map((e, i) => ({ ...e, order: i }));
-                });
-                break;
-            }
-            case 'move-emoji-down': {
-                const idx = payload;
-                setReorderList(prev => {
-                    if (idx < 0 || idx >= prev.length - 1) return prev;
-                    const next = [...prev];
-                    [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
-                    return next.map((e, i) => ({ ...e, order: i }));
-                });
-                break;
-            }
             case 'edit-emoji-confirm': {
                 if (!selectedEmoji) break;
                 handleEditEmoji();
@@ -2077,7 +2058,6 @@ if (keepN > 0) {
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
                 editEmojiNewName={editEmojiNewName} setEditEmojiNewName={setEditEmojiNewName} onEditEmojiConfirm={handleEditEmoji}
-                onOpenEmojiReorder={() => onPanelAction('open-emoji-reorder')}
                 reorderList={reorderList} onSaveReorder={handleSaveReorder} onCancelReorder={handleCancelReorder} onMoveEmoji={(idx, dir) => {
                     setReorderList(prev => {
                         const target = dir === 'up' ? idx - 1 : idx + 1;

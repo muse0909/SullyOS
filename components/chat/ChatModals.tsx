@@ -72,7 +72,6 @@ interface ChatModalsProps {
     setEditEmojiNewName: (v: string) => void;
     onEditEmojiConfirm: () => void;
     // Reorder emojis
-    onOpenEmojiReorder: () => void;
     reorderList: { name: string; url: string; categoryId?: string; order?: number }[];
     onSaveReorder: () => void;
     onCancelReorder: () => void;
@@ -143,7 +142,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
     editEmojiNewName, setEditEmojiNewName, onEditEmojiConfirm,
-    onOpenEmojiReorder,
     reorderList, onSaveReorder, onCancelReorder, onMoveEmoji,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
@@ -617,7 +615,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </svg>
                         编辑名字
                     </button>
-                    <button onClick={() => { onOpenEmojiReorder(); }} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                    <button onClick={() => setModalType('emoji-reorder')} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
                         </svg>

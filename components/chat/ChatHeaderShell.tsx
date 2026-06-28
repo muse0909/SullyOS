@@ -44,20 +44,19 @@ const getBuffLabel = (buff: CharacterBuff) => buff.label || buff.innerState || '
 const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label || '';
 
 /**
- * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景透明度：
- *   1 → 14% 背景，2 → 22%，3 → 30%
- * 文字色始终用满色，border 用对应透明度。
- * 这样不同 label 的心声自然分散到 12 色，又保留 intensity 的强弱感。
+ * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景明度：
+ *   1 → 卡片背景淡（透明度 60%），2 → 中（80%），3 → 浓（100% 满色）
+ * 文字色固定深灰（slate-800），不依赖 buff color——这样时间戳/正文/按钮字
+ * 在淡色卡片上都能看清。边框用满色 buff color。
  */
 const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
     const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
-    const bgAlpha = intensity === 3 ? '4D' : intensity === 2 ? '38' : '24';
-    const borderAlpha = intensity === 3 ? '90' : intensity === 2 ? '70' : '55';
+    const bgAlpha = intensity === 3 ? 'FF' : intensity === 2 ? 'D0' : 'A0';
     return {
         bg: `${color}${bgAlpha}`,
-        border: `${color}${borderAlpha}`,
-        text: color,
+        border: color,
+        text: '#1e293b',  // slate-800
     };
 };
 
@@ -377,12 +376,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                         style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                     >
                                         <div className="mb-2 flex items-center justify-between gap-3">
-                                            <div className="text-[10px] font-semibold opacity-70">{formatEmotionTime(buff.createdAt)}</div>
+                                            <div className="text-[11px] font-bold text-slate-600">{formatEmotionTime(buff.createdAt)}</div>
                                             <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
-                                                className="shrink-0 rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95"
-                                                style={{ color: style.text, border: `1px solid ${style.border}` }}
+                                                className="shrink-0 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95 text-slate-700"
+                                                style={{ border: `1px solid ${style.border}` }}
                                             >
                                                 删除
                                             </button>
@@ -399,7 +398,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                 {getBuffLabel(buff)}
                                             </span>
                                         </button>
-                                        <div className="text-[12px] leading-relaxed font-medium text-slate-700/90">
+                                        <div className="text-[12px] leading-relaxed font-medium text-slate-800">
                                             {getBuffInnerState(buff)}
                                         </div>
                                     </div>

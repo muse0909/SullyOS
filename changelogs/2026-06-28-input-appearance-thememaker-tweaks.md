@@ -1,7 +1,7 @@
 # 输入框 + 外观 + 气泡工坊 排版优化
 
 **日期**：2026-06-28
-**涉及 commit**：`b89bdbe` `6d3ef95`
+**涉及 commit**：`b89bdbe` `6d3ef95` `efea596`
 
 ## 改了什么
 
@@ -104,24 +104,64 @@
 - 弹窗 backdrop：`top-12 left-0 right-0 bottom-0`，限定在 toolbar 下方
 - 聊天内容独立滚动容器 `flex-1 overflow-y-auto`
 
+## 第三轮改动（commit efea596）
+
+### 删除全屏预览逻辑（用户要求整个删掉）
+- 删 `isPreviewFullscreen` state
+- 删 `createPortal` import 和 portal 渲染分支
+- Preview Area 改成 `flex-1 bg-slate-100`（去掉 fixed inset-0 全屏变体）
+- 删 Editor 的 `!isPreviewFullscreen &&` 条件包裹
+
+### 对比改 toggle 开关
+- 删 `showComparePopover` state + 弹窗 JSX + backdrop
+- 删 `previewCompareMode` state（split/toggle 模式不再用）
+- 加 `ToggleSwitch` 组件：iOS 风格 toggle（小白球左右滑动 + ON/OFF 标签）
+  - props: `checked`, `onChange`, `leftLabel`, `rightLabel`
+  - 大小：w-9 h-5，translate-x-[16px] 切换
+- toolbar 第二个按钮：**当前/上次** toggle（控制 `previewToggleTarget` A/B）
+
+### 深色壁纸改 toggle 开关
+- PREVIEW_SCENES 去掉 `dark-wallpaper` 场景（场景数 5 → 4）
+- toolbar 第三个按钮：**浅色/深色** toggle（控制 `isPreviewDark`）
+
+### toolbar 新布局
+```
+[日常聊天] [长文] [回复链] [图片混排] | [当前/上次◯] | [浅色/深色◯]
+```
+
+### 圆角清理
+- Editor 顶部去掉 `rounded-t-[2.5rem]`（改成直的）
+- chat content 容器去掉 `rounded-2xl`（改成直的）
+- toolbar 底部只用 `border-b border-slate-200` 分隔
+
+### 提示文字删除
+- 删 "A 为当前编辑，B 为上次保存版本"（蓝色框提示）
+
 ## 踩坑 / 需要知道的
 
-1. **全屏预览按钮暂时去掉了**（按用户要求"只保留这几个"）
-   - 用户没明确说全屏按钮去哪
-   - 临时方案：先去掉，等用户看完效果再决定放哪
-   - 可选位置：chat content 右上角 / 编辑器顶部 / 角色设置里
+1. **全屏预览逻辑彻底删除**
+   - 不再能进入"全屏只显示聊天预览"模式
+   - `isPreviewFullscreen` state 已删
+   - React Portal 代码也已删
+   - 如果以后想加回来，需要重新引入 state + portal
 
-2. **Live Preview 没固定 33vh**：
-   - 当前是内容自然高度 ~170px
-   - 用户说"占屏幕三分之一"——可能是 min-height 概念
-   - 如果用户想要明确高度，加 `min-h-[200px] max-h-[33vh]`
+2. **previewCompareMode 状态彻底删除**
+   - 之前有 single/split/toggle 三种模式
+   - 现在只用 `previewToggleTarget` 控制单预览时显示 A 还是 B
+   - 左右分屏模式不再支持（用户没明确说要保留，弹窗里也没了入口）
 
-3. **聊天内容（chat bubbles）的背景**：
-   - Preview Area 已有背景（点状 + wallpaper）
-   - 移除了 chat content 内的重复背景
-   - 之前重复会有双层渲染，影响性能
+3. **`renderPreviewBubble` 中的判断简化**
+   - 之前：`previewCompareMode === 'toggle' && previewToggleTarget === 'B' ? lastSavedTheme : editingTheme`
+   - 现在：`previewToggleTarget === 'B' ? lastSavedTheme : editingTheme`
+
+4. **ToggleSwitch 组件位置**
+   - 放在 `PREVIEW_SCENES` 常量下方，模块顶层
+   - 后续如果其他页面需要 toggle 开关，可以复用
+
+5. **PREVIEW_SCENES 删了 dark-wallpaper**
+   - 如果以后想"看深色壁纸下的气泡效果"，可以用 toggle 开关切换深色，然后切换场景（如长文）看效果
 
 ## 备注
-- 第一轮 push 后用户测试，发现 Live Preview sticky 没生效（其实位置问题）和 toolbar 被滚动盖住
-- 第二轮重新排版：Live Preview flow 第一个、toolbar 提到 Preview Area 顶部
-- 下一步：长文气泡功能（用户要求讨论），全屏按钮位置（用户没说但功能还在）
+- 第三轮精简后 toolbar 只有 6 个元素（4 场景 + 2 toggle），非常紧凑
+- 删的代码 ~95 行，新增 ~50 行，净减 45 行
+- 下一步：长文气泡功能（用户上一轮就要求讨论）

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
-import { getBuffColor } from '../../utils/buffColor';
+import { getBuffColor, darkenHex } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -46,8 +46,8 @@ const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label
 /**
  * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景明度：
  *   1 → 卡片背景淡（透明度 60%），2 → 中（80%），3 → 浓（100% 满色）
- * 文字色固定深灰（slate-800），不依赖 buff color——这样时间戳/正文/按钮字
- * 在淡色卡片上都能看清。边框用满色 buff color。
+ * 文字色用同色系深色版（darkenHex），保持浅底 + 深字 + 稍深边框的
+ * "请选择日程风格"框那种马卡龙卡片质感。边框用满色 buff color。
  */
 const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
@@ -56,7 +56,7 @@ const getBuffStyle = (buff: CharacterBuff) => {
     return {
         bg: `${color}${bgAlpha}`,
         border: color,
-        text: '#1e293b',  // slate-800
+        text: darkenHex(color, 0.3),
     };
 };
 
@@ -367,7 +367,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/40 bg-white/95 p-3.5 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
@@ -383,7 +383,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                     return (
                                         <div
                                             key={`panel-${buff.id}`}
-                                            className="rounded-xl border p-2.5 shadow-sm select-none"
+                                            className="rounded-2xl border p-2.5 shadow-sm select-none"
                                             style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                         >
                                             {/* 第一行：日期 + 删除 */}

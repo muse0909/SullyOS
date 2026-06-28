@@ -163,6 +163,7 @@ SullyOS-master/
 ### 6.2 已知问题
 - **不开梯子时空回/慢**（关梯子几百秒或空回，正常 30 秒）—— 2026-06-27 暂放，临时方案是用中转站 API
 - iOS 软键盘弹起时的 `100vh` 问题（Capacitor WebView 已知坑）—— 用 `Portal` + safe-area 适配
+- **`backdrop-filter` 会吃 `position: fixed`**（Chromium 完整实现 spec，Safari 实现行为不一致）—— 任何 fixed 弹窗的祖先链有 `backdrop-filter` / `transform` / `filter` / `perspective` 等任一属性时，弹窗应用 `createPortal` 挂到 `document.body`，否则 Android Chrome 上定位会乱，Safari 可能看着"正常"误导判断。详见 `changelogs/2026-06-28-buff-popup-portal-fix.md`
 
 ### 6.3 调试
 - 暮色**不**本地跑 dev——所有调试都靠 Vercel 部署链接
@@ -226,6 +227,7 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-06-28 | 心声弹窗贴顶修复（createPortal 绕开 ChatHeader backdrop-filter） | [`changelogs/2026-06-28-buff-popup-portal-fix.md`](./changelogs/2026-06-28-buff-popup-portal-fix.md) |
 | 2026-06-28 | 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行 | [`changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md`](./changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md) |
 | 2026-06-28 | 全屏按钮入框 / 外观预览固定顶部 / 气泡工坊重排 | [`changelogs/2026-06-28-input-appearance-thememaker-tweaks.md`](./changelogs/2026-06-28-input-appearance-thememaker-tweaks.md) |
 | 2026-06-28 | 气泡工坊 toggle 改版：白球不带字 + 字一直在底 + 不变颜色 + 整体缩短 | [`changelogs/2026-06-28-thememaker-toggle-redesign.md`](./changelogs/2026-06-28-thememaker-toggle-redesign.md) |

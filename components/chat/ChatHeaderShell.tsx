@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
-import { getBuffColor } from '../../utils/buffColor';
+import { getBuffColor, darkenHex } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -45,18 +45,19 @@ const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label
 
 /**
  * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景明度：
- *   1 → 卡片背景淡（透明度 60%），2 → 中（80%），3 → 浓（100% 满色）
- * 文字色固定深灰（slate-800），不依赖 buff color——这样时间戳/正文/按钮字
- * 在淡色卡片上都能看清。边框用满色 buff color。
+ *   1 → 卡片背景淡（透明度 38%），2 → 中（63%），3 → 浓（82%）
+ * 整体降一档透明度，模拟日程「请选择日程风格」框 bg-amber-50 的浅度感。
+ * 文字色用同色系深色版（darkenHex），保持浅底 + 深字 + 稍深边框的
+ * "请选择日程风格"框那种马卡龙卡片质感。边框用满色 buff color。
  */
 const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
     const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
-    const bgAlpha = intensity === 3 ? 'FF' : intensity === 2 ? 'D0' : 'A0';
+    const bgAlpha = intensity === 3 ? 'D0' : intensity === 2 ? 'A0' : '60';
     return {
         bg: `${color}${bgAlpha}`,
         border: color,
-        text: '#1e293b',  // slate-800
+        text: darkenHex(color, 0.3),
     };
 };
 
@@ -363,48 +364,48 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             )}
 
-            {isBuffListExpanded && emotionHistory.length > 0 && (
+            {isBuffListExpanded && emotionHistory.length > 0 && typeof document !== 'undefined' && createPortal(
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(94vw,460px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
-                        <div className="mb-3 text-center">
+                        <div className="mb-2.5 text-center">
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
                         {/* 心声列表：卡片间距加大，整体缩小 */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (
                                         <div
                                             key={`panel-${buff.id}`}
-                                            className="rounded-xl border p-2.5 shadow-sm select-none"
+                                            className="rounded-2xl border p-3 shadow-sm select-none"
                                             style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                         >
-                                            {/* 第一行：日期 + 删除 */}
+                                            {/* 第一行：日期 + 删除（按日程黄色框规则：字同色系） */}
                                             <div className="mb-1.5 flex items-center justify-between gap-3">
-                                                <div className="text-[10px] font-bold text-slate-600">{formatEmotionTime(buff.createdAt)}</div>
+                                                <div className="text-[10px] font-bold" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
-                                                    className="shrink-0 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold shadow-sm transition-transform active:scale-95 text-slate-700"
-                                                    style={{ border: `1px solid ${style.border}` }}
+                                                    className="shrink-0 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold shadow-sm transition-transform active:scale-95"
+                                                    style={{ color: style.text, border: `1px solid ${style.border}` }}
                                                 >
                                                     删除
                                                 </button>
                                             </div>
-                                            {/* 日期下分割线 */}
-                                            <div className="mb-1.5 h-px bg-slate-300/50" />
-                                            {/* chip + 正文 */}
+                                            {/* 日期下分割线（用 buff 边框色淡化版） */}
+                                            <div className="mb-1.5 h-px" style={{ backgroundColor: `${style.border}80` }} />
+                                            {/* 小标签 chip：保持小标签形态（胶囊 + 半透白 + 小字） */}
                                             <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); }}
-                                                className="mb-1.5 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2 py-0.5 text-[10px] font-bold leading-none"
+                                                className="mb-1.5 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none"
                                                 style={{ borderColor: style.border, color: style.text }}
                                                 title={getBuffInnerState(buff)}
                                             >
@@ -413,7 +414,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                     {getBuffLabel(buff)}
                                                 </span>
                                             </button>
-                                            <div className="text-[11px] leading-relaxed font-medium text-slate-800">
+                                            {/* 正文（大标签内字：buff 同色系深色，不要黑色） */}
+                                            <div className="text-[11px] leading-relaxed font-medium" style={{ color: style.text }}>
                                                 {getBuffInnerState(buff)}
                                             </div>
                                         </div>
@@ -422,7 +424,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {confirmDeleteBuff && typeof document !== 'undefined' && createPortal(

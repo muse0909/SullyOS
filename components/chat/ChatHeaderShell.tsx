@@ -367,17 +367,17 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(94vw,460px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/40 bg-white/95 p-3.5 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
-                        <div className="mb-3 text-center">
+                        <div className="mb-2.5 text-center">
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
                         {/* 心声列表：卡片间距加大，整体缩小 */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (

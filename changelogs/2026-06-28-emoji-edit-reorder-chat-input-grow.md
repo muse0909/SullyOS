@@ -1,7 +1,7 @@
 # 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行
 
 **日期**：2026-06-28  
-**涉及 commit**：`6d36218` `5de6751` `41ea24d`
+**涉及 commit**：`6d36218` `5de6751` `41ea24d` `5c7556c`
 
 ## 改了什么
 
@@ -59,6 +59,23 @@
 - modal 滚动容器加 `touch-none select-none`，避免拖动时选中文本/触发系统手势
 - 自动滚动用 `requestAnimationFrame` 循环 + `scrollDirRef` 控制方向
 - 长按计时器 300ms，移动 > 10px 自动取消
+
+## 修复（5c7556c）—— PC 鼠标拖动支持
+
+暮色在 PC 测反馈：长按能进入拖动，但拖动不了。根因：
+
+**之前 mousemove/mouseup 监听器挂在列表容器上**，鼠标移出容器就出问题了：
+1. `onMouseLeave` 触发 `handleReorderPointerUp` → 立即清除拖动状态
+2. 后续 mousemove 不再触发，浮层卡在原地
+
+手机端正常是因为手指一直贴着屏幕，不会"出 div"。鼠标没这个特性。
+
+**修复方案**：
+- `isDragging` 改成 React state（不只是 ref），让 useEffect 能在拖动时挂 document 监听器
+- 拖动启动后用 `useEffect` 把 `mousemove / mouseup / touchmove / touchend` 全部挂到 `document`
+- `onMouseLeave` 改为只清除未启动的长按计时（拖动中不响应 mouseleave）
+- 抽出 `updateDragAt(clientY)` 接收纯坐标参数，document 和容器共用
+- `draggingName` 加 ref 镜像（`draggingNameRef`），避免 document 监听器闭包过期读不到最新值
 
 ## 备注
 

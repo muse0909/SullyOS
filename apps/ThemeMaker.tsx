@@ -485,20 +485,41 @@ const ToggleSwitch: React.FC<{
     leftLabel: string;
     rightLabel: string;
 }> = ({ checked, onChange, leftLabel, rightLabel }) => (
-    <div className="flex items-center gap-1.5 shrink-0 select-none">
-        <span className={`text-[11px] transition-colors ${!checked ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>{leftLabel}</span>
-        <button
-            type="button"
-            onClick={() => onChange(!checked)}
-            className={`relative w-9 h-5 rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-slate-300'}`}
-            aria-pressed={checked}
+    <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        aria-pressed={checked}
+        className={`relative w-24 h-8 rounded-full transition-colors overflow-hidden shrink-0 ${
+            checked ? 'bg-primary' : 'bg-slate-300'
+        }`}
+    >
+        {/* 左标签 - 选中时被白球盖住，未选时显示 */}
+        <span
+            className={`absolute inset-y-0 left-0 flex items-center justify-center text-[11px] font-bold transition-opacity duration-200 ${
+                checked ? 'text-white opacity-0' : 'text-slate-700 opacity-100'
+            }`}
+            style={{ width: 48 }}
         >
-            <span
-                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${checked ? 'translate-x-[16px]' : 'translate-x-0'}`}
-            />
-        </button>
-        <span className={`text-[11px] transition-colors ${checked ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>{rightLabel}</span>
-    </div>
+            {leftLabel}
+        </span>
+        {/* 右标签 - 选中时被白球盖住，未选时显示 */}
+        <span
+            className={`absolute inset-y-0 right-0 flex items-center justify-center text-[11px] font-bold transition-opacity duration-200 ${
+                !checked ? 'text-slate-700 opacity-100' : 'text-white opacity-0'
+            }`}
+            style={{ width: 48 }}
+        >
+            {rightLabel}
+        </span>
+        {/* 白球 - 显示当前选中的标签 */}
+        <span
+            className={`absolute top-1 left-1 w-11 h-6 rounded-full bg-white shadow flex items-center justify-center text-[11px] font-bold text-slate-700 transition-transform duration-200 ${
+                checked ? 'translate-x-[44px]' : 'translate-x-0'
+            }`}
+        >
+            {checked ? rightLabel : leftLabel}
+        </span>
+    </button>
 );
 
 const PREVIEW_SCENES: PreviewScene[] = [

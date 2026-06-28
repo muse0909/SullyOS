@@ -485,23 +485,24 @@ const ToggleSwitch: React.FC<{
     leftLabel: string;
     rightLabel: string;
 }> = ({ checked, onChange, leftLabel, rightLabel }) => {
-    // 容器 80px(w-20) - 白球 20px(w-5) - 左右各 4px(p-1) = 滑动距离 52px
-    const SLIDE_PX = 52;
+    // 容器 80px(w-20) - 白球 40px(w-10) - 左右各 4px(p-1) = 滑动距离 32px
+    // 白球保持椭圆形（w-10 h-6）才能完整盖住 2 个汉字
+    const SLIDE_PX = 32;
     return (
         <button
             type="button"
             onClick={() => onChange(!checked)}
             aria-pressed={checked}
-            className="relative w-20 h-7 rounded-full bg-slate-200/70 overflow-hidden shrink-0"
+            className="relative w-20 h-8 rounded-full bg-slate-200/70 overflow-hidden shrink-0"
         >
             {/* 文字层 - 始终显示在底，白球滑过会盖住对应字 */}
             <span className="absolute inset-0 flex text-[11px] font-bold text-slate-600 select-none">
                 <span className="flex-1 flex items-center justify-center">{leftLabel}</span>
                 <span className="flex-1 flex items-center justify-center">{rightLabel}</span>
             </span>
-            {/* 白球 - 纯圆形不带字，在文字上左右滑动 */}
+            {/* 白球 - 椭圆形不带字，宽到能完整盖住 2 个汉字 */}
             <span
-                className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200"
+                className="absolute top-1 left-1 w-10 h-6 rounded-full bg-white shadow transition-transform duration-200"
                 style={{ transform: checked ? `translateX(${SLIDE_PX}px)` : 'translateX(0)' }}
             />
         </button>

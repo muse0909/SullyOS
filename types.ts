@@ -1540,7 +1540,6 @@ export interface Emoji {
     name: string;
     url: string;
     categoryId?: string; 
-    order?: number; // 排序字段：可选，老数据/未排序时按 IndexedDB 自然顺序处理
 }
 
 export interface FullBackupData {

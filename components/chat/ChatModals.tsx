@@ -162,16 +162,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
     // --- Emoji Reorder 拖拽排序 state ---
     // 用 position: fixed 浮层让被拖动项脱离文档流，避免 reorder 时 DOM 位置变化造成的视觉跳跃
+    // 拖动时 mousemove/mouseup 挂到 document 上，确保鼠标移出容器也能继续拖
     const reorderListRef = useRef<HTMLDivElement>(null);
     const reorderItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const dragStartPointerYRef = useRef<number>(0);
     const dragOffsetYRef = useRef<number>(0); // 长按启动时手指相对 item.top 的偏移
-    const isDraggingRef = useRef<boolean>(false);
     const scrollRafRef = useRef<number | null>(null);
     const scrollDirRef = useRef<-1 | 0 | 1>(0);
     const [draggingName, setDraggingName] = useState<string | null>(null);
     const [draggingStyle, setDraggingStyle] = useState<{ left: number; top: number; width: number } | null>(null);
+    const isDragging = draggingName !== null;
 
     const clearLongPress = () => {
         if (longPressTimerRef.current) {
@@ -203,41 +204,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         }
     };
 
-    const handleReorderPointerDown = (name: string, e: React.MouseEvent | React.TouchEvent) => {
-        // 如果点在 ↑↓ 按钮上，不进入拖拽（让按钮 onClick 生效）
-        const target = e.target as HTMLElement;
-        if (target.closest('button')) return;
-
-        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-        dragStartPointerYRef.current = clientY;
-
-        longPressTimerRef.current = setTimeout(() => {
-            const itemEl = reorderItemRefs.current.get(name);
-            if (!itemEl) return;
-            const rect = itemEl.getBoundingClientRect();
-            dragOffsetYRef.current = clientY - rect.top;
-            isDraggingRef.current = true;
-            setDraggingName(name);
-            setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
-            // 触觉反馈（如果浏览器支持）
-            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-                (navigator as any).vibrate?.(30);
-            }
-        }, 300);
-    };
-
-    const handleReorderPointerMove = (e: React.MouseEvent | React.TouchEvent) => {
-        if (!isDraggingRef.current || !draggingName) {
-            // 移动 > 10px 取消长按计时
-            if (longPressTimerRef.current) {
-                const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-                if (Math.abs(clientY - dragStartPointerYRef.current) > 10) clearLongPress();
-            }
-            return;
-        }
-        e.preventDefault();
-        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-
+    // 拖动核心逻辑（接收纯 clientY，文档级监听器复用同一函数）
+    const updateDragAt = (clientY: number) => {
         // 1) 更新拖动浮层位置（position: fixed 跟随手指，不受 DOM 变化影响）
         setDraggingStyle(prev => prev ? { ...prev, top: clientY - dragOffsetYRef.current } : prev);
 
@@ -253,7 +221,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
         // 3) 计算落点 target index
         if (!container) return;
-        const currentIdx = reorderList.findIndex(it => it.name === draggingName);
+        const currentName = draggingNameRef.current;
+        if (!currentName) return;
+        const currentIdx = reorderList.findIndex(it => it.name === currentName);
         if (currentIdx === -1) return;
         const items = reorderList
             .map(it => reorderItemRefs.current.get(it.name))
@@ -271,14 +241,72 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         }
     };
 
-    const handleReorderPointerUp = () => {
+    const endDrag = () => {
         clearLongPress();
-        if (isDraggingRef.current) {
-            isDraggingRef.current = false;
-            setDraggingName(null);
-            setDraggingStyle(null);
-            stopAutoScroll();
+        stopAutoScroll();
+        setDraggingName(null);
+        setDraggingStyle(null);
+    };
+
+    // draggingName 同步到 ref，供 updateDragAt 在 document mousemove 中读取（避免闭包过期）
+    const draggingNameRef = useRef<string | null>(null);
+    useEffect(() => { draggingNameRef.current = draggingName; }, [draggingName]);
+
+    // 拖动启动后，把 mousemove/mouseup 挂到 document（不依赖容器边界）
+    useEffect(() => {
+        if (!isDragging) return;
+        const handleMouseMove = (e: MouseEvent) => updateDragAt(e.clientY);
+        const handleTouchMove = (e: TouchEvent) => {
+            const t = e.touches[0];
+            if (t) updateDragAt(t.clientY);
+        };
+        const handleUp = () => endDrag();
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleUp);
+        document.addEventListener('touchmove', handleTouchMove);
+        document.addEventListener('touchend', handleUp);
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleUp);
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('touchend', handleUp);
+        };
+    }, [isDragging]);
+
+    const handleReorderPointerDown = (name: string, e: React.MouseEvent | React.TouchEvent) => {
+        // 如果点在 ↑↓ 按钮上，不进入拖拽（让按钮 onClick 生效）
+        const target = e.target as HTMLElement;
+        if (target.closest('button')) return;
+
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        dragStartPointerYRef.current = clientY;
+
+        longPressTimerRef.current = setTimeout(() => {
+            const itemEl = reorderItemRefs.current.get(name);
+            if (!itemEl) return;
+            const rect = itemEl.getBoundingClientRect();
+            dragOffsetYRef.current = clientY - rect.top;
+            setDraggingName(name);
+            setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
+            // 触觉反馈（如果浏览器支持）
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                (navigator as any).vibrate?.(30);
+            }
+        }, 300);
+    };
+
+    // 容器内 mousemove：仅用于长按计时器取消判断（>10px 自动取消）
+    const handleReorderContainerMove = (e: React.MouseEvent | React.TouchEvent) => {
+        if (isDragging) return; // 拖动中由 document 监听器处理
+        if (longPressTimerRef.current) {
+            const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+            if (Math.abs(clientY - dragStartPointerYRef.current) > 10) clearLongPress();
         }
+    };
+
+    // 容器 mouseleave：只清除未启动的长按计时；拖动中不响应
+    const handleReorderContainerLeave = () => {
+        if (!isDragging) clearLongPress();
     };
 
     const openVisibilityModal = () => {
@@ -779,11 +807,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <div
                     ref={reorderListRef}
                     className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 touch-none select-none"
-                    onMouseMove={handleReorderPointerMove}
-                    onTouchMove={handleReorderPointerMove}
-                    onMouseUp={handleReorderPointerUp}
-                    onTouchEnd={handleReorderPointerUp}
-                    onMouseLeave={handleReorderPointerUp}
+                    onMouseMove={handleReorderContainerMove}
+                    onTouchMove={handleReorderContainerMove}
+                    onMouseLeave={handleReorderContainerLeave}
                 >
                     {reorderList.length === 0 ? (
                         <p className="text-center text-sm text-slate-400 py-6">当前分类下没有表情包</p>

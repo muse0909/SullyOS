@@ -36,24 +36,28 @@ export const isValidHexColor = (s: unknown): s is string => {
 /**
  * 把 label 哈希到色盘。同一个 label 永远映射到同一个颜色，
  * 不同 label 之间尽量分散。
+ *
+ * 用 djb2 哈希（乘子 33），对中文 label 分散性比 31 乘子好得多
+ * ——之前 31 乘子下"掩饰性忙碌/有点心虚/CPU过载中"三个 label
+ * 全部撞到 #D4F0F0。
  */
 export const pickColorByLabel = (label?: string): string => {
     const key = (label || '').trim();
     if (!key) return MACARON_COLORS[0];
-    let hash = 0;
+    let hash = 5381;
     for (let i = 0; i < key.length; i++) {
-        // 31 是常见字符串哈希乘子
-        hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+        hash = ((hash * 33) + key.charCodeAt(i)) >>> 0;
     }
     return MACARON_COLORS[hash % MACARON_COLORS.length];
 };
 
 /**
- * 取 buff 的颜色。优先级：
- *   1. buff.color 字段是有效 hex → 直接用（LLM 自由发挥）
- *   2. 否则用 label 哈希到马卡龙色盘
+ * 取 buff 的颜色。**永远走 label 哈希到马卡龙色盘**。
+ *
+ * 不读 buff.color 字段——之前 LLM 选色会偷懒直接照搬 prompt 示例，
+ * 导致所有心声一个色。色盘哈希保证：同 label 同色（视觉一致），
+ * 不同 label 分散到 12 色（视觉多样），可控可预期。
  */
-export const getBuffColor = (buff: Pick<CharacterBuff, 'color' | 'label'>): string => {
-    if (isValidHexColor(buff.color)) return buff.color;
+export const getBuffColor = (buff: Pick<CharacterBuff, 'label'>): string => {
     return pickColorByLabel(buff.label);
 };

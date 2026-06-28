@@ -226,6 +226,7 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-06-28 | 心声弹窗贴顶修复（createPortal 绕开 ChatHeader backdrop-filter） | [`changelogs/2026-06-28-buff-popup-portal-fix.md`](./changelogs/2026-06-28-buff-popup-portal-fix.md) |
 | 2026-06-28 | 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行 | [`changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md`](./changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md) |
 | 2026-06-28 | 全屏按钮入框 / 外观预览固定顶部 / 气泡工坊重排 | [`changelogs/2026-06-28-input-appearance-thememaker-tweaks.md`](./changelogs/2026-06-28-input-appearance-thememaker-tweaks.md) |
 | 2026-06-28 | 气泡工坊 toggle 改版：白球不带字 + 字一直在底 + 不变颜色 + 整体缩短 | [`changelogs/2026-06-28-thememaker-toggle-redesign.md`](./changelogs/2026-06-28-thememaker-toggle-redesign.md) |

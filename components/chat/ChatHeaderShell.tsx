@@ -363,7 +363,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             )}
 
-            {isBuffListExpanded && emotionHistory.length > 0 && (
+            {isBuffListExpanded && emotionHistory.length > 0 && typeof document !== 'undefined' && createPortal(
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
@@ -422,7 +422,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             </div>
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {confirmDeleteBuff && typeof document !== 'undefined' && createPortal(

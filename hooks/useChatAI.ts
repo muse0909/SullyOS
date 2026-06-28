@@ -10,6 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
+import { getBuffColor } from '../utils/buffColor';
 import { useMusic } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
@@ -1366,7 +1367,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 intensity,
                                 emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
                                 createdAt: now,
-                                color: intensity === 3 ? '#874F64' : intensity === 2 ? '#965F6E' : '#9B6E6A',
+                                // 颜色：按 label 哈希到马卡龙色盘（12 色稳定多样化）
+                                // 不读 LLM 的 color——LLM 容易偷懒给示例色
+                                color: getBuffColor({ label }),
                             };
                             const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
                             const updatedChar: CharacterProfile = {

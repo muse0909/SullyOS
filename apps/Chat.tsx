@@ -57,7 +57,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'emoji-options' | 'edit-emoji' | 'emoji-reorder'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
@@ -72,6 +72,8 @@ const Chat: React.FC = () => {
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
+    const [editEmojiNewName, setEditEmojiNewName] = useState('');
+    const [reorderList, setReorderList] = useState<Emoji[]>([]); // 排序 modal 当前排序中的列表
     const [editContent, setEditContent] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
@@ -377,12 +379,23 @@ const Chat: React.FC = () => {
     const loadEmojiData = async () => {
         await DB.initializeEmojiData();
         const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
-        setEmojis(es);
+        // 兼容老数据：补 order 字段（按当前 IndexedDB 自然顺序），并按 order 排序
+        const ordered = es.map((e, idx) => ({ ...e, order: typeof e.order === 'number' ? e.order : idx }));
+        ordered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        setEmojis(ordered);
         setCategories(cats);
         if (activeCategory !== 'default' && !cats.some(c => c.id === activeCategory)) {
             setActiveCategory('default');
         }
     };
+
+    // 进入"调整顺序" modal 时，根据当前激活分类拷贝一份 emoji 列表到 reorderList。
+    // 用 useEffect 而非 panel action 链，避开跨组件回调的链路问题。
+    useEffect(() => {
+        if (modalType !== 'emoji-reorder') return;
+        const filtered = emojis.filter(e => (e.categoryId || 'default') === activeCategory);
+        setReorderList(filtered.map((e, i) => ({ ...e, order: i })));
+    }, [modalType, emojis, activeCategory]);
 
     // Hydrate voice data from IndexedDB for currently visible messages.
     // Voice URLs are stored as blob: URLs that become invalid whenever the
@@ -860,6 +873,12 @@ const Chat: React.FC = () => {
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
+            case 'emoji-options': setSelectedEmoji(payload); setEditEmojiNewName(payload?.name || ''); setModalType('emoji-options'); break;
+            case 'edit-emoji-confirm': {
+                if (!selectedEmoji) break;
+                handleEditEmoji();
+                break;
+            }
             case 'add-category': setModalType('add-category'); break;
             case 'select-category': setActiveCategory(payload); break;
             case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
@@ -1614,6 +1633,54 @@ if (keepN > 0) {
         addToast('表情包已删除', 'success');
     };
 
+    // --- Emoji 编辑名字 ---
+    const handleEditEmoji = async () => {
+        if (!selectedEmoji) return;
+        const newName = editEmojiNewName.trim();
+        if (!newName) {
+            addToast('名字不能为空', 'error');
+            return;
+        }
+        if (newName === selectedEmoji.name) {
+            // 没变，直接关掉
+            setModalType('none');
+            setSelectedEmoji(null);
+            return;
+        }
+        // 检查重名
+        const exists = emojis.some(e => e.name === newName);
+        if (exists) {
+            addToast('已存在同名表情包', 'error');
+            return;
+        }
+        try {
+            await DB.updateEmoji(selectedEmoji.name, { name: newName });
+            await loadEmojiData();
+            setModalType('none');
+            setSelectedEmoji(null);
+            addToast('已更新名字', 'success');
+        } catch (e: any) {
+            addToast(`更新失败: ${e.message || e}`, 'error');
+        }
+    };
+
+    // --- Emoji 排序保存 / 取消 ---
+    const handleSaveReorder = async () => {
+        try {
+            await DB.reorderEmojis(reorderList);
+            await loadEmojiData();
+            setModalType('none');
+            setReorderList([]);
+            addToast('排序已保存', 'success');
+        } catch (e: any) {
+            addToast(`保存失败: ${e.message || e}`, 'error');
+        }
+    };
+    const handleCancelReorder = () => {
+        setModalType('none');
+        setReorderList([]);
+    };
+
     // --- Batch Selection ---
     const handleEnterSelectionMode = () => {
         if (selectedMessage) {
@@ -1990,6 +2057,17 @@ if (keepN > 0) {
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                editEmojiNewName={editEmojiNewName} setEditEmojiNewName={setEditEmojiNewName} onEditEmojiConfirm={handleEditEmoji}
+                reorderList={reorderList} onSaveReorder={handleSaveReorder} onCancelReorder={handleCancelReorder} onMoveEmoji={(from, to) => {
+                    if (from === to) return;
+                    setReorderList(prev => {
+                        if (from < 0 || from >= prev.length || to < 0 || to >= prev.length) return prev;
+                        const next = [...prev];
+                        const [moved] = next.splice(from, 1);
+                        next.splice(to, 0, moved);
+                        return next.map((e, i) => ({ ...e, order: i }));
+                    });
+                }}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}

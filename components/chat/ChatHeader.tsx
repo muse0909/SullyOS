@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import { CharacterProfile, CharacterBuff, ApiPreset } from '../../types';
+import { getBuffColor } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -226,7 +227,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                                                 onMouseUp={handleLongPressEnd}
                                                 onMouseLeave={handleLongPressEnd}
                                                 className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-md font-bold border cursor-pointer transition-colors select-none"
-                                                style={{ color: buff.color || '#db2777', borderColor: `${buff.color || '#db2777'}40`, background: `${buff.color || '#db2777'}10` }}
+                                                style={{ color: getBuffColor(buff), borderColor: `${getBuffColor(buff)}40`, background: `${getBuffColor(buff)}10` }}
                                             >
                                                 {buff.emoji ? `${buff.emoji} ` : ''}
                                                 {buff.label}
@@ -307,7 +308,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                                     onMouseUp={handleLongPressEnd}
                                     onMouseLeave={handleLongPressEnd}
                                     className="text-[10px] px-2 py-1 rounded-lg font-bold border cursor-pointer transition-colors select-none"
-                                    style={{ color: buff.color || '#db2777', borderColor: `${buff.color || '#db2777'}40`, background: `${buff.color || '#db2777'}10` }}
+                                    style={{ color: getBuffColor(buff), borderColor: `${getBuffColor(buff)}40`, background: `${getBuffColor(buff)}10` }}
                                 >
                                     {buff.emoji ? `${buff.emoji} ` : ''}
                                     {buff.label}

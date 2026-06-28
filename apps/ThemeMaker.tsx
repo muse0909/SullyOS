@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
-import { ChatTheme, BubbleStyle } from '../types';
+import { ChatTheme, BubbleStyle, AppID } from '../types';
 import { processImage } from '../utils/file';
 
 const cloneTheme = (theme: ChatTheme): ChatTheme => {
@@ -479,6 +479,36 @@ type PreviewScene = {
     messages: PreviewMockMessage[];
 };
 
+const ToggleSwitch: React.FC<{
+    checked: boolean;
+    onChange: (v: boolean) => void;
+    leftLabel: string;
+    rightLabel: string;
+}> = ({ checked, onChange, leftLabel, rightLabel }) => {
+    // 容器 80px(w-20) - 白球 40px(w-10) - 左右各 4px(p-1) = 滑动距离 32px
+    // 白球保持椭圆形（w-10 h-6）才能完整盖住 2 个汉字
+    const SLIDE_PX = 32;
+    return (
+        <button
+            type="button"
+            onClick={() => onChange(!checked)}
+            aria-pressed={checked}
+            className="relative w-20 h-8 rounded-full bg-slate-200/70 overflow-hidden shrink-0"
+        >
+            {/* 文字层 - 始终显示在底，白球滑过会盖住对应字 */}
+            <span className="absolute inset-0 flex text-[11px] font-bold text-slate-600 select-none">
+                <span className="flex-1 flex items-center justify-center">{leftLabel}</span>
+                <span className="flex-1 flex items-center justify-center">{rightLabel}</span>
+            </span>
+            {/* 白球 - 椭圆形不带字，宽到能完整盖住 2 个汉字 */}
+            <span
+                className="absolute top-1 left-1 w-10 h-6 rounded-full bg-white shadow transition-transform duration-200"
+                style={{ transform: checked ? `translateX(${SLIDE_PX}px)` : 'translateX(0)' }}
+            />
+        </button>
+    );
+};
+
 const PREVIEW_SCENES: PreviewScene[] = [
     {
         id: 'daily',
@@ -528,21 +558,11 @@ const PREVIEW_SCENES: PreviewScene[] = [
             { id: 'm2', role: 'user', kind: 'emoji', content: '😆' },
             { id: 'm3', role: 'ai', kind: 'text', content: '图片和文字、表情混排时也要保持层级清晰。' }
         ]
-    },
-    {
-        id: 'dark-wallpaper',
-        name: '深色壁纸',
-        darkMode: true,
-        wallpaper: 'linear-gradient(135deg,#020617 0%,#1e293b 35%,#0f172a 100%)',
-        messages: [
-            { id: 'dw1', role: 'ai', kind: 'text', content: '深色壁纸下建议确认浅色文字的对比度。' },
-            { id: 'dw2', role: 'user', kind: 'text', content: 'OK，我再检查透明背景图和阴影是否干净。' }
-        ]
     }
 ];
 
 const ThemeMaker: React.FC = () => {
-    const { closeApp, addCustomTheme, addToast } = useOS();
+    const { closeApp, openApp, addCustomTheme, addToast } = useOS();
     const [initialThemeId] = useState(() => `theme-${Date.now()}`);
     const [editingTheme, setEditingTheme] = useState<ChatTheme>({ ...DEFAULT_THEME, id: initialThemeId });
     const [activeTab, setActiveTab] = useState<'user' | 'ai' | 'css'>('user');
@@ -560,10 +580,8 @@ const ThemeMaker: React.FC = () => {
     const [isAppliedToPreview, setIsAppliedToPreview] = useState(false);
     const [undoStack, setUndoStack] = useState<ChatTheme[]>([]);
     const [redoStack, setRedoStack] = useState<ChatTheme[]>([]);
-    const [previewCompareMode, setPreviewCompareMode] = useState<'single' | 'split' | 'toggle'>('single');
     const [previewToggleTarget, setPreviewToggleTarget] = useState<'A' | 'B'>('A');
     const [lastUsableCss, setLastUsableCss] = useState('');
-    const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
     const [assetUrlDraft, setAssetUrlDraft] = useState<Record<'bg' | 'deco' | 'avatarDeco', string>>({ bg: '', deco: '', avatarDeco: '' });
     
     // Local state for sliders
@@ -622,7 +640,7 @@ const ThemeMaker: React.FC = () => {
         setToolSection(target);
     };
 
-    const requestClose = () => withDiscardGuard(() => closeApp());
+    const requestClose = () => withDiscardGuard(() => openApp(AppID.Appearance));
 
     // Initialize padding state from CSS on load
     useEffect(() => {
@@ -972,6 +990,66 @@ const ThemeMaker: React.FC = () => {
 
     const parsedBgColor = parseColorValue(activeStyle.backgroundColor);
 
+    const previewArea = (
+        <div className="flex-1 relative overflow-hidden flex flex-col bg-slate-100">
+                <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+                {currentScene.wallpaper && (
+                    <div className="absolute inset-0 pointer-events-none" style={{ background: currentScene.wallpaper, opacity: isPreviewDark ? 0.9 : 0.45 }} />
+                )}
+
+                {/* Live CSS Injection for Preview */}
+                {editingTheme.customCss && <style>{editingTheme.customCss}</style>}
+
+                {/* 顶部 toolbar - sticky 紧贴标题栏，整条白底无圆角 */}
+                <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shrink-0">
+                    <div className="flex items-center gap-2 px-4 py-2 text-[12px] overflow-x-auto no-scrollbar">
+                        {/* 场景按钮 */}
+                        {PREVIEW_SCENES.map(scene => (
+                            <button
+                                key={scene.id}
+                                onClick={() => setPreviewSceneId(scene.id)}
+                                className={`shrink-0 px-3 py-1.5 rounded-full transition-all ${previewSceneId === scene.id ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                            >
+                                {scene.name}
+                            </button>
+                        ))}
+
+                        <span className="shrink-0 w-px h-4 bg-slate-300" />
+
+                        {/* 当前/上次 toggle */}
+                        <ToggleSwitch
+                            checked={previewToggleTarget === 'B'}
+                            onChange={(v) => setPreviewToggleTarget(v ? 'B' : 'A')}
+                            leftLabel="当前"
+                            rightLabel="上次"
+                        />
+
+                        <span className="shrink-0 w-px h-4 bg-slate-300" />
+
+                        {/* 深色/浅色 toggle */}
+                        <ToggleSwitch
+                            checked={isPreviewDark}
+                            onChange={setIsPreviewDark}
+                            leftLabel="浅色"
+                            rightLabel="深色"
+                        />
+                    </div>
+                </div>
+
+                {/* 聊天内容 - 滚动容器 */}
+                <div className="flex-1 overflow-y-auto relative">
+                    <div className="relative p-4 flex flex-col items-center gap-4 min-h-full justify-center">
+                        {/* Simulated Chat Conversation */}
+                        <div className={`w-full max-w-sm space-y-4 p-4 ${isPreviewDark ? 'bg-slate-950/60' : 'bg-white/70'}`}>
+                            {currentScene.messages.map(msg => (
+                                <div key={msg.id}>{renderPreviewBubble(msg, previewToggleTarget === 'B' ? lastSavedTheme : editingTheme, previewToggleTarget === 'B' ? 'B' : 'A')}</div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+    );
+
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col font-light relative">
             {/* Header */}
@@ -997,92 +1075,11 @@ const ThemeMaker: React.FC = () => {
                 </div>
             </div>
 
-            {/* Preview Area (Realistic Chat Row) */}
-            <div className={`${isPreviewFullscreen ? 'fixed inset-0 z-[120]' : 'flex-1'} relative overflow-hidden flex flex-col p-4 justify-center items-center gap-4 ${isPreviewDark ? 'bg-slate-900' : 'bg-slate-100'}`}>
-                <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-                {currentScene.wallpaper && (
-                    <div className="absolute inset-0" style={{ background: currentScene.wallpaper, opacity: isPreviewDark ? 0.9 : 0.45 }} />
-                )}
-                
-                {/* Live CSS Injection for Preview */}
-                {editingTheme.customCss && <style>{editingTheme.customCss}</style>}
-
-                <div className="w-full max-w-sm relative z-10 bg-white/70 dark:bg-black/20 backdrop-blur-sm rounded-2xl p-3 border border-white/30 shadow-sm">
-                    <div className={`absolute right-3 top-3 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-sm ${overallContrastScore.grade === 'A' ? 'bg-emerald-100 text-emerald-700' : overallContrastScore.grade === 'B' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                        可读性 {overallContrastScore.grade}
-                    </div>
-                    <div className="flex flex-wrap gap-2 mb-3">
-                        {PREVIEW_SCENES.map(scene => (
-                            <button
-                                key={scene.id}
-                                onClick={() => setPreviewSceneId(scene.id)}
-                                className={`px-2.5 py-1 rounded-full text-[11px] transition-all ${previewSceneId === scene.id ? 'bg-primary text-white shadow' : 'bg-white/80 text-slate-500 hover:bg-white'}`}
-                            >
-                                {scene.name}
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="flex flex-wrap gap-3 text-[11px] text-slate-500 mb-2">
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="checkbox" checked={showPreviewBgImage} onChange={(e) => setShowPreviewBgImage(e.target.checked)} className="accent-primary" />
-                            显示背景图层
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="checkbox" checked={isPreviewDark} onChange={(e) => setIsPreviewDark(e.target.checked)} className="accent-primary" />
-                            深色聊天背景
-                        </label>
-                    </div>
-
-                    <div className="flex items-center justify-end">
-                        <button
-                            onClick={() => setIsPreviewFullscreen(prev => !prev)}
-                            className="px-2.5 py-1 rounded-full text-[11px] bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                        >
-                            {isPreviewFullscreen ? '退出全屏预览' : '全屏预览'}
-                        </button>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                        <span className="text-slate-500">A/B 对比：</span>
-                        <button onClick={() => setPreviewCompareMode('single')} className={`px-2 py-1 rounded-full ${previewCompareMode === 'single' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}>单预览</button>
-                        <button onClick={() => setPreviewCompareMode('split')} className={`px-2 py-1 rounded-full ${previewCompareMode === 'split' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}>左右分屏</button>
-                        <button onClick={() => setPreviewCompareMode('toggle')} className={`px-2 py-1 rounded-full ${previewCompareMode === 'toggle' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}>一键切换</button>
-                        {previewCompareMode === 'toggle' && (
-                            <div className="flex items-center gap-1">
-                                <button onClick={() => setPreviewToggleTarget('A')} className={`px-2 py-1 rounded ${previewToggleTarget === 'A' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>A 当前编辑</button>
-                                <button onClick={() => setPreviewToggleTarget('B')} className={`px-2 py-1 rounded ${previewToggleTarget === 'B' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>B 上次保存</button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Simulated Chat Conversation */}
-                {previewCompareMode === 'split' ? (
-                    <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-2 gap-3 relative z-10">
-                        {[{ label: 'A 当前编辑', theme: editingTheme, panel: 'A' as const }, { label: 'B 上次保存', theme: lastSavedTheme, panel: 'B' as const }].map(item => (
-                            <div key={item.label} className={`space-y-4 p-4 rounded-2xl ${isPreviewDark ? 'bg-slate-950/60 border border-white/10' : 'bg-white/70 border border-white/60'}`}>
-                                <div className="text-[10px] text-slate-500">{item.label}</div>
-                                {currentScene.messages.map(msg => (
-                                    <div key={`${item.panel}-${msg.id}`}>{renderPreviewBubble(msg, item.theme, item.panel)}</div>
-                                ))}
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className={`w-full max-w-sm space-y-4 p-4 rounded-2xl relative z-10 ${isPreviewDark ? 'bg-slate-950/60 border border-white/10' : 'bg-white/70 border border-white/60'}`}>
-                        {currentScene.messages.map(msg => (
-                            <div key={msg.id}>{renderPreviewBubble(msg, previewCompareMode === 'toggle' && previewToggleTarget === 'B' ? lastSavedTheme : editingTheme, previewCompareMode === 'toggle' && previewToggleTarget === 'B' ? 'B' : 'A')}</div>
-                        ))}
-                    </div>
-                )}
-                
-                <div className={`text-[10px] absolute bottom-2 ${isPreviewDark ? 'text-slate-400' : 'text-slate-500'}`}>A 为当前编辑，B 为上次保存版本</div>
-            </div>
+            {/* Preview Area */}
+            {previewArea}
 
             {/* Editor Controls */}
-            {!isPreviewFullscreen && (
-            <div className="bg-white rounded-t-[2.5rem] shadow-[0_-5px_30px_rgba(0,0,0,0.08)] z-30 flex flex-col h-[55%] ring-1 ring-slate-100">
+            <div className="bg-white shadow-[0_-5px_30px_rgba(0,0,0,0.08)] z-30 flex flex-col h-[55%] ring-1 ring-slate-100">
                 {/* Main Tabs (User / AI / CSS) */}
                 <div className="flex px-8 pt-6 pb-2 gap-6 overflow-x-auto no-scrollbar">
                     <button onClick={() => requestTabSwitch('user')} className={`text-sm font-bold transition-colors whitespace-nowrap ${activeTab === 'user' ? 'text-slate-800' : 'text-slate-300'}`}>用户气泡</button>
@@ -1480,7 +1477,6 @@ const ThemeMaker: React.FC = () => {
 
                 </div>
             </div>
-            )}
 
             {/* Discard unsaved changes confirm */}
             {pendingDiscardAction && (

@@ -10,6 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
+import { getBuffColor } from '../utils/buffColor';
 import { useMusic } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
@@ -798,7 +799,7 @@ export const useChatAI = ({
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
                     : '你是生活系角色，innerState 的重心是你自己的生活和感受，不必每次都以用户为中心。';
-                systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- label：2-10字，短标签，像头像栏上的小心情贴纸，不要写完整句子\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 description\n- 正文和 <emotion> 块之间不要有多余说明`;
+                systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"label":"...","innerState":"...","intensity":1,"emoji":"...","color":"#FFB5C5"}</emotion>\n\n字段要求：\n- label：2-10字，短标签，像头像栏上的小心情贴纸，不要写完整句子\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- color：选一个柔和的马卡龙色 hex（#RRGGBB）表达这个情绪。例如#FFB5C5薄粉、#B5EAD7薄荷、#C7CEEA淡紫蓝、#FFDAC1奶油橘、#FFF1B5奶油黄。颜色要贴合情绪气质（焦虑偏冷色、甜蜜偏暖色、忧郁偏蓝紫）\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 description\n- 正文和 <emotion> 块之间不要有多余说明`;
             }
 
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
@@ -1366,7 +1367,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 intensity,
                                 emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
                                 createdAt: now,
-                                color: intensity === 3 ? '#874F64' : intensity === 2 ? '#965F6E' : '#9B6E6A',
+                                // 颜色：LLM 在 <emotion> 块给的 color 优先（自由发挥、什么颜色都可能有），
+                                // 否则按 label 哈希到马卡龙色盘（保证稳定好看）
+                                color: getBuffColor({ color: emotionData.color, label }),
                             };
                             const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
                             const updatedChar: CharacterProfile = {

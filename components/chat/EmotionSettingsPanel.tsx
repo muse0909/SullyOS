@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { CharacterProfile, ApiPreset, APIConfig, CharacterBuff } from '../../types';
 import { safeResponseJson } from '../../utils/safeApi';
+import { getBuffColor } from '../../utils/buffColor';
 
 interface EmotionSettingsPanelProps {
     char: CharacterProfile;
@@ -233,9 +234,9 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                                 key={buff.id}
                                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold"
                                 style={{
-                                    backgroundColor: buff.color ? buff.color + '22' : '#fdf2f8',
-                                    color: buff.color || '#db2777',
-                                    border: `1px solid ${buff.color ? buff.color + '55' : '#fbcfe8'}`
+                                    backgroundColor: getBuffColor(buff) + '22',
+                                    color: getBuffColor(buff),
+                                    border: `1px solid ${getBuffColor(buff) + '55'}`
                                 }}
                             >
                                 {buff.emoji && <span>{buff.emoji}</span>}

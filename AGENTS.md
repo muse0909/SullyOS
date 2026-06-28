@@ -226,4 +226,5 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-06-28 | 全屏按钮入框 / 外观预览固定顶部 / 气泡工坊重排 | [`changelogs/2026-06-28-input-appearance-thememaker-tweaks.md`](./changelogs/2026-06-28-input-appearance-thememaker-tweaks.md) |
 | 2026-06-27 | FullScreenEditor v2 切换 + 见面 app 同步 | [`changelogs/2026-06-27-fullscreen-v2-rollout.md`](./changelogs/2026-06-27-fullscreen-v2-rollout.md) |

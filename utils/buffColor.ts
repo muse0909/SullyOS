@@ -43,17 +43,12 @@ export const isValidHexColor = (s: unknown): s is string => {
  */
 export const pickColorByLabel = (label?: string): string => {
     const key = (label || '').trim();
-    if (!key) {
-        console.log('[buffColor] EMPTY label → fallback', MACARON_COLORS[0]);
-        return MACARON_COLORS[0];
-    }
+    if (!key) return MACARON_COLORS[0];
     let hash = 5381;
     for (let i = 0; i < key.length; i++) {
         hash = ((hash * 33) + key.charCodeAt(i)) >>> 0;
     }
-    const color = MACARON_COLORS[hash % MACARON_COLORS.length];
-    console.log('[buffColor] label=', JSON.stringify(key), 'hash=', hash, 'idx=', hash % MACARON_COLORS.length, '→', color);
-    return color;
+    return MACARON_COLORS[hash % MACARON_COLORS.length];
 };
 
 /**

@@ -1,7 +1,7 @@
 # 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行
 
 **日期**：2026-06-28  
-**涉及 commit**：`6d36218` `5de6751`
+**涉及 commit**：`6d36218` `5de6751` `41ea24d`
 
 ## 改了什么
 
@@ -39,6 +39,26 @@
 **重构方案**：用 `useEffect` 监听 `modalType === 'emoji-reorder'`，modalType 一变就自动从当前分类拷贝 emojis 到 `reorderList`。这样 ChatModals 的"调整顺序"按钮只需要 `setModalType('emoji-reorder')` 一个调用，少绕一层。
 
 同时清理：dead code `case 'move-emoji-up'` / `'move-emoji-down'` 在 handlePanelAction 里没用上（实际走的是 `onMoveEmoji` prop），一起删了。`onOpenEmojiReorder` prop 也不再需要。
+
+## 优化（41ea24d）—— 拖拽排序
+
+暮色说"一个一个点 ↑↓ 太费劲"，加拖拽排序：
+
+**交互**：
+- 长按 emoji 0.3s → 进入拖动状态（轻微震动反馈，`navigator.vibrate(30)`）
+- 拖动浮层用 `position: fixed` 脱离文档流 + `cursor-grabbing` 样式
+- 原位置留虚线占位（避免列表塌陷）
+- 移动越过目标 item 中线时自动重排
+- **贴近容器顶部 60px → 自动上滑；贴近底部 60px → 自动下滑**（暮色特别要求）
+- ↑↓ 按钮保留，作为精确微调兜底
+
+**接口变更**：`onMoveEmoji` 从 `(idx, dir: 'up' | 'down')` 改成 `(from, to)`，支持任意位置移动（拖动需要）。
+
+**架构细节**：
+- 拖动浮层 `z-[60]` 在 Modal 之上（z-100），确保不被 modal 遮罩拦截
+- modal 滚动容器加 `touch-none select-none`，避免拖动时选中文本/触发系统手势
+- 自动滚动用 `requestAnimationFrame` 循环 + `scrollDirRef` 控制方向
+- 长按计时器 300ms，移动 > 10px 自动取消
 
 ## 备注
 

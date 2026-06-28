@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
+import { getBuffColor } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -39,18 +40,25 @@ interface ChatHeaderShellProps {
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
 }
 
-const MACARON_BUFF_STYLES = {
-    1: { bg: '#F5EAE9', border: '#E9D2D0', text: '#9B6E6A' },
-    2: { bg: '#F4E0E4', border: '#E7C3CC', text: '#965F6E' },
-    3: { bg: '#EED4DD', border: '#DCAEBE', text: '#874F64' },
-} as const;
-
 const getBuffLabel = (buff: CharacterBuff) => buff.label || buff.innerState || '';
 const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label || '';
 
+/**
+ * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景透明度：
+ *   1 → 14% 背景，2 → 22%，3 → 30%
+ * 文字色始终用满色，border 用对应透明度。
+ * 这样不同 label 的心声自然分散到 12 色，又保留 intensity 的强弱感。
+ */
 const getBuffStyle = (buff: CharacterBuff) => {
+    const color = getBuffColor(buff);
     const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
-    return MACARON_BUFF_STYLES[intensity];
+    const bgAlpha = intensity === 3 ? '4D' : intensity === 2 ? '38' : '24';
+    const borderAlpha = intensity === 3 ? '90' : intensity === 2 ? '70' : '55';
+    return {
+        bg: `${color}${bgAlpha}`,
+        border: `${color}${borderAlpha}`,
+        text: color,
+    };
 };
 
 const formatEmotionTime = (timestamp?: number) => {

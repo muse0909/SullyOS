@@ -89,9 +89,9 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
     );
 
     return (
-        <div className="space-y-5">
+        <div className="space-y-4">
             {/* Quick Combo Presets */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">快速风格</h2>
                 <p className="text-[10px] text-slate-400 mb-3">一键切换聊天界面风格组合，包含头像、气泡、间距等全套配置。</p>
                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
@@ -105,47 +105,47 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
                 </div>
             </section>
 
-            {/* Live Preview */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">预览</h2>
+            {/* Live Preview - sticky to top, compact height */}
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 sticky top-[100px] z-10">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">预览</h2>
                 <div className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden">
-                    {/* Fake header */}
-                    <div className={`px-4 py-3 flex items-center gap-3 border-b border-slate-100 ${headerStyle === 'gradient' ? 'bg-gradient-to-r from-primary/20 to-primary/5' : headerStyle === 'minimal' ? 'bg-white' : 'bg-slate-50'}`}>
+                    {/* Fake header - compact */}
+                    <div className={`px-3 py-1.5 flex items-center gap-2 border-b border-slate-100 ${headerStyle === 'gradient' ? 'bg-gradient-to-r from-primary/20 to-primary/5' : headerStyle === 'minimal' ? 'bg-white' : 'bg-slate-50'}`}>
                         <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-primary/20 shrink-0`} />
                         <div>
-                            <div className="text-xs font-bold text-slate-700">角色名</div>
-                            {headerStyle !== 'minimal' && <div className="text-[9px] text-slate-400">在线</div>}
+                            <div className="text-[11px] font-bold text-slate-700">角色名</div>
+                            {headerStyle !== 'minimal' && <div className="text-[8px] text-slate-400">在线</div>}
                         </div>
                     </div>
-                    {/* Fake messages */}
-                    <div className={`p-3 space-y-${msgSpacing === 'compact' ? '1' : msgSpacing === 'spacious' ? '4' : '2'}`}>
+                    {/* Fake messages - compact */}
+                    <div className={`px-3 py-2 space-y-${msgSpacing === 'compact' ? '1' : msgSpacing === 'spacious' ? '3' : '1.5'}`}>
                         {/* AI message */}
-                        <div className="flex gap-2 items-end">
+                        <div className="flex gap-1.5 items-end">
                             <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-pink-200 shrink-0`} />
-                            <div className={`px-3 py-2 text-[11px] max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-slate-300 rounded-2xl rounded-bl-sm' : bubbleStyle === 'shadow' ? 'bg-white shadow-md rounded-2xl rounded-bl-sm' : bubbleStyle === 'flat' ? 'bg-slate-100 rounded-2xl rounded-bl-sm' : 'bg-white/90 backdrop-blur-sm rounded-2xl rounded-bl-sm shadow-sm'}`}>
+                            <div className={`px-2.5 py-1.5 text-[10px] max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-slate-300 rounded-2xl rounded-bl-sm' : bubbleStyle === 'shadow' ? 'bg-white shadow-md rounded-2xl rounded-bl-sm' : bubbleStyle === 'flat' ? 'bg-slate-100 rounded-2xl rounded-bl-sm' : 'bg-white/90 backdrop-blur-sm rounded-2xl rounded-bl-sm shadow-sm'}`}>
                                 你好呀，今天过得怎么样？
-                                {showTimestamp === 'always' && <div className="text-[8px] text-slate-300 mt-1 text-right">14:32</div>}
+                                {showTimestamp === 'always' && <div className="text-[8px] text-slate-300 mt-0.5 text-right">14:32</div>}
                             </div>
                         </div>
                         {/* User message */}
-                        <div className="flex gap-2 items-end justify-end">
-                            <div className={`px-3 py-2 text-[11px] text-white max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-primary text-primary rounded-2xl rounded-br-sm' : bubbleStyle === 'shadow' ? 'bg-primary shadow-md rounded-2xl rounded-br-sm' : bubbleStyle === 'flat' ? 'bg-primary rounded-2xl rounded-br-sm' : 'bg-primary/90 backdrop-blur-sm rounded-2xl rounded-br-sm shadow-sm'}`}
+                        <div className="flex gap-1.5 items-end justify-end">
+                            <div className={`px-2.5 py-1.5 text-[10px] text-white max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-primary text-primary rounded-2xl rounded-br-sm' : bubbleStyle === 'shadow' ? 'bg-primary shadow-md rounded-2xl rounded-br-sm' : bubbleStyle === 'flat' ? 'bg-primary rounded-2xl rounded-br-sm' : 'bg-primary/90 backdrop-blur-sm rounded-2xl rounded-br-sm shadow-sm'}`}
                                 style={bubbleStyle === 'outline' ? { color: `hsl(${theme.hue}, ${theme.saturation}%, ${theme.lightness}%)` } : undefined}>
                                 挺好的，今天天气不错！
-                                {showTimestamp === 'always' && <div className={`text-[8px] mt-1 text-right ${bubbleStyle === 'outline' ? 'opacity-50' : 'text-white/60'}`}>14:33</div>}
+                                {showTimestamp === 'always' && <div className={`text-[8px] mt-0.5 text-right ${bubbleStyle === 'outline' ? 'opacity-50' : 'text-white/60'}`}>14:33</div>}
                             </div>
                             <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-primary/30 shrink-0`} />
                         </div>
                     </div>
-                    {/* Fake input */}
-                    <div className={`px-3 py-2 border-t border-slate-100 ${inputStyle === 'flat' ? 'bg-slate-50' : 'bg-white'}`}>
-                        <div className={`bg-slate-100 px-4 py-2 text-[10px] text-slate-400 ${inputStyle === 'rounded' ? 'rounded-full' : inputStyle === 'flat' ? 'rounded-none border-b border-slate-200 bg-transparent' : 'rounded-xl'}`}>输入消息...</div>
+                    {/* Fake input - compact */}
+                    <div className={`px-3 py-1.5 border-t border-slate-100 ${inputStyle === 'flat' ? 'bg-slate-50' : 'bg-white'}`}>
+                        <div className={`bg-slate-100 px-3 py-1 text-[9px] text-slate-400 ${inputStyle === 'rounded' ? 'rounded-full' : inputStyle === 'flat' ? 'rounded-none border-b border-slate-200 bg-transparent' : 'rounded-xl'}`}>输入消息...</div>
                     </div>
                 </div>
             </section>
 
             {/* Avatar Shape */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">头像形状</h2>
                 <div className="flex gap-2">
                     {AVATAR_SHAPES.map(s => (
@@ -155,7 +155,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Avatar Size */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">头像大小</h2>
                 <div className="flex gap-2">
                     {AVATAR_SIZES.map(s => (
@@ -165,7 +165,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Bubble Style */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">气泡风格</h2>
                 <div className="flex gap-2 flex-wrap">
                     {BUBBLE_STYLES.map(s => (
@@ -175,7 +175,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Message Spacing */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">消息间距</h2>
                 <div className="flex gap-2">
                     {MSG_SPACINGS.map(s => (
@@ -185,7 +185,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Header Style */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">聊天头部</h2>
                 <div className="flex gap-2 flex-wrap">
                     {HEADER_STYLES.map(s => (
@@ -195,7 +195,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Input Style */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">输入框样式</h2>
                 <div className="flex gap-2">
                     {INPUT_STYLES.map(s => (
@@ -205,7 +205,7 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
             </section>
 
             {/* Timestamp Display */}
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+            <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">时间戳显示</h2>
                 <div className="flex gap-2">
                     {TIMESTAMP_OPTIONS.map(s => (
@@ -648,14 +648,14 @@ const Appearance: React.FC = () => {
 
   return (
     <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-      <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
+      <div className="h-14 bg-white/70 backdrop-blur-md flex items-center px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
         <div className="flex items-center gap-2 w-full">
             <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-slate-600">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                 </svg>
             </button>
-            <h1 className="text-xl font-medium text-slate-700 tracking-wide">外观定制</h1>
+            <h1 className="text-base font-medium text-slate-700 tracking-wide">外观定制</h1>
         </div>
       </div>
 

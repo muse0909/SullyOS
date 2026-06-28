@@ -638,16 +638,62 @@ export const DB = {
     });
   },
 
-  saveEmoji: async (name: string, url: string, categoryId?: string): Promise<void> => {
+  saveEmoji: async (name: string, url: string, categoryId?: string, order?: number): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
-    transaction.objectStore(STORE_EMOJIS).put({ name, url, categoryId });
+    const payload: Emoji = { name, url, categoryId };
+    if (typeof order === 'number') payload.order = order;
+    transaction.objectStore(STORE_EMOJIS).put(payload);
   },
 
-  deleteEmoji: async (name: string): Promise<void> => {
+  // 改名/更新表情包：name 是主键，要先读旧记录拿到 url/categoryId，再 put 新 key。
+  // 保留 order 字段（如果旧记录有的话）。
+  updateEmoji: async (oldName: string, updates: { name?: string; url?: string; categoryId?: string; order?: number }): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
-    transaction.objectStore(STORE_EMOJIS).delete(name);
+    const store = transaction.objectStore(STORE_EMOJIS);
+    const getReq = store.get(oldName);
+    await new Promise<void>((resolve, reject) => {
+      getReq.onsuccess = () => {
+        const old = getReq.result as Emoji | undefined;
+        if (!old) {
+          // 旧记录不存在，直接 put 新记录（兜底）
+          store.put({
+            name: updates.name ?? oldName,
+            url: updates.url ?? '',
+            categoryId: updates.categoryId,
+            ...(typeof updates.order === 'number' ? { order: updates.order } : {}),
+          });
+          resolve();
+          return;
+        }
+        const merged: Emoji = {
+          ...old,
+          ...(typeof updates.name === 'string' ? { name: updates.name } : {}),
+          ...(typeof updates.url === 'string' ? { url: updates.url } : {}),
+          ...(typeof updates.categoryId === 'string' ? { categoryId: updates.categoryId } : {}),
+          ...(typeof updates.order === 'number' ? { order: updates.order } : {}),
+        };
+        if (oldName !== merged.name) {
+          store.delete(oldName);
+        }
+        store.put(merged);
+        resolve();
+      };
+      getReq.onerror = () => reject(getReq.error);
+    });
+  },
+
+  // 批量调整顺序：传入完整顺序的 emoji 数组（按用户排好的），统一重写 order 字段。
+  // 注意：只更新传入的 emoji，其他不动。如果新顺序里有未传入的，不影响。
+  reorderEmojis: async (orderedEmojis: Emoji[]): Promise<void> => {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
+    const store = transaction.objectStore(STORE_EMOJIS);
+    orderedEmojis.forEach((e, idx) => {
+      const merged: Emoji = { ...e, order: idx };
+      store.put(merged);
+    });
   },
 
   getEmojiCategories: async (): Promise<EmojiCategory[]> => {

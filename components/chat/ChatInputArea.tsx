@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, CornersOut } from '@phosphor-icons/react';
 import { ShareNetwork, Trash, Copy } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
@@ -142,7 +142,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             isLongPressTriggered.current = true;
             // Trigger action
             if (type === 'emoji') {
-                onPanelAction('delete-emoji-req', item);
+                // 长按表情包 → 弹操作菜单（编辑名字 / 删除 / 调整顺序）
+                onPanelAction('emoji-options', item);
             } else {
                 onPanelAction('category-options', item);
             }
@@ -248,6 +249,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             });
         });
     };
+
+    // --- 自动撑高：1 行 → 最多 5 行（max-h-40 = 160px，按 32px 行高算 5 行） ---
+    const MAX_INPUT_HEIGHT = 160;
+    useEffect(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        // 先重置为 auto 才能正确读到 scrollHeight
+        el.style.height = 'auto';
+        const next = Math.min(el.scrollHeight, MAX_INPUT_HEIGHT);
+        el.style.height = `${next}px`;
+        // 超过 max 时开启滚动
+        el.style.overflowY = el.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
+    }, [input]);
 
     const isDiscordStyle = inputStyle === 'discord';
     const isPixelStyle = inputStyle === 'pixel' || chromeStyle === 'pixel';
@@ -391,9 +405,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..."
-                            style={{ height: 'auto' }}
+                            style={{ height: 'auto', overflowY: 'hidden' }}
                         />
                         <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />

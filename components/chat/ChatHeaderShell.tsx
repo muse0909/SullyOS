@@ -364,46 +364,62 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             )}
 
             {isBuffListExpanded && emotionHistory.length > 0 && (
-                <div ref={buffPanelRef} className="absolute top-full left-4 right-4 mt-1 rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur-xl z-40">
-                    <div className="max-h-[58vh] overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                        <div className="space-y-3">
-                            {emotionHistory.map((buff) => {
-                                const style = getBuffStyle(buff);
-                                return (
-                                    <div
-                                        key={`panel-${buff.id}`}
-                                        className="rounded-2xl border p-3 shadow-sm select-none"
-                                        style={{ borderColor: style.border, background: style.bg, color: style.text }}
-                                    >
-                                        <div className="mb-2 flex items-center justify-between gap-3">
-                                            <div className="text-[11px] font-bold text-slate-600">{formatEmotionTime(buff.createdAt)}</div>
+                <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
+                    <div
+                        ref={buffPanelRef}
+                        className="absolute left-1/2 top-1/2 w-[min(94vw,460px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/40 bg-white/95 p-4 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* 顶部居中标题：角色名·心声 */}
+                        <div className="mb-3 text-center">
+                            <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
+                        </div>
+
+                        {/* 心声列表：卡片间距加大，整体缩小 */}
+                        <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                            <div className="space-y-4">
+                                {emotionHistory.map((buff) => {
+                                    const style = getBuffStyle(buff);
+                                    return (
+                                        <div
+                                            key={`panel-${buff.id}`}
+                                            className="rounded-xl border p-2.5 shadow-sm select-none"
+                                            style={{ borderColor: style.border, background: style.bg, color: style.text }}
+                                        >
+                                            {/* 第一行：日期 + 删除 */}
+                                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-bold text-slate-600">{formatEmotionTime(buff.createdAt)}</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
+                                                    className="shrink-0 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold shadow-sm transition-transform active:scale-95 text-slate-700"
+                                                    style={{ border: `1px solid ${style.border}` }}
+                                                >
+                                                    删除
+                                                </button>
+                                            </div>
+                                            {/* 日期下分割线 */}
+                                            <div className="mb-1.5 h-px bg-slate-300/50" />
+                                            {/* chip + 正文 */}
                                             <button
                                                 type="button"
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
-                                                className="shrink-0 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95 text-slate-700"
-                                                style={{ border: `1px solid ${style.border}` }}
+                                                onClick={(e) => { e.stopPropagation(); }}
+                                                className="mb-1.5 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2 py-0.5 text-[10px] font-bold leading-none"
+                                                style={{ borderColor: style.border, color: style.text }}
+                                                title={getBuffInnerState(buff)}
                                             >
-                                                删除
+                                                <span className="truncate">
+                                                    {buff.emoji ? `${buff.emoji} ` : ''}
+                                                    {getBuffLabel(buff)}
+                                                </span>
                                             </button>
+                                            <div className="text-[11px] leading-relaxed font-medium text-slate-800">
+                                                {getBuffInnerState(buff)}
+                                            </div>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); }}
-                                            className="mb-2 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none shadow-[0_1px_4px_rgba(120,80,90,0.1)]"
-                                            style={{ borderColor: style.border, color: style.text }}
-                                            title={getBuffInnerState(buff)}
-                                        >
-                                            <span className="truncate">
-                                                {buff.emoji ? `${buff.emoji} ` : ''}
-                                                {getBuffLabel(buff)}
-                                            </span>
-                                        </button>
-                                        <div className="text-[12px] leading-relaxed font-medium text-slate-800">
-                                            {getBuffInnerState(buff)}
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 </div>

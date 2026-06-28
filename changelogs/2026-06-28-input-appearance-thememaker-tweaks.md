@@ -1,7 +1,7 @@
 # 输入框 + 外观 + 气泡工坊 排版优化
 
 **日期**：2026-06-28
-**涉及 commit**：`b89bdbe`
+**涉及 commit**：`b89bdbe` `6d3ef95`
 
 ## 改了什么
 
@@ -72,7 +72,56 @@
    - 因为低对比度警告和保存拦截是 **有实际保护作用**的，不能因为 UI 不显眼就删
    - 如果用户后续确认不再需要，可以一起删
 
+6. **sticky 容器 = 滚动祖先**（不是 ThemeMaker root）：
+   - 之前以为 sticky 不生效是因为 ThemeMaker 没滚动容器
+   - 实际上 `overflow: hidden` 也算滚动祖先（虽然不能滚，但 sticky 把它作为 containing block）
+   - PhoneShell line 451 `flex-1 relative overflow-hidden` 就是 ThemeMaker 的 sticky 容器
+   - Appearance 的滚动容器是 `<div className="flex-1 overflow-y-auto p-5 ...">` (line 670)，sticky 元素 relative 这个容器
+   - 所以 sticky top-0 = 容器可视顶，容器可视顶 = PhoneShell 标题栏下方 / tab bar 下方
+
+7. **sticky 元素必须放在 flow 第一个**：
+   - 之前 Live Preview 在"快速风格"后面，sticky 起作用但起始位置在快速风格下面
+   - 滚动后 Live Preview 会从"快速风格下面"那个位置停到 top-0
+   - 看起来像"sticky 没生效"但其实是位置不对
+   - 解决：把 sticky 元素移到 flow 第一个
+
+## 第二轮改动（commit 6d3ef95）
+
+### Live Preview 重新排版（Appearance.tsx）
+- Live Preview 移到 flow 第一个（"快速风格"前面）
+- `sticky top-0 -mt-5 z-20`：负 margin -mt-5 让 section 顶部 = 容器内顶（绕过 padding）
+- 整条 bg-white，无圆角（border-b 替代 rounded-3xl）
+- 高度约 172px（屏幕 600px 的 ~29%），接近 1/3
+- 标题字号略缩：text-sm → text-[11px]
+
+### Toolbar 整条 sticky（ThemeMaker.tsx）
+- toolbar 从 Preview Area 内部提到 Preview Area **顶部**
+- `sticky top-0 z-30 bg-white border-b border-slate-200 shrink-0`
+- 紧贴 Header 下方，整条白底无圆角
+- 只保留 5 场景按钮 + 对比按钮（去掉 背景/深色 checkbox 和全屏按钮）
+- 对比弹窗位置：`top-12 right-4` (toolbar 下方屏幕右侧)
+- 弹窗内容：单预览 / 左右分屏 / 一键切换 + 分隔线 + A 当前编辑 / B 上次保存（**常驻**，不再藏在 toggle 模式下）
+- 弹窗 backdrop：`top-12 left-0 right-0 bottom-0`，限定在 toolbar 下方
+- 聊天内容独立滚动容器 `flex-1 overflow-y-auto`
+
+## 踩坑 / 需要知道的
+
+1. **全屏预览按钮暂时去掉了**（按用户要求"只保留这几个"）
+   - 用户没明确说全屏按钮去哪
+   - 临时方案：先去掉，等用户看完效果再决定放哪
+   - 可选位置：chat content 右上角 / 编辑器顶部 / 角色设置里
+
+2. **Live Preview 没固定 33vh**：
+   - 当前是内容自然高度 ~170px
+   - 用户说"占屏幕三分之一"——可能是 min-height 概念
+   - 如果用户想要明确高度，加 `min-h-[200px] max-h-[33vh]`
+
+3. **聊天内容（chat bubbles）的背景**：
+   - Preview Area 已有背景（点状 + wallpaper）
+   - 移除了 chat content 内的重复背景
+   - 之前重复会有双层渲染，影响性能
+
 ## 备注
-- 用户在原任务里说"前面改的两个一起 push 到预览分支"——指任务 1 和 2，一起 push 了
-- 任务 4 排版和长文气泡相关的代码也在这一个 commit 里（用户说"做一版看效果"）
-- 下次和用户讨论长文气泡的实现方案：是要"BubbleStyle 加 mode 字段"还是"加第二个主题预设字段"
+- 第一轮 push 后用户测试，发现 Live Preview sticky 没生效（其实位置问题）和 toolbar 被滚动盖住
+- 第二轮重新排版：Live Preview flow 第一个、toolbar 提到 Preview Area 顶部
+- 下一步：长文气泡功能（用户要求讨论），全屏按钮位置（用户没说但功能还在）

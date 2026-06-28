@@ -484,43 +484,29 @@ const ToggleSwitch: React.FC<{
     onChange: (v: boolean) => void;
     leftLabel: string;
     rightLabel: string;
-}> = ({ checked, onChange, leftLabel, rightLabel }) => (
-    <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        aria-pressed={checked}
-        className={`relative w-24 h-8 rounded-full transition-colors overflow-hidden shrink-0 ${
-            checked ? 'bg-primary' : 'bg-slate-300'
-        }`}
-    >
-        {/* 左标签 - 选中时被白球盖住，未选时显示 */}
-        <span
-            className={`absolute inset-y-0 left-0 flex items-center justify-center text-[11px] font-bold transition-opacity duration-200 ${
-                checked ? 'text-white opacity-0' : 'text-slate-700 opacity-100'
-            }`}
-            style={{ width: 48 }}
+}> = ({ checked, onChange, leftLabel, rightLabel }) => {
+    // 容器 80px(w-20) - 白球 20px(w-5) - 左右各 4px(p-1) = 滑动距离 52px
+    const SLIDE_PX = 52;
+    return (
+        <button
+            type="button"
+            onClick={() => onChange(!checked)}
+            aria-pressed={checked}
+            className="relative w-20 h-7 rounded-full bg-slate-200/70 overflow-hidden shrink-0"
         >
-            {leftLabel}
-        </span>
-        {/* 右标签 - 选中时被白球盖住，未选时显示 */}
-        <span
-            className={`absolute inset-y-0 right-0 flex items-center justify-center text-[11px] font-bold transition-opacity duration-200 ${
-                !checked ? 'text-slate-700 opacity-100' : 'text-white opacity-0'
-            }`}
-            style={{ width: 48 }}
-        >
-            {rightLabel}
-        </span>
-        {/* 白球 - 显示当前选中的标签 */}
-        <span
-            className={`absolute top-1 left-1 w-11 h-6 rounded-full bg-white shadow flex items-center justify-center text-[11px] font-bold text-slate-700 transition-transform duration-200 ${
-                checked ? 'translate-x-[44px]' : 'translate-x-0'
-            }`}
-        >
-            {checked ? rightLabel : leftLabel}
-        </span>
-    </button>
-);
+            {/* 文字层 - 始终显示在底，白球滑过会盖住对应字 */}
+            <span className="absolute inset-0 flex text-[11px] font-bold text-slate-600 select-none">
+                <span className="flex-1 flex items-center justify-center">{leftLabel}</span>
+                <span className="flex-1 flex items-center justify-center">{rightLabel}</span>
+            </span>
+            {/* 白球 - 纯圆形不带字，在文字上左右滑动 */}
+            <span
+                className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200"
+                style={{ transform: checked ? `translateX(${SLIDE_PX}px)` : 'translateX(0)' }}
+            />
+        </button>
+    );
+};
 
 const PREVIEW_SCENES: PreviewScene[] = [
     {

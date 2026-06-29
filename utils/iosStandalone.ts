@@ -64,6 +64,20 @@ const setViewportVars = () => {
         ? appHeight + bottomSafeInset
         : appHeight;
 
+    // iOS 全屏 PWA 下 env(safe-area-inset-*) 偶发返回 0，
+    // 用 JS 探测值兜底覆写 --safe-top / --safe-bottom / --chrome-top
+    // （VRWorldApp 全屏面板的 paddingTop 依赖这些变量，否则返回按钮会被状态栏盖住）
+    if (shouldStabilizeHeight) {
+        const topSafeInset = readSafeAreaInset('top');
+        if (topSafeInset > 0) {
+            document.documentElement.style.setProperty('--safe-top', `${topSafeInset}px`);
+            document.documentElement.style.setProperty('--chrome-top', `${topSafeInset + 40}px`); /* 40px = 2.5rem SullyOS 状态栏 */
+        }
+        if (bottomSafeInset > 0) {
+            document.documentElement.style.setProperty('--safe-bottom', `${bottomSafeInset}px`);
+        }
+    }
+
     document.documentElement.style.setProperty('--app-height', `${fullAppHeight}px`);
     document.documentElement.style.setProperty('--visual-viewport-height', `${viewportHeight}px`);
     document.documentElement.style.setProperty('--keyboard-inset', `${keyboardInset}px`);

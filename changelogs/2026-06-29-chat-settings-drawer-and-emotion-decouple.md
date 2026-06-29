@@ -101,4 +101,66 @@ React 项目删 useState/useRef/const 时，**build 通过 ≠ 引用都清了**
 ---
 
 ## 🔴 待办
-- 确认修复后，**手动验证**聊天页正常进入 + 抽屉能打开 + 心声开关能切换
+- 确认修复后，**手动验证**聊天页正常进入 + 抽屉能打开 + 心声开关能切换 + 长按消息能弹菜单
+
+---
+
+## 🔥 Hotfix #2（`d3439e9`）
+
+**事故：** `85ab5a0` 修复后 Vercel 重新部署，暮色刷新 → **聊天页还是进不去**。
+错误位置：`index-CdoBCifA.js:985:55077`（就是新的 build hash）。
+
+**根因（更阴险）：**
+`10f8c9a` 删 `ChatModals.tsx` 的 `voiceAvailable` / `onGenerateVoice` interface 字段时：
+- JSX 第 488-489 行的 `{voiceAvailable && ... && onGenerateVoice && ...}` 引用**没清**
+- 函数 destructure 里这两个 prop 也**没加回去**
+
+**为什么 85ab5a0 没救到 / 为什么 build 不报：**
+- `interface` 里的 prop 字段是**纯类型**，编译后 runtime 不存在
+- 父组件 `Chat.tsx` 还在传这两个 prop（`voiceAvailable` / `onGenerateVoice`）
+- Vite 用 esbuild，**esbuild 不做 TS 类型检查**（只剥类型），所以 `TSX` 里类型不对齐不报错
+- 运行时读 `voiceAvailable` → 根本没在 destructure 里 → ReferenceError
+
+**为什么这次（修复错版）更阴：**
+我第一次（commit `85ab5a0`）只把 prop 加回 interface，**忘了 destructure 也要加**。
+- interface 是 type-only，runtime 不会输出
+- 结果 build 出的 minified 跟修复前**完全一样**（asset hash 都是 `CdoBCifA`）
+- Vercel 部署后浏览器拿的还是旧坏 JS（CDN 缓存 + 同 hash 不刷新）
+- 暮色测试后**第二次白屏**才意识到
+
+**正确修复：**
+两个地方都加：
+```ts
+// 1. interface
+interface ChatModalsProps {
+  ...
+  voiceAvailable?: boolean;
+  onGenerateVoice?: () => void;
+}
+
+// 2. 函数 destructure
+const ChatModals: React.FC<ChatModalsProps> = ({
+  ...,
+  voiceAvailable,
+  onGenerateVoice,
+}) => { ... }
+```
+
+**验证：**
+build 后 asset hash 从 `CdoBCifA` → `BGWbLDmf`（**变了**），Vercel 部署后浏览器不会拿缓存。
+
+**为什么 esbuild 不做 TS 类型检查：**
+Vite 用 esbuild 做 transform（快），但不做类型检查。类型检查需要 `tsc --noEmit`（慢）。所以 `tsconfig.json` 里写的 strict 规则**只在你 IDE 或 CI 跑 tsc 时生效**。
+- IDE（VSCode）开 TS Server：能实时看到红线
+- `npm run build`：**不会**做类型检查
+- Vercel build：**不会**做类型检查
+
+**修复 checklist（删 interface prop 时）：**
+1. grep prop 名看父组件还在不在传
+2. grep prop 名看子组件 JSX 还在不在用
+3. 如果两边都还在用：**interface + destructure 都要加**（只加 interface = 无效修复）
+4. build 后**看 asset hash 变没变**（hash 没变 = runtime 没变 = 修复无效）
+5. 部署后**自己刷一次**再交用户
+
+**为什么这事应该让用户测前发现：**
+我应该 `npm run build` 后**手动 grep minified 输出**，确认 destructure 里真的有这个 prop。但我没做，导致暮色第二次白屏才暴露问题。

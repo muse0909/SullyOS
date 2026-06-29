@@ -1,7 +1,7 @@
 # 设置入口搬到头像右上角 + 心声 / 日程解耦
 
 **日期**：2026-06-29
-**涉及 commit**：（本任务单次 commit，未定 hash）
+**涉及 commit**：`10f8c9a`（主功能）+ `85ab5a0`（hotfix 修白屏）
 
 ## 改了什么
 
@@ -62,3 +62,43 @@
 - 暮色还在找"长文 / 分段显示"的历史记录,找到了再开下一仗
 - 暮色提到的"+ 号菜单改上下滑动 + 长按弹窗编辑位置"这次**没动**,等主线跑通再处理
 - Vercel 部署 URL: `sully-os-git-preview-muse0909s-projects.vercel.app`（push 后自动部署）
+
+---
+
+## 🔥 Hotfix 补充（`85ab5a0`）
+
+**事故经过：**
+`10f8c9a` 部署上线后，暮色刷新 → **聊天页白屏**，报错：
+```
+ReferenceError: settingsContextLimit is not defined
+    at Xw (https://sully-os-git-preview-muse0909s-projects.vercel.app/assets/index-D5NihXDz.js:1280:7876)
+```
+
+**根因：**
+删 `settingsContextLimit` / `settingsHideSysLogs` 两个 useState 时，**Chat.tsx:2031-2032 传给 ChatModals 的 props 漏删**。
+- `ChatModals` 那边这些 prop 都是 `?` 可选，**TS 觉得传 undefined 合法，build 静默通过**
+- 运行时 React 读到不存在的 JS 变量 → ReferenceError → 整个聊天页白屏
+
+**修复：**
+删 3 行 props（contextLimit + hideSysLogs + preserveCount），保留 `preserveCount` 那行的 useState（line 68 还在用，line 1302 keepN 逻辑还引用）。
+
+**为什么 build 没救我：**
+TS 可选 prop（`prop?: Type`）是 silent killer——传 undefined 编译能过、运行时炸。
+React 项目删 useState/useRef/const 时，**build 通过 ≠ 引用都清了**。
+
+**下次删 useState 的 checklist：**
+1. `grep` 变量名搜整个仓库（**不光 .tsx，还要 .ts**）
+2. 重点看 `<Component xxx={xxx} />` 这种 JSX 传值的地方（TSX 里直接 grep 变量名）
+3. 重点看子组件的 props interface 里这个 prop 还有没有（不删子组件的 prop 接收，光删父组件的传值也会留垃圾）
+4. commit 前 build 后**手动搜一遍**变量名
+5. 部署后自己刷一次（如果能的话），不要等用户反馈
+
+**经验：**
+- build 静默通过不等于代码正确，**TS 可选 prop 不会救你**
+- 引用点搜索不能光靠工具记忆，每次大改必须 `grep`
+- 这次违反了我自己 2026-06-28 写的规则「改样式/函数/常量前必须先 grep 所有引用点」——**规则就是用来打破自己侥幸心理的**
+
+---
+
+## 🔴 待办
+- 确认修复后，**手动验证**聊天页正常进入 + 抽屉能打开 + 心声开关能切换

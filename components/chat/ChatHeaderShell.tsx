@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
-import { getBuffColor, darkenHex } from '../../utils/buffColor';
+import { getBuffColor, darkenHex, lightenHex } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -44,21 +44,33 @@ const getBuffLabel = (buff: CharacterBuff) => buff.label || buff.innerState || '
 const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label || '';
 
 /**
- * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景明度：
- *   1 → 卡片背景淡（透明度 38%），2 → 中（63%），3 → 浓（82%）
- * 整体降一档透明度，模拟日程「请选择日程风格」框 bg-amber-50 的浅度感。
- * 文字色用同色系深色版（darkenHex），保持浅底 + 深字 + 稍深边框的
- * "请选择日程风格"框那种马卡龙卡片质感。边框用满色 buff color。
+ * 按 buff.label 哈希到马卡龙色盘，再用 HSL 算法算三档"清透"配色：
+ *   - bg     = lightenHex(color, 0.5)  → 接近 bg-amber-50 的极浅奶油底
+ *   - border = darkenHex(color, 0.12)  → 接近 border-amber-200 的柔和边框（注意是 darken 不是 lighten，
+ *                                            因为 buff color 起点 L≈0.88，再 lighten 会封顶变白看不见）
+ *   - text   = darkenHex(color, 0.45)  → 接近 text-amber-700 的深色字
+ *
+ * 参考 SullyOS 现有「请选择日程风格」框那套 bg-X-50/border-X-200/text-X-700 三档，
+ * 整张心声卡片不再"灰突突"，而是跟日程框一致的奶油感。
+ *
+ * intensity 不再影响底色透明度（底色已经够浅），改用 chip 右侧的 ●●○ 三个小圆点视觉表示。
  */
 const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
-    const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
-    const bgAlpha = intensity === 3 ? 'D0' : intensity === 2 ? 'A0' : '60';
     return {
-        bg: `${color}${bgAlpha}`,
-        border: color,
-        text: darkenHex(color, 0.3),
+        bg: lightenHex(color, 0.5),
+        border: darkenHex(color, 0.12),
+        text: darkenHex(color, 0.45),
     };
+};
+
+/**
+ * intensity → 视觉小圆点（●●○），跟 ChatHeader.tsx 的 INTENSITY_DOTS 同款
+ * 放 chip 右侧外面，作为元数据展示
+ */
+const INTENSITY_DOTS = (n: number | undefined | null): string => {
+    const safe = n === 2 || n === 3 ? n : 1;
+    return '●'.repeat(safe) + '○'.repeat(3 - safe);
 };
 
 const formatEmotionTime = (timestamp?: number) => {
@@ -376,52 +388,85 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
-                        {/* 心声列表：卡片间距紧凑，整体往中间缩 */}
+                        {/* 心声列表：每组 = meta 行 + 卡片（meta 行紧贴卡片上沿），组与组之间 space-y 留间距 */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (
-                                        <div
-                                            key={`panel-${buff.id}`}
-                                            className="rounded-2xl border p-2.5 shadow-sm select-none"
-                                            style={{ borderColor: style.border, background: style.bg, color: style.text }}
-                                        >
-                                            {/* 第一行：日期 + 删除（按日程黄色框规则：字同色系） */}
-                                            <div className="mb-1 flex items-center justify-between gap-3">
-                                                <div className="text-[10px] font-bold" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
+                                        <div key={`panel-${buff.id}`}>
+                                            {/* meta 行（紧贴卡片上沿）：日期 + 删除 */}
+                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-0.5">
+                                                <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
-                                                    className="shrink-0 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold shadow-sm transition-transform active:scale-95"
+                                                    className="shrink-0 rounded-full bg-white/85 px-2 py-0.5 text-[9px] font-bold transition-transform active:scale-95"
                                                     style={{ color: style.text, border: `1px solid ${style.border}` }}
                                                 >
                                                     删除
                                                 </button>
                                             </div>
-                                            {/* 日期下分割线（用 buff 边框色淡化版） */}
-                                            <div className="mb-1 h-px" style={{ backgroundColor: `${style.border}80` }} />
-                                            {/* 小标签 chip：保持小标签形态（胶囊 + 半透白 + 小字） */}
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); }}
-                                                className="mb-1 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none"
-                                                style={{ borderColor: style.border, color: style.text }}
-                                                title={getBuffInnerState(buff)}
+                                            {/* 卡片本体：chip row + 正文 */}
+                                            <div
+                                                className="rounded-2xl border p-2.5 shadow-sm select-none"
+                                                style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                             >
-                                                <span className="truncate">
-                                                    {buff.emoji ? `${buff.emoji} ` : ''}
-                                                    {getBuffLabel(buff)}
-                                                </span>
-                                            </button>
-                                            {/* 正文（大标签内字：buff 同色系深色，不要黑色） */}
-                                            <div className="text-[11px] leading-snug font-medium" style={{ color: style.text }}>
-                                                {getBuffInnerState(buff)}
+                                                {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}
+                                                <div className="mb-1.5 flex items-center gap-2">
+                                                    <div
+                                                        className="inline-flex max-w-full items-center truncate rounded-full border bg-white/85 px-2.5 py-0.5 text-[10px] font-bold leading-none"
+                                                        style={{ borderColor: style.border, color: style.text }}
+                                                        title={getBuffInnerState(buff)}
+                                                    >
+                                                        {buff.emoji ? `${buff.emoji} ` : ''}
+                                                        {getBuffLabel(buff)}
+                                                    </div>
+                                                    <span className="shrink-0 text-[9px] font-bold tracking-[1.5px]" style={{ color: style.text, opacity: 0.55 }}>
+                                                        {INTENSITY_DOTS(buff.intensity)}
+                                                    </span>
+                                                </div>
+                                                {/* 正文（不加粗 font-normal，跟日程黄色框字重一致） */}
+                                                <div className="text-[12px] leading-relaxed" style={{ color: style.text }}>
+                                                    {getBuffInnerState(buff)}
+                                                </div>
                                             </div>
                                         </div>
                                     );
                                 })}
                             </div>
+                        </div>
+
+                        {/* footer：心电图 + 沿线漂浮小心（B 方案，参考候选 #B） */}
+                        <div className="mt-2 flex justify-center">
+                            <svg width="160" height="22" viewBox="0 0 160 22" fill="none" aria-hidden="true">
+                                {/* 单一贯穿心电图折线：左侧基线 + 心电图锯齿（2 段）+ 末端基线 */}
+                                <path
+                                    d="M 0 11 L 30 11 L 34 11 L 38 5 L 42 17 L 46 8 L 50 11 L 78 11 L 82 11 L 86 5 L 90 17 L 94 8 L 98 11 L 160 11"
+                                    stroke="#fca5a5"
+                                    strokeWidth="1.3"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                />
+                                {/* 小心形 1：基线上方，靠左 */}
+                                <path
+                                    d="M 18 6 C 18 5, 19 4.4, 20 4.4 C 21 4.4, 22 5, 22 6 C 22 7.5, 20 9, 18 10 C 16 9, 14 7.5, 14 6 C 14 5, 15 4.4, 16 4.4 C 17 4.4, 18 5, 18 6 Z"
+                                    fill="#f87171"
+                                    opacity="0.85"
+                                />
+                                {/* 小心形 2：基线下方，中间 */}
+                                <path
+                                    d="M 64 17 C 64 16, 65 15.4, 66 15.4 C 67 15.4, 68 16, 68 17 C 68 18.5, 66 20, 64 21 C 62 20, 60 18.5, 60 17 C 60 16, 61 15.4, 62 15.4 C 63 15.4, 64 16, 64 17 Z"
+                                    fill="#f87171"
+                                    opacity="0.7"
+                                />
+                                {/* 小心形 3：基线上方，靠右 */}
+                                <path
+                                    d="M 112 7 C 112 6, 113 5.4, 114 5.4 C 115 5.4, 116 6, 116 7 C 116 8.5, 114 10, 112 11 C 110 10, 108 8.5, 108 7 C 108 6, 109 5.4, 110 5.4 C 111 5.4, 112 6, 112 7 Z"
+                                    fill="#f87171"
+                                    opacity="0.55"
+                                />
+                            </svg>
                         </div>
                     </div>
                 </div>,

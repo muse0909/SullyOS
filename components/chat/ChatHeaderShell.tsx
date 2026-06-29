@@ -46,7 +46,8 @@ const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label
 /**
  * 按 buff.label 哈希到马卡龙色盘，再用 HSL 算法算三档"清透"配色：
  *   - bg     = lightenHex(color, 0.5)  → 接近 bg-amber-50 的极浅奶油底
- *   - border = lightenHex(color, 0.18) → 接近 border-amber-200 的柔和边框
+ *   - border = darkenHex(color, 0.12)  → 接近 border-amber-200 的柔和边框（注意是 darken 不是 lighten，
+ *                                            因为 buff color 起点 L≈0.88，再 lighten 会封顶变白看不见）
  *   - text   = darkenHex(color, 0.45)  → 接近 text-amber-700 的深色字
  *
  * 参考 SullyOS 现有「请选择日程风格」框那套 bg-X-50/border-X-200/text-X-700 三档，
@@ -58,7 +59,7 @@ const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
     return {
         bg: lightenHex(color, 0.5),
-        border: lightenHex(color, 0.18),
+        border: darkenHex(color, 0.12),
         text: darkenHex(color, 0.45),
     };
 };
@@ -387,19 +388,15 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
-                        {/* 心声列表：卡片间距紧凑，整体往中间缩 */}
+                        {/* 心声列表：meta 行 + 卡片 div 平级（meta 行在卡片底图外面） */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                             <div className="space-y-2">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (
-                                        <div
-                                            key={`panel-${buff.id}`}
-                                            className="rounded-2xl border p-2.5 shadow-sm select-none"
-                                            style={{ borderColor: style.border, background: style.bg, color: style.text }}
-                                        >
+                                        <React.Fragment key={`panel-${buff.id}`}>
                                             {/* meta 行（卡片外）：日期 + 删除 */}
-                                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-1">
                                                 <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
@@ -410,62 +407,65 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                     删除
                                                 </button>
                                             </div>
-                                            {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}
-                                            <div className="mb-1.5 flex items-center gap-2">
-                                                <div
-                                                    className="inline-flex max-w-full items-center truncate rounded-full border bg-white/85 px-2.5 py-0.5 text-[10px] font-bold leading-none"
-                                                    style={{ borderColor: style.border, color: style.text }}
-                                                    title={getBuffInnerState(buff)}
-                                                >
-                                                    {buff.emoji ? `${buff.emoji} ` : ''}
-                                                    {getBuffLabel(buff)}
+                                            {/* 卡片本体：chip row + 正文 */}
+                                            <div
+                                                className="rounded-2xl border p-2.5 shadow-sm select-none"
+                                                style={{ borderColor: style.border, background: style.bg, color: style.text }}
+                                            >
+                                                {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}
+                                                <div className="mb-1.5 flex items-center gap-2">
+                                                    <div
+                                                        className="inline-flex max-w-full items-center truncate rounded-full border bg-white/85 px-2.5 py-0.5 text-[10px] font-bold leading-none"
+                                                        style={{ borderColor: style.border, color: style.text }}
+                                                        title={getBuffInnerState(buff)}
+                                                    >
+                                                        {buff.emoji ? `${buff.emoji} ` : ''}
+                                                        {getBuffLabel(buff)}
+                                                    </div>
+                                                    <span className="shrink-0 text-[9px] font-bold tracking-[1.5px]" style={{ color: style.text, opacity: 0.55 }}>
+                                                        {INTENSITY_DOTS(buff.intensity)}
+                                                    </span>
                                                 </div>
-                                                <span className="shrink-0 text-[9px] font-bold tracking-[1.5px]" style={{ color: style.text, opacity: 0.55 }}>
-                                                    {INTENSITY_DOTS(buff.intensity)}
-                                                </span>
+                                                {/* 正文（不加粗 font-normal，跟日程黄色框字重一致） */}
+                                                <div className="text-[12px] leading-relaxed" style={{ color: style.text }}>
+                                                    {getBuffInnerState(buff)}
+                                                </div>
                                             </div>
-                                            {/* 正文（不加粗 font-normal，跟日程黄色框字重一致） */}
-                                            <div className="text-[12px] leading-relaxed" style={{ color: style.text }}>
-                                                {getBuffInnerState(buff)}
-                                            </div>
-                                        </div>
+                                        </React.Fragment>
                                     );
                                 })}
                             </div>
                         </div>
 
-                        {/* footer：心电图 + 胖红心 + 小红心 + 虚线尾巴 */}
+                        {/* footer：心电图 + 胖红心（左）+ 心电图折线 + 小红心 + 虚线尾巴 */}
                         <div className="mt-2 flex justify-center">
-                            <svg width="120" height="20" viewBox="0 0 120 20" fill="none" aria-hidden="true">
-                                {/* 基线 + 心电图折线 */}
+                            <svg width="160" height="22" viewBox="0 0 160 22" fill="none" aria-hidden="true">
+                                {/* 左侧基线 */}
+                                <line x1="0" y1="11" x2="22" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
+                                {/* 大胖红心（覆盖基线靠左位置） */}
                                 <path
-                                    d="M 0 10 L 28 10 L 31 10 L 34 4 L 37 16 L 40 7 L 43 10 L 56 10"
+                                    d="M 30 11 C 30 8, 32.5 6, 35.5 6 C 38.5 6, 41 8, 41 11 C 41 14.5, 35.5 18, 30 21 C 24.5 18, 19 14.5, 19 11 C 19 8, 21.5 6, 24.5 6 C 27.5 6, 30 8, 30 11 Z"
+                                    fill="#ef4444"
+                                />
+                                {/* 中段基线 */}
+                                <line x1="44" y1="11" x2="60" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
+                                {/* 心电图折线锯齿 */}
+                                <path
+                                    d="M 60 11 L 64 11 L 67 4 L 70 18 L 73 7 L 76 11 L 92 11"
                                     stroke="#fca5a5"
                                     strokeWidth="1.3"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                 />
-                                {/* 胖红心（覆盖在基线靠左） */}
+                                {/* 中段基线 */}
+                                <line x1="94" y1="11" x2="116" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
+                                {/* 小红心（在中段基线后） */}
                                 <path
-                                    d="M 52 8 C 52 6.6, 53.3 5.5, 54.6 5.5 C 55.9 5.5, 57.2 6.6, 57.2 8 C 57.2 10, 54.6 11.8, 52 13 C 49.4 11.8, 46.8 10, 46.8 8 C 46.8 6.6, 48.1 5.5, 49.4 5.5 C 50.7 5.5, 52 6.6, 52 8 Z"
-                                    fill="#ef4444"
-                                />
-                                {/* 虚线尾巴 */}
-                                <line
-                                    x1="65"
-                                    y1="10"
-                                    x2="90"
-                                    y2="10"
-                                    stroke="#fca5a5"
-                                    strokeWidth="1.1"
-                                    strokeDasharray="2 2"
-                                    strokeLinecap="round"
-                                />
-                                {/* 小红心在虚线尾巴末端 */}
-                                <path
-                                    d="M 100 9 C 100 8, 101 7.4, 101.6 7.4 C 102.2 7.4, 103.2 8, 103.2 9 C 103.2 10.4, 101.6 11.4, 100 12.4 C 98.4 11.4, 96.8 10.4, 96.8 9 C 96.8 8, 97.8 7.4, 98.4 7.4 C 99 7.4, 100 8, 100 9 Z"
+                                    d="M 122 9 C 122 7.6, 123.6 6.6, 125.2 6.6 C 126.8 6.6, 128.4 7.6, 128.4 9 C 128.4 11.4, 125.2 13.6, 122 15.6 C 118.8 13.6, 115.6 11.4, 115.6 9 C 115.6 7.6, 117.2 6.6, 118.8 6.6 C 120.4 6.6, 122 7.6, 122 9 Z"
                                     fill="#f87171"
                                 />
+                                {/* 虚线尾巴 */}
+                                <line x1="134" y1="11" x2="160" y2="11" stroke="#fca5a5" strokeWidth="1" strokeDasharray="2 2" strokeLinecap="round" />
                             </svg>
                         </div>
                     </div>

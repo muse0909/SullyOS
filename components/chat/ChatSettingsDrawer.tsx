@@ -176,7 +176,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                             </div>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
-                            开启后，角色会在聊天中自动生成一段第一人称的内心独白。角色不知道user能读到。
+                            开启后，角色会在聊天中自动生成一段第一人称的内心独白。
                         </p>
                     </section>
 

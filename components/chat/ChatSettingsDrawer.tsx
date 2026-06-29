@@ -112,7 +112,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                 </div>
 
                 {/* 设置项：可滚动 */}
-                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+                <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
                     {/* === 聊天背景（置顶） === */}
                     <section>
                         <div className="flex items-center justify-between mb-2">

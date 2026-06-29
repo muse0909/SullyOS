@@ -54,6 +54,11 @@ const Chat: React.FC = () => {
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
     const charRef = useRef<typeof char>(null as any);
+    // 加载历史消息前快照 scrollTop/scrollHeight，回调里补偿偏移（保持视觉位置）
+    const preHistoryScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+    // 进入聊天 / 切角色时的强制 scroll-to-bottom 计数器
+    // （消息异步加载，rAF + setTimeout 双保险）
+    const pendingScrollLockRef = useRef(0);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -687,13 +692,106 @@ const Chat: React.FC = () => {
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
-        // Only auto-scroll when a new message is appended (ID changes),
-        // not when loading older history or updating existing messages in-place
+
+        // 历史消息刚刚 prepend 完：补偿 scrollTop 保持视觉位置
+        // （否则用户会看到新加载的旧消息在屏幕上方，但滚动条位置不变 → 像"被推下去"）
+        if (preHistoryScrollRef.current) {
+            const { scrollTop, scrollHeight } = preHistoryScrollRef.current;
+            const newScrollHeight = scrollRef.current.scrollHeight;
+            scrollRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
+            preHistoryScrollRef.current = null;
+            lastMsgIdRef.current = currentLastId;
+            return;
+        }
+
+        // 进入聊天 / 切角色 / 新消息追加：滚到底
         if (currentLastId !== lastMsgIdRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             lastMsgIdRef.current = currentLastId;
         }
     }, [messages, activeCharacterId, selectionMode]);
+
+    // ──── 进入聊天 / 切角色：保证在最后一条 ────
+    // 消息是异步加载的（DB query），useLayoutEffect 第一次跑时 messages 还是空，
+    // 等消息真正进 DOM 时再 rAF + setTimeout 双保险滚到底（图片/懒加载元素可能让 scrollHeight 在第一帧不准确）
+    useEffect(() => {
+        if (selectionMode) return;
+        const myLockId = ++pendingScrollLockRef.current;
+        const scrollToBottom = () => {
+            if (pendingScrollLockRef.current !== myLockId) return; // 被新一轮 lock 顶掉
+            if (scrollRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
+        };
+        scrollToBottom();
+        const raf1 = requestAnimationFrame(() => {
+            scrollToBottom();
+            requestAnimationFrame(scrollToBottom);
+            setTimeout(scrollToBottom, 60);
+            setTimeout(scrollToBottom, 180);
+        });
+        return () => { pendingScrollLockRef.current++; }; // 任何依赖变化都让旧 lock 失效
+    }, [activeCharacterId, selectionMode]);
+
+    // ──── 加载历史消息：保留视觉位置 ────
+    const handleLoadMoreHistory = async () => {
+        if (scrollRef.current) {
+            preHistoryScrollRef.current = {
+                scrollTop: scrollRef.current.scrollTop,
+                scrollHeight: scrollRef.current.scrollHeight
+            };
+        }
+        const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
+        visibleCountRef.current = nextVisibleCount;
+        setVisibleCount(nextVisibleCount);
+        await reloadMessages(nextVisibleCount);
+    };
+
+    // ──── 键盘弹起 / 输入聚焦：聊天滚动到最后一条 ────
+    // 监听 textarea/input 聚焦 + visualViewport resize（iOS 键盘）
+    useEffect(() => {
+        if (selectionMode) return;
+        let lastVVHeight = window.visualViewport?.height ?? 0;
+        const scrollToBottom = () => {
+            if (scrollRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
+        };
+        const handleFocusIn = (e: FocusEvent) => {
+            const t = e.target as HTMLElement | null;
+            if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) {
+                // 键盘弹出是渐进的，rAF + setTimeout 双保险
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                    setTimeout(scrollToBottom, 280);
+                });
+            }
+        };
+        const handleVVResize = () => {
+            const cur = window.visualViewport?.height ?? 0;
+            if (cur > 0 && cur < lastVVHeight) {
+                // 视口变高 → 键盘弹出
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                });
+            } else if (cur > lastVVHeight && cur > 0) {
+                // 视口变低 → 键盘收起
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                });
+            }
+            lastVVHeight = cur;
+        };
+        document.addEventListener('focusin', handleFocusIn);
+        window.visualViewport?.addEventListener('resize', handleVVResize);
+        return () => {
+            document.removeEventListener('focusin', handleFocusIn);
+            window.visualViewport?.removeEventListener('resize', handleVVResize);
+        };
+    }, [selectionMode]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode) {
@@ -2276,12 +2374,7 @@ if (keepN > 0) {
             <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-4 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {collapsedCount > 0 && (
                     <div className="flex justify-center mb-6">
-                        <button onClick={async () => {
-                            const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
-                            visibleCountRef.current = nextVisibleCount;
-                            setVisibleCount(nextVisibleCount);
-                            await reloadMessages(nextVisibleCount);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
+                        <button onClick={handleLoadMoreHistory} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
                     </div>
                 )}
 

@@ -17,6 +17,7 @@ import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer';
+import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
@@ -54,11 +55,13 @@ const Chat: React.FC = () => {
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
     const charRef = useRef<typeof char>(null as any);
-    // 加载历史消息前快照 scrollTop/scrollHeight，回调里补偿偏移（保持视觉位置）
-    const preHistoryScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
     // 进入聊天 / 切角色时的强制 scroll-to-bottom 计数器
     // （消息异步加载，rAF + setTimeout 双保险）
     const pendingScrollLockRef = useRef(0);
+    // 用户是否在「翻历史」状态（看老消息）—— 翻历史时新消息来了不强制滚到底
+    const isViewingHistoryRef = useRef(false);
+    // 右侧 4 个导航按钮的可见性（不依赖 React state，免得每次 scroll 触发 re-render）
+    const [showNavButtons, setShowNavButtons] = useState(false);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -70,6 +73,7 @@ const Chat: React.FC = () => {
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
+    const [showChatSearchDrawer, setShowChatSearchDrawer] = useState(false);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
@@ -515,6 +519,7 @@ const Chat: React.FC = () => {
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
+            isViewingHistoryRef.current = false;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
             setReplyTarget(null);
@@ -692,21 +697,13 @@ const Chat: React.FC = () => {
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
-
-        // 历史消息刚刚 prepend 完：补偿 scrollTop 保持视觉位置
-        // （否则用户会看到新加载的旧消息在屏幕上方，但滚动条位置不变 → 像"被推下去"）
-        if (preHistoryScrollRef.current) {
-            const { scrollTop, scrollHeight } = preHistoryScrollRef.current;
-            const newScrollHeight = scrollRef.current.scrollHeight;
-            scrollRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
-            preHistoryScrollRef.current = null;
-            lastMsgIdRef.current = currentLastId;
-            return;
-        }
-
-        // 进入聊天 / 切角色 / 新消息追加：滚到底
+        // Only auto-scroll when a new message is appended (ID changes),
+        // not when loading older history or updating existing messages in-place
+        // 用户在翻历史时（不在底部）即使有 last ID 变化也强制不滚——避免翻着看着被甩回最新
         if (currentLastId !== lastMsgIdRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            if (!isViewingHistoryRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
             lastMsgIdRef.current = currentLastId;
         }
     }, [messages, activeCharacterId, selectionMode]);
@@ -733,18 +730,48 @@ const Chat: React.FC = () => {
         return () => { pendingScrollLockRef.current++; }; // 任何依赖变化都让旧 lock 失效
     }, [activeCharacterId, selectionMode]);
 
-    // ──── 加载历史消息：保留视觉位置 ────
+    // ──── 加载历史消息（不加 scroll preservation，行为回到最朴素版） ────
     const handleLoadMoreHistory = async () => {
-        if (scrollRef.current) {
-            preHistoryScrollRef.current = {
-                scrollTop: scrollRef.current.scrollTop,
-                scrollHeight: scrollRef.current.scrollHeight
-            };
-        }
         const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
         visibleCountRef.current = nextVisibleCount;
         setVisibleCount(nextVisibleCount);
         await reloadMessages(nextVisibleCount);
+    };
+
+    // ──── 监听滚动：标记用户在不在「翻历史」状态 ────
+    // 翻历史（不在底部）时如果新消息进来，不强制滚到底 —— 避免翻着翻着被甩回最新
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const handleScroll = () => {
+            const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            isViewingHistoryRef.current = distFromBottom > 80; // 80px 容忍
+            setShowNavButtons(distFromBottom > 100);
+        };
+        el.addEventListener('scroll', handleScroll, { passive: true });
+        // 挂载后立即跑一次，处理「带着滚动位置进聊天」的场景（比如切角色回到滚动到一半的聊天）
+        handleScroll();
+        return () => el.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    // ──── 4 个导航按钮的滚动函数 ────
+    // ⏫ 跳到最上：scrollTop = 0
+    // ^ 往上 50 条：按当前可见消息的平均高度估算 50 条
+    // v 往下 50 条：同上，方向反
+    // ⏬ 跳到最下：scrollTop = scrollHeight
+    const scrollToTop = () => {
+        if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    const scrollToBottom = () => {
+        if (scrollRef.current) scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    };
+    const scrollByMessages = (count: number) => {
+        const el = scrollRef.current;
+        if (!el) return;
+        // 用当前可见区域的高度作为 50 条消息的近似量级（容错友好，比算"消息节点位置"更稳）
+        const step = el.clientHeight * (count / 6); // 6 屏 ≈ 50 条
+        const newTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, el.scrollTop + step));
+        el.scrollTo({ top: newTop, behavior: 'smooth' });
     };
 
     // ──── 键盘弹起 / 输入聚焦：聊天滚动到最后一条 ────
@@ -2224,6 +2251,7 @@ if (keepN > 0) {
                 activeCharacter={char}
                 onBgUpload={handleBgUpload}
                 onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
+                onOpenSearch={() => { setShowChatSettingsDrawer(false); setShowChatSearchDrawer(true); }}
                 chatVoiceEnabled={!!char.chatVoiceEnabled}
                 onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
                 chatVoiceLang={char.chatVoiceLang || ''}
@@ -2251,6 +2279,14 @@ if (keepN > 0) {
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}
                 onClearHistory={handleClearHistory}
+            />
+
+            {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}
+            <ChatSearchDrawer
+                isOpen={showChatSearchDrawer}
+                onClose={() => setShowChatSearchDrawer(false)}
+                activeCharacter={char}
+                userName={userProfile?.name || '我'}
             />
 
 
@@ -2454,6 +2490,50 @@ if (keepN > 0) {
                     </div>
                 )}
             </div>
+
+            {/* 右侧 4 个导航按钮（只在用户翻历史时显示） */}
+            {showNavButtons && !selectionMode && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1.5 pointer-events-auto">
+                    <button
+                        onClick={scrollToTop}
+                        title="跳到最上"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="7 13 12 8 17 13"/>
+                            <polyline points="7 18 12 13 17 18"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={() => scrollByMessages(-50)}
+                        title="往上 50 条"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="6 15 12 9 18 15"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={() => scrollByMessages(50)}
+                        title="往下 50 条"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={scrollToBottom}
+                        title="跳到最下"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="7 11 12 16 17 11"/>
+                            <polyline points="7 6 12 11 17 6"/>
+                        </svg>
+                    </button>
+                </div>
+            )}
 
             <div className="relative z-40">
                 {mcdActivated && (

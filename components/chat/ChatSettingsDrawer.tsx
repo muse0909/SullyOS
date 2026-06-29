@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Image as ImageIcon, Trash } from '@phosphor-icons/react';
+import { X, Image as ImageIcon, Trash, MagnifyingGlass } from '@phosphor-icons/react';
 import { CharacterProfile, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 
 interface ChatSettingsDrawerProps {
@@ -12,6 +12,9 @@ interface ChatSettingsDrawerProps {
     // 聊天背景
     onBgUpload: (file: File) => void;
     onRemoveBg: () => void;
+
+    // 搜索聊天记录
+    onOpenSearch: () => void;
 
     // 语音消息
     chatVoiceEnabled: boolean;
@@ -63,7 +66,7 @@ interface ChatSettingsDrawerProps {
 
 const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     isOpen, onClose, activeCharacter,
-    onBgUpload, onRemoveBg,
+    onBgUpload, onRemoveBg, onOpenSearch,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
     contextLimit, onSetContextLimit,
@@ -138,6 +141,21 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         {activeCharacter.chatBackground && (
                             <button onClick={onRemoveBg} className="text-[10px] text-red-400 mt-1.5">移除背景</button>
                         )}
+                    </section>
+
+                    {/* === 搜索聊天记录（紧跟背景） === */}
+                    <section>
+                        <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">搜索聊天记录</label>
+                            <button
+                                onClick={onOpenSearch}
+                                title="搜索聊天记录"
+                                aria-label="搜索聊天记录"
+                                className="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 active:scale-90 transition-transform"
+                            >
+                                <MagnifyingGlass className="w-4.5 h-4.5" weight="bold" />
+                            </button>
+                        </div>
                     </section>
 
                     {/* === 语音消息（紧跟背景） === */}

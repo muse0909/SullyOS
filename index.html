@@ -101,10 +101,17 @@
     </script>
     <style>
       :root {
-        --primary-hue: 245; 
+        --primary-hue: 245;
         --primary-sat: 25%;
         --primary-lightness: 65%;
         --safe-area-bottom: env(safe-area-inset-bottom);
+        /* 安全区 + SullyOS 状态栏 — 全屏面板顶栏统一用这套
+           静态 fallback：浏览器/非 iOS PWA 直接用 env() 值
+           动态覆写：utils/iosStandalone.ts 在 iOS 全屏 PWA 下用 JS 探测值兜底
+           （iOS env() 偶发返回 0 的已知 bug） */
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bottom: env(safe-area-inset-bottom, 0px);
+        --chrome-top: calc(env(safe-area-inset-top, 0px) + 2.5rem); /* 40px = SullyOS in-app 状态栏 */
         --app-height: 100lvh;
         --keyboard-inset: 0px;
         --app-font: 'Quicksand', sans-serif;

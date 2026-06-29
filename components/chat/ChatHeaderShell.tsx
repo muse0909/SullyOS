@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft } from '@phosphor-icons/react';
+import { CaretLeft, GearSix } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
 import { getBuffColor, darkenHex, lightenHex } from '../../utils/buffColor';
@@ -32,6 +32,7 @@ interface ChatHeaderShellProps {
     onSwitchPreset?: (preset: any) => void;
     onShowCharsPanel: () => void;
     onDeleteBuff?: (buffId: string) => void;
+    onOpenChatSettings?: () => void;
     headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
     avatarShape?: 'circle' | 'rounded' | 'square';
     headerAlign?: 'left' | 'center';
@@ -97,6 +98,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     onSwitchPreset,
     onShowCharsPanel,
     onDeleteBuff,
+    onOpenChatSettings,
     headerStyle = 'default',
     avatarShape = 'circle',
     headerAlign = 'left',
@@ -349,12 +351,18 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderCenteredInfo()}
                     </div>
 
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         <ChatMusicPlayer />
-                        <div>
-                            
-                            
-                        </div>
+                        {onOpenChatSettings && (
+                            <button
+                                onClick={onOpenChatSettings}
+                                className={`p-2 ${iconButtonClass}`}
+                                title="聊天设置"
+                                aria-label="聊天设置"
+                            >
+                                <GearSix className="w-5 h-5" weight="bold" />
+                            </button>
+                        )}
                     </div>
 
                 </div>
@@ -368,9 +376,18 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderStandardInfo()}
                     </div>
 
-                    <div className="relative ml-auto flex items-center gap-2">
+                    <div className="relative ml-auto flex items-center gap-1">
                         <ChatMusicPlayer />
-                        
+                        {onOpenChatSettings && (
+                            <button
+                                onClick={onOpenChatSettings}
+                                className={`p-2 ${iconButtonClass}`}
+                                title="聊天设置"
+                                aria-label="聊天设置"
+                            >
+                                <GearSix className="w-5 h-5" weight="bold" />
+                            </button>
+                        )}
                     </div>
 
                 </div>
@@ -380,7 +397,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-3 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-5 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
@@ -396,7 +413,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                     return (
                                         <div key={`panel-${buff.id}`}>
                                             {/* meta 行（紧贴卡片上沿）：日期 + 删除 */}
-                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-0.5">
+                                            <div className="flex items-center justify-between gap-3 px-3 pb-0.5">
                                                 <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
@@ -409,7 +426,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                             </div>
                                             {/* 卡片本体：chip row + 正文 */}
                                             <div
-                                                className="rounded-2xl border p-2.5 shadow-sm select-none"
+                                                className="rounded-2xl border p-3.5 shadow-sm select-none"
                                                 style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                             >
                                                 {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}

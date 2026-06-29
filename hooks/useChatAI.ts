@@ -17,7 +17,7 @@ import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemorie
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
-import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -794,7 +794,8 @@ export const useChatAI = ({
             }
 
             // 【改动 1】注入心声输出要求到 system prompt
-            if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+            // 心声条件：优先用独立的 emotionEnabled 字段；老数据（undefined）走旧逻辑兜底
+            if (isEmotionOn(char)) {
                 const scheduleStyle = char.scheduleStyle || 'lifestyle';
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
@@ -1344,7 +1345,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             aiContent = normalizeAiContent(aiContent);
 
             // 【改动 2】主 API 返回后解析内联心声块
-            if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+            if (isEmotionOn(char)) {
                 const emotionMatch = aiContent.match(/<emotion>([\s\S]*?)<\/emotion>/);
                 if (emotionMatch) {
                     try {

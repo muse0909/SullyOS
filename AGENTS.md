@@ -227,6 +227,7 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-06-29 | 设置入口搬到头像右上角 + 心声 / 日程解耦 | [`changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md`](./changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md) |
 | 2026-06-29 | 心声弹窗照扒日程三档配色 + 心电图 footer | [`changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md`](./changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md) |
 | 2026-06-28 | 心声弹窗贴顶修复（createPortal 绕开 ChatHeader backdrop-filter） | [`changelogs/2026-06-28-buff-popup-portal-fix.md`](./changelogs/2026-06-28-buff-popup-portal-fix.md) |
 | 2026-06-28 | 表情包编辑名字+排序 / 聊天输入框自动撑高 1→5 行 | [`changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md`](./changelogs/2026-06-28-emoji-edit-reorder-chat-input-grow.md) |

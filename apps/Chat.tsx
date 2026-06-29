@@ -5,7 +5,7 @@ import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
-import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
@@ -16,6 +16,8 @@ import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatC
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
+import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer';
+import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
@@ -53,6 +55,13 @@ const Chat: React.FC = () => {
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
     const charRef = useRef<typeof char>(null as any);
+    // 进入聊天 / 切角色时的强制 scroll-to-bottom 计数器
+    // （消息异步加载，rAF + setTimeout 双保险）
+    const pendingScrollLockRef = useRef(0);
+    // 用户是否在「翻历史」状态（看老消息）—— 翻历史时新消息来了不强制滚到底
+    const isViewingHistoryRef = useRef(false);
+    // 右侧 4 个导航按钮的可见性（不依赖 React state，免得每次 scroll 触发 re-render）
+    const [showNavButtons, setShowNavButtons] = useState(false);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -63,9 +72,8 @@ const Chat: React.FC = () => {
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
-    const [settingsContextLimit, setSettingsContextLimit] = useState(500);
-    const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
-    const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
+    const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
+    const [showChatSearchDrawer, setShowChatSearchDrawer] = useState(false);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
@@ -463,7 +471,10 @@ const Chat: React.FC = () => {
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
-            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            // 2026-06-30：取消「加载历史消息」分页机制，直接载入所有消息
+            // LLM 上下文不受影响（chatRequestPayload.ts 里 char.contextLimit 限制了发出去的条数）
+            // 4 个导航按钮也才能真正自由翻历史
+            setMessages(chatScopeMsgs);
         } catch (e) {
             // DB read failed — retry once after a short delay
             if (activeCharIdRef.current !== charIdAtStart) return;
@@ -477,7 +488,7 @@ const Chat: React.FC = () => {
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
-                setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+                setMessages(chatScopeMsgs);
             } catch { /* give up silently */ }
         }
     }, [activeCharacterId]);
@@ -502,9 +513,6 @@ const Chat: React.FC = () => {
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
             if (char) {
-                setSettingsContextLimit(char.contextLimit || 500);
-                setSettingsHideSysLogs(char.hideSystemLogs || false);
-                setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
             }
             // Per-character translation toggle
@@ -514,6 +522,7 @@ const Chat: React.FC = () => {
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
+            isViewingHistoryRef.current = false;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
             setReplyTarget(null);
@@ -693,11 +702,118 @@ const Chat: React.FC = () => {
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place
+        // 用户在翻历史时（不在底部）即使有 last ID 变化也强制不滚——避免翻着看着被甩回最新
         if (currentLastId !== lastMsgIdRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            if (!isViewingHistoryRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
             lastMsgIdRef.current = currentLastId;
         }
     }, [messages, activeCharacterId, selectionMode]);
+
+    // ──── 进入聊天 / 切角色：保证在最后一条 ────
+    // 消息是异步加载的（DB query），useLayoutEffect 第一次跑时 messages 还是空，
+    // 等消息真正进 DOM 时再 rAF + setTimeout 双保险滚到底（图片/懒加载元素可能让 scrollHeight 在第一帧不准确）
+    useEffect(() => {
+        if (selectionMode) return;
+        const myLockId = ++pendingScrollLockRef.current;
+        const scrollToBottom = () => {
+            if (pendingScrollLockRef.current !== myLockId) return; // 被新一轮 lock 顶掉
+            if (scrollRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
+        };
+        scrollToBottom();
+        const raf1 = requestAnimationFrame(() => {
+            scrollToBottom();
+            requestAnimationFrame(scrollToBottom);
+            setTimeout(scrollToBottom, 60);
+            setTimeout(scrollToBottom, 180);
+        });
+        return () => { pendingScrollLockRef.current++; }; // 任何依赖变化都让旧 lock 失效
+    }, [activeCharacterId, selectionMode]);
+
+    // ──── 监听滚动：标记用户在不在「翻历史」状态 ────
+    // 翻历史（不在底部）时如果新消息进来，不强制滚到底 —— 避免翻着翻着被甩回最新
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const handleScroll = () => {
+            const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            isViewingHistoryRef.current = distFromBottom > 80; // 80px 容忍
+            setShowNavButtons(distFromBottom > 100);
+        };
+        el.addEventListener('scroll', handleScroll, { passive: true });
+        // 挂载后立即跑一次，处理「带着滚动位置进聊天」的场景（比如切角色回到滚动到一半的聊天）
+        handleScroll();
+        return () => el.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    // ──── 4 个导航按钮的滚动函数 ────
+    // ⏫ 跳到最上：scrollTop = 0
+    // ^ 往上 50 条：按当前可见消息的平均高度估算 50 条
+    // v 往下 50 条：同上，方向反
+    // ⏬ 跳到最下：scrollTop = scrollHeight
+    const scrollToTop = () => {
+        if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    const scrollToBottom = () => {
+        if (scrollRef.current) scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    };
+    const scrollByMessages = (count: number) => {
+        const el = scrollRef.current;
+        if (!el) return;
+        // 用当前可见区域的高度作为 50 条消息的近似量级（容错友好，比算"消息节点位置"更稳）
+        const step = el.clientHeight * (count / 6); // 6 屏 ≈ 50 条
+        const newTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, el.scrollTop + step));
+        el.scrollTo({ top: newTop, behavior: 'smooth' });
+    };
+
+    // ──── 键盘弹起 / 输入聚焦：聊天滚动到最后一条 ────
+    // 监听 textarea/input 聚焦 + visualViewport resize（iOS 键盘）
+    useEffect(() => {
+        if (selectionMode) return;
+        let lastVVHeight = window.visualViewport?.height ?? 0;
+        const scrollToBottom = () => {
+            if (scrollRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
+        };
+        const handleFocusIn = (e: FocusEvent) => {
+            const t = e.target as HTMLElement | null;
+            if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) {
+                // 键盘弹出是渐进的，rAF + setTimeout 双保险
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                    setTimeout(scrollToBottom, 280);
+                });
+            }
+        };
+        const handleVVResize = () => {
+            const cur = window.visualViewport?.height ?? 0;
+            if (cur > 0 && cur < lastVVHeight) {
+                // 视口变高 → 键盘弹出
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                });
+            } else if (cur > lastVVHeight && cur > 0) {
+                // 视口变低 → 键盘收起
+                requestAnimationFrame(() => {
+                    scrollToBottom();
+                    setTimeout(scrollToBottom, 120);
+                });
+            }
+            lastVVHeight = cur;
+        };
+        document.addEventListener('focusin', handleFocusIn);
+        window.visualViewport?.addEventListener('resize', handleVVResize);
+        return () => {
+            document.removeEventListener('focusin', handleFocusIn);
+            window.visualViewport?.removeEventListener('resize', handleVVResize);
+        };
+    }, [selectionMode]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode) {
@@ -869,7 +985,7 @@ const Chat: React.FC = () => {
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
-            case 'settings': setModalType('chat-settings'); break;
+            case 'settings': handleOpenChatSettings(); break;
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
@@ -903,12 +1019,12 @@ const Chat: React.FC = () => {
                 break;
             }
             case 'html-mode-settings': {
-                // 长按 → 跳进聊天设置 modal 的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
+                // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
                 if (!char) break;
                 if (!(char as any).htmlModeEnabled) {
                     updateCharacter(char.id, { htmlModeEnabled: true } as any);
                 }
-                setModalType('chat-settings');
+                setShowChatSettingsDrawer(true);
                 break;
             }
         }
@@ -1091,31 +1207,25 @@ const Chat: React.FC = () => {
         }
     };
 
-    // 日程 / 情绪 buff 总开关
-    // 关闭：清空前台 scheduleData，同时清空可能已缓存的 buff 注入（防止继续污染下一轮 prompt）
+    // 日程开关（2026-06-29 与心声解耦后：只管日程生成，不再联动情绪/意识流）
+    // 关闭：清空前台 scheduleData，同时清空 buff 注入（防止继续污染下一轮 prompt）
     // 打开：若还没生成今日日程，立即生成一次
     const handleToggleScheduleFeature = async () => {
         if (!char) return;
         const nextEnabled = !isScheduleFeatureOn(char);
         const patch: any = { scheduleFeatureEnabled: nextEnabled };
-        if (nextEnabled) {
-            // 与 handleScheduleStyleChange 对齐：开日程 = 同步开情绪/意识流。
-            // 旧逻辑下，新角色的 emotionConfig 从未初始化（undefined），
-            // 仅切总开关而不点风格时，emotionConfig?.enabled 始终落 false，
-            // 副 API 闸门 (isScheduleFeatureOn && emotionConfig?.enabled) 永远过不去。
-            patch.emotionConfig = { ...(char.emotionConfig || {}), enabled: true };
-        } else {
-            // 关闭时顺手把 buff 注入清空，避免上一轮残留继续注入
+        if (!nextEnabled) {
+            // 关闭日程时顺手把 buff 注入清空，避免上一轮残留继续注入
             patch.buffInjection = '';
             patch.activeBuffs = [];
         }
         updateCharacter(char.id, patch);
         if (!nextEnabled) {
             setScheduleData(null);
-            addToast('日程与情绪已关闭', 'info');
+            addToast('日程已关闭', 'info');
             return;
         }
-        addToast('日程与情绪已开启', 'success');
+        addToast('日程已开启', 'success');
         // 打开后立刻尝试生成（若今日未生成且已选风格）
         const updatedChar = { ...char, ...patch };
         if (updatedChar.scheduleStyle) {
@@ -1127,6 +1237,22 @@ const Chat: React.FC = () => {
                 generateDailySchedule(updatedChar, false);
             }
         }
+    };
+
+    // 心声独立开关（2026-06-29 与 scheduleFeatureEnabled 解耦）
+    // - char.emotionEnabled === undefined（老用户）：首次切换时把"等效值"作为基础 toggle，再写回明确值
+    // - char.emotionEnabled === true/false（新用户 / 已显式切换）：直接 toggle
+    const handleToggleEmotion = () => {
+        if (!char) return;
+        const isEmotionOnNow = isEmotionOn(char);
+        updateCharacter(char.id, { emotionEnabled: !isEmotionOnNow } as any);
+        addToast(!isEmotionOnNow ? '心声已开启' : '心声已关闭', !isEmotionOnNow ? 'success' : 'info');
+    };
+
+    // 打开聊天设置抽屉（头像右上角 GearSix 按钮触发）
+    const handleOpenChatSettings = () => {
+        setShowPanel('none'); // 顺手关掉 + 号面板，避免叠层
+        setShowChatSettingsDrawer(true);
     };
 
     // --- Modal Handlers ---
@@ -1245,16 +1371,6 @@ const Chat: React.FC = () => {
         } catch(err: any) {
             addToast(err.message, 'error');
         }
-    };
-
-    const saveSettings = () => {
-        updateCharacter(char.id, {
-            contextLimit: settingsContextLimit,
-            hideSystemLogs: settingsHideSysLogs,
-            htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
-        } as any);
-        setModalType('none');
-        addToast('设置已保存', 'success');
     };
 
     const handleClearHistory = async () => {
@@ -1807,14 +1923,14 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
+    // 2026-06-30：取消「加载历史消息」分页，displayMessages 也不再 slice(-visibleCount)
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
-        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
-        .slice(-visibleCount),
-        [messages, char?.id, char?.hideSystemLogs, visibleCount]);
+        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; }),
+        [messages, char?.id, char?.hideSystemLogs]);
 
-    const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+    // 2026-06-30：去掉 collapsedCount（不再分页，没有"被折叠"的概念）
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -2031,12 +2147,9 @@ if (keepN > 0) {
              <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
-                emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
-                settingsContextLimit={settingsContextLimit} setSettingsContextLimit={setSettingsContextLimit}
-                settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
-               preserveCount={preserveCount} setPreserveCount={setPreserveCount}
+                 emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
 
-                editContent={editContent} setEditContent={setEditContent}
+                 editContent={editContent} setEditContent={setEditContent}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={(id: string) => {
                     setSelectedPromptId(id);
                     // 同步写 localStorage，让 palace extraction 的风格追加能读到最新选择
@@ -2051,7 +2164,6 @@ if (keepN > 0) {
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt }); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
-                onSaveSettings={saveSettings} onBgUpload={handleBgUpload} onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
                 onClearHistory={handleClearHistory} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
@@ -2069,22 +2181,6 @@ if (keepN > 0) {
                     });
                 }}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
-                translationEnabled={translationEnabled}
-                onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
-                translateSourceLang={translateSourceLang}
-                translateTargetLang={translateTargetLang}
-                onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem('chat_translate_source_lang', lang); setShowingTargetIds(new Set()); }}
-                onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
-                xhsEnabled={!!char.xhsEnabled}
-                onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
-                htmlModeEnabled={!!(char as any).htmlModeEnabled}
-                onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
-                htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}
-                setHtmlModeCustomPrompt={setSettingsHtmlModeCustomPrompt}
-                chatVoiceEnabled={!!char.chatVoiceEnabled}
-                onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
-                chatVoiceLang={char.chatVoiceLang || ''}
-                onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
                 voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
                 scheduleData={scheduleData}
@@ -2096,25 +2192,6 @@ if (keepN > 0) {
                 onScheduleStyleChange={handleScheduleStyleChange}
                 isScheduleFeatureEnabled={isScheduleFeatureOn(char)}
                 onToggleScheduleFeature={handleToggleScheduleFeature}
-                isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
-                isVectorizing={isVectorizing}
-                onForceVectorize={handleForceVectorize}
-                apiPresets={apiPresets}
-                onAddApiPreset={addApiPreset}
-                onSaveEmotion={(config) => {
-                    // API 同步到所有角色，enabled 仅写到当前角色
-                    syncEmotionApiToAllCharacters(config.api);
-                    updateCharacter(char.id, {
-                        emotionConfig: {
-                            enabled: config.enabled,
-                            ...(config.api && config.api.baseUrl ? { api: config.api } : {}),
-                        },
-                    });
-                }}
-                onClearBuffs={() => {
-                    updateCharacter(char.id, { activeBuffs: [], emotionHistory: [], buffInjection: '' });
-                    addToast('心声历史已清除', 'info');
-                }}
              />
              
              <ChatHeader
@@ -2158,8 +2235,54 @@ if (keepN > 0) {
                     updateApiConfig({ baseUrl: preset.config.baseUrl, apiKey: preset.config.apiKey, model: preset.config.model });
                     addToast(`已切换: ${preset.name}`, 'info');
                 }}
+                onOpenChatSettings={handleOpenChatSettings}
 
              />
+
+            {/* 聊天设置右侧抽屉（头像右上角 GearSix 触发） */}
+            <ChatSettingsDrawer
+                isOpen={showChatSettingsDrawer}
+                onClose={() => setShowChatSettingsDrawer(false)}
+                activeCharacter={char}
+                onBgUpload={handleBgUpload}
+                onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
+                onOpenSearch={() => { setShowChatSettingsDrawer(false); setShowChatSearchDrawer(true); }}
+                chatVoiceEnabled={!!char.chatVoiceEnabled}
+                onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
+                chatVoiceLang={char.chatVoiceLang || ''}
+                onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
+                emotionEnabled={isEmotionOn(char)}
+                onToggleEmotion={handleToggleEmotion}
+                contextLimit={char.contextLimit || 500}
+                onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
+                hideSysLogs={!!char.hideSystemLogs}
+                onSetHideSysLogs={(v) => updateCharacter(char.id, { hideSystemLogs: v } as any)}
+                translationEnabled={translationEnabled}
+                onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
+                translateSourceLang={translateSourceLang}
+                translateTargetLang={translateTargetLang}
+                onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem('chat_translate_source_lang', lang); setShowingTargetIds(new Set()); }}
+                onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
+                xhsEnabled={!!char.xhsEnabled}
+                onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
+                htmlModeEnabled={!!(char as any).htmlModeEnabled}
+                onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
+                htmlModeCustomPrompt={(char as any).htmlModeCustomPrompt || ''}
+                onSetHtmlModeCustomPrompt={(v) => updateCharacter(char.id, { htmlModeCustomPrompt: v } as any)}
+                onOpenHistoryManager={() => { setShowChatSettingsDrawer(false); setModalType('history-manager'); }}
+                isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
+                isVectorizing={isVectorizing}
+                onForceVectorize={handleForceVectorize}
+                onClearHistory={handleClearHistory}
+            />
+
+            {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}
+            <ChatSearchDrawer
+                isOpen={showChatSearchDrawer}
+                onClose={() => setShowChatSearchDrawer(false)}
+                activeCharacter={char}
+                userName={userProfile?.name || '我'}
+            />
 
 
             {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}
@@ -2280,17 +2403,6 @@ if (keepN > 0) {
             })()}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-4 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
-                {collapsedCount > 0 && (
-                    <div className="flex justify-center mb-6">
-                        <button onClick={async () => {
-                            const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
-                            visibleCountRef.current = nextVisibleCount;
-                            setVisibleCount(nextVisibleCount);
-                            await reloadMessages(nextVisibleCount);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
-                    </div>
-                )}
-
                 {displayMessages.map((m, i) => {
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
@@ -2367,6 +2479,50 @@ if (keepN > 0) {
                     </div>
                 )}
             </div>
+
+            {/* 右侧 4 个导航按钮（只在用户翻历史时显示） */}
+            {showNavButtons && !selectionMode && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1.5 pointer-events-auto">
+                    <button
+                        onClick={scrollToTop}
+                        title="跳到最上"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="7 13 12 8 17 13"/>
+                            <polyline points="7 18 12 13 17 18"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={() => scrollByMessages(-50)}
+                        title="往上 50 条"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="6 15 12 9 18 15"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={() => scrollByMessages(50)}
+                        title="往下 50 条"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+                    <button
+                        onClick={scrollToBottom}
+                        title="跳到最下"
+                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="7 11 12 16 17 11"/>
+                            <polyline points="7 6 12 11 17 6"/>
+                        </svg>
+                    </button>
+                </div>
+            )}
 
             <div className="relative z-40">
                 {mcdActivated && (

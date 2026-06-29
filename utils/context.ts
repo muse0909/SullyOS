@@ -1,7 +1,7 @@
 
 import { CharacterProfile, UserProfile, DailySchedule } from '../types';
 import { normalizeUserImpression } from './impression';
-import { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleGenerator';
+import { getFlowNarrativeKey, isScheduleFeatureOn, isEmotionOn } from './scheduleGenerator';
 
 /**
  * Memory Central
@@ -250,8 +250,8 @@ export const ContextBuilder = {
 
         // 6. 情绪底色 Buff (Emotion Buff Injection)
         // 放在角色设定之后，使所有调用 ContextBuilder 的 App 都能感知情绪状态
-        // 总开关关闭时完全跳过，防止残留 buff 继续污染 prompt
-        if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled && char.buffInjection) {
+        // 心声关闭时完全跳过，防止残留 buff 继续污染 prompt（2026-06-29 与 scheduleFeatureEnabled 解耦）
+        if (isEmotionOn(char) && char.buffInjection) {
             context += `${char.buffInjection}\n\n`;
             console.log(`🎭 [Context] Buff injected for ${char.name}:\n`, char.buffInjection);
             console.log(`🎭 [Context] Active buffs:`, JSON.stringify(char.activeBuffs || [], null, 2));

@@ -119,3 +119,60 @@ export const darkenHex = (hex: string, amount: number = 0.3): string => {
     const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
     return `#${toHex(dr)}${toHex(dg)}${toHex(db)}`;
 };
+
+/**
+ * 把马卡龙色提亮成"同色系浅色"，用于心声卡片底色。
+ *
+ * 对称 darkenHex：只调 lightness（HSL L 加 amount），保持 hue/saturation，
+ * 这样出来的浅色跟原色"同色系"而不是变成另一种色。
+ *
+ * 参考 SullyOS 现有"请选择日程风格"框的"奶油感"底色：
+ *   bg-amber-50 (L≈0.97) / bg-violet-100 (L≈0.95) / bg-teal-100 (L≈0.94)
+ * 起点是马卡龙色（典型 L≈0.83-0.90），加 0.4-0.5 后落在 L≈0.95-0.97。
+ *
+ * @param hex 浅色（马卡龙色盘里的色）
+ * @param amount 加多少 lightness，0.4-0.5 适合马卡龙浅色 → 极浅底
+ * @returns 同色系浅色 hex（最高不超 L=0.97，避免变白）
+ */
+export const lightenHex = (hex: string, amount: number = 0.4): string => {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+
+    const rn = r / 255, gn = g / 255, bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const l = (max + min) / 2;
+    let hue = 0, sat = 0;
+    if (max !== min) {
+        const d = max - min;
+        sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        if (max === rn) hue = (gn - bn) / d + (gn < bn ? 6 : 0);
+        else if (max === gn) hue = (bn - rn) / d + 2;
+        else hue = (rn - gn) / d + 4;
+        hue /= 6;
+    }
+
+    const newL = Math.min(0.97, l + amount);
+    let dr: number, dg: number, db: number;
+    if (sat === 0) {
+        dr = dg = db = newL;
+    } else {
+        const hue2rgb = (p: number, q: number, t: number) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        const q = newL < 0.5 ? newL * (1 + sat) : newL + sat - newL * sat;
+        const p = 2 * newL - q;
+        dr = hue2rgb(p, q, hue + 1 / 3);
+        dg = hue2rgb(p, q, hue);
+        db = hue2rgb(p, q, hue - 1 / 3);
+    }
+    const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+    return `#${toHex(dr)}${toHex(dg)}${toHex(db)}`;
+};

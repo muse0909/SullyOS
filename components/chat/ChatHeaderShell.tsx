@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
-import { getBuffColor, darkenHex } from '../../utils/buffColor';
+import { getBuffColor, darkenHex, lightenHex } from '../../utils/buffColor';
 
 interface TokenBreakdown {
     prompt: number;
@@ -44,21 +44,32 @@ const getBuffLabel = (buff: CharacterBuff) => buff.label || buff.innerState || '
 const getBuffInnerState = (buff: CharacterBuff) => buff.innerState || buff.label || '';
 
 /**
- * 按 buff.label 哈希到马卡龙色盘算基础色，intensity 调背景明度：
- *   1 → 卡片背景淡（透明度 38%），2 → 中（63%），3 → 浓（82%）
- * 整体降一档透明度，模拟日程「请选择日程风格」框 bg-amber-50 的浅度感。
- * 文字色用同色系深色版（darkenHex），保持浅底 + 深字 + 稍深边框的
- * "请选择日程风格"框那种马卡龙卡片质感。边框用满色 buff color。
+ * 按 buff.label 哈希到马卡龙色盘，再用 HSL 算法算三档"清透"配色：
+ *   - bg     = lightenHex(color, 0.5)  → 接近 bg-amber-50 的极浅奶油底
+ *   - border = lightenHex(color, 0.18) → 接近 border-amber-200 的柔和边框
+ *   - text   = darkenHex(color, 0.45)  → 接近 text-amber-700 的深色字
+ *
+ * 参考 SullyOS 现有「请选择日程风格」框那套 bg-X-50/border-X-200/text-X-700 三档，
+ * 整张心声卡片不再"灰突突"，而是跟日程框一致的奶油感。
+ *
+ * intensity 不再影响底色透明度（底色已经够浅），改用 chip 右侧的 ●●○ 三个小圆点视觉表示。
  */
 const getBuffStyle = (buff: CharacterBuff) => {
     const color = getBuffColor(buff);
-    const intensity = buff.intensity === 2 || buff.intensity === 3 ? buff.intensity : 1;
-    const bgAlpha = intensity === 3 ? 'D0' : intensity === 2 ? 'A0' : '60';
     return {
-        bg: `${color}${bgAlpha}`,
-        border: color,
-        text: darkenHex(color, 0.3),
+        bg: lightenHex(color, 0.5),
+        border: lightenHex(color, 0.18),
+        text: darkenHex(color, 0.45),
     };
+};
+
+/**
+ * intensity → 视觉小圆点（●●○），跟 ChatHeader.tsx 的 INTENSITY_DOTS 同款
+ * 放 chip 右侧外面，作为元数据展示
+ */
+const INTENSITY_DOTS = (n: number | undefined | null): string => {
+    const safe = n === 2 || n === 3 ? n : 1;
+    return '●'.repeat(safe) + '○'.repeat(3 - safe);
 };
 
 const formatEmotionTime = (timestamp?: number) => {
@@ -387,41 +398,75 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                             className="rounded-2xl border p-2.5 shadow-sm select-none"
                                             style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                         >
-                                            {/* 第一行：日期 + 删除（按日程黄色框规则：字同色系） */}
-                                            <div className="mb-1 flex items-center justify-between gap-3">
-                                                <div className="text-[10px] font-bold" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
+                                            {/* meta 行（卡片外）：日期 + 删除 */}
+                                            <div className="mb-1.5 flex items-center justify-between gap-3">
+                                                <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); handleDeleteFromHistory(buff); }}
-                                                    className="shrink-0 rounded-full bg-white/90 px-2 py-0.5 text-[9px] font-bold shadow-sm transition-transform active:scale-95"
+                                                    className="shrink-0 rounded-full bg-white/85 px-2 py-0.5 text-[9px] font-bold transition-transform active:scale-95"
                                                     style={{ color: style.text, border: `1px solid ${style.border}` }}
                                                 >
                                                     删除
                                                 </button>
                                             </div>
-                                            {/* 日期下分割线（用 buff 边框色淡化版） */}
-                                            <div className="mb-1 h-px" style={{ backgroundColor: `${style.border}80` }} />
-                                            {/* 小标签 chip：保持小标签形态（胶囊 + 半透白 + 小字） */}
-                                            <button
-                                                type="button"
-                                                onClick={(e) => { e.stopPropagation(); }}
-                                                className="mb-1 inline-flex max-w-full items-center rounded-full border bg-white/55 px-2.5 py-1 text-[10px] font-bold leading-none"
-                                                style={{ borderColor: style.border, color: style.text }}
-                                                title={getBuffInnerState(buff)}
-                                            >
-                                                <span className="truncate">
+                                            {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}
+                                            <div className="mb-1.5 flex items-center gap-2">
+                                                <div
+                                                    className="inline-flex max-w-full items-center truncate rounded-full border bg-white/85 px-2.5 py-0.5 text-[10px] font-bold leading-none"
+                                                    style={{ borderColor: style.border, color: style.text }}
+                                                    title={getBuffInnerState(buff)}
+                                                >
                                                     {buff.emoji ? `${buff.emoji} ` : ''}
                                                     {getBuffLabel(buff)}
+                                                </div>
+                                                <span className="shrink-0 text-[9px] font-bold tracking-[1.5px]" style={{ color: style.text, opacity: 0.55 }}>
+                                                    {INTENSITY_DOTS(buff.intensity)}
                                                 </span>
-                                            </button>
-                                            {/* 正文（大标签内字：buff 同色系深色，不要黑色） */}
-                                            <div className="text-[11px] leading-snug font-medium" style={{ color: style.text }}>
+                                            </div>
+                                            {/* 正文（不加粗 font-normal，跟日程黄色框字重一致） */}
+                                            <div className="text-[12px] leading-relaxed" style={{ color: style.text }}>
                                                 {getBuffInnerState(buff)}
                                             </div>
                                         </div>
                                     );
                                 })}
                             </div>
+                        </div>
+
+                        {/* footer：心电图 + 胖红心 + 小红心 + 虚线尾巴 */}
+                        <div className="mt-2 flex justify-center">
+                            <svg width="120" height="20" viewBox="0 0 120 20" fill="none" aria-hidden="true">
+                                {/* 基线 + 心电图折线 */}
+                                <path
+                                    d="M 0 10 L 28 10 L 31 10 L 34 4 L 37 16 L 40 7 L 43 10 L 56 10"
+                                    stroke="#fca5a5"
+                                    strokeWidth="1.3"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                />
+                                {/* 胖红心（覆盖在基线靠左） */}
+                                <path
+                                    d="M 52 8 C 52 6.6, 53.3 5.5, 54.6 5.5 C 55.9 5.5, 57.2 6.6, 57.2 8 C 57.2 10, 54.6 11.8, 52 13 C 49.4 11.8, 46.8 10, 46.8 8 C 46.8 6.6, 48.1 5.5, 49.4 5.5 C 50.7 5.5, 52 6.6, 52 8 Z"
+                                    fill="#ef4444"
+                                />
+                                {/* 虚线尾巴 */}
+                                <line
+                                    x1="65"
+                                    y1="10"
+                                    x2="90"
+                                    y2="10"
+                                    stroke="#fca5a5"
+                                    strokeWidth="1.1"
+                                    strokeDasharray="2 2"
+                                    strokeLinecap="round"
+                                />
+                                {/* 小红心在虚线尾巴末端 */}
+                                <path
+                                    d="M 100 9 C 100 8, 101 7.4, 101.6 7.4 C 102.2 7.4, 103.2 8, 103.2 9 C 103.2 10.4, 101.6 11.4, 100 12.4 C 98.4 11.4, 96.8 10.4, 96.8 9 C 96.8 8, 97.8 7.4, 98.4 7.4 C 99 7.4, 100 8, 100 9 Z"
+                                    fill="#f87171"
+                                />
+                            </svg>
                         </div>
                     </div>
                 </div>,

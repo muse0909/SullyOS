@@ -80,6 +80,9 @@ interface ChatModalsProps {
     // Schedule master toggle
     isScheduleFeatureEnabled?: boolean;
     onToggleScheduleFeature?: () => void;
+    // Voice generation from long-press
+    onGenerateVoice?: () => void;
+    voiceAvailable?: boolean; // true if char has voiceProfile configured
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -101,6 +104,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
+    voiceAvailable, onGenerateVoice,
 }) => {
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);

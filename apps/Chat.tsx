@@ -471,7 +471,10 @@ const Chat: React.FC = () => {
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
-            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            // 2026-06-30：取消「加载历史消息」分页机制，直接载入所有消息
+            // LLM 上下文不受影响（chatRequestPayload.ts 里 char.contextLimit 限制了发出去的条数）
+            // 4 个导航按钮也才能真正自由翻历史
+            setMessages(chatScopeMsgs);
         } catch (e) {
             // DB read failed — retry once after a short delay
             if (activeCharIdRef.current !== charIdAtStart) return;
@@ -485,7 +488,7 @@ const Chat: React.FC = () => {
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
-                setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+                setMessages(chatScopeMsgs);
             } catch { /* give up silently */ }
         }
     }, [activeCharacterId]);
@@ -729,14 +732,6 @@ const Chat: React.FC = () => {
         });
         return () => { pendingScrollLockRef.current++; }; // 任何依赖变化都让旧 lock 失效
     }, [activeCharacterId, selectionMode]);
-
-    // ──── 加载历史消息（不加 scroll preservation，行为回到最朴素版） ────
-    const handleLoadMoreHistory = async () => {
-        const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
-        visibleCountRef.current = nextVisibleCount;
-        setVisibleCount(nextVisibleCount);
-        await reloadMessages(nextVisibleCount);
-    };
 
     // ──── 监听滚动：标记用户在不在「翻历史」状态 ────
     // 翻历史（不在底部）时如果新消息进来，不强制滚到底 —— 避免翻着翻着被甩回最新
@@ -1928,14 +1923,14 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
+    // 2026-06-30：取消「加载历史消息」分页，displayMessages 也不再 slice(-visibleCount)
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
-        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
-        .slice(-visibleCount),
-        [messages, char?.id, char?.hideSystemLogs, visibleCount]);
+        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; }),
+        [messages, char?.id, char?.hideSystemLogs]);
 
-    const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+    // 2026-06-30：去掉 collapsedCount（不再分页，没有"被折叠"的概念）
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -2408,12 +2403,6 @@ if (keepN > 0) {
             })()}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-4 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
-                {collapsedCount > 0 && (
-                    <div className="flex justify-center mb-6">
-                        <button onClick={handleLoadMoreHistory} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
-                    </div>
-                )}
-
                 {displayMessages.map((m, i) => {
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;

@@ -230,9 +230,22 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
                             );
                         })}
                     </div>
+
+                    {/* 底部留白 + 小提示，让空搜索状态不那么空 */}
+                    {!loading && results.length === 0 && debouncedQuery && (
+                        <div className="mt-4 text-center text-[10.5px] text-slate-300 leading-relaxed">
+                            试试别的关键词，或滑回聊天页查看上下文
+                        </div>
+                    )}
+                    {!loading && !debouncedQuery && allMessages.length > 0 && (
+                        <div className="mt-4 text-center text-[10.5px] text-slate-300 leading-relaxed">
+                            共载入 {allMessages.length} 条该角色聊天记录
+                        </div>
+                    )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

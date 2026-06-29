@@ -60,8 +60,6 @@ const Chat: React.FC = () => {
     const pendingScrollLockRef = useRef(0);
     // 用户是否在「翻历史」状态（看老消息）—— 翻历史时新消息来了不强制滚到底
     const isViewingHistoryRef = useRef(false);
-    // 右侧 4 个导航按钮的可见性（不依赖 React state，免得每次 scroll 触发 re-render）
-    const [showNavButtons, setShowNavButtons] = useState(false);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -471,10 +469,7 @@ const Chat: React.FC = () => {
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
-            // 2026-06-30：取消「加载历史消息」分页机制，直接载入所有消息
-            // LLM 上下文不受影响（chatRequestPayload.ts 里 char.contextLimit 限制了发出去的条数）
-            // 4 个导航按钮也才能真正自由翻历史
-            setMessages(chatScopeMsgs);
+            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
         } catch (e) {
             // DB read failed — retry once after a short delay
             if (activeCharIdRef.current !== charIdAtStart) return;
@@ -488,7 +483,7 @@ const Chat: React.FC = () => {
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
-                setMessages(chatScopeMsgs);
+                setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
             } catch { /* give up silently */ }
         }
     }, [activeCharacterId]);
@@ -749,24 +744,12 @@ const Chat: React.FC = () => {
         return () => el.removeEventListener('scroll', handleScroll);
     }, []);
 
-    // ──── 4 个导航按钮的滚动函数 ────
-    // ⏫ 跳到最上：scrollTop = 0
-    // ^ 往上 50 条：按当前可见消息的平均高度估算 50 条
-    // v 往下 50 条：同上，方向反
-    // ⏬ 跳到最下：scrollTop = scrollHeight
-    const scrollToTop = () => {
-        if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    const scrollToBottom = () => {
-        if (scrollRef.current) scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-    };
-    const scrollByMessages = (count: number) => {
-        const el = scrollRef.current;
-        if (!el) return;
-        // 用当前可见区域的高度作为 50 条消息的近似量级（容错友好，比算"消息节点位置"更稳）
-        const step = el.clientHeight * (count / 6); // 6 屏 ≈ 50 条
-        const newTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, el.scrollTop + step));
-        el.scrollTo({ top: newTop, behavior: 'smooth' });
+    // ──── 加载历史消息：分页 prepend ────
+    const handleLoadMoreHistory = async () => {
+        const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
+        visibleCountRef.current = nextVisibleCount;
+        setVisibleCount(nextVisibleCount);
+        await reloadMessages(nextVisibleCount);
     };
 
     // ──── 键盘弹起 / 输入聚焦：聊天滚动到最后一条 ────
@@ -1923,14 +1906,14 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
-    // 2026-06-30：取消「加载历史消息」分页，displayMessages 也不再 slice(-visibleCount)
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
-        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; }),
-        [messages, char?.id, char?.hideSystemLogs]);
+        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
+        .slice(-visibleCount),
+        [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
-    // 2026-06-30：去掉 collapsedCount（不再分页，没有"被折叠"的概念）
+    const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -2403,6 +2386,12 @@ if (keepN > 0) {
             })()}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-4 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+                {collapsedCount > 0 && (
+                    <div className="flex justify-center mb-6">
+                        <button onClick={handleLoadMoreHistory} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
+                    </div>
+                )}
+
                 {displayMessages.map((m, i) => {
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
@@ -2479,50 +2468,6 @@ if (keepN > 0) {
                     </div>
                 )}
             </div>
-
-            {/* 右侧 4 个导航按钮（只在用户翻历史时显示） */}
-            {showNavButtons && !selectionMode && (
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1.5 pointer-events-auto">
-                    <button
-                        onClick={scrollToTop}
-                        title="跳到最上"
-                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
-                    >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="7 13 12 8 17 13"/>
-                            <polyline points="7 18 12 13 17 18"/>
-                        </svg>
-                    </button>
-                    <button
-                        onClick={() => scrollByMessages(-50)}
-                        title="往上 50 条"
-                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
-                    >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="6 15 12 9 18 15"/>
-                        </svg>
-                    </button>
-                    <button
-                        onClick={() => scrollByMessages(50)}
-                        title="往下 50 条"
-                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
-                    >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="6 9 12 15 18 9"/>
-                        </svg>
-                    </button>
-                    <button
-                        onClick={scrollToBottom}
-                        title="跳到最下"
-                        className="w-9 h-9 rounded-full bg-white/85 backdrop-blur-sm border border-slate-200 text-slate-600 shadow-md flex items-center justify-center active:scale-90 transition-transform hover:bg-white"
-                    >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="7 11 12 16 17 11"/>
-                            <polyline points="7 6 12 11 17 6"/>
-                        </svg>
-                    </button>
-                </div>
-            )}
 
             <div className="relative z-40">
                 {mcdActivated && (

@@ -388,15 +388,15 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             <div className="text-base font-bold text-slate-800">{activeCharacter.name}·心声</div>
                         </div>
 
-                        {/* 心声列表：meta 行 + 卡片 div 平级（meta 行在卡片底图外面） */}
+                        {/* 心声列表：每组 = meta 行 + 卡片（meta 行紧贴卡片上沿），组与组之间 space-y 留间距 */}
                         <div className="flex-1 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                                 {emotionHistory.map((buff) => {
                                     const style = getBuffStyle(buff);
                                     return (
-                                        <React.Fragment key={`panel-${buff.id}`}>
-                                            {/* meta 行（卡片外）：日期 + 删除 */}
-                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-1">
+                                        <div key={`panel-${buff.id}`}>
+                                            {/* meta 行（紧贴卡片上沿）：日期 + 删除 */}
+                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-0.5">
                                                 <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
@@ -431,7 +431,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                     {getBuffInnerState(buff)}
                                                 </div>
                                             </div>
-                                        </React.Fragment>
+                                        </div>
                                     );
                                 })}
                             </div>

@@ -736,7 +736,6 @@ const Chat: React.FC = () => {
         const handleScroll = () => {
             const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
             isViewingHistoryRef.current = distFromBottom > 80; // 80px 容忍
-            setShowNavButtons(distFromBottom > 100);
         };
         el.addEventListener('scroll', handleScroll, { passive: true });
         // 挂载后立即跑一次，处理「带着滚动位置进聊天」的场景（比如切角色回到滚动到一半的聊天）

@@ -2027,12 +2027,9 @@ if (keepN > 0) {
              <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
-                emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
-                settingsContextLimit={settingsContextLimit} setSettingsContextLimit={setSettingsContextLimit}
-                settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
-               preserveCount={preserveCount} setPreserveCount={setPreserveCount}
+                 emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
 
-                editContent={editContent} setEditContent={setEditContent}
+                 editContent={editContent} setEditContent={setEditContent}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={(id: string) => {
                     setSelectedPromptId(id);
                     // 同步写 localStorage，让 palace extraction 的风格追加能读到最新选择

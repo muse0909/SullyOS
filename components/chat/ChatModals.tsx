@@ -3,7 +3,6 @@ import React, { useRef, useState, useEffect } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
-import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { saveRemoteImage } from '../../utils/file';
 
 interface ChatModalsProps {
@@ -14,16 +13,10 @@ interface ChatModalsProps {
     setTransferAmt: (v: string) => void;
     emojiImportText: string;
     setEmojiImportText: (v: string) => void;
-    settingsContextLimit: number;
-    setSettingsContextLimit: (v: number) => void;
-    settingsHideSysLogs: boolean;
-    setSettingsHideSysLogs: (v: boolean) => void;
-    preserveCount: number;
-    setPreserveCount: (v: number) => void;
 
     editContent: string;
     setEditContent: (v: string) => void;
-    
+
     // New Category Props
     newCategoryName: string;
     setNewCategoryName: (v: string) => void;
@@ -49,9 +42,6 @@ interface ChatModalsProps {
     // Handlers
     onTransfer: () => void;
     onImportEmoji: () => void;
-    onSaveSettings: () => void;
-    onBgUpload: (file: File) => void;
-    onRemoveBg: () => void;
     onClearHistory: () => void;
     onArchive: () => void;
     onCreatePrompt: () => void;
@@ -79,29 +69,6 @@ interface ChatModalsProps {
     // Category Visibility
     allCharacters?: CharacterProfile[];
     onSaveCategoryVisibility?: (categoryId: string, allowedCharacterIds: string[] | undefined) => void;
-    // Translation
-    translationEnabled?: boolean;
-    onToggleTranslation?: () => void;
-    translateSourceLang?: string;
-    translateTargetLang?: string;
-    onSetTranslateSourceLang?: (lang: string) => void;
-    onSetTranslateLang?: (lang: string) => void;
-    // XHS toggle
-    xhsEnabled?: boolean;
-    onToggleXhs?: () => void;
-    // HTML mode
-    htmlModeEnabled?: boolean;
-    onToggleHtmlMode?: () => void;
-    htmlModeCustomPrompt?: string;
-    setHtmlModeCustomPrompt?: (v: string) => void;
-    // Voice TTS
-    chatVoiceEnabled?: boolean;
-    onToggleChatVoice?: () => void;
-    chatVoiceLang?: string;
-    onSetChatVoiceLang?: (lang: string) => void;
-    // Voice generation from long-press
-    onGenerateVoice?: () => void;
-    voiceAvailable?: boolean; // true if char has voiceProfile configured
     // Schedule
     scheduleData?: DailySchedule | null;
     isScheduleGenerating?: boolean;
@@ -113,49 +80,28 @@ interface ChatModalsProps {
     // Schedule master toggle
     isScheduleFeatureEnabled?: boolean;
     onToggleScheduleFeature?: () => void;
-    // Memory Palace force vectorize
-    isMemoryPalaceEnabled?: boolean;
-    isVectorizing?: boolean;
-    onForceVectorize?: () => void;
-    // Emotion (embedded under schedule modal, synced on/off with scheduleStyle)
-    apiPresets?: ApiPreset[];
-    onAddApiPreset?: (name: string, config: APIConfig, kind?: ApiPreset['kind']) => void;
-    onSaveEmotion?: (config: NonNullable<CharacterProfile['emotionConfig']>) => void;
-    onClearBuffs?: () => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
     modalType, setModalType,
     transferAmt, setTransferAmt,
     emojiImportText, setEmojiImportText,
-    settingsContextLimit, setSettingsContextLimit,
-    settingsHideSysLogs, setSettingsHideSysLogs,
-    preserveCount, setPreserveCount,
     editContent, setEditContent,
     newCategoryName, setNewCategoryName, onAddCategory,
     archivePrompts, selectedPromptId, setSelectedPromptId,
     editingPrompt, setEditingPrompt, isSummarizing, archiveProgress,
     selectedMessage, selectedEmoji, selectedCategory, activeCharacter, messages,
     allHistoryMessages = [],
-    onTransfer, onImportEmoji, onSaveSettings,
-    onBgUpload, onRemoveBg, onClearHistory,
+    onTransfer, onImportEmoji, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
     editEmojiNewName, setEditEmojiNewName, onEditEmojiConfirm,
     reorderList, onSaveReorder, onCancelReorder, onMoveEmoji,
     allCharacters = [], onSaveCategoryVisibility,
-    translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
-    xhsEnabled, onToggleXhs,
-    htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
-    chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
-    onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
-    isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
-    apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
-    const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
@@ -369,200 +315,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <div className="space-y-3">
                     <p className="text-xs text-slate-400">表情将导入到你当前选中的分类。</p>
                     <textarea value={emojiImportText} onChange={e => setEmojiImportText(e.target.value)} placeholder="Name--URL (每行一个)" className="w-full h-40 bg-slate-100 rounded-2xl p-4 resize-none" />
-                </div>
-            </Modal>
-
-            <Modal 
-                isOpen={modalType === 'chat-settings'} title="聊天设置" onClose={() => setModalType('none')}
-                footer={<button onClick={onSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
-            >
-                <div className="space-y-6">
-                     <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">聊天背景</label>
-                         <div onClick={() => bgInputRef.current?.click()} className="h-24 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center cursor-pointer hover:border-primary/50 overflow-hidden relative">
-                             {activeCharacter.chatBackground ? <img src={activeCharacter.chatBackground} className="w-full h-full object-cover opacity-60" /> : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
-                             {activeCharacter.chatBackground && <span className="absolute z-10 text-xs bg-white/80 px-2 py-1 rounded">更换</span>}
-                         </div>
-                         <input type="file" ref={bgInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && onBgUpload(e.target.files[0])} />
-                         {activeCharacter.chatBackground && <button onClick={onRemoveBg} className="text-[10px] text-red-400 mt-1">移除背景</button>}
-                     </div>
-                     <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">上下文条数 ({settingsContextLimit})</label>
-                         <input type="range" min="20" max="5000" step="10" value={settingsContextLimit} onChange={e => setSettingsContextLimit(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-primary" />
-                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
-                     </div>
-
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={() => setSettingsHideSysLogs(!settingsHideSysLogs)}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">隐藏系统日志</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${settingsHideSysLogs ? 'bg-primary' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${settingsHideSysLogs ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，将不再显示 Date/App 产生的上下文提示文本（转账、戳一戳、图片发送提示除外）。
-                         </p>
-                     </div>
-
-                     {/* Translation Settings */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleTranslation}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">消息翻译</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${translationEnabled ? 'bg-primary' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${translationEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                             开启后，AI 消息自动翻译为「选」的语言显示，点「译」切换到目标语言。
-                         </p>
-                         {translationEnabled && (
-                             <div className="mt-3 space-y-3">
-                                 {/* Source Language (选) */}
-                                 <div>
-                                     <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">选（气泡显示语言）</label>
-                                     <div className="flex flex-wrap gap-1.5">
-                                         {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
-                                             <button
-                                                 key={`src-${lang}`}
-                                                 onClick={() => onSetTranslateSourceLang?.(lang)}
-                                                 className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${translateSourceLang === lang ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500'}`}
-                                             >
-                                                 {lang}
-                                             </button>
-                                         ))}
-                                     </div>
-                                 </div>
-                                 {/* Target Language (译) */}
-                                 <div>
-                                     <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">译（翻译目标语言）</label>
-                                     <div className="flex flex-wrap gap-1.5">
-                                         {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
-                                             <button
-                                                 key={`tgt-${lang}`}
-                                                 onClick={() => onSetTranslateLang?.(lang)}
-                                                 className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${translateTargetLang === lang ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
-                                             >
-                                                 {lang}
-                                             </button>
-                                         ))}
-                                     </div>
-                                 </div>
-                                 {/* Preview */}
-                                 <div className="text-[11px] text-center text-slate-500 bg-slate-50 rounded-lg py-2">
-                                     选<span className="font-bold text-slate-700">{translateSourceLang || '?'}</span> 译<span className="font-bold text-primary">{translateTargetLang || '?'}</span>
-                                 </div>
-                             </div>
-                         )}
-                     </div>
-
-                     {/* XHS Toggle */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleXhs}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">小红书</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${xhsEnabled ? 'bg-red-400' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${xhsEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，角色在聊天中可以搜索、浏览、发帖、评论小红书。需要在全局设置中配置 MCP 或 Cookie。
-                         </p>
-                     </div>
-
-                     {/* HTML 模块模式 */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleHtmlMode}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">HTML 模块模式</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${htmlModeEnabled ? 'bg-fuchsia-500' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${htmlModeEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后注入"用 [html]...[/html] 包裹的精美卡片"提示词，AI 会在合适场景输出邀请函 / 票据 / 通知等可视化模块。
-                             历史上下文里只保留剥离 HTML 后的文字摘要，不浪费 token。
-                         </p>
-                         {htmlModeEnabled && (
-                             <div className="mt-3">
-                                 <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">自定义提示词补充（追加在内置提示词之后，不会覆盖）</label>
-                                 <textarea
-                                     value={htmlModeCustomPrompt || ''}
-                                     onChange={e => setHtmlModeCustomPrompt?.(e.target.value)}
-                                     placeholder="比如：偏好暖色调 / 默认风格走 minimal 杂志感 / 票据类必须含二维码占位…"
-                                     className="w-full h-28 bg-slate-50 rounded-2xl p-3 text-[12px] resize-none border border-slate-200 focus:outline-none focus:border-fuchsia-300"
-                                 />
-                                 <p className="text-[10px] text-slate-400 mt-1">留空则只使用内置提示词。</p>
-                             </div>
-                         )}
-                     </div>
-
-                     {/* Voice TTS */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleChatVoice}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">语音消息</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${chatVoiceEnabled ? 'bg-emerald-400' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${chatVoiceEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                             开启后，AI 回复自动生成语音条（需配置 MiniMax 和角色语音）。
-                         </p>
-                         {chatVoiceEnabled && (
-                             <div className="mt-3">
-                                 <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">语音语种</label>
-                                 <div className="flex flex-wrap gap-1.5">
-                                     {[{v:'',l:'默认'},{v:'en',l:'English'},{v:'ja',l:'日本語'},{v:'ko',l:'한국어'},{v:'fr',l:'Français'},{v:'es',l:'Español'}].map(opt => (
-                                         <button key={opt.v} onClick={() => onSetChatVoiceLang?.(opt.v)}
-                                             className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${chatVoiceLang === opt.v ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                                             {opt.l}
-                                         </button>
-                                     ))}
-                                 </div>
-                                 {chatVoiceLang && <p className="text-[10px] text-emerald-600/70 mt-1.5">选择非默认语种时，AI 台词会先翻译再生成语音。</p>}
-                             </div>
-                         )}
-                     </div>
-
-                     <div className="pt-2 border-t border-slate-100">
-                         <button onClick={() => setModalType('history-manager')} className="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-2xl border border-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                             管理上下文 / 隐藏历史
-                         </button>
-                         <p className="text-[10px] text-slate-400 mt-2 text-center">可选择从某条消息开始显示，隐藏之前的记录（不被 AI 读取）。</p>
-                     </div>
-                     
-                     {/* 记忆宫殿：一键向量化所有聊天记录 */}
-                     {isMemoryPalaceEnabled && onForceVectorize && (
-                         <div className="pt-2 border-t border-slate-100">
-                             <button
-                                 onClick={onForceVectorize}
-                                 disabled={isVectorizing}
-                                 className="w-full py-3 bg-emerald-50 text-emerald-600 font-bold rounded-2xl border border-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
-                             >
-                                 {isVectorizing ? '🏰 向量化处理中...' : '🏰 一键向量化所有聊天记录'}
-                             </button>
-                             <p className="text-[10px] text-slate-400 mt-2 text-center leading-relaxed">
-                                 将所有未处理的聊天记录交给记忆宫殿向量化，完成后可安全清空聊天。<br/>
-                                 <span className="text-slate-300">看不懂这是什么的话不需要操作此按钮。</span>
-                             </p>
-                         </div>
-                     )}
-
-                     <div className="pt-2 border-t border-slate-100">
-    <label className="text-xs font-bold text-red-400 uppercase mb-3 block">危险区域 (Danger Zone)</label>
-    <div className="flex items-center gap-2 mb-3">
-        <span className="text-sm text-slate-600 whitespace-nowrap">清空时建议保留最后</span>
-        <input
-            type="number"
-            min={0}
-            value={preserveCount ?? 10}
-            onChange={(e) => setPreserveCount(Math.max(0, parseInt(e.target.value) || 0))}
-            className="w-14 text-center text-sm font-bold border border-slate-300 rounded-lg py-1 px-1 focus:ring-1 focus:ring-primary/30 focus:border-primary"
-        />
-        <span className="text-sm text-slate-600 whitespace-nowrap">条记录以维持语境</span>
-    </div>
-    <button onClick={onClearHistory} className="w-full py-3 bg-red-50 text-red-500 font-bold rounded-2xl border border-red-100 active:scale-95 transition-transform flex items-center justify-center gap-2">
-        执行清空
-    </button>
-</div>
-
                 </div>
             </Modal>
 
@@ -970,21 +722,21 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
-                    {/* 总开关：关闭时不生成日程、不注入情绪 buff */}
+                    {/* 总开关：关闭时不生成日程（2026-06-29 与心声解耦后：不再影响情绪/意识流） */}
                     {onToggleScheduleFeature && (
                         <div className="mb-4 bg-slate-50 border border-slate-200 rounded-2xl p-3">
                             <div className="flex items-center justify-between">
                                 <div className="flex-1 min-w-0 pr-3">
-                                    <p className="text-xs font-bold text-slate-700">日程与情绪 Buff</p>
+                                    <p className="text-xs font-bold text-slate-700">日程</p>
                                     <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
                                         {isScheduleFeatureEnabled
-                                            ? '已开启：会生成今日日程，并在对话中评估情绪 buff。'
-                                            : '已关闭：不生成日程，不注入情绪 buff。'}
+                                            ? '已开启：会生成今日日程。'
+                                            : '已关闭：不生成日程。'}
                                     </p>
                                 </div>
                                 <button
                                     onClick={onToggleScheduleFeature}
-                                    aria-label="切换日程与情绪总开关"
+                                    aria-label="切换日程总开关"
                                     className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${isScheduleFeatureEnabled ? 'bg-primary' : 'bg-slate-300'}`}
                                 >
                                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${isScheduleFeatureEnabled ? 'translate-x-4' : ''}`}></div>
@@ -1048,17 +800,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
                                 点击日程项可编辑 · 长按可删除
                             </p>
-
-                            {/* 情绪 buff 现已合并到主回复，无需单独配置 API。此处 API 仅用于日程生成。 */}
-                            {activeCharacter && apiPresets && onAddApiPreset && onSaveEmotion && onClearBuffs && (
-                                <EmotionSettingsPanel
-                                    char={activeCharacter}
-                                    apiPresets={apiPresets}
-                                    addApiPreset={onAddApiPreset}
-                                    onSave={onSaveEmotion}
-                                    onClearBuffs={onClearBuffs}
-                                />
-                            )}
                         </>
                     )}
                 </div>

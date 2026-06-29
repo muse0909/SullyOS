@@ -62,6 +62,24 @@ export function isScheduleFeatureOn(char: Pick<CharacterProfile, 'scheduleFeatur
 }
 
 /**
+ * 心声独立开关判定（2026-06-29 与 scheduleFeatureEnabled 解耦后新增）。
+ *
+ * - true：主 LLM 在回复末尾附 <emotion>...</emotion> 心声块，心声卡片正常生成。
+ * - false：完全不发心声。
+ * - undefined：老用户兜底——走旧逻辑 `isScheduleFeatureOn && emotionConfig?.enabled`，
+ *   保持升级前行为一致；新用户首次在聊天设置切换后写入明确值。
+ */
+export function isEmotionOn(
+    char: Pick<CharacterProfile, 'emotionEnabled' | 'scheduleFeatureEnabled' | 'scheduleStyle' | 'emotionConfig'> | null | undefined
+): boolean {
+    if (!char) return false;
+    if (char.emotionEnabled === true) return true;
+    if (char.emotionEnabled === false) return false;
+    // undefined → 老数据兜底
+    return isScheduleFeatureOn(char) && !!char.emotionConfig?.enabled;
+}
+
+/**
  * 构建生活系（lifestyle）角色的日程生成 prompt。
  *
  * 设计更新（user 反馈）：

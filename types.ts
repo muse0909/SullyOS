@@ -1018,6 +1018,17 @@ export interface CharacterProfile {
   scheduleFeatureEnabled?: boolean;
 
   /**
+   * 心声（情绪 / 意识流）独立开关。
+   * - true：主 LLM 在每次回复末尾附 <emotion>...</emotion> 心声块，心声卡片正常生成。
+   * - false：完全不发心声、不生成心声卡片。
+   * - undefined：向后兼容——老用户默认走 `scheduleFeatureEnabled && emotionConfig?.enabled` 旧逻辑；
+   *   新用户在聊天设置里首次切换后写入明确值。
+   *
+   * 与 scheduleFeatureEnabled 完全解耦：日程可以独立开/关,心声也可以独立开/关。
+   */
+  emotionEnabled?: boolean;
+
+  /**
    * HTML 模块模式（per-character）。
    * - htmlModeEnabled：开启后，给 LLM 注入"用 [html]...[/html] 包裹的富 HTML 卡片"提示词，
    *   AI 输出里的 [html] 块会被解析成单独的 html_card 消息（沙盒 iframe 渲染）。

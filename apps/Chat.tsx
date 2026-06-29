@@ -5,7 +5,7 @@ import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
-import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
@@ -16,6 +16,7 @@ import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatC
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
+import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
@@ -63,9 +64,7 @@ const Chat: React.FC = () => {
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
-    const [settingsContextLimit, setSettingsContextLimit] = useState(500);
-    const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
-    const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
+    const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
@@ -502,9 +501,6 @@ const Chat: React.FC = () => {
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
             if (char) {
-                setSettingsContextLimit(char.contextLimit || 500);
-                setSettingsHideSysLogs(char.hideSystemLogs || false);
-                setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
             }
             // Per-character translation toggle
@@ -869,7 +865,7 @@ const Chat: React.FC = () => {
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
-            case 'settings': setModalType('chat-settings'); break;
+            case 'settings': handleOpenChatSettings(); break;
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
@@ -903,12 +899,12 @@ const Chat: React.FC = () => {
                 break;
             }
             case 'html-mode-settings': {
-                // 长按 → 跳进聊天设置 modal 的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
+                // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
                 if (!char) break;
                 if (!(char as any).htmlModeEnabled) {
                     updateCharacter(char.id, { htmlModeEnabled: true } as any);
                 }
-                setModalType('chat-settings');
+                setShowChatSettingsDrawer(true);
                 break;
             }
         }
@@ -1091,31 +1087,25 @@ const Chat: React.FC = () => {
         }
     };
 
-    // 日程 / 情绪 buff 总开关
-    // 关闭：清空前台 scheduleData，同时清空可能已缓存的 buff 注入（防止继续污染下一轮 prompt）
+    // 日程开关（2026-06-29 与心声解耦后：只管日程生成，不再联动情绪/意识流）
+    // 关闭：清空前台 scheduleData，同时清空 buff 注入（防止继续污染下一轮 prompt）
     // 打开：若还没生成今日日程，立即生成一次
     const handleToggleScheduleFeature = async () => {
         if (!char) return;
         const nextEnabled = !isScheduleFeatureOn(char);
         const patch: any = { scheduleFeatureEnabled: nextEnabled };
-        if (nextEnabled) {
-            // 与 handleScheduleStyleChange 对齐：开日程 = 同步开情绪/意识流。
-            // 旧逻辑下，新角色的 emotionConfig 从未初始化（undefined），
-            // 仅切总开关而不点风格时，emotionConfig?.enabled 始终落 false，
-            // 副 API 闸门 (isScheduleFeatureOn && emotionConfig?.enabled) 永远过不去。
-            patch.emotionConfig = { ...(char.emotionConfig || {}), enabled: true };
-        } else {
-            // 关闭时顺手把 buff 注入清空，避免上一轮残留继续注入
+        if (!nextEnabled) {
+            // 关闭日程时顺手把 buff 注入清空，避免上一轮残留继续注入
             patch.buffInjection = '';
             patch.activeBuffs = [];
         }
         updateCharacter(char.id, patch);
         if (!nextEnabled) {
             setScheduleData(null);
-            addToast('日程与情绪已关闭', 'info');
+            addToast('日程已关闭', 'info');
             return;
         }
-        addToast('日程与情绪已开启', 'success');
+        addToast('日程已开启', 'success');
         // 打开后立刻尝试生成（若今日未生成且已选风格）
         const updatedChar = { ...char, ...patch };
         if (updatedChar.scheduleStyle) {
@@ -1127,6 +1117,22 @@ const Chat: React.FC = () => {
                 generateDailySchedule(updatedChar, false);
             }
         }
+    };
+
+    // 心声独立开关（2026-06-29 与 scheduleFeatureEnabled 解耦）
+    // - char.emotionEnabled === undefined（老用户）：首次切换时把"等效值"作为基础 toggle，再写回明确值
+    // - char.emotionEnabled === true/false（新用户 / 已显式切换）：直接 toggle
+    const handleToggleEmotion = () => {
+        if (!char) return;
+        const isEmotionOnNow = isEmotionOn(char);
+        updateCharacter(char.id, { emotionEnabled: !isEmotionOnNow } as any);
+        addToast(!isEmotionOnNow ? '心声已开启' : '心声已关闭', !isEmotionOnNow ? 'success' : 'info');
+    };
+
+    // 打开聊天设置抽屉（头像右上角 GearSix 按钮触发）
+    const handleOpenChatSettings = () => {
+        setShowPanel('none'); // 顺手关掉 + 号面板，避免叠层
+        setShowChatSettingsDrawer(true);
     };
 
     // --- Modal Handlers ---
@@ -1245,16 +1251,6 @@ const Chat: React.FC = () => {
         } catch(err: any) {
             addToast(err.message, 'error');
         }
-    };
-
-    const saveSettings = () => {
-        updateCharacter(char.id, {
-            contextLimit: settingsContextLimit,
-            hideSystemLogs: settingsHideSysLogs,
-            htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
-        } as any);
-        setModalType('none');
-        addToast('设置已保存', 'success');
     };
 
     const handleClearHistory = async () => {
@@ -2051,7 +2047,6 @@ if (keepN > 0) {
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt }); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
-                onSaveSettings={saveSettings} onBgUpload={handleBgUpload} onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
                 onClearHistory={handleClearHistory} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
@@ -2069,22 +2064,6 @@ if (keepN > 0) {
                     });
                 }}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
-                translationEnabled={translationEnabled}
-                onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
-                translateSourceLang={translateSourceLang}
-                translateTargetLang={translateTargetLang}
-                onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem('chat_translate_source_lang', lang); setShowingTargetIds(new Set()); }}
-                onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
-                xhsEnabled={!!char.xhsEnabled}
-                onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
-                htmlModeEnabled={!!(char as any).htmlModeEnabled}
-                onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
-                htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}
-                setHtmlModeCustomPrompt={setSettingsHtmlModeCustomPrompt}
-                chatVoiceEnabled={!!char.chatVoiceEnabled}
-                onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
-                chatVoiceLang={char.chatVoiceLang || ''}
-                onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
                 voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
                 scheduleData={scheduleData}
@@ -2096,25 +2075,6 @@ if (keepN > 0) {
                 onScheduleStyleChange={handleScheduleStyleChange}
                 isScheduleFeatureEnabled={isScheduleFeatureOn(char)}
                 onToggleScheduleFeature={handleToggleScheduleFeature}
-                isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
-                isVectorizing={isVectorizing}
-                onForceVectorize={handleForceVectorize}
-                apiPresets={apiPresets}
-                onAddApiPreset={addApiPreset}
-                onSaveEmotion={(config) => {
-                    // API 同步到所有角色，enabled 仅写到当前角色
-                    syncEmotionApiToAllCharacters(config.api);
-                    updateCharacter(char.id, {
-                        emotionConfig: {
-                            enabled: config.enabled,
-                            ...(config.api && config.api.baseUrl ? { api: config.api } : {}),
-                        },
-                    });
-                }}
-                onClearBuffs={() => {
-                    updateCharacter(char.id, { activeBuffs: [], emotionHistory: [], buffInjection: '' });
-                    addToast('心声历史已清除', 'info');
-                }}
              />
              
              <ChatHeader
@@ -2158,8 +2118,45 @@ if (keepN > 0) {
                     updateApiConfig({ baseUrl: preset.config.baseUrl, apiKey: preset.config.apiKey, model: preset.config.model });
                     addToast(`已切换: ${preset.name}`, 'info');
                 }}
+                onOpenChatSettings={handleOpenChatSettings}
 
              />
+
+            {/* 聊天设置右侧抽屉（头像右上角 GearSix 触发） */}
+            <ChatSettingsDrawer
+                isOpen={showChatSettingsDrawer}
+                onClose={() => setShowChatSettingsDrawer(false)}
+                activeCharacter={char}
+                onBgUpload={handleBgUpload}
+                onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
+                chatVoiceEnabled={!!char.chatVoiceEnabled}
+                onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
+                chatVoiceLang={char.chatVoiceLang || ''}
+                onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
+                emotionEnabled={isEmotionOn(char)}
+                onToggleEmotion={handleToggleEmotion}
+                contextLimit={char.contextLimit || 500}
+                onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
+                hideSysLogs={!!char.hideSystemLogs}
+                onSetHideSysLogs={(v) => updateCharacter(char.id, { hideSystemLogs: v } as any)}
+                translationEnabled={translationEnabled}
+                onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
+                translateSourceLang={translateSourceLang}
+                translateTargetLang={translateTargetLang}
+                onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem('chat_translate_source_lang', lang); setShowingTargetIds(new Set()); }}
+                onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
+                xhsEnabled={!!char.xhsEnabled}
+                onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
+                htmlModeEnabled={!!(char as any).htmlModeEnabled}
+                onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
+                htmlModeCustomPrompt={(char as any).htmlModeCustomPrompt || ''}
+                onSetHtmlModeCustomPrompt={(v) => updateCharacter(char.id, { htmlModeCustomPrompt: v } as any)}
+                onOpenHistoryManager={() => { setShowChatSettingsDrawer(false); setModalType('history-manager'); }}
+                isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
+                isVectorizing={isVectorizing}
+                onForceVectorize={handleForceVectorize}
+                onClearHistory={handleClearHistory}
+            />
 
 
             {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}

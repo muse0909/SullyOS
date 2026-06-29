@@ -397,7 +397,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-3 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-5 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
@@ -413,7 +413,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                     return (
                                         <div key={`panel-${buff.id}`}>
                                             {/* meta 行（紧贴卡片上沿）：日期 + 删除 */}
-                                            <div className="flex items-center justify-between gap-3 px-2.5 pb-0.5">
+                                            <div className="flex items-center justify-between gap-3 px-3 pb-0.5">
                                                 <div className="text-[10px] font-bold tracking-wide" style={{ color: style.text }}>{formatEmotionTime(buff.createdAt)}</div>
                                                 <button
                                                     type="button"
@@ -426,7 +426,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                             </div>
                                             {/* 卡片本体：chip row + 正文 */}
                                             <div
-                                                className="rounded-2xl border p-2.5 shadow-sm select-none"
+                                                className="rounded-2xl border p-3.5 shadow-sm select-none"
                                                 style={{ borderColor: style.border, background: style.bg, color: style.text }}
                                             >
                                                 {/* chip row：左 chip + 右 intensity 圆点（横排，元数据放主元素外） */}

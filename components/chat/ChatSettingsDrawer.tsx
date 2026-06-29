@@ -112,7 +112,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                 </div>
 
                 {/* 设置项：可滚动 */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
                     {/* === 聊天背景（置顶） === */}
                     <section>
                         <div className="flex items-center justify-between mb-2">
@@ -176,7 +176,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                             </div>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
-                            开启后，角色会在聊天中自动生成「心声」——一段第一人称的内心独白，会以小卡片的形态出现在头像栏里。与日程完全独立，开关各自管各自。
+                            开启后，角色会在聊天中自动生成一段第一人称的内心独白。角色不知道user能读到。
                         </p>
                     </section>
 

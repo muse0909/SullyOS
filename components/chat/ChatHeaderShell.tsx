@@ -457,9 +457,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                 />
-                                {/* 中段基线（短 + 断开） */}
-                                <line x1="95" y1="11" x2="102" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
-                                <line x1="107" y1="11" x2="114" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
+                                {/* 中段基线（短，不断开） */}
+                                <line x1="94" y1="11" x2="116" y2="11" stroke="#fca5a5" strokeWidth="1.3" strokeLinecap="round" />
                                 {/* 小红心 */}
                                 <path
                                     d="M 122 9 C 122 7.6, 123.6 6.6, 125.2 6.6 C 126.8 6.6, 128.4 7.6, 128.4 9 C 128.4 11.4, 125.2 13.6, 122 15.6 C 118.8 13.6, 115.6 11.4, 115.6 9 C 115.6 7.6, 117.2 6.6, 118.8 6.6 C 120.4 6.6, 122 7.6, 122 9 Z"

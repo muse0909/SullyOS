@@ -173,9 +173,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         if (!container) return;
         const currentName = draggingNameRef.current;
         if (!currentName) return;
-        const currentIdx = reorderList.findIndex(it => it.name === currentName);
+        // 用 ref 读最新列表（拖动过程中 onMoveEmoji 会改 reorderList，
+        // 但 updateDragAt 是 useEffect [isDragging] 闭包内定义的，
+        // 不加 ref 会读到旧列表 → currentIdx/target 全错，拖动几次后落点算错）
+        const list = reorderListDataRef.current;
+        const move = onMoveEmojiRef.current;
+        const currentIdx = list.findIndex(it => it.name === currentName);
         if (currentIdx === -1) return;
-        const items = reorderList
+        const items = list
             .map(it => reorderItemRefs.current.get(it.name))
             .filter((el): el is HTMLDivElement => !!el);
         let target = currentIdx;
@@ -187,7 +192,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             }
         }
         if (target !== currentIdx) {
-            onMoveEmoji(currentIdx, target);
+            move(currentIdx, target);
         }
     };
 
@@ -201,6 +206,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     // draggingName 同步到 ref，供 updateDragAt 在 document mousemove 中读取（避免闭包过期）
     const draggingNameRef = useRef<string | null>(null);
     useEffect(() => { draggingNameRef.current = draggingName; }, [draggingName]);
+
+    // reorderList / onMoveEmoji 同样用 ref 镜像：拖动过程中 onMoveEmoji 会 setReorderList，
+    // 但 updateDragAt 是 useEffect [isDragging] 闭包内的 const，不会随重渲染更新，
+    // 必须通过 ref 读最新值（commit 6d36218 后拖动几次落点错就是这个原因）
+    const reorderListDataRef = useRef(reorderList);
+    useEffect(() => { reorderListDataRef.current = reorderList; }, [reorderList]);
+    const onMoveEmojiRef = useRef(onMoveEmoji);
+    useEffect(() => { onMoveEmojiRef.current = onMoveEmoji; }, [onMoveEmoji]);
 
     // 拖动启动后，把 mousemove/mouseup 挂到 document（不依赖容器边界）
     useEffect(() => {
@@ -562,7 +575,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <p className="text-xs text-slate-400 text-center pb-2">长按表情包 0.3s 后可拖动；贴近顶部/底部会自动滚动</p>
                 <div
                     ref={reorderListRef}
-                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 touch-none select-none"
+                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 select-none"
                     onMouseMove={handleReorderContainerMove}
                     onTouchMove={handleReorderContainerMove}
                     onMouseLeave={handleReorderContainerLeave}
@@ -626,7 +639,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     if (!e) return null;
                     return (
                         <div
-                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing"
+                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing touch-none select-none"
                             style={{
                                 left: draggingStyle.left,
                                 top: draggingStyle.top,

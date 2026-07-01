@@ -696,6 +696,13 @@ export const DB = {
     });
   },
 
+  // 按 name 删除单个表情包（commit 6d36218 重构时漏补回来，2026-07-01 恢复）
+  deleteEmoji: async (name: string): Promise<void> => {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
+    transaction.objectStore(STORE_EMOJIS).delete(name);
+  },
+
   getEmojiCategories: async (): Promise<EmojiCategory[]> => {
       const db = await openDB();
       return new Promise((resolve, reject) => {

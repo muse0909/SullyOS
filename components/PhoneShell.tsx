@@ -7,8 +7,9 @@ import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
 import Settings from '../apps/Settings';
 import Character from '../apps/Character';
-import Chat from '../apps/Chat'; 
-import GroupChat from '../apps/GroupChat'; 
+import WeChat from '../apps/WeChat';
+import Chat from '../apps/Chat';
+import GroupChat from '../apps/GroupChat';
 import ThemeMaker from '../apps/ThemeMaker';
 import Appearance from '../apps/Appearance';
 import Gallery from '../apps/Gallery'; 
@@ -378,7 +379,7 @@ const PhoneShell: React.FC = () => {
     switch (activeApp) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
-      case AppID.Chat: return <Chat />;
+      case AppID.Chat: return <WeChat />;
       case AppID.GroupChat: return <GroupChat />; 
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;

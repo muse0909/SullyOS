@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, CaretRight, Eye, EyeSlash, Gear, ImageSquare, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, CaretRight, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 import type { ApiPreset } from '../../types';
 
@@ -429,7 +429,7 @@ const ApiQuickFloat: React.FC = () => {
         className="z-[100] rounded-full bg-white/90 backdrop-blur-md shadow-lg shadow-slate-300/50 border border-slate-200/60 flex items-center justify-center text-slate-600 active:scale-95 transition-transform select-none"
         title="API 快捷设置（可拖动）"
       >
-        <Gear size={20} weight="bold" />
+        <WifiHigh size={20} weight="bold" />
       </div>
 
       {showPanel ? (

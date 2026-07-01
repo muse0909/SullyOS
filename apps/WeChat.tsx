@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { CharacterProfile } from '../types';
 import Chat from './Chat';
+import UserApp from './UserApp';
 
 // 三个 Tab 键
 type TabKey = 'messages' | 'discover' | 'me';
@@ -12,8 +13,9 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'me', label: '我' },
 ];
 
-// WeChat: 仿微信风格的"消息页"入口
-// Step 1 范围：联系人列表 + 三 Tab 占位 + 嵌套 Chat（嵌套逻辑预览用，完整返回闭环等 Step 3 优化）
+// WeChat: 仿微信风格的"消息 / 发现 / 我"三屏入口
+// 占位发现 tab + 联系人 tab 走真实 characters
+// "我" tab 直接渲染 UserApp（个人档案）
 const WeChat: React.FC = () => {
   const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp } = useOS();
 
@@ -41,19 +43,19 @@ const WeChat: React.FC = () => {
     }
   }, [openedCharId, activeCharacterId, setActiveCharacterId]);
 
-  // 已选角色 → 嵌套 Chat + 左上角返回按钮（叠在 Chat 之上，绕开 Chat 顶栏避免改 Chat.tsx）
+  // 已选角色 → 嵌套 Chat + 左上角小箭头（叠在 Chat 顶栏左侧，z 高于 Chat onClose）
   if (openedCharId) {
     return (
       <div className="absolute inset-0 flex flex-col">
         <div className="flex-1 relative overflow-hidden">
           <Chat />
-          {/* 左上角"返回联系人列表"按钮 — absolute 浮在 Chat 顶栏左侧 */}
+          {/* 左上角"返回联系人列表" — 纯透明 + 仅箭头，不与 Chat onClose 按钮视觉重叠 */}
           <button
             onClick={() => setOpenedCharId(null)}
-            className="absolute left-3 top-3 z-30 w-9 h-9 flex items-center justify-center rounded-full bg-white/85 backdrop-blur-sm shadow-md text-slate-600 hover:bg-white active:scale-95 transition-transform"
+            className="absolute left-2 top-2 z-30 p-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:scale-95 transition-transform"
             aria-label="返回联系人"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
               <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
             </svg>
           </button>
@@ -62,13 +64,20 @@ const WeChat: React.FC = () => {
     );
   }
 
-  // 没选角色 → 联系人列表 + 三 Tab
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed]">
-      {/* 顶部 header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200/60 shrink-0">
-        <div className="w-9 h-9" />
-        <h1 className="text-base font-semibold text-slate-800 tracking-wide">消息</h1>
+      {/* 顶部 header — "联系人" + 左上角返回 (返回 launcher) + 右上齿轮 */}
+      <div className="flex items-center justify-between px-2 py-3 bg-white border-b border-slate-200/60 shrink-0">
+        <button
+          onClick={closeApp}
+          className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
+          aria-label="返回桌面"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
+          </svg>
+        </button>
+        <h1 className="text-base font-semibold text-slate-800 tracking-wide">联系人</h1>
         <button
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
           aria-label="设置"
@@ -79,24 +88,6 @@ const WeChat: React.FC = () => {
         </button>
       </div>
 
-      {/* 三 Tab 切换 */}
-      <div className="flex bg-white border-b border-slate-200/60 shrink-0">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex-1 relative py-3 text-sm font-medium transition-colors ${
-              tab === t.key ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {t.label}
-            {tab === t.key && (
-              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-0.5 bg-emerald-500 rounded-full" />
-            )}
-          </button>
-        ))}
-      </div>
-
       {/* 内容区 */}
       <div className="flex-1 overflow-y-auto">
         {tab === 'messages' && (
@@ -105,9 +96,28 @@ const WeChat: React.FC = () => {
         {tab === 'discover' && (
           <PlaceholderTab title="发现" hint="朋友圈 · 收藏 · 日记 — 即将到来" />
         )}
-        {tab === 'me' && (
-          <PlaceholderTab title="我" hint="档案页面 — 即将接入" />
-        )}
+        {tab === 'me' && <UserApp />}
+      </div>
+
+      {/* 底部 Tab bar — 仿微信底部三 Tab */}
+      <div
+        className="shrink-0 bg-white border-t border-slate-200/60 flex"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex-1 relative py-2.5 text-[13px] font-medium transition-colors ${
+              tab === t.key ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t.label}
+            {tab === t.key && (
+              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-5 h-0.5 bg-emerald-500 rounded-full" />
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -132,7 +142,7 @@ const MessagesTab: React.FC<{
     );
   }
   return (
-    <div className="px-3 py-3 space-y-2">
+    <div className="px-5 py-3 space-y-3">
       {characters.map((c) => (
         <ContactCard key={c.id} char={c} onClick={() => onOpenChar(c.id)} />
       ))}
@@ -167,7 +177,7 @@ const ContactCard: React.FC<{
   );
 };
 
-// === 子组件：占位 Tab（发现 / 我） ===
+// === 子组件：占位 Tab（发现） ===
 const PlaceholderTab: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
   <div className="flex flex-col items-center justify-center h-full py-24 text-slate-400">
     <div className="text-base font-medium text-slate-500 mb-2">{title}</div>

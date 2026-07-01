@@ -43,22 +43,15 @@ const WeChat: React.FC = () => {
     }
   }, [openedCharId, activeCharacterId, setActiveCharacterId]);
 
-  // 已选角色 → 嵌套 Chat + 左上角小箭头（叠在 Chat 顶栏左侧，z 高于 Chat onClose）
+  // 已选角色 → 嵌套 Chat
+  // 顶栏左侧 onClose 交给 Chat 自己的 ChatHeaderShell 处理：
+  //   onClose → closeApp → handleBack → 我们的 registerBackHandler 优先级最高 → 自动回到联系人列表
+  // （Android 物理返回键 / 浏览器后退同样走这条链路）
   if (openedCharId) {
     return (
       <div className="absolute inset-0 flex flex-col">
         <div className="flex-1 relative overflow-hidden">
           <Chat />
-          {/* 左上角"返回联系人列表" — 纯透明 + 仅箭头，不与 Chat onClose 按钮视觉重叠 */}
-          <button
-            onClick={() => setOpenedCharId(null)}
-            className="absolute left-2 top-2 z-30 p-2 flex items-center justify-center text-slate-700 hover:text-slate-900 active:scale-95 transition-transform"
-            aria-label="返回联系人"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-              <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
-            </svg>
-          </button>
         </div>
       </div>
     );

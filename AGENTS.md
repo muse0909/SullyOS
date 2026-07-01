@@ -228,6 +228,7 @@ SullyOS-master/
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-01 | 仿微信联系人页 — Step 1 框架壳 | [`changelogs/2026-07-01-wechat-step1.md`](./changelogs/2026-07-01-wechat-step1.md) |
+| 2026-07-02 | WeChat Step 1 调整 — Tab 移底 / 留白 / 去白圈 / 我接档案 / 撕档案桌入 / API 换 WiFi | [`changelogs/2026-07-02-wechat-step1-tweaks.md`](./changelogs/2026-07-02-wechat-step1-tweaks.md) |
 | 2026-07-01 | 心声防重复 — 提示词注入最近 5 条 innerState | [`changelogs/2026-07-01-inner-state-dedup-prompt.md`](./changelogs/2026-07-01-inner-state-dedup-prompt.md) |
 | 2026-07-01 | emoji-reorder modal 3 个 bug（删除 / 拖动落点 / 列表滚动） | [`changelogs/2026-07-01-emoji-reorder-3-bugs.md`](./changelogs/2026-07-01-emoji-reorder-3-bugs.md) |
 | 2026-06-29 | 设置入口搬到头像右上角 + 心声 / 日程解耦 | [`changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md`](./changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md) |

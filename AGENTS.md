@@ -227,6 +227,8 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-01 | 心声防重复 — 提示词注入最近 5 条 innerState | [`changelogs/2026-07-01-inner-state-dedup-prompt.md`](./changelogs/2026-07-01-inner-state-dedup-prompt.md) |
+| 2026-07-01 | emoji-reorder modal 3 个 bug（删除 / 拖动落点 / 列表滚动） | [`changelogs/2026-07-01-emoji-reorder-3-bugs.md`](./changelogs/2026-07-01-emoji-reorder-3-bugs.md) |
 | 2026-06-29 | 设置入口搬到头像右上角 + 心声 / 日程解耦 | [`changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md`](./changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md) |
 | 2026-06-29 | 心声弹窗照扒日程三档配色 + 心电图 footer | [`changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md`](./changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md) |
 | 2026-06-28 | 心声弹窗贴顶修复（createPortal 绕开 ChatHeader backdrop-filter） | [`changelogs/2026-06-28-buff-popup-portal-fix.md`](./changelogs/2026-06-28-buff-popup-portal-fix.md) |

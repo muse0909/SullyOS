@@ -17,12 +17,21 @@ const TABS: { key: TabKey; label: string }[] = [
 // 占位发现 tab + 联系人 tab 走真实 characters
 // "我" tab 直接渲染 UserApp（个人档案）
 const WeChat: React.FC = () => {
-  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp } = useOS();
+  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp, consumePendingDirectChat } = useOS();
 
   // 当前 Tab
   const [tab, setTab] = useState<TabKey>('messages');
   // 已点开的角色 id（null = 还在联系人列表）
   const [openedCharId, setOpenedCharId] = useState<string | null>(null);
+
+  // Mount 时：检查是否有 pending direct chat（来自 launcher widget 直跳）
+  // 有值就直接进 Chat，跳过联系人列表；读完清掉，不影响后续进 AppID.Chat
+  useEffect(() => {
+    const pending = consumePendingDirectChat();
+    if (pending) {
+      setOpenedCharId(pending);
+    }
+  }, [consumePendingDirectChat]);
 
   // Android 物理返回键 / 浏览器返回：优先回联系人列表，其次 closeApp
   useEffect(() => {

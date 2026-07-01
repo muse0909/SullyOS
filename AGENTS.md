@@ -150,6 +150,38 @@ SullyOS-master/
 - 顶部返回即保存（v2 删了底部按钮）
 - 预览区只显示样式效果（背景图/遮罩/字号/颜色），文字固定占位
 
+### 5.5 弹窗 / Modal 标准（暮色 2026-07-02 拍板）
+
+**所有新弹窗默认按 `components/os/Modal.tsx` 的视觉规格统一**，不要再各弹各的。这条是为了避免"心声弹窗一种圆角、API 浮窗又一种圆角"的混乱。
+
+```
+容器（最外层）
+  fixed inset-0
+  z-[100]                           ← 或按需调高（ApiQuickFloat 用 z-[110] 因为是 floating 工具）
+  flex items-center justify-center
+  p-6                               ← 给卡片留左右上下呼吸
+  animate-fade-in
+
+背景遮罩
+  absolute inset-0 bg-black/40      ← 不加 backdrop-blur，与项目级 Modal 一致
+
+卡片
+  relative
+  w-full max-w-sm                   ← max-width 24rem (384px)
+  bg-white
+  rounded-[2.5rem]                  ← 40px 大圆角，项目标配
+  shadow-2xl
+  border border-white/20            ← 浅白描边
+  overflow-hidden
+  animate-slide-up
+```
+
+title：`text-center` + `px-6 pt-6 pb-2` + `text-lg font-bold text-slate-800`
+body：`px-6 py-4 max-h-[60vh] overflow-y-auto no-scrollbar`
+footer：`px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭"按钮）
+
+**例外**：微信式心声弹窗 / 圆角较小的轻量确认弹窗可以用 `rounded-3xl + w-[min(88vw,360px)]`，那是另一种风格，但需要暮色明确认可才用。
+
 ---
 
 ## 6. 部署 & 调试

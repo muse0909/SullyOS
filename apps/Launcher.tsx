@@ -314,7 +314,7 @@ let _lastPageIndex = 0;
 // --- Main Launcher ---
 
 const Launcher: React.FC = () => {
-  const { openApp, characters, activeCharacterId, theme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
+  const { openApp, jumpToChat, characters, activeCharacterId, theme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
 
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
@@ -539,7 +539,7 @@ const Launcher: React.FC = () => {
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}
-                            onClick={() => openApp(AppID.Chat)}
+                            onClick={() => jumpToChat(widgetChar.id)}
                             contentColor={contentColor}
                         />
                         <div className="flex-1">

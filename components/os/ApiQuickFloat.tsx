@@ -433,11 +433,11 @@ const ApiQuickFloat: React.FC = () => {
       </div>
 
       {showPanel ? (
-        <div className="fixed inset-0 z-[110] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setShowPanel(false)}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 animate-fade-in" onClick={() => setShowPanel(false)}>
+          <div className="absolute inset-0 bg-black/40" />
           <div
             onClick={(e) => e.stopPropagation()}
-            className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] -translate-x-1/2 -translate-y-1/2 bg-white rounded-3xl shadow-2xl shadow-slate-900/25 max-h-[80vh] overflow-hidden flex flex-col border border-white/40"
-            style={{ animation: 'apiQuickFloatFade 0.22s ease-out' }}
+            className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up max-h-[80vh] flex flex-col"
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2">
@@ -808,12 +808,6 @@ const ApiQuickFloat: React.FC = () => {
             </div>
           </div>
 
-          <style>{`
-            @keyframes apiQuickFloatFade {
-              from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
-              to { opacity: 1; transform: translate(-50%, -50%); }
-            }
-          `}</style>
         </div>
       ) : null}
 

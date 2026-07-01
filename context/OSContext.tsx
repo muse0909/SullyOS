@@ -246,6 +246,10 @@ interface OSContextType {
   // Navigation Logic
   registerBackHandler: (handler: () => boolean) => () => void; // Returns unregister function
   handleBack: () => void;
+  // Direct chat jump: 让 launcher 上的角色 widget 能跳过"联系人列表"直接进入聊天
+  // — 一次性 transient ref，WeChat mount 时 consume 然后清空
+  jumpToChat: (charId: string) => void;
+  consumePendingDirectChat: () => string | null;
 
   // Call Suspend
   suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
@@ -575,6 +579,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // Back Handler Ref
   const backHandlerRef = useRef<(() => boolean) | null>(null);
+
+  // Pending Direct Chat Ref — jumpToChat 设置一次性 transient 状态，
+  // WeChat mount 时 consumeOnce 读取后清掉，下次进 WeChat 默认仍走联系人列表
+  const pendingDirectChatRef = useRef<string | null>(null);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2765,6 +2773,19 @@ if (!isVisible || !isChattingWithThisChar) {
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 
+  // Direct chat jump — 设一次性 pending flag，WeChat mount 时 consume
+  // 用 ref 而非 state 避免触发 re-render
+  const jumpToChat = (charId: string) => {
+    pendingDirectChatRef.current = charId;
+    setActiveCharacterId(charId);
+    setActiveApp(AppID.Chat);
+  };
+  const consumePendingDirectChat = () => {
+    const id = pendingDirectChatRef.current;
+    pendingDirectChatRef.current = null;
+    return id;
+  };
+
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
     setSuspendedCall(info);
     setActiveApp(AppID.Launcher);
@@ -2878,7 +2899,9 @@ if (!isVisible || !isChattingWithThisChar) {
     suspendedCall,
     suspendCall,
     resumeCall,
-    clearSuspendedCall
+    clearSuspendedCall,
+    jumpToChat,
+    consumePendingDirectChat
   };
 
   return (

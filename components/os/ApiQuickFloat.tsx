@@ -438,7 +438,7 @@ const ApiQuickFloat: React.FC = () => {
           <div className="absolute inset-0 bg-black/40" />
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up max-h-[60vh] flex flex-col"
+            className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up h-[80vh] flex flex-col"
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2">
@@ -452,7 +452,7 @@ const ApiQuickFloat: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
               <QuickSection
                 icon={<Gear size={18} weight="bold" />}
                 title="API 设置"

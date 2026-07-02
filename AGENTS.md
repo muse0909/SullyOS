@@ -273,12 +273,14 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-02 | SullyOS vs orangechat 工具调用对比报告（调研） | [`changelogs/2026-07-02-orangechat-tool-calling-comparison.md`](./changelogs/2026-07-02-orangechat-tool-calling-comparison.md) |
 | 2026-07-02 | 聊天框 + / 表情包面板支持点空白处收起 | [`changelogs/2026-07-02-chat-input-panel-tap-outside.md`](./changelogs/2026-07-02-chat-input-panel-tap-outside.md) |
 | 2026-07-02 | 弹窗卡片 h-[80vh] 写死一刀切 — 暮色吐槽"4 个尺寸" | [`changelogs/2026-07-02-modal-h80vh-one-size.md`](./changelogs/2026-07-02-modal-h80vh-one-size.md) |
 | 2026-07-02 | API 弹窗统一到日程弹窗尺寸 (60vh) + 聊天页返回路径修复 | [`changelogs/2026-07-02-api-modal-size-and-back-path.md`](./changelogs/2026-07-02-api-modal-size-and-back-path.md) |
 | 2026-07-01 | 仿微信联系人页 — Step 1 框架壳 | [`changelogs/2026-07-01-wechat-step1.md`](./changelogs/2026-07-01-wechat-step1.md) |
 | 2026-07-02 | WeChat Step 1 调整 — Tab 移底 / 留白 / 去白圈 / 我接档案 / 撕档案桌入 / API 换 WiFi | [`changelogs/2026-07-02-wechat-step1-tweaks.md`](./changelogs/2026-07-02-wechat-step1-tweaks.md) |
 | 2026-07-02 | WeChat 嵌套 Chat 单返回修复 + API 浮窗居中 | [`changelogs/2026-07-02-wechat-once-back-and-api-centered.md`](./changelogs/2026-07-02-wechat-once-back-and-api-centered.md) |
+| 2026-07-02 | 收藏页 v4 改造 + 2 个新 bug 交接（联系人页 / 切换会话） | [`changelogs/2026-07-02-favorites-v4-and-2-new-bugs.md`](./changelogs/2026-07-02-favorites-v4-and-2-new-bugs.md) |
 | 2026-07-02 | Launcher widget 直跳 Chat + 项目级 Modal 标准落实 | [`changelogs/2026-07-02-widget-jump-and-modal-standard.md`](./changelogs/2026-07-02-widget-jump-and-modal-standard.md) |
 | 2026-07-01 | 心声防重复 — 提示词注入最近 5 条 innerState | [`changelogs/2026-07-01-inner-state-dedup-prompt.md`](./changelogs/2026-07-01-inner-state-dedup-prompt.md) |
 | 2026-07-01 | emoji-reorder modal 3 个 bug（删除 / 拖动落点 / 列表滚动） | [`changelogs/2026-07-01-emoji-reorder-3-bugs.md`](./changelogs/2026-07-01-emoji-reorder-3-bugs.md) |

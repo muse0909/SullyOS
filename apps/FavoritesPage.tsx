@@ -1,17 +1,14 @@
 // FavoritesPage — 收藏页（发现页子页）
-// 顶 Tab：消息收藏 / 语音收藏（暮色拍板）
-// 内容：按角色分组的收藏列表（每条一个格子，分割线分开）
-// 不再用"选角色"层级（暮色最初提议，但 4 层太深）—— 直接 Tab 切换
-// 星标：每条卡片自带的星标按钮（独立 tab 不需要"全部/星标"二级）
+// 顶 Tab：消息收藏 / 语音收藏
+// 内容：所有 favorite 混在一起按时间倒序，不按角色分组（暮色明确"不喜欢混在一起的"是指不喜欢分组本身）
+// 卡片操作：右上角横排 ⭐→📍→🗑（暮色拍板顺序）
 
 import React, { useEffect, useState } from 'react';
-import { CaretLeft, Star, StarFour, ArrowSquareOut, Quotes, ChatCircleDots } from '@phosphor-icons/react';
+import { CaretLeft, Star, StarFour, ArrowSquareOut, Quotes, ChatCircleDots, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   FavoriteItem,
   getAllFavorites,
-  getVoiceFavorites,
-  getStarredFavorites,
   removeFavorite,
   updateFavorite,
   markFavoriteInvalid,
@@ -20,15 +17,16 @@ import {
 type TabKey = 'text' | 'voice';
 
 const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { characters, jumpToMessage, addToast } = useOS();
+  const { jumpToMessage, addToast } = useOS();
   const [tab, setTab] = useState<TabKey>('voice');
   const [items, setItems] = useState<FavoriteItem[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // 加载数据（按 tab 筛选 + 按时间倒序）
   useEffect(() => {
     const load = () => {
-      const all = getAllFavorites().filter((f) => f.type === tab);
+      const all = getAllFavorites()
+        .filter((f) => f.type === tab)
+        .sort((a, b) => b.createdAt - a.createdAt);
       setItems(all);
     };
     load();
@@ -36,13 +34,6 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [tab]);
-
-  // 按角色分组
-  const grouped = items.reduce<Record<string, FavoriteItem[]>>((acc, item) => {
-    if (!acc[item.charId]) acc[item.charId] = [];
-    acc[item.charId].push(item);
-    return acc;
-  }, {});
 
   const handleLocate = (item: FavoriteItem) => {
     jumpToMessage(item.charId, item.sourceMessageId);
@@ -67,7 +58,7 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed]">
       {/* Header */}
-      <div className="flex items-center px-2 py-3 bg-white border-b border-slate-200/60 shrink-0">
+      <div className="flex items-center px-3 py-3 bg-white border-b border-slate-200/60 shrink-0">
         <button
           onClick={onBack}
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
@@ -97,42 +88,22 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         </button>
       </div>
 
-      {/* 列表 */}
+      {/* 列表 — 所有 favorite 混在一起按时间倒序，不分组 */}
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <EmptyState tab={tab} />
         ) : (
-          <div className="space-y-0">
-            {Object.entries(grouped).map(([charId, charItems]) => {
-              const char = characters.find((c) => c.id === charId);
-              const charName = charItems[0]?.charName || char?.name || 'AI';
-              return (
-                <div key={charId}>
-                  {/* 角色分组 header */}
-                  <div className="px-4 py-2 bg-slate-100/80 flex items-center gap-2 sticky top-0 z-10">
-                    {char?.avatar ? (
-                      <img src={char.avatar} alt={charName} className="w-6 h-6 rounded-full object-cover bg-white" />
-                    ) : (
-                      <div className="w-6 h-6 rounded-full bg-slate-300" />
-                    )}
-                    <span className="text-xs font-bold text-slate-700">{charName}</span>
-                    <span className="text-[10px] text-slate-400 ml-auto">{charItems.length} 条</span>
-                  </div>
-                  {/* 该角色的收藏列表 */}
-                  {charItems.map((item) => (
-                    <FavoriteCard
-                      key={item.id}
-                      item={item}
-                      expanded={expandedId === item.id}
-                      onToggleExpand={() => setExpandedId((id) => (id === item.id ? null : item.id))}
-                      onLocate={() => handleLocate(item)}
-                      onRemove={() => handleRemove(item)}
-                      onToggleStar={() => handleToggleStar(item)}
-                    />
-                  ))}
-                </div>
-              );
-            })}
+          <div className="px-5 py-3 space-y-2.5">
+            {items.map((item) => (
+              <FavoriteCard
+                key={item.id}
+                item={item}
+                onLocate={() => handleLocate(item)}
+                onRemove={() => handleRemove(item)}
+                onToggleStar={() => handleToggleStar(item)}
+              />
+            ))}
+            <div className="h-4" />
           </div>
         )}
       </div>
@@ -141,20 +112,18 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 };
 
 // === 单条收藏卡片 ===
+// 操作按钮右上角横排 ⭐→📍→🗑（暮色拍板顺序）
 const FavoriteCard: React.FC<{
   item: FavoriteItem;
-  expanded: boolean;
-  onToggleExpand: () => void;
   onLocate: () => void;
   onRemove: () => void;
   onToggleStar: () => void;
-}> = ({ item, expanded, onToggleExpand, onLocate, onRemove, onToggleStar }) => {
+}> = ({ item, onLocate, onRemove, onToggleStar }) => {
   const { addToast } = useOS();
   const date = new Date(item.createdAt);
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
   const isVoice = item.type === 'voice';
-  const isText = item.type === 'text';
 
   const handleAudioError = () => {
     markFavoriteInvalid(item.id);
@@ -162,18 +131,31 @@ const FavoriteCard: React.FC<{
   };
 
   return (
-    <div className="bg-white px-4 py-3.5 border-b border-slate-100">
-      {/* 日期 + 星标 */}
+    <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-slate-100/80">
+      {/* 日期 + 右上角操作按钮（⭐→📍→🗑） */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] text-slate-400 font-medium">{dateStr}</span>
-        <div className="flex items-center gap-1">
-          {item.starred && <StarFour size={14} weight="fill" className="text-amber-500" />}
+        <div className="flex items-center gap-0.5 -mr-1.5">
           <button
             onClick={onToggleStar}
             className="p-1.5 rounded-full hover:bg-slate-100 active:scale-95 transition-all"
             aria-label={item.starred ? '取消星标' : '加星标'}
           >
             <Star size={14} weight={item.starred ? 'fill' : 'regular'} className={item.starred ? 'text-amber-500' : 'text-slate-400'} />
+          </button>
+          <button
+            onClick={onLocate}
+            className="p-1.5 rounded-full hover:bg-slate-100 active:scale-95 transition-all"
+            aria-label="定位到聊天"
+          >
+            <ArrowSquareOut size={14} weight="bold" className="text-amber-500" />
+          </button>
+          <button
+            onClick={onRemove}
+            className="p-1.5 rounded-full hover:bg-slate-100 active:scale-95 transition-all"
+            aria-label="删除"
+          >
+            <Trash size={14} weight="regular" className="text-slate-400" />
           </button>
         </div>
       </div>
@@ -196,33 +178,8 @@ const FavoriteCard: React.FC<{
       )}
 
       {/* 文字版（voice 显示文字，text 显示原文） */}
-      <button
-        onClick={onToggleExpand}
-        className={`mt-2 w-full text-left ${isText ? 'mt-0' : ''}`}
-      >
-        <div className={`text-[13px] text-slate-700 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>
-          {item.text || '（无文字）'}
-        </div>
-        {item.text && item.text.length > 80 && (
-          <div className="text-[10px] text-amber-600 mt-0.5">{expanded ? '收起' : '展开'}</div>
-        )}
-      </button>
-
-      {/* 操作按钮 */}
-      <div className="mt-2.5 flex items-center gap-2">
-        <button
-          onClick={onLocate}
-          className="flex-1 py-1.5 bg-amber-50 text-amber-600 text-xs font-bold rounded-full flex items-center justify-center gap-1 active:scale-95 transition-transform"
-        >
-          <ArrowSquareOut size={12} weight="bold" />
-          定位到聊天
-        </button>
-        <button
-          onClick={onRemove}
-          className="px-3 py-1.5 bg-slate-50 text-slate-500 text-xs rounded-full active:bg-slate-100 transition-colors"
-        >
-          删除
-        </button>
+      <div className={`text-[13px] text-slate-700 leading-relaxed ${isVoice ? 'mt-2' : ''}`}>
+        {item.text || '（无文字）'}
       </div>
     </div>
   );

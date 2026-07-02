@@ -60,11 +60,20 @@ const WeChat: React.FC = () => {
   }, [cameFromDirectEntry, openedCharId, registerBackHandler]);
 
   // 同步 activeCharacterId — Chat.tsx 从 OSContext 拿这个值
+  // 反向同步：activeCharacterId 外部被改了（比如收藏页"定位到聊天"）
+  // → 也自动 setOpenedCharId，让 WeChat 路由进 Chat
   useEffect(() => {
     if (openedCharId && openedCharId !== activeCharacterId) {
       setActiveCharacterId(openedCharId);
     }
   }, [openedCharId, activeCharacterId, setActiveCharacterId]);
+
+  // 收藏页"定位到聊天"反向同步
+  useEffect(() => {
+    if (activeCharacterId && !openedCharId) {
+      setOpenedCharId(activeCharacterId);
+    }
+  }, [activeCharacterId, openedCharId]);
 
   // 已选角色 → 嵌套 Chat
   // 顶栏左侧 onClose 交给 Chat 自己的 ChatHeaderShell 处理：
@@ -115,9 +124,9 @@ const WeChat: React.FC = () => {
         {tab === 'me' && <UserApp />}
       </div>
 
-      {/* 底部 Tab bar — 仿微信底部三 Tab */}
+      {/* 底部 Tab bar — 仿微信底部三 Tab（磨砂白底，暮色 v4 反馈） */}
       <div
-        className="shrink-0 bg-white border-t border-slate-200/60 flex"
+        className="shrink-0 bg-white/85 backdrop-blur-xl border-t border-slate-200/40 flex"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         {TABS.map((t) => (

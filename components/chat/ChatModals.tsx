@@ -4,6 +4,8 @@ import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import { saveRemoteImage } from '../../utils/file';
+import { addFavorite, genFavoriteId, getAllFavorites } from '../../utils/favoritesStorage';
+import { useOS } from '../../context/OSContext';
 
 interface ChatModalsProps {
     modalType: string;
@@ -106,6 +108,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     isScheduleFeatureEnabled, onToggleScheduleFeature,
     voiceAvailable, onGenerateVoice,
 }) => {
+    const { addToast } = useOS();
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
@@ -173,9 +176,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         if (!container) return;
         const currentName = draggingNameRef.current;
         if (!currentName) return;
-        const currentIdx = reorderList.findIndex(it => it.name === currentName);
+        // 用 ref 读最新列表（拖动过程中 onMoveEmoji 会改 reorderList，
+        // 但 updateDragAt 是 useEffect [isDragging] 闭包内定义的，
+        // 不加 ref 会读到旧列表 → currentIdx/target 全错，拖动几次后落点算错）
+        const list = reorderListDataRef.current;
+        const move = onMoveEmojiRef.current;
+        const currentIdx = list.findIndex(it => it.name === currentName);
         if (currentIdx === -1) return;
-        const items = reorderList
+        const items = list
             .map(it => reorderItemRefs.current.get(it.name))
             .filter((el): el is HTMLDivElement => !!el);
         let target = currentIdx;
@@ -187,7 +195,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             }
         }
         if (target !== currentIdx) {
-            onMoveEmoji(currentIdx, target);
+            move(currentIdx, target);
         }
     };
 
@@ -201,6 +209,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     // draggingName 同步到 ref，供 updateDragAt 在 document mousemove 中读取（避免闭包过期）
     const draggingNameRef = useRef<string | null>(null);
     useEffect(() => { draggingNameRef.current = draggingName; }, [draggingName]);
+
+    // reorderList / onMoveEmoji 同样用 ref 镜像：拖动过程中 onMoveEmoji 会 setReorderList，
+    // 但 updateDragAt 是 useEffect [isDragging] 闭包内的 const，不会随重渲染更新，
+    // 必须通过 ref 读最新值（commit 6d36218 后拖动几次落点错就是这个原因）
+    const reorderListDataRef = useRef(reorderList);
+    useEffect(() => { reorderListDataRef.current = reorderList; }, [reorderList]);
+    const onMoveEmojiRef = useRef(onMoveEmoji);
+    useEffect(() => { onMoveEmojiRef.current = onMoveEmoji; }, [onMoveEmoji]);
 
     // 拖动启动后，把 mousemove/mouseup 挂到 document（不依赖容器边界）
     useEffect(() => {
@@ -465,7 +481,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 </div>
             </Modal>
             
-            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')}>
+            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')} adaptiveHeight>
                 <div className="space-y-3">
                     <button onClick={onEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         多选 / 批量删除
@@ -495,6 +511,43 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             转换语音
                         </button>
                     )}
+
+                    {/* 收藏消息 — 用户/AI 文本消息都支持（type: 'text'） */}
+                    {selectedMessage?.type === 'text' && selectedMessage?.content && (
+                        <button
+                            onClick={() => {
+                                if (!selectedMessage) return;
+                                const text = selectedMessage.content || '';
+                                if (!text.trim()) return;
+                                // 防重复：同 sourceMessageId 不重复加
+                                const existing = getAllFavorites().find(
+                                    (f) => f.sourceMessageId === selectedMessage.id && f.type === 'text'
+                                );
+                                if (existing) {
+                                    addToast('这条消息已收藏过', 'info');
+                                    return;
+                                }
+                                addFavorite({
+                                    id: genFavoriteId(),
+                                    type: 'text',
+                                    text: text,
+                                    charId: activeCharacter.id,
+                                    charName: activeCharacter.name,
+                                    sourceMessageId: selectedMessage.id,
+                                    createdAt: Date.now(),
+                                });
+                                addToast('已加入收藏', 'success');
+                                setModalType('none');
+                            }}
+                            className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                                <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006Z" clipRule="evenodd" />
+                            </svg>
+                            收藏消息
+                        </button>
+                    )}
+
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
                         删除消息
                     </button>
@@ -562,7 +615,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <p className="text-xs text-slate-400 text-center pb-2">长按表情包 0.3s 后可拖动；贴近顶部/底部会自动滚动</p>
                 <div
                     ref={reorderListRef}
-                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 touch-none select-none"
+                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 select-none"
                     onMouseMove={handleReorderContainerMove}
                     onTouchMove={handleReorderContainerMove}
                     onMouseLeave={handleReorderContainerLeave}
@@ -626,7 +679,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     if (!e) return null;
                     return (
                         <div
-                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing"
+                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing touch-none select-none"
                             style={{
                                 left: draggingStyle.left,
                                 top: draggingStyle.top,

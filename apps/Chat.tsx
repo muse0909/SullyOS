@@ -23,12 +23,53 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
+
+    // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
+    const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
+    // 用 ref 存 consumePendingHighlightMessageId — 避免放到 deps 触发死循环
+    // （OSContext.value 每次 render 都新建，函数引用每次 render 都变）
+    const consumePendingHighlightRef = useRef(consumePendingHighlightMessageId);
+    consumePendingHighlightRef.current = consumePendingHighlightMessageId;
+    useEffect(() => {
+        const pending = consumePendingHighlightRef.current();
+        if (pending) {
+            setHighlightMessageId(pending);
+            // 2 秒后清掉高亮
+            setTimeout(() => setHighlightMessageId(null), 2000);
+        }
+    }, [activeCharacterId]);
+
+    // scroll 到目标 message
+    // NOTE: deps 只保留 highlightMessageId（不加 messages，否则 React 19 会在评估 deps 时触发 TDZ，
+    // 因为 messages 在 Chat 组件后半段才定义）
+    useEffect(() => {
+        if (!highlightMessageId) return;
+        const tryScroll = () => {
+            const el = document.querySelector(`[data-message-id="${highlightMessageId}"]`) as HTMLElement;
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+                setTimeout(tryScroll, 300);
+            }
+        };
+        setTimeout(tryScroll, 200);
+    }, [highlightMessageId]);
+
+    // 高亮注入（收藏页"定位到聊天"时给目标 message 加背景高亮 2 秒）
+    const highlightStyle = highlightMessageId ? `
+        [data-message-id="${highlightMessageId}"] {
+            background: linear-gradient(90deg, rgba(251, 191, 36, 0.18) 0%, rgba(251, 191, 36, 0.06) 100%) !important;
+            border-radius: 12px !important;
+            transition: background 0.3s ease !important;
+        }
+    ` : '';
 
     // 记忆宫殿高水位（用于清空聊天时的安全检查）
     const getMemoryPalaceHWM = useCallback(async (charId: string): Promise<number> => {
@@ -334,6 +375,21 @@ const Chat: React.FC = () => {
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
             // Persist so the voice bar survives leaving and re-entering the chat.
             persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
+            // Auto-archive to favorites (语音自动加入收藏，暮色要求)
+            try {
+                addFavorite({
+                    id: genFavoriteId(),
+                    type: 'voice',
+                    url: blobUrl,
+                    text: originalText,
+                    charId: char.id,
+                    charName: char.name,
+                    sourceMessageId: msg.id,
+                    createdAt: Date.now(),
+                });
+            } catch (e) {
+                console.warn('[favorites] auto-archive failed', e);
+            }
             // Auto-play
             if (!chatAudioRef.current) chatAudioRef.current = new Audio();
             chatAudioRef.current.src = blobUrl;
@@ -1978,11 +2034,14 @@ if (keepN > 0) {
                 };
 
     return (
-        <div 
+        <div
             className={chatRootClass}
             style={chatRootStyle}
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
+
+             {/* 收藏定位高亮（临时注入，2 秒后清空） */}
+             {highlightStyle && <style dangerouslySetInnerHTML={{ __html: highlightStyle }} />}
 
              {/* 记忆整理中 — 顶部浮动胶囊（不阻塞交互，轻量无 backdrop-filter） */}
              {memoryPalaceStatus && (

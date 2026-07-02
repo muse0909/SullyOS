@@ -801,6 +801,20 @@ export const useChatAI = ({
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
                     : '你是生活系角色，innerState 的重心是你自己的生活和感受，不必每次都以用户为中心。';
                 systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- label：2-10字，短标签，像头像栏上的小心情贴纸，不要写完整句子\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 description\n- 正文和 <emotion> 块之间不要有多余说明`;
+
+                // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
+                // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
+                const recentInnerStates = (char.emotionHistory || []).slice(0, 5)
+                    .map(b => ({ innerState: b.innerState, createdAt: b.createdAt }))
+                    .filter(x => typeof x.innerState === 'string' && x.innerState.trim());
+                if (recentInnerStates.length > 0) {
+                    const recentBlock = recentInnerStates.map((x, i) => {
+                        const mins = x.createdAt ? Math.max(0, Math.round((Date.now() - x.createdAt) / 60000)) : null;
+                        const timeHint = mins !== null ? `（${mins}分钟前）` : '';
+                        return `${i + 1}. ${timeHint}${x.innerState}`;
+                    }).join('\n');
+                    systemPrompt += `\n\n[最近心声 — 本次 innerState 必须跟以下明显不同，不能换个说法重复同样的事、不能写同样的情绪、不能继续上一条没解决的悬念]\n${recentBlock}`;
+                }
             }
 
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];

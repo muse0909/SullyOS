@@ -70,6 +70,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    // 点空白处收起面板：标记 panel 容器 + 两个 toggle 按钮（按钮内点击让 toggle 行为自己处理）
+    const panelContainerRef = useRef<HTMLDivElement>(null);
+    const toggleActionsBtnRef = useRef<HTMLButtonElement>(null);
+    const toggleEmojisBtnRef = useRef<HTMLButtonElement>(null);
     const [actionsPage, setActionsPage] = useState<0 | 1>(0);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
@@ -92,11 +96,34 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const sendFromFullInput = () => {
         const text = tempInput.trim();
         if (!text || isTyping) return;
-        setInput(text); // 同步给原 input（保持状态一致）
+        setInput(tempInput); // 同步给原 input（保持状态一致）
         setShowFullInput(false);
         // 触发 onSend 是在父组件里通过 onSend prop，所以用 setTimeout 0 等状态更新
         setTimeout(() => onSend(), 0);
     };
+
+    // 点空白处收起面板（暮色要求）：
+    //   - 点 panel 容器内 → 不收起（用户在选表情/操作）
+    //   - 点 + / 表情包按钮 → 不收起（让 toggle 行为自己处理）
+    //   - 点其他任何位置（聊天消息、textarea、空白处）→ 收起面板
+    // 挂在 document 而不是容器，因为 panel 收起后容器消失，监听器需要能继续触发
+    // 用 mousedown + touchstart 双绑，覆盖桌面/手机
+    useEffect(() => {
+        if (showPanel === 'none') return;
+        const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+            const target = e.target as Node;
+            if (panelContainerRef.current?.contains(target)) return;
+            if (toggleActionsBtnRef.current?.contains(target)) return;
+            if (toggleEmojisBtnRef.current?.contains(target)) return;
+            setShowPanel('none');
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        document.addEventListener('touchstart', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('touchstart', handleClickOutside);
+        };
+    }, [showPanel, setShowPanel]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -382,7 +409,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 ) : (
 
                 <div className="p-3 px-4 flex gap-3 items-end">
-                    <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
+                    <button ref={toggleActionsBtnRef} onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
                     <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
@@ -409,7 +436,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             placeholder="Message..."
                             style={{ height: 'auto', overflowY: 'hidden' }}
                         />
-                        <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>
@@ -428,6 +455,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             {/* Panels — always mounted, height transitions for smooth open/close */}
             {!selectionMode && (
                 <div
+                    ref={panelContainerRef}
                     className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
                     style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px' }}
                 >

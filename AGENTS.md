@@ -150,6 +150,52 @@ SullyOS-master/
 - 顶部返回即保存（v2 删了底部按钮）
 - 预览区只显示样式效果（背景图/遮罩/字号/颜色），文字固定占位
 
+### 5.5 弹窗 / Modal 标准（暮色 2026-07-02 拍板 — 写死 spec，以后别再改）
+
+**所有新弹窗默认按 `components/os/Modal.tsx` 的视觉规格统一**，不要再各弹各的。这条是为了避免"心声弹窗一种圆角、API 浮窗又一种圆角 / 这个大那个小"的混乱——**暮色 2026-07-02 反馈 API 弹窗、心声卡片改过很多次，明确要求一刀切**。
+
+```
+容器（最外层）
+  fixed inset-0
+  z-[100]                           ← 或按需调高（ApiQuickFloat 用 z-[110] 因为是 floating 工具）
+  flex items-center justify-center
+  p-6                               ← 给卡片留左右上下呼吸
+  animate-fade-in
+
+背景遮罩
+  absolute inset-0 bg-black/40      ← 不加 backdrop-blur，与项目级 Modal 一致
+
+卡片（一刀切规格，别动）
+  relative
+  w-full max-w-sm                   ← max-width 24rem (384px) — 宽度统一
+  bg-white
+  rounded-[2.5rem]                  ← 40px 大圆角，项目标配
+  shadow-2xl
+  border border-white/20            ← 浅白描边
+  overflow-hidden
+  animate-slide-up
+  h-[80vh] flex flex-col            ← ⚠️ 固定 80vh（不是 max-h，是 h）；内容少时底部留白
+```
+
+title：`shrink-0` + `px-6 pt-6 pb-2` + `text-center text-lg font-bold text-slate-800`
+body：`flex-1 min-h-0 overflow-y-auto no-scrollbar`（**没有 max-h**；flex 自然撑到 80vh - 标题 - footer）
+footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭"按钮）
+
+**核心原则（一刀切）**：
+- **所有弹窗卡片**：`max-w-sm` (384px) + `rounded-[2.5rem]` (40px) + **`h-[80vh]`** (固定 80vh) + `flex flex-col`
+- **所有内部结构**：title `shrink-0` + body `flex-1 min-h-0 overflow-y-auto` + footer `shrink-0`
+- **折叠/展开一律在卡片内部完成**——不创建新弹窗、不撑大整个面板
+- 内容少的弹窗底部留白——**弹窗比例统一优先**（不接受"内容少时卡片小"那种"4 个尺寸"问题）
+- `openSection` 状态保留用户上次选择，**关掉再开还是同一个 section 展开**
+- API 弹窗等"内容多"的弹窗，**默认打开第一个 section**（避免初始全折叠→点开→撑大的视觉跳变）
+
+**例外**：微信式心声弹窗 / 圆角较小的轻量确认弹窗可以用 `rounded-3xl + w-[min(88vw,360px)]`，那是另一种风格，但需要暮色明确认可才用。
+
+**为什么是 `h-[80vh]` 不是 `max-h-[80vh]`**：
+- `max-h` + `flex-1` 时内容少的弹窗卡片自适应小，**跟 80vh 卡片视觉上不一致**（暮色吐槽"4 个尺寸"的根因）
+- `h` 固定 80vh + `flex-1` 撑开内容，**所有弹窗卡片总高永远 80vh**，底部留白是"统一规格的一部分"
+- `min-h-0` 在 body 上是 flex item 的常见 fix，避免内容超过容器时无法缩小
+
 ---
 
 ## 6. 部署 & 调试
@@ -227,6 +273,19 @@ SullyOS-master/
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-02 | SullyOS vs orangechat 工具调用对比报告（调研） | [`changelogs/2026-07-02-orangechat-tool-calling-comparison.md`](./changelogs/2026-07-02-orangechat-tool-calling-comparison.md) |
+| 2026-07-02 | WeChat 两个 bug 修复：联系人页 + chars 面板切换 | [`changelogs/2026-07-02-wechat-bug-fixes.md`](./changelogs/2026-07-02-wechat-bug-fixes.md) |
+| 2026-07-02 | 聊天框 + / 表情包面板支持点空白处收起 | [`changelogs/2026-07-02-chat-input-panel-tap-outside.md`](./changelogs/2026-07-02-chat-input-panel-tap-outside.md) |
+| 2026-07-02 | 弹窗卡片 h-[80vh] 写死一刀切 — 暮色吐槽"4 个尺寸" | [`changelogs/2026-07-02-modal-h80vh-one-size.md`](./changelogs/2026-07-02-modal-h80vh-one-size.md) |
+| 2026-07-02 | API 弹窗统一到日程弹窗尺寸 (60vh) + 聊天页返回路径修复 | [`changelogs/2026-07-02-api-modal-size-and-back-path.md`](./changelogs/2026-07-02-api-modal-size-and-back-path.md) |
+| 2026-07-02 | 收藏页 Header h1 `-ml-9` 覆盖 button 导致返回按钮"点着没反应" | [`changelogs/2026-07-02-favorites-header-ml9-cover-button.md`](./changelogs/2026-07-02-favorites-header-ml9-cover-button.md) |
+| 2026-07-01 | 仿微信联系人页 — Step 1 框架壳 | [`changelogs/2026-07-01-wechat-step1.md`](./changelogs/2026-07-01-wechat-step1.md) |
+| 2026-07-02 | WeChat Step 1 调整 — Tab 移底 / 留白 / 去白圈 / 我接档案 / 撕档案桌入 / API 换 WiFi | [`changelogs/2026-07-02-wechat-step1-tweaks.md`](./changelogs/2026-07-02-wechat-step1-tweaks.md) |
+| 2026-07-02 | WeChat 嵌套 Chat 单返回修复 + API 浮窗居中 | [`changelogs/2026-07-02-wechat-once-back-and-api-centered.md`](./changelogs/2026-07-02-wechat-once-back-and-api-centered.md) |
+| 2026-07-02 | 收藏页 v4 改造 + 2 个新 bug 交接（联系人页 / 切换会话） | [`changelogs/2026-07-02-favorites-v4-and-2-new-bugs.md`](./changelogs/2026-07-02-favorites-v4-and-2-new-bugs.md) |
+| 2026-07-02 | Launcher widget 直跳 Chat + 项目级 Modal 标准落实 | [`changelogs/2026-07-02-widget-jump-and-modal-standard.md`](./changelogs/2026-07-02-widget-jump-and-modal-standard.md) |
+| 2026-07-01 | 心声防重复 — 提示词注入最近 5 条 innerState | [`changelogs/2026-07-01-inner-state-dedup-prompt.md`](./changelogs/2026-07-01-inner-state-dedup-prompt.md) |
+| 2026-07-01 | emoji-reorder modal 3 个 bug（删除 / 拖动落点 / 列表滚动） | [`changelogs/2026-07-01-emoji-reorder-3-bugs.md`](./changelogs/2026-07-01-emoji-reorder-3-bugs.md) |
 | 2026-06-29 | 设置入口搬到头像右上角 + 心声 / 日程解耦 | [`changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md`](./changelogs/2026-06-29-chat-settings-drawer-and-emotion-decouple.md) |
 | 2026-06-29 | 心声弹窗照扒日程三档配色 + 心电图 footer | [`changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md`](./changelogs/2026-06-29-buff-popup-macaron-and-ecg-footer.md) |
 | 2026-06-28 | 心声弹窗贴顶修复（createPortal 绕开 ChatHeader backdrop-filter） | [`changelogs/2026-06-28-buff-popup-portal-fix.md`](./changelogs/2026-06-28-buff-popup-portal-fix.md) |

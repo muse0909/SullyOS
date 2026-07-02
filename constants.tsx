@@ -95,7 +95,6 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },                  // 原小红书图库位置
-  { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },                       // 原气泡工坊位置
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' },                     // 原外观位置
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },

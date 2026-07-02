@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, CaretRight, Eye, EyeSlash, Gear, ImageSquare, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, CaretRight, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 import type { ApiPreset } from '../../types';
 
@@ -174,7 +174,7 @@ const ApiQuickFloat: React.FC = () => {
   const [showImageKey, setShowImageKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
 
-  const [openSection, setOpenSection] = useState<QuickPresetKind | null>(null);
+  const [openSection, setOpenSection] = useState<QuickPresetKind>('main');
 
   const [showMainModelPicker, setShowMainModelPicker] = useState(false);
   const [showImageModelPicker, setShowImageModelPicker] = useState(false);
@@ -250,7 +250,8 @@ const ApiQuickFloat: React.FC = () => {
       dragRef.current.moved = false;
       return;
     }
-    setOpenSection(null);
+    // 不重置 openSection：保留用户上次选择，关闭再开还是同一个 section 展开
+    // （之前 setOpenSection(null) 会强制全部折叠，造成"折叠→展开"的视觉跳变）
     setShowMainModelPicker(false);
     setShowImageModelPicker(false);
     setShowVisionModelPicker(false);
@@ -429,16 +430,15 @@ const ApiQuickFloat: React.FC = () => {
         className="z-[100] rounded-full bg-white/90 backdrop-blur-md shadow-lg shadow-slate-300/50 border border-slate-200/60 flex items-center justify-center text-slate-600 active:scale-95 transition-transform select-none"
         title="API 快捷设置（可拖动）"
       >
-        <Gear size={20} weight="bold" />
+        <WifiHigh size={20} weight="bold" />
       </div>
 
       {showPanel ? (
-        <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center" onClick={() => setShowPanel(false)}>
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 animate-fade-in" onClick={() => setShowPanel(false)}>
+          <div className="absolute inset-0 bg-black/40" />
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[80vh] overflow-hidden flex flex-col"
-            style={{ animation: 'apiQuickFloatSlide 0.25s ease-out' }}
+            className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up max-h-[80vh] flex flex-col"
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2">
@@ -452,7 +452,7 @@ const ApiQuickFloat: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
               <QuickSection
                 icon={<Gear size={18} weight="bold" />}
                 title="API 设置"
@@ -809,12 +809,6 @@ const ApiQuickFloat: React.FC = () => {
             </div>
           </div>
 
-          <style>{`
-            @keyframes apiQuickFloatSlide {
-              from { transform: translateY(100%); opacity: 0; }
-              to { transform: translateY(0); opacity: 1; }
-            }
-          `}</style>
         </div>
       ) : null}
 

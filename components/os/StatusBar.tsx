@@ -133,10 +133,11 @@ const StatusBar: React.FC = () => {
           </button>
       )}
 
-      <Modal 
-          isOpen={showLogModal} 
-          title="系统调试终端" 
+      <Modal
+          isOpen={showLogModal}
+          title="系统调试终端"
           onClose={() => setShowLogModal(false)}
+          adaptiveHeight
           footer={
               <div className="flex gap-2 w-full">
                   <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(systemLogs, null, 2)); }} className="flex-1 py-3 bg-slate-100 font-bold rounded-xl text-slate-600">复制 JSON</button>
@@ -144,9 +145,9 @@ const StatusBar: React.FC = () => {
               </div>
           }
       >
-          <div className="h-64 bg-slate-900 rounded-xl p-3 overflow-y-auto font-mono text-[10px] space-y-2 no-scrollbar shadow-inner">
+          <div className="bg-slate-900 rounded-xl p-3 overflow-y-auto font-mono text-[10px] space-y-2 no-scrollbar shadow-inner">
               {systemLogs.length === 0 ? (
-                  <div className="text-slate-500 text-center mt-20">系统运行正常，暂无错误日志。</div>
+                  <div className="text-slate-500 text-center py-10">系统运行正常，暂无错误日志。</div>
               ) : (
                   systemLogs.map(log => (
                       <div key={log.id} className="border-b border-white/10 pb-2 mb-2 last:border-0 last:mb-0 last:pb-0">

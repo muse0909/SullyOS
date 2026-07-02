@@ -531,7 +531,7 @@ const MessageItem = React.memo(({
     }
 
     const commonLayout = (content: React.ReactNode) => (
-            <div className={`flex items-start ${isUser ? 'justify-end' : 'justify-start'} ${marginBottom} px-3 group select-none relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''}`}>
+            <div data-message-id={m.id} className={`flex items-start ${isUser ? 'justify-end' : 'justify-start'} ${marginBottom} px-3 group select-none relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''}`}>
                 {selectionMode && (
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -1485,6 +1485,9 @@ const MessageItem = React.memo(({
                                     border: isVoicePlaying
                                         ? `1px solid ${vbBtn ? vbBtn + '33' : 'rgba(16,185,129,0.2)'}`
                                         : '1px solid rgba(0,0,0,0.05)',
+                                    // 磨砂底：模糊聊天消息背景，字更清晰（暮色要求）
+                                    backdropFilter: 'blur(6px) saturate(1.2)',
+                                    WebkitBackdropFilter: 'blur(6px) saturate(1.2)',
                                 }}
                             >
                                 {/* Play/Pause circle */}

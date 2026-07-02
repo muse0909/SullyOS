@@ -187,6 +187,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         : isPixelHeader
           ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
           : 'text-slate-500 hover:bg-slate-100 rounded-full';
+    // onClose 单独：无 hover 底色（暮色偏好 — 不要白圈）
+    const onCloseButtonClass = isDarkHeader
+        ? 'text-slate-200 rounded-full'
+        : isPixelHeader
+          ? 'text-[#fff7ed] rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
+          : 'text-slate-500 rounded-full';
     const actionButtonClass = isDarkHeader
         ? 'text-sky-300 hover:bg-sky-400/10 rounded-full'
         : isPixelHeader
@@ -340,7 +346,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : useCenteredLayout ? (
                 <div className="relative w-full flex items-center justify-center">
-                    <button onClick={onClose} className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 ${iconButtonClass}`}>
+                    <button onClick={onClose} className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 ${onCloseButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
@@ -368,7 +374,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : (
                 <div className="flex items-center gap-3 w-full">
-                    <button onClick={onClose} className={`p-2 -ml-2 ${iconButtonClass}`}>
+                    <button onClick={onClose} className={`p-2 -ml-2 ${onCloseButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 

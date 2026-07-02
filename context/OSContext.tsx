@@ -246,6 +246,15 @@ interface OSContextType {
   // Navigation Logic
   registerBackHandler: (handler: () => boolean) => () => void; // Returns unregister function
   handleBack: () => void;
+  // Direct chat jump: 让 launcher 上的角色 widget 能跳过"联系人列表"直接进入聊天
+  // — 一次性 transient ref，WeChat mount 时 consume 然后清空
+  jumpToChat: (charId: string) => void;
+  consumePendingDirectChat: () => string | null;
+  // 配套标记：jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
+  // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
+  consumeDirectEntry: () => boolean;
+  // 收藏定位：点击收藏页"定位到聊天"时调，Chat 页面 mount/激活时 consume 决定 scroll/highlight
+  consumePendingHighlightMessageId: () => string | null;
 
   // Call Suspend
   suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
@@ -575,6 +584,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // Back Handler Ref
   const backHandlerRef = useRef<(() => boolean) | null>(null);
+
+  // Pending Direct Chat Ref — jumpToChat 设置一次性 transient 状态，
+  // WeChat mount 时 consumeOnce 读取后清掉，下次进 WeChat 默认仍走联系人列表
+  const pendingDirectChatRef = useRef<string | null>(null);
+  // Direct Entry Flag — jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
+  // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
+  const directEntryRef = useRef(false);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2765,6 +2781,42 @@ if (!isVisible || !isChattingWithThisChar) {
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 
+  // Direct chat jump — 设一次性 pending flag + direct entry 标记，WeChat mount 时 consume
+  // 用 ref 而非 state 避免触发 re-render
+  const jumpToChat = (charId: string) => {
+    pendingDirectChatRef.current = charId;
+    directEntryRef.current = true;
+    setActiveCharacterId(charId);
+    setActiveApp(AppID.Chat);
+  };
+  const consumePendingDirectChat = () => {
+    const id = pendingDirectChatRef.current;
+    pendingDirectChatRef.current = null;
+    return id;
+  };
+  const consumeDirectEntry = () => {
+    const was = directEntryRef.current;
+    directEntryRef.current = false;
+    return was;
+  };
+
+  // 收藏定位 — 跳到 chat + 高亮某条 message（用于收藏页"定位到聊天"）
+  // 复用 pendingDirectChatRef：WeChat mount 时会 consume，看到有值就直接 setOpenedCharId
+  // 跳过联系人列表直接进 Chat（撤销之前反向同步 effect 的方案，避免破坏联系人列表入口）
+  // 注意：不设 directEntryRef，因为收藏页跳过来的"按返回"行为跟 widget 直跳不同（见 WeChat.tsx）
+  const pendingHighlightMessageIdRef = useRef<string | null>(null);
+  const jumpToMessage = (charId: string, messageId: string) => {
+    pendingDirectChatRef.current = charId;
+    pendingHighlightMessageIdRef.current = messageId;
+    setActiveCharacterId(charId);
+    setActiveApp(AppID.Chat);
+  };
+  const consumePendingHighlightMessageId = () => {
+    const id = pendingHighlightMessageIdRef.current;
+    pendingHighlightMessageIdRef.current = null;
+    return id;
+  };
+
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
     setSuspendedCall(info);
     setActiveApp(AppID.Launcher);
@@ -2878,7 +2930,12 @@ if (!isVisible || !isChattingWithThisChar) {
     suspendedCall,
     suspendCall,
     resumeCall,
-    clearSuspendedCall
+    clearSuspendedCall,
+    jumpToChat,
+    consumePendingDirectChat,
+    consumeDirectEntry,
+    jumpToMessage,
+    consumePendingHighlightMessageId
   };
 
   return (

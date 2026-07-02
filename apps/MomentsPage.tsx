@@ -277,17 +277,19 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* 签名 — 单独白底行，靠右对齐（与头像左对齐） */}
+        {/* 签名 — 单独白底行，靠右对齐（与头像左对齐，靠红线位置） */}
         <div className="bg-white">
-          <button
+          <div
             onClick={() => setEditingSignature(true)}
-            onTouchEnd={(e) => { e.preventDefault(); setEditingSignature(true); }}
-            className="w-full px-4 py-3 pr-20 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors block"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setEditingSignature(true); }}
+            className="w-full px-4 py-3 pr-4 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer select-none"
           >
-            <span className="text-[13px] text-slate-500 leading-snug inline-block max-w-full">
+            <span className="text-[13px] text-slate-500 leading-snug">
               {signature || '点此添加签名...'}
             </span>
-          </button>
+          </div>
         </div>
 
         {/* 动态列表（无 border-t 分割线） */}

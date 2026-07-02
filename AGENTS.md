@@ -273,6 +273,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-02 | 聊天框 + / 表情包面板支持点空白处收起 | [`changelogs/2026-07-02-chat-input-panel-tap-outside.md`](./changelogs/2026-07-02-chat-input-panel-tap-outside.md) |
 | 2026-07-02 | 弹窗卡片 h-[80vh] 写死一刀切 — 暮色吐槽"4 个尺寸" | [`changelogs/2026-07-02-modal-h80vh-one-size.md`](./changelogs/2026-07-02-modal-h80vh-one-size.md) |
 | 2026-07-02 | API 弹窗统一到日程弹窗尺寸 (60vh) + 聊天页返回路径修复 | [`changelogs/2026-07-02-api-modal-size-and-back-path.md`](./changelogs/2026-07-02-api-modal-size-and-back-path.md) |
 | 2026-07-01 | 仿微信联系人页 — Step 1 框架壳 | [`changelogs/2026-07-01-wechat-step1.md`](./changelogs/2026-07-01-wechat-step1.md) |

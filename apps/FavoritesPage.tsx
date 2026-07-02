@@ -57,8 +57,9 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed]">
-      {/* Header */}
-      <div className="flex items-center px-3 py-3 bg-white border-b border-slate-200/60 shrink-0">
+      {/* Header — 用 justify-between 让 button / h1 / div 三栏分散对齐，
+          避免 h1 用 -ml-9 覆盖到 button 上导致点击事件被吃掉（参考日记/朋友圈） */}
+      <div className="flex items-center justify-between px-3 py-3 bg-white border-b border-slate-200/60 shrink-0">
         <button
           onClick={onBack}
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
@@ -66,7 +67,7 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         >
           <CaretLeft size={20} weight="bold" />
         </button>
-        <h1 className="flex-1 text-center text-base font-semibold text-slate-800 tracking-wide -ml-9">收藏</h1>
+        <h1 className="text-base font-semibold text-slate-800 tracking-wide">收藏</h1>
         <div className="w-9 h-9" />
       </div>
 

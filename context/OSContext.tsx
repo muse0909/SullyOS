@@ -250,6 +250,9 @@ interface OSContextType {
   // — 一次性 transient ref，WeChat mount 时 consume 然后清空
   jumpToChat: (charId: string) => void;
   consumePendingDirectChat: () => string | null;
+  // 配套标记：jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
+  // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
+  consumeDirectEntry: () => boolean;
 
   // Call Suspend
   suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
@@ -583,6 +586,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // Pending Direct Chat Ref — jumpToChat 设置一次性 transient 状态，
   // WeChat mount 时 consumeOnce 读取后清掉，下次进 WeChat 默认仍走联系人列表
   const pendingDirectChatRef = useRef<string | null>(null);
+  // Direct Entry Flag — jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
+  // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
+  const directEntryRef = useRef(false);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2773,10 +2779,11 @@ if (!isVisible || !isChattingWithThisChar) {
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 
-  // Direct chat jump — 设一次性 pending flag，WeChat mount 时 consume
+  // Direct chat jump — 设一次性 pending flag + direct entry 标记，WeChat mount 时 consume
   // 用 ref 而非 state 避免触发 re-render
   const jumpToChat = (charId: string) => {
     pendingDirectChatRef.current = charId;
+    directEntryRef.current = true;
     setActiveCharacterId(charId);
     setActiveApp(AppID.Chat);
   };
@@ -2784,6 +2791,11 @@ if (!isVisible || !isChattingWithThisChar) {
     const id = pendingDirectChatRef.current;
     pendingDirectChatRef.current = null;
     return id;
+  };
+  const consumeDirectEntry = () => {
+    const was = directEntryRef.current;
+    directEntryRef.current = false;
+    return was;
   };
 
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
@@ -2901,7 +2913,8 @@ if (!isVisible || !isChattingWithThisChar) {
     resumeCall,
     clearSuspendedCall,
     jumpToChat,
-    consumePendingDirectChat
+    consumePendingDirectChat,
+    consumeDirectEntry
   };
 
   return (

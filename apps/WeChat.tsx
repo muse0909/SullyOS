@@ -17,25 +17,38 @@ const TABS: { key: TabKey; label: string }[] = [
 // 占位发现 tab + 联系人 tab 走真实 characters
 // "我" tab 直接渲染 UserApp（个人档案）
 const WeChat: React.FC = () => {
-  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp, consumePendingDirectChat } = useOS();
+  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp, consumePendingDirectChat, consumeDirectEntry } = useOS();
 
   // 当前 Tab
   const [tab, setTab] = useState<TabKey>('messages');
   // 已点开的角色 id（null = 还在联系人列表）
   const [openedCharId, setOpenedCharId] = useState<string | null>(null);
+  // 入口标记：widget 直跳进来 → 按返回直接回桌面；联系人列表点入 → 按返回回联系人列表
+  const [cameFromDirectEntry, setCameFromDirectEntry] = useState(false);
 
   // Mount 时：检查是否有 pending direct chat（来自 launcher widget 直跳）
   // 有值就直接进 Chat，跳过联系人列表；读完清掉，不影响后续进 AppID.Chat
+  // 同时消费 direct entry 标记，决定返回行为
   useEffect(() => {
     const pending = consumePendingDirectChat();
     if (pending) {
       setOpenedCharId(pending);
+      if (consumeDirectEntry()) {
+        setCameFromDirectEntry(true);
+      }
     }
-  }, [consumePendingDirectChat]);
+  }, [consumePendingDirectChat, consumeDirectEntry]);
 
-  // Android 物理返回键 / 浏览器返回：优先回联系人列表，其次 closeApp
+  // Android 物理返回键 / 浏览器返回：
+  //   - widget 直跳入口 → 一次返回直接回桌面（不走联系人列表，因为用户压根没看过）
+  //   - 联系人列表点入 → 聊天页返回回联系人列表，再返回才到桌面（保持微信式结构）
+  //   - 联系人列表页 → 返回 closeApp（return false 让 OSContext.handleBack 处理）
   useEffect(() => {
     const unregister = registerBackHandler(() => {
+      if (cameFromDirectEntry && openedCharId) {
+        // widget 直跳：直接 closeApp（return false 让 OSContext.handleBack 走默认逻辑）
+        return false;
+      }
       if (openedCharId) {
         setOpenedCharId(null);
         return true;
@@ -43,7 +56,7 @@ const WeChat: React.FC = () => {
       return false;
     });
     return unregister;
-  }, [openedCharId, registerBackHandler]);
+  }, [cameFromDirectEntry, openedCharId, registerBackHandler]);
 
   // 同步 activeCharacterId — Chat.tsx 从 OSContext 拿这个值
   useEffect(() => {

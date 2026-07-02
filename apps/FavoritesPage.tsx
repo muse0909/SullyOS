@@ -1,10 +1,11 @@
 // FavoritesPage — 收藏页（发现页子页）
-// 顶 Tab：全部 / 星标
-// 内容：按角色分组的语音列表（每条一个格子，分割线分开）
-// 右上齿轮：未来加筛选/导出
+// 顶 Tab：消息收藏 / 语音收藏（暮色拍板）
+// 内容：按角色分组的收藏列表（每条一个格子，分割线分开）
+// 不再用"选角色"层级（暮色最初提议，但 4 层太深）—— 直接 Tab 切换
+// 星标：每条卡片自带的星标按钮（独立 tab 不需要"全部/星标"二级）
 
 import React, { useEffect, useState } from 'react';
-import { CaretLeft, Star, StarFour, ArrowSquareOut, Quotes } from '@phosphor-icons/react';
+import { CaretLeft, Star, StarFour, ArrowSquareOut, Quotes, ChatCircleDots } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   FavoriteItem,
@@ -16,23 +17,21 @@ import {
   markFavoriteInvalid,
 } from '../utils/favoritesStorage';
 
+type TabKey = 'text' | 'voice';
+
 const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const { characters, jumpToMessage, addToast } = useOS();
-  const [tab, setTab] = useState<'all' | 'starred'>('all');
+  const [tab, setTab] = useState<TabKey>('voice');
   const [items, setItems] = useState<FavoriteItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // 加载数据
+  // 加载数据（按 tab 筛选 + 按时间倒序）
   useEffect(() => {
     const load = () => {
-      if (tab === 'starred') {
-        setItems(getStarredFavorites());
-      } else {
-        setItems(getVoiceFavorites());
-      }
+      const all = getAllFavorites().filter((f) => f.type === tab);
+      setItems(all);
     };
     load();
-    // 监听 storage 变化（其他 tab 改 localStorage 时刷新）
     const onStorage = () => load();
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -80,21 +79,21 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         <div className="w-9 h-9" />
       </div>
 
-      {/* Tab Bar */}
+      {/* Tab Bar — 一级 Tab：消息收藏 / 语音收藏 */}
       <div className="flex bg-white border-b border-slate-200/60 shrink-0">
         <button
-          onClick={() => setTab('all')}
-          className={`flex-1 py-2.5 text-sm font-medium relative ${tab === 'all' ? 'text-amber-600' : 'text-slate-500'}`}
+          onClick={() => setTab('text')}
+          className={`flex-1 py-2.5 text-sm font-medium relative ${tab === 'text' ? 'text-amber-600' : 'text-slate-500'}`}
         >
-          全部
-          {tab === 'all' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-amber-500 rounded-full" />}
+          消息收藏
+          {tab === 'text' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-amber-500 rounded-full" />}
         </button>
         <button
-          onClick={() => setTab('starred')}
-          className={`flex-1 py-2.5 text-sm font-medium relative ${tab === 'starred' ? 'text-amber-600' : 'text-slate-500'}`}
+          onClick={() => setTab('voice')}
+          className={`flex-1 py-2.5 text-sm font-medium relative ${tab === 'voice' ? 'text-amber-600' : 'text-slate-500'}`}
         >
-          星标
-          {tab === 'starred' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-amber-500 rounded-full" />}
+          语音收藏
+          {tab === 'voice' && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-amber-500 rounded-full" />}
         </button>
       </div>
 
@@ -154,6 +153,9 @@ const FavoriteCard: React.FC<{
   const date = new Date(item.createdAt);
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
+  const isVoice = item.type === 'voice';
+  const isText = item.type === 'text';
+
   const handleAudioError = () => {
     markFavoriteInvalid(item.id);
     addToast('语音已失效（CDN 链接过期）', 'warning');
@@ -161,7 +163,7 @@ const FavoriteCard: React.FC<{
 
   return (
     <div className="bg-white px-4 py-3.5 border-b border-slate-100">
-      {/* 日期 */}
+      {/* 日期 + 星标 */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] text-slate-400 font-medium">{dateStr}</span>
         <div className="flex items-center gap-1">
@@ -176,30 +178,32 @@ const FavoriteCard: React.FC<{
         </div>
       </div>
 
-      {/* 语音条 */}
-      {item.invalid ? (
-        <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
-          语音已失效
-        </div>
-      ) : (
-        <audio
-          controls
-          src={item.url}
-          onError={handleAudioError}
-          className="w-full h-9"
-          preload="metadata"
-        />
+      {/* 语音条（仅 voice） */}
+      {isVoice && (
+        item.invalid ? (
+          <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
+            语音已失效
+          </div>
+        ) : (
+          <audio
+            controls
+            src={item.url}
+            onError={handleAudioError}
+            className="w-full h-9"
+            preload="metadata"
+          />
+        )
       )}
 
-      {/* 文字版（可展开） */}
+      {/* 文字版（voice 显示文字，text 显示原文） */}
       <button
         onClick={onToggleExpand}
-        className="mt-2 w-full text-left"
+        className={`mt-2 w-full text-left ${isText ? 'mt-0' : ''}`}
       >
-        <div className={`text-[12px] text-slate-600 leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
+        <div className={`text-[13px] text-slate-700 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>
           {item.text || '（无文字）'}
         </div>
-        {item.text && item.text.length > 60 && (
+        {item.text && item.text.length > 80 && (
           <div className="text-[10px] text-amber-600 mt-0.5">{expanded ? '收起' : '展开'}</div>
         )}
       </button>
@@ -225,14 +229,18 @@ const FavoriteCard: React.FC<{
 };
 
 // === 空状态 ===
-const EmptyState: React.FC<{ tab: 'all' | 'starred' }> = ({ tab }) => (
+const EmptyState: React.FC<{ tab: TabKey }> = ({ tab }) => (
   <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-    {tab === 'all' ? <Quotes size={40} weight="regular" className="mb-3 opacity-50" /> : <StarFour size={40} weight="regular" className="mb-3 opacity-50" />}
+    {tab === 'voice' ? (
+      <Quotes size={40} weight="regular" className="mb-3 opacity-50" />
+    ) : (
+      <ChatCircleDots size={40} weight="regular" className="mb-3 opacity-50" />
+    )}
     <div className="text-sm">
-      {tab === 'all' ? '还没有收藏的语音' : '还没有星标收藏'}
+      {tab === 'voice' ? '还没有收藏的语音' : '还没有收藏的消息'}
     </div>
     <div className="text-[11px] mt-1.5 text-center max-w-[240px] leading-relaxed">
-      {tab === 'all' ? 'AI 角色说话时会自动加入收藏' : '长按语音条 → 🌟 收藏，可永久保留'}
+      {tab === 'voice' ? 'AI 角色说话时会自动加入收藏' : '聊天页消息操作 → 🌟 收藏'}
     </div>
   </div>
 );

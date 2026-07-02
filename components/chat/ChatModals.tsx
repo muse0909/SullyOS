@@ -4,6 +4,8 @@ import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import { saveRemoteImage } from '../../utils/file';
+import { addFavorite, genFavoriteId, getAllFavorites } from '../../utils/favoritesStorage';
+import { useOS } from '../../context/OSContext';
 
 interface ChatModalsProps {
     modalType: string;
@@ -106,6 +108,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     isScheduleFeatureEnabled, onToggleScheduleFeature,
     voiceAvailable, onGenerateVoice,
 }) => {
+    const { addToast } = useOS();
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
@@ -509,16 +512,39 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </button>
                     )}
 
-                    {/* 星标收藏 — 仅 AI 语音消息显示（占位按钮，下一轮实现） */}
-                    {selectedMessage?.role === 'assistant' && selectedMessage?.voiceData?.url && (
+                    {/* 收藏消息 — 用户/AI 文本消息都支持（type: 'text'） */}
+                    {selectedMessage?.type === 'text' && selectedMessage?.content && (
                         <button
-                            onClick={() => { addToast('星标收藏 — 下一轮实现', 'info'); }}
+                            onClick={() => {
+                                if (!selectedMessage) return;
+                                const text = selectedMessage.content || '';
+                                if (!text.trim()) return;
+                                // 防重复：同 sourceMessageId 不重复加
+                                const existing = getAllFavorites().find(
+                                    (f) => f.sourceMessageId === selectedMessage.id && f.type === 'text'
+                                );
+                                if (existing) {
+                                    addToast('这条消息已收藏过', 'info');
+                                    return;
+                                }
+                                addFavorite({
+                                    id: genFavoriteId(),
+                                    type: 'text',
+                                    text: text,
+                                    charId: activeCharacter.id,
+                                    charName: activeCharacter.name,
+                                    sourceMessageId: selectedMessage.id,
+                                    createdAt: Date.now(),
+                                });
+                                addToast('已加入收藏', 'success');
+                                setModalType('none');
+                            }}
                             className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
                                 <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006Z" clipRule="evenodd" />
                             </svg>
-                            星标收藏
+                            收藏消息
                         </button>
                     )}
 

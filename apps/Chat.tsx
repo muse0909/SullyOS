@@ -23,7 +23,7 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { addFavorite, genFavoriteId, FavoriteItem } from '../utils/favoritesStorage';
+import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -33,14 +33,18 @@ const Chat: React.FC = () => {
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
     const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
+    // 用 ref 存 consumePendingHighlightMessageId — 避免放到 deps 触发死循环
+    // （OSContext.value 每次 render 都新建，函数引用每次 render 都变）
+    const consumePendingHighlightRef = useRef(consumePendingHighlightMessageId);
+    consumePendingHighlightRef.current = consumePendingHighlightMessageId;
     useEffect(() => {
-        const pending = consumePendingHighlightMessageId();
+        const pending = consumePendingHighlightRef.current();
         if (pending) {
             setHighlightMessageId(pending);
             // 2 秒后清掉高亮
             setTimeout(() => setHighlightMessageId(null), 2000);
         }
-    }, [consumePendingHighlightMessageId, activeCharacterId]);
+    }, [activeCharacterId]);
 
     // scroll 到目标 message
     useEffect(() => {

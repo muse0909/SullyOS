@@ -6,13 +6,13 @@ const STORAGE_KEY = 'sullyos_favorites_v1';
 
 export interface FavoriteItem {
   id: string;
-  type: 'voice' | 'image' | 'text';   // 这一轮只做 voice
-  url: string;                          // 优先 remote CDN URL（永久）
-  text: string;                         // 语音对应的文字版（UI 显示）
+  type: 'voice' | 'image' | 'text';   // voice/image 需要 url；text 不需要
+  url?: string;                         // 优先 remote CDN URL（voice/image 必填，text 留空）
+  text: string;                         // UI 显示用（语音是文字版，文本是原文）
   charId: string;
   charName: string;                     // 冗余存，避免 char 改名后找不到
   sourceMessageId: string;              // 关联到原 message
-  invalid?: boolean;                    // 远程 URL 失效标记
+  invalid?: boolean;                    // 远程 URL 失效标记（voice/image 才有）
   starred?: boolean;                    // 用户主动加星标
   createdAt: number;
 }

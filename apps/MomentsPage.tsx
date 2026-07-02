@@ -1,12 +1,12 @@
-// MomentsPage — 朋友圈主页（v2 修复版）
-// 修复：
-//   1. 签名移到头像下方（白底），不在封面图上
-//   2. 列表紧跟签名下方（紧贴封面图不要，给签名留白）
-//   3. 头像读 userProfile.avatar（不再用硬编码渐变）
-//   4. 封面图长按弹底部 modal（不用 confirm，避免误点取消清空）
-//   5. 退出去再回来数据丢失 → visibilitychange + 显式重读兜底
-//   6. 详情页 + 图片大图查看
-//   7. 顶部只留相机（去掉齿轮）
+// MomentsPage — 朋友圈主页（v3 修复版）
+// 修复 v2 反馈：
+//   1. 签名靠右对齐（头像左边）
+//   2. 头像去掉白圈底
+//   3. 签名下面的浅灰分割线去掉
+//   4. 名字在封面图上（跟头像并列，卡封面图底边上面一点点）
+//   5. 签名点击/长按不进编辑 → 之前是 z-index 被头像覆盖；现在签名独立行 + 留 padding-right
+//   6. 连发被吞 + 退出去再回来不见 → **localStorage quota 超出静默失败**（带图 dataURL 太大）
+//      修复：图片 canvas 压缩到 1080px / jpeg 0.7 + saveAllPosts 失败 addToast 提示
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CaretLeft, Camera, X, Heart, ChatCircleDots } from '@phosphor-icons/react';
@@ -19,13 +19,44 @@ import {
   setSignature,
   getCoverImage,
   setCoverImage,
+  saveAllPosts,
   genPostId,
 } from '../utils/momentsStorage';
 import FullScreenEditor from '../components/common/FullScreenEditor';
 
+// 压缩图片到 max 1080px + jpeg 0.7 —— 避免 localStorage quota 超出
+async function compressImage(dataUrl: string, maxDim = 1080, quality = 0.7): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const ratio = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.round(img.width * ratio);
+        const h = Math.round(img.height * ratio);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl); // 兜底：原图
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) {
+        resolve(dataUrl); // 兜底
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { theme, userProfile, addToast } = useOS();
-  const [posts, setPosts] = useState<MomentPost[]>(() => getAllPosts());
+  const { theme, userProfile, characters, addToast } = useOS();
+  const [posts, setPosts] = useState<MomentPost[]>(() => {
+    try { return getAllPosts(); } catch { return []; }
+  });
   const [signature, setSigState] = useState(getSignature());
   const [coverImage, setCoverImageState] = useState<string | null>(getCoverImage());
   const [editingSignature, setEditingSignature] = useState(false);
@@ -36,14 +67,19 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
 
-  // 刷新 posts 的统一函数
+  // 刷新数据
   const refreshPosts = useCallback(() => {
-    setPosts(getAllPosts());
-    setSigState(getSignature());
-    setCoverImageState(getCoverImage());
+    try {
+      const all = getAllPosts();
+      setPosts(all);
+      setSigState(getSignature());
+      setCoverImageState(getCoverImage());
+    } catch (e) {
+      console.error('[moments] refresh failed', e);
+    }
   }, []);
 
-  // 页面重新可见时（退出去再回来）刷新数据
+  // 页面重新可见时刷新（退出去再回来）
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
@@ -51,19 +87,19 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       }
     };
     document.addEventListener('visibilitychange', onVisible);
-    // 首次 mount 强制刷新（避免 useState 初始化时 localStorage 还没写入的边缘情况）
+    // mount 时强制刷新（兜底）
     refreshPosts();
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [refreshPosts]);
 
-  // 头像形状（主题 chatAvatarShape）
+  // 头像形状
   const avatarShape = theme.chatAvatarShape || 'circle';
   const avatarClass =
     avatarShape === 'circle' ? 'rounded-full' :
     avatarShape === 'rounded' ? 'rounded-2xl' :
     'rounded-md';
 
-  // 渲染用户头像元素（userProfile.avatar 优先）
+  // 渲染用户头像元素（无白圈底）
   const renderUserAvatar = (size: 'sm' | 'md' | 'lg' = 'md') => {
     const sizeClass = size === 'sm' ? 'w-10 h-10' : size === 'lg' ? 'w-16 h-16' : 'w-12 h-12';
     if (userProfile.avatar) {
@@ -87,7 +123,6 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   // 渲染角色头像
   const renderCharAvatar = (charId: string | undefined, name: string, charColor: number | undefined, size: 'sm' | 'md' = 'sm') => {
-    const { characters } = useOS();
     const char = characters.find((c) => c.id === charId);
     const sizeClass = size === 'sm' ? 'w-10 h-10' : 'w-12 h-12';
     if (char?.avatar) {
@@ -110,7 +145,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     );
   };
 
-  // 封面图长按弹选项 modal（不用 confirm，避免误点）
+  // 封面图长按
   const handleCoverPointerDown = () => {
     longPressTimerRef.current = window.setTimeout(() => {
       setShowCoverOptions(true);
@@ -154,27 +189,47 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     addToast('签名已更新', 'success');
   };
 
-  // 发布朋友圈
-  const handlePublish = (text: string, images: string[]) => {
+  // 发布朋友圈（带图片压缩 + quota 错误提示）
+  const handlePublish = async (text: string, images: string[]) => {
     if (!text.trim() && images.length === 0) return;
+
+    addToast('正在处理图片...', 'info');
+    const compressed = await Promise.all(images.map((img) => compressImage(img)));
+
     const newPost: MomentPost = {
       id: genPostId(),
       authorType: 'user',
       content: text,
-      images,
+      images: compressed,
       createdAt: Date.now(),
       likes: [],
       comments: [],
     };
-    const next = addPost(newPost);
-    setPosts(next);
+
+    // 先本地更新 state
+    const all = [newPost, ...posts];
+    setPosts(all);
     setShowPublisher(false);
-    addToast('已发表', 'success');
+
+    // 异步写 localStorage
+    try {
+      saveAllPosts(all);
+      addToast('已发表', 'success');
+    } catch (e: any) {
+      // quota 超出：撤回最新一条
+      if (e?.name === 'QuotaExceededError' || /quota/i.test(e?.message || '')) {
+        addToast('存储空间已满，已自动撤回该条动态。请删除一些旧动态', 'error');
+        const fallback = getAllPosts();
+        setPosts(fallback);
+      } else {
+        addToast('保存失败：' + (e?.message || '未知错误'), 'error');
+      }
+    }
   };
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed] overflow-hidden">
-      {/* 顶部工具栏（sticky） — 只留相机（齿轮去掉） */}
+      {/* 顶部工具栏（只留相机） */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-2 py-2 pointer-events-none">
         <button
           onClick={onBack}
@@ -194,7 +249,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
       {/* 可滚动主体 */}
       <div className="flex-1 overflow-y-auto">
-        {/* 封面图（不 sticky） */}
+        {/* 封面图 240px */}
         <div
           className="relative"
           style={{
@@ -210,35 +265,33 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           {coverImage && (
             <img src={coverImage} alt="封面" className="absolute inset-0 w-full h-full object-cover" />
           )}
+
+          {/* 名字 — 封面图上、头像左边（卡封面图底边上面一点） */}
+          <div className="absolute z-10" style={{ bottom: 12, right: 80 }}>
+            <span className="text-white text-base font-bold drop-shadow-md">{userProfile.name}</span>
+          </div>
+
+          {/* 头像 — 封面图右下角（无白圈底） */}
+          <div className="absolute z-10" style={{ bottom: 8, right: 12 }}>
+            {renderUserAvatar('lg')}
+          </div>
         </div>
 
-        {/* 头像 + 名字 + 签名（白底区域） — 在封面图下方 */}
-        <div className="bg-white px-4 pt-4 pb-4 relative">
-          {/* 头像 — 覆盖在封面图右下角（向上 32px 偏移） */}
-          <div className="absolute right-4 -top-12">
-            <div className="rounded-full p-1 bg-white shadow-md">
-              {renderUserAvatar('lg')}
-            </div>
-          </div>
-
-          {/* 名字（在头像下方右对齐 padding right） */}
-          <div className="pr-20">
-            <div className="text-base font-bold text-slate-800">{userProfile.name}</div>
-          </div>
-
-          {/* 签名 — 名字下方，可点编辑 */}
+        {/* 签名 — 单独白底行，靠右对齐（与头像左对齐） */}
+        <div className="bg-white">
           <button
             onClick={() => setEditingSignature(true)}
-            className="mt-1.5 text-left w-full hover:opacity-70 transition-opacity pr-4"
+            onTouchEnd={(e) => { e.preventDefault(); setEditingSignature(true); }}
+            className="w-full px-4 py-3 pr-20 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors block"
           >
-            <span className="text-[12px] text-slate-500 leading-snug block">
+            <span className="text-[13px] text-slate-500 leading-snug inline-block max-w-full">
               {signature || '点此添加签名...'}
             </span>
           </button>
         </div>
 
-        {/* 动态列表 */}
-        <div className="bg-white min-h-[200px] border-t border-slate-100">
+        {/* 动态列表（无 border-t 分割线） */}
+        <div className="bg-white min-h-[200px]">
           {posts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-slate-400">
               <Camera size={36} weight="regular" className="mb-3 opacity-50" />
@@ -328,7 +381,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         />
       )}
 
-      {/* 图片大图查看（全屏） */}
+      {/* 图片大图查看 */}
       {imageModal && (
         <ImageViewer src={imageModal} onClose={() => setImageModal(null)} />
       )}
@@ -343,6 +396,7 @@ const SimplePublisher: React.FC<{
 }> = ({ onClose, onPublish }) => {
   const [text, setText] = useState('');
   const [image, setImage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { addToast } = useOS();
 
@@ -359,17 +413,28 @@ const SimplePublisher: React.FC<{
     e.target.value = '';
   };
 
+  const handleSubmit = async () => {
+    if (submitting) return;
+    if (!text.trim() && !image) return;
+    setSubmitting(true);
+    try {
+      await onPublish(text, image ? [image] : []);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="absolute inset-0 z-40 bg-white flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-        <button onClick={onClose} className="text-sm text-slate-500">取消</button>
+        <button onClick={onClose} disabled={submitting} className="text-sm text-slate-500 disabled:opacity-50">取消</button>
         <h2 className="text-sm font-semibold text-slate-800">发表朋友圈</h2>
         <button
-          onClick={() => onPublish(text, image ? [image] : [])}
-          disabled={!text.trim() && !image}
+          onClick={handleSubmit}
+          disabled={(!text.trim() && !image) || submitting}
           className="px-4 py-1.5 bg-emerald-500 text-white text-xs font-bold rounded-full disabled:opacity-40"
         >
-          发表
+          {submitting ? '发布中' : '发表'}
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-4">
@@ -501,7 +566,7 @@ const PostCard: React.FC<{
   );
 };
 
-// === 动态详情 modal（按图3 仿的 v4 预览） ===
+// === 动态详情 modal ===
 const PostDetailModal: React.FC<{
   post: MomentPost;
   onClose: () => void;
@@ -581,7 +646,7 @@ const PostDetailModal: React.FC<{
   );
 };
 
-// === 图片大图查看（全屏黑色背景） ===
+// === 图片大图查看 ===
 const ImageViewer: React.FC<{ src: string; onClose: () => void }> = ({ src, onClose }) => {
   return (
     <div

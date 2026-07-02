@@ -3,6 +3,7 @@ import { useOS } from '../context/OSContext';
 import { CharacterProfile } from '../types';
 import Chat from './Chat';
 import UserApp from './UserApp';
+import DiscoverPage from './DiscoverPage';
 
 // 三个 Tab 键
 type TabKey = 'messages' | 'discover' | 'me';
@@ -109,7 +110,7 @@ const WeChat: React.FC = () => {
           <MessagesTab characters={characters} onOpenChar={setOpenedCharId} />
         )}
         {tab === 'discover' && (
-          <PlaceholderTab title="发现" hint="朋友圈 · 收藏 · 日记 — 即将到来" />
+          <DiscoverPage onClose={() => setTab('messages')} />
         )}
         {tab === 'me' && <UserApp />}
       </div>

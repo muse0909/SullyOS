@@ -1,12 +1,15 @@
-// MomentsPage — 朋友圈主页
-// 仿微信：顶部工具栏（sticky）+ 封面图 + 名字/签名/头像（一起滚）+ 动态列表
-// 头像形状跟随主题 OSTheme.chatAvatarShape（circle / rounded / square）
-// 签名可编辑（点签名 → FullScreenEditor v2）
-// 封面图长按换图（FileReader → localStorage）
-// 相机按钮：跳到发布器（先占位：弹个简单输入框）
+// MomentsPage — 朋友圈主页（v2 修复版）
+// 修复：
+//   1. 签名移到头像下方（白底），不在封面图上
+//   2. 列表紧跟签名下方（紧贴封面图不要，给签名留白）
+//   3. 头像读 userProfile.avatar（不再用硬编码渐变）
+//   4. 封面图长按弹底部 modal（不用 confirm，避免误点取消清空）
+//   5. 退出去再回来数据丢失 → visibilitychange + 显式重读兜底
+//   6. 详情页 + 图片大图查看
+//   7. 顶部只留相机（去掉齿轮）
 
-import React, { useEffect, useRef, useState } from 'react';
-import { CaretLeft, Gear, Camera, Heart, ChatCircleDots } from '@phosphor-icons/react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { CaretLeft, Camera, X, Heart, ChatCircleDots } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   MomentPost,
@@ -22,35 +25,95 @@ import FullScreenEditor from '../components/common/FullScreenEditor';
 
 const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const { theme, userProfile, addToast } = useOS();
-  const [posts, setPosts] = useState<MomentPost[]>([]);
+  const [posts, setPosts] = useState<MomentPost[]>(() => getAllPosts());
   const [signature, setSigState] = useState(getSignature());
   const [coverImage, setCoverImageState] = useState<string | null>(getCoverImage());
   const [editingSignature, setEditingSignature] = useState(false);
   const [showPublisher, setShowPublisher] = useState(false);
+  const [showCoverOptions, setShowCoverOptions] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<MomentPost | null>(null);
+  const [imageModal, setImageModal] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
+  // 刷新 posts 的统一函数
+  const refreshPosts = useCallback(() => {
     setPosts(getAllPosts());
+    setSigState(getSignature());
+    setCoverImageState(getCoverImage());
   }, []);
 
-  // 头像形状
+  // 页面重新可见时（退出去再回来）刷新数据
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        refreshPosts();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    // 首次 mount 强制刷新（避免 useState 初始化时 localStorage 还没写入的边缘情况）
+    refreshPosts();
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshPosts]);
+
+  // 头像形状（主题 chatAvatarShape）
   const avatarShape = theme.chatAvatarShape || 'circle';
   const avatarClass =
     avatarShape === 'circle' ? 'rounded-full' :
     avatarShape === 'rounded' ? 'rounded-2xl' :
     'rounded-md';
 
-  // 封面图长按换图
+  // 渲染用户头像元素（userProfile.avatar 优先）
+  const renderUserAvatar = (size: 'sm' | 'md' | 'lg' = 'md') => {
+    const sizeClass = size === 'sm' ? 'w-10 h-10' : size === 'lg' ? 'w-16 h-16' : 'w-12 h-12';
+    if (userProfile.avatar) {
+      return (
+        <img
+          src={userProfile.avatar}
+          alt={userProfile.name}
+          className={`${sizeClass} ${avatarClass} border-2 border-white object-cover bg-slate-100`}
+        />
+      );
+    }
+    return (
+      <div
+        className={`${sizeClass} ${avatarClass} border-2 border-white flex items-center justify-center text-white font-bold shadow-sm`}
+        style={{ background: 'linear-gradient(135deg, #fbbf24, #f59e0b)' }}
+      >
+        {(userProfile.name || '?').slice(0, 1)}
+      </div>
+    );
+  };
+
+  // 渲染角色头像
+  const renderCharAvatar = (charId: string | undefined, name: string, charColor: number | undefined, size: 'sm' | 'md' = 'sm') => {
+    const { characters } = useOS();
+    const char = characters.find((c) => c.id === charId);
+    const sizeClass = size === 'sm' ? 'w-10 h-10' : 'w-12 h-12';
+    if (char?.avatar) {
+      return (
+        <img
+          src={char.avatar}
+          alt={name}
+          className={`${sizeClass} ${avatarClass} object-cover bg-slate-100`}
+        />
+      );
+    }
+    const bg = typeof charColor === 'number' ? `hsl(${charColor}, 70%, 65%)` : 'linear-gradient(135deg, #a78bfa, #8b5cf6)';
+    return (
+      <div
+        className={`${sizeClass} ${avatarClass} flex items-center justify-center text-white font-bold text-sm`}
+        style={{ background: bg }}
+      >
+        {name.slice(0, 1)}
+      </div>
+    );
+  };
+
+  // 封面图长按弹选项 modal（不用 confirm，避免误点）
   const handleCoverPointerDown = () => {
     longPressTimerRef.current = window.setTimeout(() => {
-      if (window.confirm('换封面图？（取消则恢复默认渐变）')) {
-        fileInputRef.current?.click();
-      } else {
-        setCoverImage(null);
-        setCoverImageState(null);
-        addToast('已恢复默认封面', 'success');
-      }
+      setShowCoverOptions(true);
     }, 600);
   };
   const handleCoverPointerUp = () => {
@@ -76,6 +139,12 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     reader.readAsDataURL(file);
     e.target.value = '';
   };
+  const handleResetCover = () => {
+    setCoverImage(null);
+    setCoverImageState(null);
+    setShowCoverOptions(false);
+    addToast('已恢复默认封面', 'success');
+  };
 
   // 签名保存
   const handleSignatureConfirm = (text: string) => {
@@ -85,7 +154,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     addToast('签名已更新', 'success');
   };
 
-  // 发布朋友圈（最简版：文本 + 可选图片，先用一个简单的输入）
+  // 发布朋友圈
   const handlePublish = (text: string, images: string[]) => {
     if (!text.trim() && images.length === 0) return;
     const newPost: MomentPost = {
@@ -105,7 +174,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed] overflow-hidden">
-      {/* 顶部工具栏（sticky） */}
+      {/* 顶部工具栏（sticky） — 只留相机（齿轮去掉） */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-2 py-2 pointer-events-none">
         <button
           onClick={onBack}
@@ -114,30 +183,26 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         >
           <CaretLeft size={20} weight="bold" />
         </button>
-        <div className="flex items-center gap-2 pointer-events-auto">
-          <button
-            className="w-9 h-9 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white active:scale-95 transition-transform"
-            aria-label="设置"
-            onClick={() => addToast('朋友圈设置 — 下一轮做', 'info')}
-          >
-            <Gear size={18} weight="bold" />
-          </button>
-          <button
-            className="w-9 h-9 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white active:scale-95 transition-transform"
-            aria-label="发表朋友圈"
-            onClick={() => setShowPublisher(true)}
-          >
-            <Camera size={18} weight="bold" />
-          </button>
-        </div>
+        <button
+          className="w-9 h-9 mr-1 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
+          aria-label="发表朋友圈"
+          onClick={() => setShowPublisher(true)}
+        >
+          <Camera size={18} weight="bold" />
+        </button>
       </div>
 
       {/* 可滚动主体 */}
       <div className="flex-1 overflow-y-auto">
-        {/* 封面图 + 名字/签名/头像 = 一起滚的单元 */}
+        {/* 封面图（不 sticky） */}
         <div
           className="relative"
-          style={{ height: 280, background: coverImage ? undefined : 'linear-gradient(180deg, #5d4037 0%, #8d6e63 30%, #d7a96e 60%, #f4e4bc 100%)' }}
+          style={{
+            height: 240,
+            background: coverImage
+              ? undefined
+              : 'linear-gradient(180deg, #5d4037 0%, #8d6e63 30%, #d7a96e 60%, #f4e4bc 100%)',
+          }}
           onPointerDown={handleCoverPointerDown}
           onPointerUp={handleCoverPointerUp}
           onPointerLeave={handleCoverPointerUp}
@@ -145,37 +210,35 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           {coverImage && (
             <img src={coverImage} alt="封面" className="absolute inset-0 w-full h-full object-cover" />
           )}
+        </div>
 
-          {/* 名字"暮色" — 右上方 */}
-          <div className="absolute z-10" style={{ top: 220, right: 80 }}>
-            <span className="text-white text-sm font-semibold drop-shadow-md">{userProfile.name}</span>
-          </div>
-
-          {/* 签名 — 名字下方，宽度大 */}
-          <div className="absolute z-10" style={{ top: 240, left: 16, right: 80 }}>
-            <button
-              onClick={() => setEditingSignature(true)}
-              className="text-left w-full hover:opacity-80 transition-opacity"
-            >
-              <span className="text-white/95 text-[12px] drop-shadow-md leading-snug block">
-                {signature || '点此添加签名...'}
-              </span>
-            </button>
-          </div>
-
-          {/* 圆形头像 — 右下角（跟随主题 chatAvatarShape） */}
-          <div className="absolute z-10" style={{ bottom: 12, right: 12 }}>
-            <div
-              className={`w-16 h-16 ${avatarClass} border-2 border-white shadow-lg flex items-center justify-center text-white text-xl font-bold`}
-              style={{ background: 'linear-gradient(135deg, #fbbf24, #f59e0b)' }}
-            >
-              {(userProfile.name || '?').slice(0, 1)}
+        {/* 头像 + 名字 + 签名（白底区域） — 在封面图下方 */}
+        <div className="bg-white px-4 pt-4 pb-4 relative">
+          {/* 头像 — 覆盖在封面图右下角（向上 32px 偏移） */}
+          <div className="absolute right-4 -top-12">
+            <div className="rounded-full p-1 bg-white shadow-md">
+              {renderUserAvatar('lg')}
             </div>
           </div>
+
+          {/* 名字（在头像下方右对齐 padding right） */}
+          <div className="pr-20">
+            <div className="text-base font-bold text-slate-800">{userProfile.name}</div>
+          </div>
+
+          {/* 签名 — 名字下方，可点编辑 */}
+          <button
+            onClick={() => setEditingSignature(true)}
+            className="mt-1.5 text-left w-full hover:opacity-70 transition-opacity pr-4"
+          >
+            <span className="text-[12px] text-slate-500 leading-snug block">
+              {signature || '点此添加签名...'}
+            </span>
+          </button>
         </div>
 
         {/* 动态列表 */}
-        <div className="bg-white min-h-[200px]">
+        <div className="bg-white min-h-[200px] border-t border-slate-100">
           {posts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-slate-400">
               <Camera size={36} weight="regular" className="mb-3 opacity-50" />
@@ -184,13 +247,20 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             </div>
           ) : (
             posts.map((post) => (
-              <PostCard key={post.id} post={post} avatarClass={avatarClass} />
+              <PostCard
+                key={post.id}
+                post={post}
+                avatarClass={avatarClass}
+                onOpenDetail={() => setSelectedPost(post)}
+                onOpenImage={(src) => setImageModal(src)}
+                renderCharAvatar={renderCharAvatar}
+              />
             ))
           )}
         </div>
       </div>
 
-      {/* 隐藏的 file input（长按封面图触发） */}
+      {/* 隐藏的 file input */}
       <input
         ref={fileInputRef}
         type="file"
@@ -209,18 +279,64 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         />
       )}
 
-      {/* 极简发布器（占位，下一轮做完整版） */}
+      {/* 封面图选项 modal（长按触发） */}
+      {showCoverOptions && (
+        <div
+          className="absolute inset-0 z-30 bg-black/40 flex items-end"
+          onClick={() => setShowCoverOptions(false)}
+        >
+          <div className="bg-white w-full rounded-t-3xl p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center text-xs text-slate-400 mb-2 py-1">封面图</div>
+            <button
+              onClick={() => { fileInputRef.current?.click(); setShowCoverOptions(false); }}
+              className="w-full py-3.5 bg-slate-100 rounded-2xl text-sm font-medium text-slate-700 active:scale-95 transition-transform"
+            >
+              换封面图
+            </button>
+            <button
+              onClick={handleResetCover}
+              className="w-full py-3.5 bg-slate-100 rounded-2xl text-sm font-medium text-slate-700 active:scale-95 transition-transform"
+            >
+              恢复默认
+            </button>
+            <button
+              onClick={() => setShowCoverOptions(false)}
+              className="w-full py-3.5 text-sm text-slate-500 active:scale-95 transition-transform"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 极简发布器 */}
       {showPublisher && (
         <SimplePublisher
           onClose={() => setShowPublisher(false)}
           onPublish={handlePublish}
         />
       )}
+
+      {/* 动态详情 modal */}
+      {selectedPost && (
+        <PostDetailModal
+          post={selectedPost}
+          onClose={() => setSelectedPost(null)}
+          onOpenImage={(src) => setImageModal(src)}
+          avatarClass={avatarClass}
+          renderCharAvatar={renderCharAvatar}
+        />
+      )}
+
+      {/* 图片大图查看（全屏） */}
+      {imageModal && (
+        <ImageViewer src={imageModal} onClose={() => setImageModal(null)} />
+      )}
     </div>
   );
 };
 
-// === 极简发布器（这一轮先用，最简版） ===
+// === 极简发布器 ===
 const SimplePublisher: React.FC<{
   onClose: () => void;
   onPublish: (text: string, images: string[]) => void;
@@ -228,6 +344,7 @@ const SimplePublisher: React.FC<{
   const [text, setText] = useState('');
   const [image, setImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { addToast } = useOS();
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -243,7 +360,7 @@ const SimplePublisher: React.FC<{
   };
 
   return (
-    <div className="absolute inset-0 z-30 bg-white flex flex-col">
+    <div className="absolute inset-0 z-40 bg-white flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
         <button onClick={onClose} className="text-sm text-slate-500">取消</button>
         <h2 className="text-sm font-semibold text-slate-800">发表朋友圈</h2>
@@ -286,37 +403,74 @@ const SimplePublisher: React.FC<{
   );
 };
 
-// === 单条 post 卡片（极简） ===
-const PostCard: React.FC<{ post: MomentPost; avatarClass: string }> = ({ post, avatarClass }) => {
-  const { characters } = useOS();
+// === 单条 post 卡片 ===
+const PostCard: React.FC<{
+  post: MomentPost;
+  avatarClass: string;
+  onOpenDetail: () => void;
+  onOpenImage: (src: string) => void;
+  renderCharAvatar: (charId: string | undefined, name: string, charColor: number | undefined, size?: 'sm' | 'md') => React.ReactNode;
+}> = ({ post, avatarClass, onOpenDetail, onOpenImage, renderCharAvatar }) => {
+  const { characters, userProfile } = useOS();
   const authorChar = post.authorType === 'char' ? characters.find((c) => c.id === post.charId) : null;
-  const authorName = post.authorType === 'user' ? '暮色' : authorChar?.name || 'AI';
-  const authorAvatarBg = post.authorType === 'user'
-    ? 'linear-gradient(135deg, #fbbf24, #f59e0b)'
-    : (authorChar?.themeColor ? `hsl(${authorChar.themeColor}, 70%, 65%)` : 'linear-gradient(135deg, #a78bfa, #8b5cf6)');
+  const authorName = post.authorType === 'user' ? userProfile.name : authorChar?.name || 'AI';
+  const authorColor = post.authorType === 'user' ? undefined : authorChar?.themeColor;
 
   return (
     <div className="flex gap-3 p-3 border-b border-slate-100 bg-white">
-      <div
-        className={`w-10 h-10 ${avatarClass} shrink-0 flex items-center justify-center text-white font-bold text-sm`}
-        style={{ background: authorAvatarBg }}
-      >
-        {authorName.slice(0, 1)}
+      <div className="shrink-0">
+        {post.authorType === 'user' ? (
+          userProfile.avatar ? (
+            <img
+              src={userProfile.avatar}
+              alt={authorName}
+              className={`w-10 h-10 ${avatarClass} object-cover bg-slate-100`}
+            />
+          ) : (
+            <div
+              className={`w-10 h-10 ${avatarClass} flex items-center justify-center text-white font-bold text-sm`}
+              style={{ background: 'linear-gradient(135deg, #fbbf24, #f59e0b)' }}
+            >
+              {authorName.slice(0, 1)}
+            </div>
+          )
+        ) : (
+          renderCharAvatar(post.charId, authorName, authorColor, 'sm')
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold text-slate-800">{authorName}</div>
-        <div className="text-sm text-slate-700 mt-1 leading-relaxed whitespace-pre-wrap break-words">{post.content}</div>
+        <button onClick={onOpenDetail} className="text-left w-full">
+          <div className="text-sm text-slate-700 mt-1 leading-relaxed whitespace-pre-wrap break-words">{post.content}</div>
+        </button>
         {post.images.length > 0 && (
           <div
             className="mt-2 grid gap-1"
-            style={{ gridTemplateColumns: post.images.length === 1 ? '1fr' : 'repeat(3, 1fr)', maxWidth: post.images.length === 1 ? 220 : undefined }}
+            style={{
+              gridTemplateColumns: post.images.length === 1 ? '1fr' : 'repeat(3, 1fr)',
+              maxWidth: post.images.length === 1 ? 220 : undefined,
+            }}
           >
             {post.images.map((img, i) => (
-              <img key={i} src={img} alt="" className="w-full aspect-square object-cover rounded" />
+              <button
+                key={i}
+                onClick={() => onOpenImage(img)}
+                className="block active:opacity-80 transition-opacity"
+              >
+                <img src={img} alt="" className="w-full aspect-square object-cover rounded" />
+              </button>
             ))}
           </div>
         )}
-        <div className="text-[10px] text-slate-400 mt-1.5">{formatTime(post.createdAt)}</div>
+        <div className="flex items-center justify-between mt-1.5">
+          <div className="text-[10px] text-slate-400">{formatTime(post.createdAt)}</div>
+          <button
+            onClick={onOpenDetail}
+            className="text-[10px] text-slate-400 hover:text-slate-600"
+          >
+            <ChatCircleDots size={14} weight="regular" />
+          </button>
+        </div>
         {(post.likes.length > 0 || post.comments.length > 0) && (
           <div className="mt-2 bg-slate-50 rounded-lg p-2 text-xs space-y-1">
             {post.likes.length > 0 && (
@@ -329,7 +483,9 @@ const PostCard: React.FC<{ post: MomentPost; avatarClass: string }> = ({ post, a
               <div className="space-y-0.5 text-slate-700">
                 {post.comments.slice(0, 2).map((c) => (
                   <div key={c.id}>
-                    <span className="font-semibold text-slate-800">{c.authorType === 'user' ? '暮色' : (characters.find((x) => x.id === c.charId)?.name || 'AI')}：</span>
+                    <span className="font-semibold text-slate-800">
+                      {c.authorType === 'user' ? userProfile.name : (characters.find((x) => x.id === c.charId)?.name || 'AI')}：
+                    </span>
                     <span>{c.content}</span>
                   </div>
                 ))}
@@ -341,6 +497,110 @@ const PostCard: React.FC<{ post: MomentPost; avatarClass: string }> = ({ post, a
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+// === 动态详情 modal（按图3 仿的 v4 预览） ===
+const PostDetailModal: React.FC<{
+  post: MomentPost;
+  onClose: () => void;
+  onOpenImage: (src: string) => void;
+  avatarClass: string;
+  renderCharAvatar: (charId: string | undefined, name: string, charColor: number | undefined, size?: 'sm' | 'md') => React.ReactNode;
+}> = ({ post, onClose, onOpenImage, avatarClass, renderCharAvatar }) => {
+  const { characters, userProfile } = useOS();
+  const authorChar = post.authorType === 'char' ? characters.find((c) => c.id === post.charId) : null;
+  const authorName = post.authorType === 'user' ? userProfile.name : authorChar?.name || 'AI';
+  const authorColor = post.authorType === 'user' ? undefined : authorChar?.themeColor;
+
+  return (
+    <div className="absolute inset-0 z-40 bg-[#ededed] flex flex-col">
+      <div className="flex items-center px-4 py-2.5 bg-white border-b border-slate-100">
+        <button onClick={onClose} className="text-slate-500 text-lg">‹</button>
+        <h2 className="text-sm font-semibold text-slate-800 ml-2">动态详情</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="bg-white p-3 flex gap-2.5">
+          <div className="shrink-0">
+            {post.authorType === 'user' ? (
+              userProfile.avatar ? (
+                <img src={userProfile.avatar} alt="" className={`w-10 h-10 ${avatarClass} object-cover bg-slate-100`} />
+              ) : (
+                <div className={`w-10 h-10 ${avatarClass} flex items-center justify-center text-white font-bold text-sm`} style={{ background: 'linear-gradient(135deg, #fbbf24, #f59e0b)' }}>
+                  {authorName.slice(0, 1)}
+                </div>
+              )
+            ) : renderCharAvatar(post.charId, authorName, authorColor, 'sm')}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-slate-800">{authorName}</div>
+            <div className="text-sm text-slate-700 mt-1 leading-relaxed whitespace-pre-wrap break-words">{post.content}</div>
+            {post.images.length > 0 && (
+              <div
+                className="mt-2 grid gap-1"
+                style={{
+                  gridTemplateColumns: post.images.length === 1 ? '1fr' : 'repeat(3, 1fr)',
+                  maxWidth: post.images.length === 1 ? 220 : undefined,
+                }}
+              >
+                {post.images.map((img, i) => (
+                  <button key={i} onClick={() => onOpenImage(img)} className="block active:opacity-80 transition-opacity">
+                    <img src={img} alt="" className="w-full aspect-square object-cover rounded" />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="text-[10px] text-slate-400 mt-1.5">{formatTime(post.createdAt)}</div>
+          </div>
+        </div>
+        <div className="bg-white px-3 pb-3 border-b border-slate-100">
+          {post.likes.length > 0 && (
+            <div className="bg-slate-50 rounded-lg p-2 text-xs flex items-center gap-1 mb-1.5">
+              <Heart size={12} weight="fill" className="text-red-400" />
+              <span className="text-slate-700">{post.likes.length} 人赞过</span>
+            </div>
+          )}
+          {post.comments.length > 0 ? (
+            <div className="bg-slate-50 rounded-lg p-2 text-xs space-y-1.5">
+              {post.comments.map((c) => (
+                <div key={c.id}>
+                  <span className="font-semibold text-slate-800">
+                    {c.authorType === 'user' ? userProfile.name : (characters.find((x) => x.id === c.charId)?.name || 'AI')}：
+                  </span>
+                  <span className="text-slate-700">{c.content}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center text-xs text-slate-400 py-3">还没有评论</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// === 图片大图查看（全屏黑色背景） ===
+const ImageViewer: React.FC<{ src: string; onClose: () => void }> = ({ src, onClose }) => {
+  return (
+    <div
+      className="absolute inset-0 z-50 bg-black/95 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <button
+        onClick={onClose}
+        className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white active:scale-95 transition-transform z-10"
+        aria-label="关闭"
+      >
+        <X size={20} weight="bold" />
+      </button>
+      <img
+        src={src}
+        alt=""
+        className="max-w-full max-h-full object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
     </div>
   );
 };

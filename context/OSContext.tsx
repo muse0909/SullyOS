@@ -2801,8 +2801,12 @@ if (!isVisible || !isChattingWithThisChar) {
   };
 
   // 收藏定位 — 跳到 chat + 高亮某条 message（用于收藏页"定位到聊天"）
+  // 复用 pendingDirectChatRef：WeChat mount 时会 consume，看到有值就直接 setOpenedCharId
+  // 跳过联系人列表直接进 Chat（撤销之前反向同步 effect 的方案，避免破坏联系人列表入口）
+  // 注意：不设 directEntryRef，因为收藏页跳过来的"按返回"行为跟 widget 直跳不同（见 WeChat.tsx）
   const pendingHighlightMessageIdRef = useRef<string | null>(null);
   const jumpToMessage = (charId: string, messageId: string) => {
+    pendingDirectChatRef.current = charId;
     pendingHighlightMessageIdRef.current = messageId;
     setActiveCharacterId(charId);
     setActiveApp(AppID.Chat);

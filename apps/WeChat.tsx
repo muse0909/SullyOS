@@ -60,20 +60,36 @@ const WeChat: React.FC = () => {
   }, [cameFromDirectEntry, openedCharId, registerBackHandler]);
 
   // 同步 activeCharacterId — Chat.tsx 从 OSContext 拿这个值
-  // 反向同步：activeCharacterId 外部被改了（比如收藏页"定位到聊天"）
-  // → 也自动 setOpenedCharId，让 WeChat 路由进 Chat
+  // 修复 Bug 2（聊天页 chars 面板切换切不了）：
+  //   原 deps 含 [openedCharId, activeCharacterId, setActiveCharacterId]
+  //   → 用户在 chat 内 chars 面板 setActiveCharacterId(newId) 后，
+  //     此 effect 检测到 openedCharId(oldId) !== activeCharacterId(newId)
+  //     → setActiveCharacterId(openedCharId) 覆盖回 oldId，切换失效
+  // 修法：deps 只用 [openedCharId, setActiveCharacterId]，
+  //   只有联系人列表点入（openedCharId 变化）时才同步；
+  //   Chat 内 chars 面板切角色（activeCharacterId 变化）不再触发反向覆盖
   useEffect(() => {
     if (openedCharId && openedCharId !== activeCharacterId) {
       setActiveCharacterId(openedCharId);
     }
-  }, [openedCharId, activeCharacterId, setActiveCharacterId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openedCharId, setActiveCharacterId]);
 
-  // 收藏页"定位到聊天"反向同步
+  // 修复 Bug 1（联系人页被反向同步 effect 破坏）：
+  //   撤掉原来的 "activeCharacterId → openedCharId" 反向同步 effect，
+  //   改走 pendingDirectChatRef 路径（见 context/OSContext.tsx jumpToMessage）：
+  //     - 普通进 WeChat：pendingDirectChatRef 为 null → 不动 → 显示联系人列表 ✓
+  //     - jumpToMessage 收藏页跳转：pendingDirectChatRef = charId → consume 后 setOpenedCharId → 进 Chat ✓
+  //   这个 effect 处理 WeChat 已 mounted 时收到 jumpToMessage 的场景（收藏页本身在 WeChat 内，
+  //   setActiveApp(AppID.Chat) 不会触发 WeChat 重新 mount，所以上面的 mount effect 不会再跑）。
+  //   普通字符切换走 chars 面板（setActiveCharacterId 不走 pendingDirectChatRef）→ 这里 consume 拿到 null → 不动 → OK
   useEffect(() => {
-    if (activeCharacterId && !openedCharId) {
-      setOpenedCharId(activeCharacterId);
+    const pending = consumePendingDirectChat();
+    if (pending && !openedCharId) {
+      setOpenedCharId(pending);
     }
-  }, [activeCharacterId, openedCharId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCharacterId]);
 
   // 已选角色 → 嵌套 Chat
   // 顶栏左侧 onClose 交给 Chat 自己的 ChatHeaderShell 处理：

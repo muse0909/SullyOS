@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { CaretRight, Gear, BookOpen, BookmarkSimple, Smiley } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import MomentsPage from './MomentsPage';
+import FavoritesPage from './FavoritesPage';
 
 type SubPage = 'list' | 'moments' | 'favorites' | 'journal';
 
@@ -18,9 +19,13 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     return <MomentsPage onBack={() => setSubPage('list')} />;
   }
 
-  // 子页：收藏 / 日记（暂未实现）
-  if (subPage === 'favorites' || subPage === 'journal') {
-    const isFavorites = subPage === 'favorites';
+  // 子页：收藏（语音收藏，按角色分组）
+  if (subPage === 'favorites') {
+    return <FavoritesPage onBack={() => setSubPage('list')} />;
+  }
+
+  // 子页：日记（暂未实现）
+  if (subPage === 'journal') {
     return (
       <div className="absolute inset-0 flex flex-col bg-[#ededed]">
         <div className="flex items-center justify-between px-2 py-3 bg-white border-b border-slate-200/60 shrink-0">
@@ -33,18 +38,14 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
             </svg>
           </button>
-          <h1 className="text-base font-semibold text-slate-800 tracking-wide">{isFavorites ? '收藏' : '日记'}</h1>
+          <h1 className="text-base font-semibold text-slate-800 tracking-wide">日记</h1>
           <div className="w-9 h-9" />
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
           <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center mb-4 shadow-sm">
-            {isFavorites ? (
-              <BookmarkSimple size={28} weight="regular" className="text-slate-300" />
-            ) : (
-              <BookOpen size={28} weight="regular" className="text-slate-300" />
-            )}
+            <BookOpen size={28} weight="regular" className="text-slate-300" />
           </div>
-          <div className="text-sm text-slate-500">{isFavorites ? '收藏夹' : '日记'} — 敬请期待</div>
+          <div className="text-sm text-slate-500">日记 — 敬请期待</div>
           <div className="text-[11px] text-slate-400 mt-1">先把朋友圈跑通，下一轮做</div>
         </div>
       </div>

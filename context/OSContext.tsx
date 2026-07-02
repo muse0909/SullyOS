@@ -253,6 +253,8 @@ interface OSContextType {
   // 配套标记：jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
   // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
   consumeDirectEntry: () => boolean;
+  // 收藏定位：点击收藏页"定位到聊天"时调，Chat 页面 mount/激活时 consume 决定 scroll/highlight
+  consumePendingHighlightMessageId: () => string | null;
 
   // Call Suspend
   suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
@@ -2798,6 +2800,19 @@ if (!isVisible || !isChattingWithThisChar) {
     return was;
   };
 
+  // 收藏定位 — 跳到 chat + 高亮某条 message（用于收藏页"定位到聊天"）
+  const pendingHighlightMessageIdRef = useRef<string | null>(null);
+  const jumpToMessage = (charId: string, messageId: string) => {
+    pendingHighlightMessageIdRef.current = messageId;
+    setActiveCharacterId(charId);
+    setActiveApp(AppID.Chat);
+  };
+  const consumePendingHighlightMessageId = () => {
+    const id = pendingHighlightMessageIdRef.current;
+    pendingHighlightMessageIdRef.current = null;
+    return id;
+  };
+
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
     setSuspendedCall(info);
     setActiveApp(AppID.Launcher);
@@ -2914,7 +2929,9 @@ if (!isVisible || !isChattingWithThisChar) {
     clearSuspendedCall,
     jumpToChat,
     consumePendingDirectChat,
-    consumeDirectEntry
+    consumeDirectEntry,
+    jumpToMessage,
+    consumePendingHighlightMessageId
   };
 
   return (

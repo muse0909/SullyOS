@@ -47,6 +47,8 @@ const Chat: React.FC = () => {
     }, [activeCharacterId]);
 
     // scroll 到目标 message
+    // NOTE: deps 只保留 highlightMessageId（不加 messages，否则 React 19 会在评估 deps 时触发 TDZ，
+    // 因为 messages 在 Chat 组件后半段才定义）
     useEffect(() => {
         if (!highlightMessageId) return;
         const tryScroll = () => {
@@ -58,7 +60,7 @@ const Chat: React.FC = () => {
             }
         };
         setTimeout(tryScroll, 200);
-    }, [highlightMessageId, messages]);
+    }, [highlightMessageId]);
 
     // 高亮注入（收藏页"定位到聊天"时给目标 message 加背景高亮 2 秒）
     const highlightStyle = highlightMessageId ? `

@@ -152,7 +152,7 @@ SullyOS-master/
 
 ### 5.5 弹窗 / Modal 标准（暮色 2026-07-02 拍板）
 
-**所有新弹窗默认按 `components/os/Modal.tsx` 的视觉规格统一**，不要再各弹各的。这条是为了避免"心声弹窗一种圆角、API 浮窗又一种圆角"的混乱。
+**所有新弹窗默认按 `components/os/Modal.tsx` 的视觉规格统一**，不要再各弹各的。这条是为了避免"心声弹窗一种圆角、API 浮窗又一种圆角 / 这个大那个小"的混乱。
 
 ```
 容器（最外层）
@@ -167,18 +167,25 @@ SullyOS-master/
 
 卡片
   relative
-  w-full max-w-sm                   ← max-width 24rem (384px)
+  w-full max-w-sm                   ← max-width 24rem (384px) — 宽度统一
   bg-white
   rounded-[2.5rem]                  ← 40px 大圆角，项目标配
   shadow-2xl
   border border-white/20            ← 浅白描边
   overflow-hidden
   animate-slide-up
+  max-h-[60vh] flex flex-col        ← 高度统一 60vh；内容超出走内部滚动
 ```
 
 title：`text-center` + `px-6 pt-6 pb-2` + `text-lg font-bold text-slate-800`
-body：`px-6 py-4 max-h-[60vh] overflow-y-auto no-scrollbar`
+body：`px-6 py-4 max-h-[60vh] overflow-y-auto no-scrollbar`（内容超出滚动）
 footer：`px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭"按钮）
+
+**核心原则（暮色强调）**：
+- **所有弹窗尺寸统一**到 `max-w-sm` (384px) + `rounded-[2.5rem]` (40px) + `max-h-[60vh]`
+- **折叠/展开一律在卡片内部完成**——不创建新弹窗、不撑大整个面板
+- API 弹窗等"内容多"的弹窗，**默认打开第一个 section**（避免初始全折叠→点开→撑大的视觉跳变）
+- `openSection` 状态保留用户上次选择，**关掉再开还是同一个 section 展开**
 
 **例外**：微信式心声弹窗 / 圆角较小的轻量确认弹窗可以用 `rounded-3xl + w-[min(88vw,360px)]`，那是另一种风格，但需要暮色明确认可才用。
 

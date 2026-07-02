@@ -266,6 +266,7 @@ footer：`px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭"按钮）
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-02 | API 弹窗统一到日程弹窗尺寸 (60vh) + 聊天页返回路径修复 | [`changelogs/2026-07-02-api-modal-size-and-back-path.md`](./changelogs/2026-07-02-api-modal-size-and-back-path.md) |
 | 2026-07-01 | 仿微信联系人页 — Step 1 框架壳 | [`changelogs/2026-07-01-wechat-step1.md`](./changelogs/2026-07-01-wechat-step1.md) |
 | 2026-07-02 | WeChat Step 1 调整 — Tab 移底 / 留白 / 去白圈 / 我接档案 / 撕档案桌入 / API 换 WiFi | [`changelogs/2026-07-02-wechat-step1-tweaks.md`](./changelogs/2026-07-02-wechat-step1-tweaks.md) |
 | 2026-07-02 | WeChat 嵌套 Chat 单返回修复 + API 浮窗居中 | [`changelogs/2026-07-02-wechat-once-back-and-api-centered.md`](./changelogs/2026-07-02-wechat-once-back-and-api-centered.md) |

@@ -1857,7 +1857,17 @@ if (!isVisible || !isChattingWithThisChar) {
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
-  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  // 暮色 2026-07-03 修复：
+  //   1. String() 防御 — 任何调用方传 object 不会炸 React（之前 React error #31 一次因为 message 字段是 SyntheticEvent）
+  //   2. 支持第 3 个参数 duration（毫秒，默认 3000）— 之前签名只接 2 个参数，调用方传 2000/3000 等被静默忽略
+  const addToast = (message: string, type: Toast['type'] = 'info', duration = 3000) => {
+    const safeMessage = typeof message === 'string' ? message : String(message);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts(prev => [...prev, { id, message: safeMessage, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, duration);
+  };
 
   // --- APPEARANCE PRESETS ---
   const saveAppearancePreset = async (name: string) => {

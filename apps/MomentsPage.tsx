@@ -25,7 +25,6 @@ import {
 } from '../utils/momentsStorage';
 import { triggerAIReaction } from '../utils/momentsAI';
 import { DB } from '../utils/db';
-import FullScreenEditor from '../components/common/FullScreenEditor';
 
 // 压缩图片到 max 1080px + jpeg 0.7 —— 避免 localStorage quota 超出
 async function compressImage(dataUrl: string, maxDim = 1080, quality = 0.7): Promise<string> {
@@ -65,6 +64,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     try { return getAllPosts(); } catch { return []; }
   });
   const [signature, setSigState] = useState(getSignature());
+  const [signatureDraft, setSignatureDraft] = useState('');
   const [coverImage, setCoverImageState] = useState<string | null>(getCoverImage());
   const [editingSignature, setEditingSignature] = useState(false);
   const [showPublisher, setShowPublisher] = useState(false);
@@ -188,12 +188,17 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     addToast('已恢复默认封面', 'success');
   };
 
-  // 签名保存
-  const handleSignatureConfirm = (text: string) => {
+  // 签名保存（暮色 2026-07-03 改：点签名直接 inline 编辑，不进编辑器）
+  // 触发：blur / Enter（保存）/ Escape（取消）
+  const handleSignatureSave = () => {
+    const text = signatureDraft.trim();
     setSignature(text);
     setSigState(text);
     setEditingSignature(false);
-    addToast('签名已更新', 'success');
+    if (text) addToast('签名已更新', 'success');
+  };
+  const handleSignatureCancel = () => {
+    setEditingSignature(false);
   };
 
   // 发布朋友圈（带图片压缩 + quota 错误提示 + 暮色 2026-07-03 通知 AI）
@@ -338,18 +343,39 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* 签名 — 单独白底行，靠右对齐（暮色 2026-07-03 修：改 button + z-index 保险） */}
+        {/* 签名 — 单独白底行，靠右对齐（暮色 2026-07-03 改：inline input 编辑，点直接改，不进编辑器） */}
         <div className="bg-white relative z-10">
-          <button
-            type="button"
-            onClick={() => setEditingSignature(true)}
-            className="w-full px-4 py-3 pr-4 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer select-none touch-manipulation"
-            style={{ touchAction: 'manipulation' }}
-          >
-            <span className="text-[13px] text-slate-500 leading-snug pointer-events-none">
-              {signature || '点此添加签名...'}
-            </span>
-          </button>
+          {editingSignature ? (
+            <input
+              type="text"
+              autoFocus
+              value={signatureDraft}
+              onChange={(e) => setSignatureDraft(e.target.value)}
+              onBlur={handleSignatureSave}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSignatureSave(); }
+                if (e.key === 'Escape') { e.preventDefault(); handleSignatureCancel(); }
+              }}
+              maxLength={50}
+              placeholder="点此添加签名..."
+              className="w-full px-4 py-3 pr-4 text-right bg-slate-50 text-[13px] text-slate-700 leading-snug focus:outline-none focus:bg-white transition-colors placeholder:text-slate-300 touch-manipulation"
+              style={{ touchAction: 'manipulation' }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setSignatureDraft(signature);
+                setEditingSignature(true);
+              }}
+              className="w-full px-4 py-3 pr-4 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer select-none touch-manipulation"
+              style={{ touchAction: 'manipulation' }}
+            >
+              <span className="text-[13px] text-slate-500 leading-snug pointer-events-none">
+                {signature || '点此添加签名...'}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* 动态列表（无 border-t 分割线） */}
@@ -384,16 +410,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         onChange={handleCoverFileChange}
       />
 
-      {/* 签名编辑器 */}
-      {editingSignature && (
-        <FullScreenEditor
-          isOpen={editingSignature}
-          title="编辑签名"
-          value={signature}
-          onClose={() => setEditingSignature(false)}
-          onConfirm={handleSignatureConfirm}
-        />
-      )}
+      {/* 签名编辑器（暮色 2026-07-03 改：inline input 直接编辑，不弹编辑器） */}
 
       {/* 封面图选项 modal（长按触发） */}
       {showCoverOptions && (
@@ -603,8 +620,13 @@ const PostCard: React.FC<{
           <div className="mt-2 bg-slate-50 rounded-lg p-2 text-xs space-y-1">
             {post.likes.length > 0 && (
               <div className="flex items-center gap-1 text-slate-700">
-                <Heart size={12} weight="fill" className="text-red-400" />
-                <span>{post.likes.length} 人赞过</span>
+                <Heart size={12} weight="fill" className="text-red-400 shrink-0" />
+                <span className="truncate">
+                  {post.likes.map((l) => {
+                    if (l.authorType === 'user') return userProfile.name;
+                    return characters.find((x) => x.id === l.charId)?.name || 'AI';
+                  }).join('、')}
+                </span>
               </div>
             )}
             {post.comments.length > 0 && (
@@ -685,8 +707,13 @@ const PostDetailModal: React.FC<{
         <div className="bg-white px-3 pb-3 border-b border-slate-100">
           {post.likes.length > 0 && (
             <div className="bg-slate-50 rounded-lg p-2 text-xs flex items-center gap-1 mb-1.5">
-              <Heart size={12} weight="fill" className="text-red-400" />
-              <span className="text-slate-700">{post.likes.length} 人赞过</span>
+              <Heart size={12} weight="fill" className="text-red-400 shrink-0" />
+              <span className="text-slate-700 truncate">
+                {post.likes.map((l) => {
+                  if (l.authorType === 'user') return userProfile.name;
+                  return characters.find((x) => x.id === l.charId)?.name || 'AI';
+                }).join('、')}
+              </span>
             </div>
           )}
           {post.comments.length > 0 ? (

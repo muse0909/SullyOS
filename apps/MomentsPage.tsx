@@ -21,9 +21,10 @@ import {
   setCoverImage,
   saveAllPosts,
   genPostId,
-  pushNotifyQueue,
   getSettings as getMomentsSettings,
 } from '../utils/momentsStorage';
+import { triggerAIReaction } from '../utils/momentsAI';
+import { DB } from '../utils/db';
 import FullScreenEditor from '../components/common/FullScreenEditor';
 
 // 压缩图片到 max 1080px + jpeg 0.7 —— 避免 localStorage quota 超出
@@ -192,6 +193,8 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   };
 
   // 发布朋友圈（带图片压缩 + quota 错误提示 + 暮色 2026-07-03 通知 AI）
+  // 暮色 2026-07-03 修正：发完朋友圈立即触发 AI 流程（1 次 API），不等聊天下一轮
+  // 流程：AI 点赞 + AI 评论 + AI 决定是否主动发消息
   const handlePublish = async (text: string, images: string[]) => {
     if (!text.trim() && images.length === 0) return;
 
@@ -217,17 +220,57 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     try {
       saveAllPosts(all);
       addToast('已发表', 'success');
-      // 暮色 2026-07-03：用户发完朋友圈 → 通知 AI
-      // 暮色 B 方案：notifyAIOnUserPost=true 时 push 队列，AI 下一轮对话时消费
+      // 暮色 2026-07-03：发完朋友圈立即触发 AI（不等聊天下一轮）
       const settings = getMomentsSettings();
-      if (settings.notifyAIOnUserPost) {
-        pushNotifyQueue({
-          postId: newPost.id,
-          content: newPost.content,
-          images: newPost.images,
-          createdAt: newPost.createdAt,
-        });
-        addToast('已通知 AI', 'info', 2000);
+      if (settings.notifyAIOnUserPost && activeCharacterId && characters.length > 0) {
+        const char = characters.find((c) => c.id === activeCharacterId);
+        if (char && apiConfig.baseUrl && apiConfig.apiKey) {
+          addToast('已通知 AI', 'info', 2000);
+          // fire-and-forget：异步跑 trigger 流程
+          triggerAIReaction(
+            char,
+            newPost,
+            settings,
+            apiConfig,
+            {
+              userName: userProfile.name || '我',
+              userPersona: userProfile.persona,
+              memory: char.memory,
+            },
+            // 主动消息回调：写进 IndexedDB + 通知 Chat
+            (message: string) => {
+              // 1) 持久化
+              DB.saveMessage({
+                charId: char.id,
+                role: 'assistant',
+                type: 'text',
+                content: message,
+                timestamp: Date.now(),
+                metadata: { source: 'moments_trigger' }, // 标记来源，方便后续追踪
+              }).then(() => {
+                // 2) 通知 Chat（如果在 mount）让它立即 prepend
+                window.dispatchEvent(new CustomEvent('sullyos:direct-ai-message', {
+                  detail: { charId: char.id, content: message, timestamp: Date.now() },
+                }));
+                addToast(`${char.name} 主动发来了一条消息`, 'info', 3000);
+              }).catch((e) => {
+                console.warn('[moments] save direct message failed', e);
+              });
+            }
+          ).then((result) => {
+            // 触发完后刷新本地 posts state（让 AI 点赞/评论立刻可见）
+            const updated = getAllPosts();
+            setPosts(updated);
+            if (result.comment) {
+              addToast(`${char.name} 评论了你的朋友圈`, 'success', 2500);
+            }
+            if (result.liked) {
+              addToast(`${char.name} 赞了你的朋友圈`, 'success', 2000);
+            }
+          }).catch((e) => {
+            console.warn('[moments] trigger failed', e);
+          });
+        }
       }
     } catch (e: any) {
       // quota 超出：撤回最新一条
@@ -291,19 +334,18 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* 签名 — 单独白底行，靠右对齐（与头像左对齐，靠红线位置） */}
-        <div className="bg-white">
-          <div
+        {/* 签名 — 单独白底行，靠右对齐（暮色 2026-07-03 修：改 button + z-index 保险） */}
+        <div className="bg-white relative z-10">
+          <button
+            type="button"
             onClick={() => setEditingSignature(true)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setEditingSignature(true); }}
-            className="w-full px-4 py-3 pr-4 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer select-none"
+            className="w-full px-4 py-3 pr-4 text-right hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer select-none touch-manipulation"
+            style={{ touchAction: 'manipulation' }}
           >
-            <span className="text-[13px] text-slate-500 leading-snug">
+            <span className="text-[13px] text-slate-500 leading-snug pointer-events-none">
               {signature || '点此添加签名...'}
             </span>
-          </div>
+          </button>
         </div>
 
         {/* 动态列表（无 border-t 分割线） */}

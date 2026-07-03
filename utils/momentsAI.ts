@@ -257,9 +257,8 @@ ${ctx.recentChat ? '# 你们最近的对话\n' + ctx.recentChat : ''}
 - 你们最近聊天是否频繁（太频繁就不发了）
 - 你的性格（有的角色不爱主动说话）
 
-# 铁律（暮色 2026-07-03 强调）
-- **这次只能发 0 或 1 条消息**——发完就完事，不要超
-- 不要每次都主动发（看情况）
+# 写作要求
+- 不要每次都主动发（看情况决定）
 - 如果决定发，message 要像真人发微信一样短（1-2 句话，不超过 60 字），符合你的语气
 - message 不要描述动作（"我看了你的朋友圈笑了笑"这种），只输出纯文字聊天内容
 - 绝对不要提到你是 AI
@@ -307,6 +306,70 @@ export function countTodayPostsByChar(charId: string, maxPerDay: number): number
   return all.filter(
     (p) => p.authorType === 'char' && p.charId === charId && p.createdAt >= todayStart
   ).length;
+}
+
+// === Trigger 完整流程：发朋友圈后立即调一次（暮色 2026-07-03 拍板） ===
+// 不再用 isTyping 钩子等"下一轮聊天"——用户发完朋友圈立即触发
+// 流程：点赞（如 autoCommentMine） → AI 评论 → AI 决定是否主动发消息
+// 主动发消息：写进 Chat 的 messages（通过 onAIDirectMessage 回调，UI 层注册）
+export interface TriggerResult {
+  liked: boolean;
+  comment?: string;
+  directMessage?: string;
+}
+
+export async function triggerAIReaction(
+  char: CharacterProfile,
+  post: MomentPost,
+  settings: MomentSettings,
+  apiConfig: { baseUrl: string; apiKey: string; model: string },
+  ctx: {
+    userName: string;
+    userPersona?: string;
+    memory?: string;
+    recentChat?: string;
+  },
+  onAIDirectMessage?: (message: string) => void
+): Promise<TriggerResult> {
+  const result: TriggerResult = { liked: false };
+
+  // 1) 点赞
+  if (settings.autoCommentMine) {
+    likePostAsChar(post.id, char.id);
+    result.liked = true;
+  }
+
+  // 2) AI 评论
+  try {
+    const comment = await generateComment(char, post, apiConfig, {
+      userName: ctx.userName,
+      memory: ctx.memory,
+    });
+    if (comment?.content) {
+      commentPostAsChar(post.id, char.id, comment.content);
+      result.comment = comment.content;
+    }
+  } catch (e) {
+    console.warn('[moments] trigger comment failed', e);
+  }
+
+  // 3) AI 决定是否主动发消息
+  try {
+    const decision = await generateTriggerDecision(char, post, apiConfig, {
+      userName: ctx.userName,
+      userPersona: ctx.userPersona,
+      memory: ctx.memory,
+      recentChat: ctx.recentChat,
+    });
+    if (decision?.shouldSend && decision.message && onAIDirectMessage) {
+      onAIDirectMessage(decision.message);
+      result.directMessage = decision.message;
+    }
+  } catch (e) {
+    console.warn('[moments] trigger decision failed', e);
+  }
+
+  return result;
 }
 
 // === 工具：AI 点赞朋友圈（不调 API，纯本地操作） ===

@@ -150,9 +150,13 @@ SullyOS-master/
 - 顶部返回即保存（v2 删了底部按钮）
 - 预览区只显示样式效果（背景图/遮罩/字号/颜色），文字固定占位
 
-### 5.5 弹窗 / Modal 标准（暮色 2026-07-02 拍板 — 写死 spec，以后别再改）
+### 5.5 弹窗 / Modal 标准（暮色 2026-07-02 拍板，2026-07-03 修正高度策略）
 
 **所有新弹窗默认按 `components/os/Modal.tsx` 的视觉规格统一**，不要再各弹各的。这条是为了避免"心声弹窗一种圆角、API 浮窗又一种圆角 / 这个大那个小"的混乱——**暮色 2026-07-02 反馈 API 弹窗、心声卡片改过很多次，明确要求一刀切**。
+
+**修正历史**：
+- 2026-07-02 初版：宽度 + 圆角 + **高度 `h-[80vh]` 一刀切**
+- 2026-07-03 暮色反馈"同步完看到好多弹窗都是底下很大的空白，不好看"——改为**宽度 + 圆角统一，高度自适应**（最高 80vh）
 
 ```
 容器（最外层）
@@ -165,7 +169,7 @@ SullyOS-master/
 背景遮罩
   absolute inset-0 bg-black/40      ← 不加 backdrop-blur，与项目级 Modal 一致
 
-卡片（一刀切规格，别动）
+卡片（统一规格）
   relative
   w-full max-w-sm                   ← max-width 24rem (384px) — 宽度统一
   bg-white
@@ -174,26 +178,29 @@ SullyOS-master/
   border border-white/20            ← 浅白描边
   overflow-hidden
   animate-slide-up
-  h-[80vh] flex flex-col            ← ⚠️ 固定 80vh（不是 max-h，是 h）；内容少时底部留白
+  max-h-[80vh]                      ← ⚠️ 最高 80vh（不是 h，是 max-h）；高度根据内容自适应
+  flex flex-col                     ← 内部 flex 布局，让 body 撑开
+  mx-auto                           ← 水平居中兜底（避免 max-w 失算）
 ```
 
 title：`shrink-0` + `px-6 pt-6 pb-2` + `text-center text-lg font-bold text-slate-800`
-body：`flex-1 min-h-0 overflow-y-auto no-scrollbar`（**没有 max-h**；flex 自然撑到 80vh - 标题 - footer）
+body：`flex-1 min-h-0 overflow-y-auto no-scrollbar`（**没有 max-h**；flex 自然撑开；超过卡片 max-h 时内部滚动）
 footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭"按钮）
 
-**核心原则（一刀切）**：
-- **所有弹窗卡片**：`max-w-sm` (384px) + `rounded-[2.5rem]` (40px) + **`h-[80vh]`** (固定 80vh) + `flex flex-col`
+**核心原则（2026-07-03 修正版）**：
+- **统一**：所有弹窗卡片 **`max-w-sm` (384px) + `rounded-[2.5rem]` (40px) + `max-h-[80vh]`** + `flex flex-col` + `overflow-hidden`
+- **自适应**：卡片**高度根据内容撑开**，内容少的弹窗自动变矮（不再"4 个尺寸"）
+- **不超 80vh**：内容超出 80vh 时 body 内部滚动，footer 始终在底部
 - **所有内部结构**：title `shrink-0` + body `flex-1 min-h-0 overflow-y-auto` + footer `shrink-0`
 - **折叠/展开一律在卡片内部完成**——不创建新弹窗、不撑大整个面板
-- 内容少的弹窗底部留白——**弹窗比例统一优先**（不接受"内容少时卡片小"那种"4 个尺寸"问题）
 - `openSection` 状态保留用户上次选择，**关掉再开还是同一个 section 展开**
 - API 弹窗等"内容多"的弹窗，**默认打开第一个 section**（避免初始全折叠→点开→撑大的视觉跳变）
 
 **例外**：微信式心声弹窗 / 圆角较小的轻量确认弹窗可以用 `rounded-3xl + w-[min(88vw,360px)]`，那是另一种风格，但需要暮色明确认可才用。
 
-**为什么是 `h-[80vh]` 不是 `max-h-[80vh]`**：
-- `max-h` + `flex-1` 时内容少的弹窗卡片自适应小，**跟 80vh 卡片视觉上不一致**（暮色吐槽"4 个尺寸"的根因）
-- `h` 固定 80vh + `flex-1` 撑开内容，**所有弹窗卡片总高永远 80vh**，底部留白是"统一规格的一部分"
+**为什么是 `max-h-[80vh]` 不是 `h-[80vh]`**：
+- `max-h` 让卡片高度 = 内容高度（**自适应**）
+- 内容超过 80vh 时 body 内部滚动，**不撑爆屏幕**
 - `min-h-0` 在 body 上是 flex item 的常见 fix，避免内容超过容器时无法缩小
 
 ---

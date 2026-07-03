@@ -1,14 +1,14 @@
 // DiscoverPage — 发现页（WeChat 内嵌子页）
-// 3 入口：朋友圈 / 收藏 / 日记
-// 这一轮：朋友圈可用，收藏 / 日记点进去"敬请期待"提示
+// 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState } from 'react';
 import { CaretRight, Gear, BookOpen, BookmarkSimple, Smiley } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
+import MomentsSettingsPage from './MomentsSettingsPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'journal';
+type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast } = useOS();
@@ -24,6 +24,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     return <FavoritesPage onBack={() => setSubPage('list')} />;
   }
 
+  // 子页：朋友圈设置（暮色 2026-07-03 新增）
+  if (subPage === 'moments-settings') {
+    return <MomentsSettingsPage onBack={() => setSubPage('list')} />;
+  }
+
   // 子页：日记（暂未实现）
   if (subPage === 'journal') {
     return (
@@ -35,7 +40,7 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             aria-label="返回"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-              <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
+              <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
             </svg>
           </button>
           <h1 className="text-base font-semibold text-slate-800 tracking-wide">日记</h1>
@@ -63,14 +68,14 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           aria-label="返回"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
+            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
           </svg>
         </button>
         <h1 className="text-base font-semibold text-slate-800 tracking-wide">发现</h1>
         <button
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-          aria-label="设置"
-          onClick={() => addToast('发现页设置 — 敬请期待', 'info')}
+          aria-label="朋友圈设置"
+          onClick={() => setSubPage('moments-settings')}
         >
           <Gear size={20} weight="regular" />
         </button>

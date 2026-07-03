@@ -376,11 +376,12 @@ const Chat: React.FC = () => {
             // Persist so the voice bar survives leaving and re-entering the chat.
             persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
             // Auto-archive to favorites (语音自动加入收藏，暮色要求)
+            // 关键：不传 url，favorites 播放时通过 sourceMessageId 找到 IndexedDB 里的 blob
+            // （blob URL 跨页面会失效，IndexedDB 不会）
             try {
                 addFavorite({
                     id: genFavoriteId(),
                     type: 'voice',
-                    url: blobUrl,
                     text: originalText,
                     charId: char.id,
                     charName: char.name,

@@ -6,15 +6,35 @@ const STORAGE_KEY = 'sullyos_favorites_v1';
 
 export interface FavoriteItem {
   id: string;
-  type: 'voice' | 'image' | 'text';   // voice/image 需要 url；text 不需要
-  url?: string;                         // 优先 remote CDN URL（voice/image 必填，text 留空）
+  type: 'voice' | 'image' | 'text';
+  // voice: 新版不再存 blob URL（blob 跨页面失效），改为从 IndexedDB 读；
+  //       URL 字段保留兼容老数据，读不到 blob 时回退用 url
+  // image: 仍用 remote URL
+  // text:  不需要 url
+  url?: string;
   text: string;                         // UI 显示用（语音是文字版，文本是原文）
   charId: string;
   charName: string;                     // 冗余存，避免 char 改名后找不到
-  sourceMessageId: string;              // 关联到原 message
-  invalid?: boolean;                    // 远程 URL 失效标记（voice/image 才有）
+  sourceMessageId: string;              // 关联到原 message（voice 通过它定位到 voice_msg_${id} IndexedDB key）
+  invalid?: boolean;                    // 远程 URL 失效 或 IndexedDB blob 丢失（voice/image 才有）
   starred?: boolean;                    // 用户主动加星标
   createdAt: number;
+}
+
+/**
+ * 从 IndexedDB 读语音收藏的 blob。
+ * voice favorite 通过 sourceMessageId 关联到 Chat 自己存的 voiceAssetKey(`voice_msg_${msgId}`)。
+ * 返回 null 表示数据丢失（迁移前的老数据 / Chat 没存过 / IndexedDB 被清）。
+ */
+export async function getFavoriteVoiceBlob(sourceMessageId: string): Promise<Blob | null> {
+  try {
+    const { DB } = await import('./db');
+    const entry = await DB.getAssetRaw(`voice_msg_${sourceMessageId}`);
+    if (entry && entry.blob instanceof Blob) return entry.blob;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function getAllFavorites(): FavoriteItem[] {

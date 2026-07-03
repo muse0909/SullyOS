@@ -274,6 +274,8 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-02 | SullyOS vs orangechat 工具调用对比报告（调研） | [`changelogs/2026-07-02-orangechat-tool-calling-comparison.md`](./changelogs/2026-07-02-orangechat-tool-calling-comparison.md) |
+| 2026-07-02 | ComfyUI 本地部署 + OpenAI 桥接到小手机 | [`changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md`](./changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md) |
+| 2026-07-02 | Pony V6 XL 模型部署 + Apple Silicon 16GB SDXL NaN 坑 | [`changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md`](./changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md) |
 | 2026-07-02 | WeChat 两个 bug 修复：联系人页 + chars 面板切换 | [`changelogs/2026-07-02-wechat-bug-fixes.md`](./changelogs/2026-07-02-wechat-bug-fixes.md) |
 | 2026-07-02 | 聊天框 + / 表情包面板支持点空白处收起 | [`changelogs/2026-07-02-chat-input-panel-tap-outside.md`](./changelogs/2026-07-02-chat-input-panel-tap-outside.md) |
 | 2026-07-02 | 弹窗卡片 h-[80vh] 写死一刀切 — 暮色吐槽"4 个尺寸" | [`changelogs/2026-07-02-modal-h80vh-one-size.md`](./changelogs/2026-07-02-modal-h80vh-one-size.md) |

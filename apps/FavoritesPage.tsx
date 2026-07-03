@@ -12,6 +12,7 @@ import {
   removeFavorite,
   updateFavorite,
   markFavoriteInvalid,
+  getFavoriteVoiceBlob,
 } from '../utils/favoritesStorage';
 
 type TabKey = 'text' | 'voice';
@@ -126,9 +127,40 @@ const FavoriteCard: React.FC<{
 
   const isVoice = item.type === 'voice';
 
+  // voice 卡片：mount 时从 IndexedDB 读 blob + 生成 blob URL（解决跨页面 blob 失效）
+  // 优先级：新方案（IndexedDB） > 老方案（item.url，blob URL 跨页面会失效）
+  const [voiceSrc, setVoiceSrc] = React.useState<string | null>(item.url || null);
+  React.useEffect(() => {
+    if (!isVoice || item.invalid) return;
+    let url: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const blob = await getFavoriteVoiceBlob(item.sourceMessageId);
+        if (cancelled) return;
+        if (blob) {
+          url = URL.createObjectURL(blob);
+          setVoiceSrc(url);
+        } else {
+          // IndexedDB 也没有 — 老数据（迁移前存的 blob URL，原始 blob 已 GC）或 Chat 没存过
+          markFavoriteInvalid(item.id);
+          addToast('语音数据已丢失（升级前的老收藏）', 'warning');
+        }
+      } catch (e) {
+        console.warn('[favorites] read voice blob failed', e);
+        markFavoriteInvalid(item.id);
+        addToast('语音读取失败', 'error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [item.id, item.sourceMessageId, isVoice, item.invalid, addToast]);
+
   const handleAudioError = () => {
     markFavoriteInvalid(item.id);
-    addToast('语音已失效（CDN 链接过期）', 'warning');
+    addToast('语音播放失败', 'error');
   };
 
   return (
@@ -167,14 +199,18 @@ const FavoriteCard: React.FC<{
           <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
             语音已失效
           </div>
-        ) : (
+        ) : voiceSrc ? (
           <audio
             controls
-            src={item.url}
+            src={voiceSrc}
             onError={handleAudioError}
             className="w-full h-9"
             preload="metadata"
           />
+        ) : (
+          <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
+            加载中...
+          </div>
         )
       )}
 

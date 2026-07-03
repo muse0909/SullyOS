@@ -165,10 +165,14 @@ const ApiQuickFloat: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
-  // 生图 provider 切换（照 TTS 模式：openai 兼容 / comfyui 本地 / nai / mcd）
-  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai' | 'mcd'>(
+  // 生图 provider 切换（3 档，删了 mcd）
+  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai'>(
     apiConfig.imageGenProvider || 'openai'
   );
+  // ComfyUI 测试连接状态
+  const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [comfyuiTestMsg, setComfyuiTestMsg] = useState('');
+  const [comfyuiModelList, setComfyuiModelList] = useState<string[]>([]);
 
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
@@ -321,21 +325,66 @@ const ApiQuickFloat: React.FC = () => {
     }
   };
 
+  // ComfyUI 写死常量（与 Settings.tsx 同步）
+  const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
+  const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
+  const COMFYUI_FIXED_MODEL = 'realisticVisionV60B1_v60B1VAE.safetensors';
+
+  // 测试 ComfyUI 连接
+  const testComfyuiConnection = async () => {
+    setComfyuiTestState('testing');
+    setComfyuiTestMsg('正在连接...');
+    try {
+      const response = await fetch(`${COMFYUI_FIXED_URL}/models`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${COMFYUI_FIXED_KEY}` },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await safeResponseJson(response);
+      const list = data.data || data.models || [];
+      const modelIds: string[] = (Array.isArray(list) ? list : []).map((m: any) => m.id || m).filter(Boolean);
+      setComfyuiModelList(modelIds);
+      setComfyuiTestState('ok');
+      setComfyuiTestMsg(`在线 · ${modelIds.length} 个 checkpoint`);
+    } catch (e: any) {
+      setComfyuiTestState('fail');
+      setComfyuiTestMsg(`连接失败：${e?.message || '未知错误'}`);
+      setComfyuiModelList([]);
+    }
+  };
+
   const handleSaveAndClose = () => {
+    // 暮色 2026-07-03 要求"在哪个 provider 页面保存就用哪个"
+    // ComfyUI 页面：写死常量
+    // OpenAI / NAI 页面：用 localImageUrl/Key/Model 字段值
+    const imageConfig = localImageGenProvider === 'comfyui'
+      ? {
+          imageBaseUrl: COMFYUI_FIXED_URL,
+          imageApiKey: COMFYUI_FIXED_KEY,
+          imageModel: COMFYUI_FIXED_MODEL,
+        }
+      : {
+          imageBaseUrl: localImageUrl,
+          imageApiKey: localImageKey,
+          imageModel: localImageModel,
+        };
     updateApiConfig({
       ...apiConfig,
       baseUrl: localUrl,
       apiKey: localKey,
       model: localModel,
-      imageBaseUrl: localImageUrl,
-      imageApiKey: localImageKey,
-      imageModel: localImageModel,
+      ...imageConfig,
       imageGenProvider: localImageGenProvider,
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
     });
-    addToast('API 配置已保存', 'success');
+    addToast(
+      localImageGenProvider === 'comfyui' ? 'ComfyUI 本地已启用'
+      : localImageGenProvider === 'nai' ? 'NAI 已启用（占位）'
+      : 'API 配置已保存',
+      'success'
+    );
     setShowPanel(false);
   };
 
@@ -584,133 +633,179 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
-                  {/* 生图 provider 切换（与 Settings.tsx 同步） */}
+                  {/* 顶部：当前使用状态条（暮色 2026-07-03 要求"保存即用"） */}
+                  <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">🎨</span>
+                      <span className="text-[10px] text-slate-500">当前使用：</span>
+                      <span className="text-[11px] font-bold text-purple-700">
+                        {apiConfig.imageGenProvider === 'comfyui' ? 'ComfyUI 本地' : apiConfig.imageGenProvider === 'nai' ? 'NAI（占位未生效）' : 'OpenAI 兼容'}
+                      </span>
+                    </div>
+                    {apiConfig.imageGenProvider === 'comfyui' && (
+                      <span className="text-[9px] text-slate-400 font-mono">默认 RV</span>
+                    )}
+                    {apiConfig.imageGenProvider === 'openai' && apiConfig.imageModel && (
+                      <span className="text-[9px] text-slate-400 font-mono truncate max-w-[120px]">{apiConfig.imageModel}</span>
+                    )}
+                  </div>
+                  {/* 生图 provider 切换（3 档，删 mcd） */}
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">服务商</label>
                     <div className="flex bg-white border border-slate-200 rounded-xl p-1 gap-1">
                       <button type="button" onClick={() => setLocalImageGenProvider('openai')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'openai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>OpenAI</button>
                       <button type="button" onClick={() => setLocalImageGenProvider('comfyui')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'comfyui' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>ComfyUI</button>
                       <button type="button" onClick={() => setLocalImageGenProvider('nai')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'nai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>NAI</button>
-                      <button type="button" onClick={() => setLocalImageGenProvider('mcd')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'mcd' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>MCD</button>
                     </div>
-                    {localImageGenProvider === 'comfyui' && (
-                      <p className="text-[10px] text-emerald-700 mt-1.5 pl-1 leading-relaxed">
-                        本地 ComfyUI 桥，URL = <span className="font-mono">http://127.0.0.1:8190/v1</span>，Key 随便填，Model = checkpoint 文件名
-                      </p>
-                    )}
-                    {localImageGenProvider === 'openai' && (
-                      <p className="text-[10px] text-slate-500 mt-1.5 pl-1 leading-relaxed">
-                        支持 DALL·E 3 / GPT Image / 各类 OpenAI 协议中转
-                      </p>
-                    )}
-                    {(localImageGenProvider === 'nai' || localImageGenProvider === 'mcd') && (
-                      <p className="text-[10px] text-amber-600 mt-1.5 pl-1 leading-relaxed">
-                        占位中，字段同 OpenAI 兼容
-                      </p>
-                    )}
-                  </div>
-                  {imageApiPresets.length > 0 ? (
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
-                      <div className="flex gap-2 flex-wrap">
-                        {imageApiPresets.map((preset) => {
-                          const active = isPresetActive(preset, 'image');
-                          return (
-                            <PresetChip
-                              key={preset.id}
-                              preset={preset}
-                              active={active}
-                              activeClassName="bg-violet-50 border-violet-200"
-                              idleClassName="bg-white border-slate-200"
-                              textActiveClassName="text-violet-600"
-                              textIdleClassName="text-slate-600 hover:text-violet-500"
-                              onLoad={() => loadPreset(preset, 'image')}
-                              onRequestDelete={() => setPresetPendingDelete(preset)}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
-                    <input
-                      type="text"
-                      value={localImageUrl}
-                      onChange={(e) => setLocalImageUrl(e.target.value)}
-                      placeholder="https://..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-violet-300 outline-none transition-all"
-                    />
+                    <p className="text-[10px] text-slate-400 mt-1.5 pl-1 leading-relaxed">
+                      选哪个页面保存就用哪个（保存即用）
+                    </p>
                   </div>
 
-                  <VisibleKeyInput
-                    label="Key"
-                    value={localImageKey}
-                    onChange={setLocalImageKey}
-                    placeholder="sk-..."
-                    visible={showImageKey}
-                    onToggle={() => setShowImageKey((value) => !value)}
-                  />
-
-                  <div>
-                    <div className="flex justify-between items-center mb-1.5 pl-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
-                      <button
-                        onClick={() => fetchModelsFor('image', localImageUrl, localImageKey, setImageStatusMsg)}
-                        disabled={loadingTarget !== null}
-                        className="text-[10px] text-violet-500 font-bold flex items-center gap-1 disabled:opacity-50"
-                      >
-                        <ArrowsClockwise size={11} className={loadingTarget === 'image' ? 'animate-spin' : ''} />
-                        {loadingTarget === 'image' ? '加载中...' : '刷新模型列表'}
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setShowImageModelPicker((value) => !value);
-                        setShowMainModelPicker(false);
-                        setShowVisionModelPicker(false);
-                      }}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all"
-                    >
-                      <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}>
-                        <bdi style={{ direction: 'ltr' }}>{localImageModel || '点击选择...'}</bdi>
-                      </span>
-                      <CaretRight size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${showImageModelPicker ? 'rotate-90' : ''}`} />
-                    </button>
-
-                    {showImageModelPicker ? (
-                      <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                  {/* === OpenAI 卡片 === */}
+                  {localImageGenProvider === 'openai' && (
+                    <>
+                      {imageApiPresets.length > 0 ? (
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
+                          <div className="flex gap-2 flex-wrap">
+                            {imageApiPresets.map((preset) => {
+                              const active = isPresetActive(preset, 'image');
+                              return (
+                                <PresetChip
+                                  key={preset.id}
+                                  preset={preset}
+                                  active={active}
+                                  activeClassName="bg-violet-50 border-violet-200"
+                                  idleClassName="bg-white border-slate-200"
+                                  textActiveClassName="text-violet-600"
+                                  textIdleClassName="text-slate-600 hover:text-violet-500"
+                                  onLoad={() => loadPreset(preset, 'image')}
+                                  onRequestDelete={() => setPresetPendingDelete(preset)}
+                                />
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
                         <input
                           type="text"
-                          value={imageModelFilter}
-                          onChange={(e) => setImageModelFilter(e.target.value)}
-                          placeholder={`搜索 ${availableModels.length} 个模型...`}
-                          className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs mb-2 outline-none"
+                          value={localImageUrl}
+                          onChange={(e) => setLocalImageUrl(e.target.value)}
+                          placeholder="https://..."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-violet-300 outline-none transition-all"
                         />
-                        <div className="max-h-48 overflow-y-auto space-y-1">
-                          {filteredImageModels.length > 0 ? (
-                            filteredImageModels.map((model) => (
-                              <button
-                                key={model}
-                                onClick={() => {
-                                  setLocalImageModel(model);
-                                  setShowImageModelPicker(false);
-                                }}
-                                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono break-all ${model === localImageModel ? 'bg-violet-100 text-violet-700 font-bold' : 'text-slate-600 hover:bg-white'}`}
-                              >
-                                {model}
-                              </button>
-                            ))
-                          ) : (
-                            <div className="text-center text-slate-400 py-4 text-xs">
-                              {availableModels.length === 0 ? '点击右上角刷新模型列表获取' : `没有匹配 "${imageModelFilter}" 的模型`}
-                            </div>
-                          )}
-                        </div>
                       </div>
-                    ) : null}
-                  </div>
+                      <VisibleKeyInput
+                        label="Key"
+                        value={localImageKey}
+                        onChange={setLocalImageKey}
+                        placeholder="sk-..."
+                        visible={showImageKey}
+                        onToggle={() => setShowImageKey((value) => !value)}
+                      />
+                      <div>
+                        <div className="flex justify-between items-center mb-1.5 pl-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
+                          <button
+                            onClick={() => fetchModelsFor('image', localImageUrl, localImageKey, setImageStatusMsg)}
+                            disabled={loadingTarget !== null}
+                            className="text-[10px] text-violet-500 font-bold flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <ArrowsClockwise size={11} className={loadingTarget === 'image' ? 'animate-spin' : ''} />
+                            {loadingTarget === 'image' ? '加载中...' : '刷新模型列表'}
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setShowImageModelPicker((value) => !value);
+                            setShowMainModelPicker(false);
+                            setShowVisionModelPicker(false);
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all"
+                        >
+                          <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}>
+                            <bdi style={{ direction: 'ltr' }}>{localImageModel || '点击选择...'}</bdi>
+                          </span>
+                          <CaretRight size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${showImageModelPicker ? 'rotate-90' : ''}`} />
+                        </button>
+                        {showImageModelPicker ? (
+                          <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                            <input
+                              type="text"
+                              value={imageModelFilter}
+                              onChange={(e) => setImageModelFilter(e.target.value)}
+                              placeholder={`搜索 ${availableModels.length} 个模型...`}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs mb-2 outline-none"
+                            />
+                            <div className="max-h-48 overflow-y-auto space-y-1">
+                              {filteredImageModels.length > 0 ? (
+                                filteredImageModels.map((model) => (
+                                  <button
+                                    key={model}
+                                    onClick={() => {
+                                      setLocalImageModel(model);
+                                      setShowImageModelPicker(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono break-all ${model === localImageModel ? 'bg-violet-100 text-violet-700 font-bold' : 'text-slate-600 hover:bg-white'}`}
+                                  >
+                                    {model}
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="text-center text-slate-400 py-4 text-xs">
+                                  {availableModels.length === 0 ? '点击右上角刷新模型列表获取' : `没有匹配 "${imageModelFilter}" 的模型`}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
+
+                  {/* === ComfyUI 卡片（暮色 2026-07-03 简化） === */}
+                  {localImageGenProvider === 'comfyui' && (
+                    <>
+                      <div className={`rounded-2xl border px-3 py-2.5 ${comfyuiTestState === 'ok' ? 'bg-emerald-50/50 border-emerald-200' : comfyuiTestState === 'fail' ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50/50 border-slate-200'}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`text-[11px] font-bold ${comfyuiTestState === 'ok' ? 'text-emerald-700' : comfyuiTestState === 'fail' ? 'text-rose-700' : 'text-slate-500'}`}>
+                            {comfyuiTestState === 'ok' ? '✓ 在线' : comfyuiTestState === 'fail' ? '✗ 离线' : comfyuiTestState === 'testing' ? '⏳ 测试中...' : '○ 未测试'}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-mono">127.0.0.1:8190</span>
+                        </div>
+                        {comfyuiTestMsg && <p className="text-[10px] text-slate-500">{comfyuiTestMsg}</p>}
+                        {comfyuiModelList.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {comfyuiModelList.map(m => (
+                              <span key={m} className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${m === COMFYUI_FIXED_MODEL ? 'bg-emerald-200 text-emerald-800 font-bold' : 'bg-white text-slate-600 border border-slate-200'}`}>{m.replace('.safetensors', '')}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={testComfyuiConnection}
+                        disabled={comfyuiTestState === 'testing'}
+                        className="w-full py-2.5 rounded-2xl font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 active:scale-95 transition-all disabled:opacity-50 text-sm"
+                      >
+                        {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
+                      </button>
+                      <p className="text-[10px] text-slate-400 leading-relaxed pl-1">
+                        点底部"保存"启用 ComfyUI。后台写死 URL/Key/默认模型 RV，无需填字段。
+                      </p>
+                    </>
+                  )}
+
+                  {/* === NAI 卡片（占位） === */}
+                  {localImageGenProvider === 'nai' && (
+                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/50 px-3 py-2.5">
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        <span className="font-semibold text-amber-700">NAI</span> 占位中。NovelAI 也提供 OpenAI 兼容 API，<span className="font-semibold">切到 OpenAI 页填 NAI 的 URL 即可</span>。
+                      </p>
+                    </div>
+                  )}
 
                   {imageStatusMsg ? <div className="text-xs text-center text-slate-500">{imageStatusMsg}</div> : null}
                 </section>

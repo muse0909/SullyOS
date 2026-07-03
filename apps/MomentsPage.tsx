@@ -56,7 +56,11 @@ async function compressImage(dataUrl: string, maxDim = 1080, quality = 0.7): Pro
 }
 
 const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const { theme, userProfile, characters, addToast } = useOS();
+  // 暮色 2026-07-03 修复：补 destructure `activeCharacterId` 和 `apiConfig`
+  // 之前 line 225-227 引用了这两个变量但 useOS() 没取出来 → ReferenceError
+  // 整个 AI trigger 流程直接挂了，toast "已发表" 之后报错
+  // 表现为：toast 弹了但 AI 没反应（trigger 流程没启动）
+  const { theme, userProfile, characters, addToast, activeCharacterId, apiConfig } = useOS();
   const [posts, setPosts] = useState<MomentPost[]>(() => {
     try { return getAllPosts(); } catch { return []; }
   });
@@ -383,6 +387,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       {/* 签名编辑器 */}
       {editingSignature && (
         <FullScreenEditor
+          isOpen={editingSignature}
           title="编辑签名"
           value={signature}
           onClose={() => setEditingSignature(false)}

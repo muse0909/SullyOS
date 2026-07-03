@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-03 | ComfyUI fp16 默认化 + Pony SDXL fp16 验证（无 NaN） | [`changelogs/2026-07-03-fp16-default-pony-validation.md`](./changelogs/2026-07-03-fp16-default-pony-validation.md) |
 | 2026-07-02 | SullyOS vs orangechat 工具调用对比报告（调研） | [`changelogs/2026-07-02-orangechat-tool-calling-comparison.md`](./changelogs/2026-07-02-orangechat-tool-calling-comparison.md) |
 | 2026-07-02 | ComfyUI 本地部署 + OpenAI 桥接到小手机 | [`changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md`](./changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md) |
 | 2026-07-02 | Pony V6 XL 模型部署 + Apple Silicon 16GB SDXL NaN 坑 | [`changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md`](./changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md) |

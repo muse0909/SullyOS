@@ -173,6 +173,10 @@ const Settings: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
+  // 生图 provider 切换（照 TTS 模式：openai 兼容 / comfyui 本地 / nai / mcd 占位）
+  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai' | 'mcd'>(
+    apiConfig.imageGenProvider || 'openai'
+  );
   const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
@@ -415,6 +419,7 @@ const Settings: React.FC = () => {
       setLocalImageUrl(apiConfig.imageBaseUrl || '');
       setLocalImageKey(apiConfig.imageApiKey || '');
       setLocalImageModel(apiConfig.imageModel || '');
+      setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -462,10 +467,12 @@ const Settings: React.FC = () => {
       setLocalImageUrl(c.imageBaseUrl || '');
       setLocalImageKey(c.imageApiKey || '');
       setLocalImageModel(c.imageModel || '');
+      setLocalImageGenProvider(c.imageGenProvider || 'openai');
       updateApiConfig({
         imageBaseUrl: c.imageBaseUrl || '',
         imageApiKey: c.imageApiKey || '',
         imageModel: c.imageModel || '',
+        imageGenProvider: c.imageGenProvider || 'openai',
       });
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
@@ -538,6 +545,7 @@ const Settings: React.FC = () => {
           imageBaseUrl: localImageUrl,
           imageApiKey: localImageKey,
           imageModel: localImageModel,
+          imageGenProvider: localImageGenProvider,
         };
         break;
       case 'tts':
@@ -607,6 +615,7 @@ const handleSaveImageApi = () => {
       imageBaseUrl: localImageUrl,
       imageApiKey: localImageKey,
       imageModel: localImageModel,
+      imageGenProvider: localImageGenProvider,
     });
     setImageStatusMsg('生图配置已保存');
     setTimeout(() => setImageStatusMsg(''), 2000);
@@ -1374,7 +1383,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 7 - 生图服务 */}
-        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="NAI / OpenAI·分离风格" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
+        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="OpenAI 兼容 / ComfyUI 本地" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
           statusText={apiConfig.imageBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-4">
@@ -1390,7 +1399,49 @@ const handleSaveTts = () => {
                     保存为预设
                 </button>
             </div>
-            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。支持 GPT Image / DALL·E 3 等图像生成模型。</p>
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。选择服务商后填写对应配置，角色页可单独设置默认模型。</p>
+            {/* 生图服务商切换（照 TTS 的 MiniMax / Volink 模式） */}
+            <div className="group mb-4">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图服务商</label>
+              <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
+                <button type="button" onClick={() => setLocalImageGenProvider('openai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'openai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>OpenAI 兼容</button>
+                <button type="button" onClick={() => setLocalImageGenProvider('comfyui')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'comfyui' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>ComfyUI 本地</button>
+                <button type="button" onClick={() => setLocalImageGenProvider('nai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'nai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>NAI</button>
+                <button type="button" onClick={() => setLocalImageGenProvider('mcd')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'mcd' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>MCD</button>
+              </div>
+            </div>
+            {/* 当前 provider 提示框（提示用户怎么填） */}
+            {localImageGenProvider === 'openai' && (
+              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3 mb-4">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-slate-600">OpenAI 兼容</span> — 支持 DALL·E 3 / GPT Image / Gemini 3 Pro Image / 各类 OpenAI 协议中转站。
+                  URL 例：<span className="font-mono text-slate-600">https://api.openai.com/v1</span>，Model 例：<span className="font-mono text-slate-600">dall-e-3</span>。
+                </p>
+              </div>
+            )}
+            {localImageGenProvider === 'comfyui' && (
+              <div className="rounded-2xl bg-emerald-50/80 border border-emerald-200/50 px-4 py-3 mb-4">
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  <span className="font-semibold text-emerald-700">ComfyUI 本地</span> — 走本地 ComfyUI 桥（OpenAI 协议兼容）。
+                  URL 填 <span className="font-mono text-emerald-700">http://127.0.0.1:8190/v1</span>，Key 随便填（桥不验证），Model 填 checkpoint 文件名（如 <span className="font-mono text-emerald-700">realisticVisionV60B1_v60B1VAE.safetensors</span>）。
+                  先在 Mac 上 <span className="font-mono">~/ComfyUI/start_comfyui.sh</span> 启 ComfyUI。
+                </p>
+              </div>
+            )}
+            {localImageGenProvider === 'nai' && (
+              <div className="rounded-2xl bg-amber-50/80 border border-amber-200/50 px-4 py-3 mb-4">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-amber-700">NAI</span> — 占位中。NovelAI 也提供 OpenAI 兼容 API，目前字段同 OpenAI 兼容，UI 区分后续会做专用分支。
+                </p>
+              </div>
+            )}
+            {localImageGenProvider === 'mcd' && (
+              <div className="rounded-2xl bg-amber-50/80 border border-amber-200/50 px-4 py-3 mb-4">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-amber-700">MCD</span> — 占位中。后续会接独立字段。
+                </p>
+              </div>
+            )}
             {presetsByKind.image.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>

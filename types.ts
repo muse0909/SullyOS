@@ -154,6 +154,10 @@ export interface APIConfig {
   imageBaseUrl?: string;
   imageApiKey?: string;
   imageModel?: string;
+  // 生图 provider 分类（UI 提示 + 字段含义区分）。openai 兼容协议通用（OpenAI 官方 / 各类中转 / NAI / 云端 ComfyUI 桥），
+  // comfyui = 本地 ComfyUI 桥（Mac 本地或内网穿透），nai/mcd 暂为占位（字段同 openai 但语义不同）。
+  // Missing → 'openai'（保持向后兼容）。
+  imageGenProvider?: 'openai' | 'comfyui' | 'nai' | 'mcd';
   // Per-API streaming toggle. Some endpoints only support stream:true.
   // Missing → false (默认非流式).
   stream?: boolean;

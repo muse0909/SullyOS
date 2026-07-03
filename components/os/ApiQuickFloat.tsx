@@ -165,6 +165,10 @@ const ApiQuickFloat: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
+  // 生图 provider 切换（照 TTS 模式：openai 兼容 / comfyui 本地 / nai / mcd）
+  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai' | 'mcd'>(
+    apiConfig.imageGenProvider || 'openai'
+  );
 
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
@@ -197,6 +201,7 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
+    setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
@@ -207,6 +212,7 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.imageBaseUrl,
     apiConfig.imageApiKey,
     apiConfig.imageModel,
+    apiConfig.imageGenProvider,
     apiConfig.visionBaseUrl,
     apiConfig.visionApiKey,
     apiConfig.visionModel,
@@ -324,6 +330,7 @@ const ApiQuickFloat: React.FC = () => {
       imageBaseUrl: localImageUrl,
       imageApiKey: localImageKey,
       imageModel: localImageModel,
+      imageGenProvider: localImageGenProvider,
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
@@ -342,6 +349,7 @@ const ApiQuickFloat: React.FC = () => {
       setLocalImageUrl(c.imageBaseUrl || '');
       setLocalImageKey(c.imageApiKey || '');
       setLocalImageModel(c.imageModel || '');
+      setLocalImageGenProvider(c.imageGenProvider || 'openai');
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
     }
@@ -571,11 +579,36 @@ const ApiQuickFloat: React.FC = () => {
               <QuickSection
                 icon={<ImageSquare size={18} weight="bold" />}
                 title="生图"
-                subtitle="独立生图通道"
+                subtitle="OpenAI / ComfyUI 本地"
                 isOpen={openSection === 'image'}
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
+                  {/* 生图 provider 切换（与 Settings.tsx 同步） */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">服务商</label>
+                    <div className="flex bg-white border border-slate-200 rounded-xl p-1 gap-1">
+                      <button type="button" onClick={() => setLocalImageGenProvider('openai')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'openai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>OpenAI</button>
+                      <button type="button" onClick={() => setLocalImageGenProvider('comfyui')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'comfyui' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>ComfyUI</button>
+                      <button type="button" onClick={() => setLocalImageGenProvider('nai')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'nai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>NAI</button>
+                      <button type="button" onClick={() => setLocalImageGenProvider('mcd')} className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'mcd' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>MCD</button>
+                    </div>
+                    {localImageGenProvider === 'comfyui' && (
+                      <p className="text-[10px] text-emerald-700 mt-1.5 pl-1 leading-relaxed">
+                        本地 ComfyUI 桥，URL = <span className="font-mono">http://127.0.0.1:8190/v1</span>，Key 随便填，Model = checkpoint 文件名
+                      </p>
+                    )}
+                    {localImageGenProvider === 'openai' && (
+                      <p className="text-[10px] text-slate-500 mt-1.5 pl-1 leading-relaxed">
+                        支持 DALL·E 3 / GPT Image / 各类 OpenAI 协议中转
+                      </p>
+                    )}
+                    {(localImageGenProvider === 'nai' || localImageGenProvider === 'mcd') && (
+                      <p className="text-[10px] text-amber-600 mt-1.5 pl-1 leading-relaxed">
+                        占位中，字段同 OpenAI 兼容
+                      </p>
+                    )}
+                  </div>
                   {imageApiPresets.length > 0 ? (
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>

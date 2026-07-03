@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { CharacterProfile } from '../types';
 import Chat from './Chat';
@@ -30,7 +30,10 @@ const WeChat: React.FC = () => {
   // Mount 时：检查是否有 pending direct chat（来自 launcher widget 直跳）
   // 有值就直接进 Chat，跳过联系人列表；读完清掉，不影响后续进 AppID.Chat
   // 同时消费 direct entry 标记，决定返回行为
-  useEffect(() => {
+  // 修复跳转错位（#5）：用 useLayoutEffect 同步消费 + 同步 setOpenedCharId，
+  //   避免 useEffect 异步消费导致的"中间帧"（FavoritesPage 还没卸载，Chat 已经在 mounted，
+  //   两者在 transition 中叠加成错位）
+  useLayoutEffect(() => {
     const pending = consumePendingDirectChat();
     if (pending) {
       setOpenedCharId(pending);
@@ -38,7 +41,8 @@ const WeChat: React.FC = () => {
         setCameFromDirectEntry(true);
       }
     }
-  }, [consumePendingDirectChat, consumeDirectEntry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Android 物理返回键 / 浏览器返回：
   //   - widget 直跳入口 → 一次返回直接回桌面（不走联系人列表，因为用户压根没看过）
@@ -83,7 +87,8 @@ const WeChat: React.FC = () => {
   //   这个 effect 处理 WeChat 已 mounted 时收到 jumpToMessage 的场景（收藏页本身在 WeChat 内，
   //   setActiveApp(AppID.Chat) 不会触发 WeChat 重新 mount，所以上面的 mount effect 不会再跑）。
   //   普通字符切换走 chars 面板（setActiveCharacterId 不走 pendingDirectChatRef）→ 这里 consume 拿到 null → 不动 → OK
-  useEffect(() => {
+  // 修复跳转错位（#5）：改用 useLayoutEffect 同步消费，避免 useEffect 异步导致的中间帧错位
+  useLayoutEffect(() => {
     const pending = consumePendingDirectChat();
     if (pending && !openedCharId) {
       setOpenedCharId(pending);

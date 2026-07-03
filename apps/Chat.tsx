@@ -24,6 +24,22 @@ import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
+import {
+  getSettings as getMomentsSettings,
+  getNotifyQueue,
+  popNotifyQueue,
+  getAllPosts as getAllMoments,
+  pushNotifyQueue,
+} from '../utils/momentsStorage';
+import {
+  generatePost as aiGeneratePost,
+  generateComment as aiGenerateComment,
+  generateTriggerDecision,
+  likePostAsChar,
+  commentPostAsChar,
+  publishPostAsChar,
+  countTodayPostsByChar,
+} from '../utils/momentsAI';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -425,6 +441,103 @@ const Chat: React.FC = () => {
             if (voiceDataMap[msg.id] || voiceLoading.has(msg.id)) continue;
             handleManualTts(msg, true);
         }
+    }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // --- 朋友圈：AI 回复完一轮后自动发朋友圈（暮色 2026-07-03 要求） ---
+    // 跟 auto-TTS 同一个 "wasTyping → !isTyping" 钩子，一轮 = 1 轮 user+AI
+    // 自动发的限制：autoPostByChar=true + 今天没超 maxPerDay
+    useEffect(() => {
+        const wasTyping = prevIsTypingRef.current;
+        // 复用 prevIsTypingRef（auto-TTS 已经更新过）
+        if (!wasTyping || isTyping) return;
+        const settings = getMomentsSettings();
+        if (!settings.autoPostByChar) return;
+        if (!apiConfig.baseUrl || !apiConfig.apiKey) return;
+        if (countTodayPostsByChar(char.id, settings.maxPerDay) >= settings.maxPerDay) return;
+        // 触发 AI 发朋友圈（fire-and-forget，不阻塞当前 UI）
+        (async () => {
+            try {
+                const recentPosts = getAllMoments().slice(0, 10);
+                const generated = await aiGeneratePost(char, apiConfig, {
+                    userName: userProfile?.name || '我',
+                    userPersona: userProfile?.persona,
+                    memory: char.memory || undefined,
+                    recentChat: messages.slice(-6).map((m) => `${m.role === 'user' ? (userProfile?.name || '我') : char.name}: ${m.content}`).join('\n'),
+                    recentPosts,
+                }, settings);
+                if (generated) {
+                    publishPostAsChar(char, generated.content, generated.imagePrompt, settings.imageGenProvider);
+                    addToast(`${char.name} 发了一条新朋友圈`, 'info', 3000);
+                }
+            } catch (e) {
+                console.warn('[moments] auto post failed', e);
+            }
+        })();
+    }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // --- 朋友圈：消费 notify queue（用户发完朋友圈的 AI 通知） ---
+    // 暮色 2026-07-03：每条朋友圈 push 到队列，AI 一轮回复完后消费队列
+    // 流程：调一次 API 让 AI 点赞/评论 + 决定是否主动发消息
+    // "提醒一次"机制：每条 post 一次提醒，AI 决定发就发，不发就过
+    useEffect(() => {
+        const wasTyping = prevIsTypingRef.current;
+        if (!wasTyping || isTyping) return;
+        const settings = getMomentsSettings();
+        if (!settings.notifyAIOnUserPost) return;
+        if (!apiConfig.baseUrl || !apiConfig.apiKey) return;
+        const pending = getNotifyQueue();
+        if (pending.length === 0) return;
+        // 只处理当前 char 的（active character）
+        const item = pending.find((p) => true); // 简化：取队首
+        if (!item) return;
+        // 找到 post 详情
+        const post = getAllMoments().find((p) => p.id === item.postId);
+        if (!post) {
+            // post 已被删除，跳过这一条
+            popNotifyQueue();
+            return;
+        }
+        // 消费队列
+        popNotifyQueue();
+        // 异步跑：先让 AI 点赞（如果开了 autoCommentMine），再评论 + 决定主动发消息
+        (async () => {
+            try {
+                // 1) 点赞（暮色：autoCommentMine 控制是否点赞）
+                if (settings.autoCommentMine) {
+                    likePostAsChar(post.id, char.id);
+                }
+                // 2) AI 评论
+                const comment = await aiGenerateComment(char, post, apiConfig, {
+                    userName: userProfile?.name || '我',
+                    memory: char.memory || undefined,
+                });
+                if (comment) {
+                    commentPostAsChar(post.id, char.id, comment.content);
+                }
+                // 3) AI 决定要不要主动发消息
+                const decision = await generateTriggerDecision(char, post, apiConfig, {
+                    userName: userProfile?.name || '我',
+                    userPersona: userProfile?.persona,
+                    memory: char.memory || undefined,
+                    recentChat: messages.slice(-6).map((m) => `${m.role === 'user' ? (userProfile?.name || '我') : char.name}: ${m.content}`).join('\n'),
+                });
+                if (decision?.shouldSend && decision.message) {
+                    // 把 AI 主动消息写进 messages 数组
+                    addToast(`${char.name} 主动发来了一条消息`, 'info', 3000);
+                    // 调 Chat 自己的 addMessage
+                    const nextId = Math.max(0, ...messages.map((m) => m.id)) + 1;
+                    setMessages((prev) => [...prev, {
+                        id: nextId,
+                        role: 'assistant',
+                        type: 'text',
+                        content: decision.message!,
+                        timestamp: Date.now(),
+                    }]);
+                }
+            } catch (e) {
+                console.warn('[moments] trigger reaction failed', e);
+            }
+        })();
     }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';

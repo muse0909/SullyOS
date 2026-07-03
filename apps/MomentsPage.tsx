@@ -21,6 +21,8 @@ import {
   setCoverImage,
   saveAllPosts,
   genPostId,
+  pushNotifyQueue,
+  getSettings as getMomentsSettings,
 } from '../utils/momentsStorage';
 import FullScreenEditor from '../components/common/FullScreenEditor';
 
@@ -189,7 +191,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     addToast('签名已更新', 'success');
   };
 
-  // 发布朋友圈（带图片压缩 + quota 错误提示）
+  // 发布朋友圈（带图片压缩 + quota 错误提示 + 暮色 2026-07-03 通知 AI）
   const handlePublish = async (text: string, images: string[]) => {
     if (!text.trim() && images.length === 0) return;
 
@@ -215,6 +217,18 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     try {
       saveAllPosts(all);
       addToast('已发表', 'success');
+      // 暮色 2026-07-03：用户发完朋友圈 → 通知 AI
+      // 暮色 B 方案：notifyAIOnUserPost=true 时 push 队列，AI 下一轮对话时消费
+      const settings = getMomentsSettings();
+      if (settings.notifyAIOnUserPost) {
+        pushNotifyQueue({
+          postId: newPost.id,
+          content: newPost.content,
+          images: newPost.images,
+          createdAt: newPost.createdAt,
+        });
+        addToast('已通知 AI', 'info', 2000);
+      }
     } catch (e: any) {
       // quota 超出：撤回最新一条
       if (e?.name === 'QuotaExceededError' || /quota/i.test(e?.message || '')) {

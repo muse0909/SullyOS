@@ -8,14 +8,14 @@ interface ModalProps {
     children: React.ReactNode;
     footer?: React.ReactNode;
     /**
-     * 默认 false: 卡片 h-[80vh] 固定 80vh（内容少时底部留白，内容多时滚动）
-     * true: 卡片 max-h-[80vh] 自适应（内容少时卡片小，**底部不留空**）
-     * 适用：消息操作/快捷切换类（内容少）；固定高度类（朋友圈/日程/详情）保持默认
+     * 默认 true（暮色 2026-07-03 拍板）：卡片 max-h-[80vh] 自适应
+     *   高度 = 内容高度（底部不留空）；超过 80vh 时 body 内部滚动
+     * 传 false：卡片 h-[80vh] 固定（少数特殊场景才用，比如需要占满屏幕的复杂表单）
      */
     adaptiveHeight?: boolean;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer, adaptiveHeight = false }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer, adaptiveHeight = true }) => {
     if (!isOpen) return null;
 
     const cardHeightClass = adaptiveHeight ? 'max-h-[80vh]' : 'h-[80vh]';

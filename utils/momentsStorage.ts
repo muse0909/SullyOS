@@ -34,6 +34,10 @@ export interface MomentSettings {
   autoCharInteraction: boolean; // 角色间自动互动
   // 频率控制（用户填）
   maxPerDay: number;            // 每天最多 N 条 AI 朋友圈，0 = 关闭
+  // 用户发完是否触发 AI（暮色 2026-07-03 要求）
+  notifyAIOnUserPost: boolean;  // 用户发完朋友圈后是否通知 AI（AI 点赞/评论 + AI 自己判断要不要主动发消息）
+  // 生图 API（暮色 2026-07-03 要求）
+  imageGenProvider: 'none' | 'comfyui' | 'nai' | 'mcd';
 }
 
 const DEFAULT_SETTINGS: MomentSettings = {
@@ -41,7 +45,62 @@ const DEFAULT_SETTINGS: MomentSettings = {
   autoPostByChar: true,
   autoCharInteraction: false,
   maxPerDay: 2,
+  notifyAIOnUserPost: true,
+  imageGenProvider: 'none',
 };
+
+// === 用户发朋友圈 → 通知 AI 队列 ===
+// 每次用户发完朋友圈，push 一条；AI 消费后从队列移除
+// 暮色 2026-07-03：每条朋友圈只触发一次 AI 决定（"提醒一次"），不会超
+
+const STORAGE_KEY_NOTIFY_QUEUE = 'sullyos_moments_notify_queue_v1';
+
+export interface MomentsNotifyItem {
+  postId: string;
+  content: string;
+  images: string[];       // dataURL，AI 不一定看但保留
+  createdAt: number;
+}
+
+export function getNotifyQueue(): MomentsNotifyItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_NOTIFY_QUEUE);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function saveNotifyQueue(items: MomentsNotifyItem[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_NOTIFY_QUEUE, JSON.stringify(items));
+  } catch (e) {
+    console.error('[moments] save notify queue failed', e);
+  }
+}
+
+export function pushNotifyQueue(item: MomentsNotifyItem): void {
+  const all = getNotifyQueue();
+  // 防重：同 postId 不重复入队
+  if (all.some((x) => x.postId === item.postId)) return;
+  all.push(item);
+  saveNotifyQueue(all);
+}
+
+export function popNotifyQueue(): MomentsNotifyItem | null {
+  const all = getNotifyQueue();
+  if (all.length === 0) return null;
+  const first = all[0];
+  saveNotifyQueue(all.slice(1));
+  return first;
+}
+
+export function clearNotifyQueue(): void {
+  saveNotifyQueue([]);
+}
 
 // === posts 列表 ===
 

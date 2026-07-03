@@ -407,6 +407,8 @@ const Settings: React.FC = () => {
   const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [comfyuiTestMsg, setComfyuiTestMsg] = useState('');
   const [comfyuiModelList, setComfyuiModelList] = useState<string[]>([]);
+  // 暮色 2026-07-04 要求：checkpoint 列表可手动选哪个（写实 RV / 动漫 Pony）
+  const [localComfyuiSelectedModel, setLocalComfyuiSelectedModel] = useState<string>('');
   const [ttsModelStatusMsg, setTtsModelStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -424,6 +426,7 @@ const Settings: React.FC = () => {
       setLocalImageKey(apiConfig.imageApiKey || '');
       setLocalImageModel(apiConfig.imageModel || '');
       setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
+      setLocalComfyuiSelectedModel(apiConfig.imageModel || '');
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -614,10 +617,9 @@ const Settings: React.FC = () => {
   };
 
 // 生图配置：分两个 provider 独立保存（暮色 2026-07-03 要求"在哪个页面保存就用哪个"）
-// ComfyUI 写死本地桥地址 + 占位 key + 默认 model（后台全部设置好，UI 不暴露字段）
+// ComfyUI 写死本地桥地址 + 占位 key。model 由用户在 UI 上选（暮色 2026-07-04 要求 RV/Pony 可切换）
 const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
 const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
-const COMFYUI_FIXED_MODEL = 'realisticVisionV60B1_v60B1VAE.safetensors';
 
 const handleSaveOpenaiImageApi = () => {
     updateApiConfig({
@@ -632,14 +634,20 @@ const handleSaveOpenaiImageApi = () => {
   };
 
 const handleSaveComfyuiImageApi = () => {
+    // 暮色 2026-07-04 要求：用户在 checkpoint 列表里选哪个就用哪个（不再写死 RV）
+    const selectedModel = localComfyuiSelectedModel || comfyuiModelList[0] || '';
+    if (!selectedModel) {
+      setImageStatusMsg('请先点 [测试连接] 拉取 checkpoint 列表');
+      return;
+    }
     updateApiConfig({
       ...apiConfig,
       imageBaseUrl: COMFYUI_FIXED_URL,
       imageApiKey: COMFYUI_FIXED_KEY,
-      imageModel: COMFYUI_FIXED_MODEL,
+      imageModel: selectedModel,
       imageGenProvider: 'comfyui',
     });
-    setImageStatusMsg('ComfyUI 本地已启用，当前生效');
+    setImageStatusMsg(`ComfyUI 本地已启用 · ${selectedModel.replace('.safetensors', '')}`);
     setTimeout(() => setImageStatusMsg(''), 2500);
   };
 
@@ -1537,11 +1545,34 @@ const handleSaveTts = () => {
                     <span className="text-[10px] text-slate-400 font-mono">{COMFYUI_FIXED_URL}</span>
                   </div>
                   {comfyuiTestMsg && <p className="text-[10px] text-slate-500 mb-1.5">{comfyuiTestMsg}</p>}
+                  {/* checkpoint 列表：暮色 2026-07-04 要求 RV/Pony 可手动选哪个出图 */}
                   {comfyuiModelList.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {comfyuiModelList.map(m => (
-                        <span key={m} className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${m === COMFYUI_FIXED_MODEL ? 'bg-emerald-200 text-emerald-800 font-bold' : 'bg-white text-slate-600 border border-slate-200'}`}>{m.replace('.safetensors', '')}{m === COMFYUI_FIXED_MODEL ? ' · 默认' : ''}</span>
-                      ))}
+                    <div className="mt-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">选择 checkpoint 出图</label>
+                      <div className="flex flex-col gap-1.5">
+                        {comfyuiModelList.map(m => {
+                          const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
+                          // 风格标签自动判断（暮色审美偏好）
+                          const styleHint = m.toLowerCase().includes('pony') ? '🎨 动漫' :
+                                            m.toLowerCase().includes('realistic') ? '📷 写实' : '';
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setLocalComfyuiSelectedModel(m)}
+                              className={`w-full text-left px-3 py-2 rounded-xl text-[11px] flex items-center justify-between gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600 active:bg-slate-50'}`}
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`}>
+                                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </span>
+                                <span className="font-mono truncate">{m.replace('.safetensors', '')}</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 shrink-0">{styleHint}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -173,6 +173,8 @@ const ApiQuickFloat: React.FC = () => {
   const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [comfyuiTestMsg, setComfyuiTestMsg] = useState('');
   const [comfyuiModelList, setComfyuiModelList] = useState<string[]>([]);
+  // 暮色 2026-07-04 要求：checkpoint 列表可手动选哪个
+  const [localComfyuiSelectedModel, setLocalComfyuiSelectedModel] = useState<string>('');
 
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
@@ -325,10 +327,9 @@ const ApiQuickFloat: React.FC = () => {
     }
   };
 
-  // ComfyUI 写死常量（与 Settings.tsx 同步）
+  // ComfyUI 写死常量（与 Settings.tsx 同步）— model 由用户在 UI 上选
   const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
   const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
-  const COMFYUI_FIXED_MODEL = 'realisticVisionV60B1_v60B1VAE.safetensors';
 
   // 测试 ComfyUI 连接
   const testComfyuiConnection = async () => {
@@ -355,13 +356,13 @@ const ApiQuickFloat: React.FC = () => {
 
   const handleSaveAndClose = () => {
     // 暮色 2026-07-03 要求"在哪个 provider 页面保存就用哪个"
-    // ComfyUI 页面：写死常量
+    // ComfyUI 页面：写死常量 + 用户选的 checkpoint model
     // OpenAI / NAI 页面：用 localImageUrl/Key/Model 字段值
     const imageConfig = localImageGenProvider === 'comfyui'
       ? {
           imageBaseUrl: COMFYUI_FIXED_URL,
           imageApiKey: COMFYUI_FIXED_KEY,
-          imageModel: COMFYUI_FIXED_MODEL,
+          imageModel: localComfyuiSelectedModel || comfyuiModelList[0] || '',
         }
       : {
           imageBaseUrl: localImageUrl,
@@ -778,10 +779,26 @@ const ApiQuickFloat: React.FC = () => {
                         </div>
                         {comfyuiTestMsg && <p className="text-[10px] text-slate-500">{comfyuiTestMsg}</p>}
                         {comfyuiModelList.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {comfyuiModelList.map(m => (
-                              <span key={m} className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${m === COMFYUI_FIXED_MODEL ? 'bg-emerald-200 text-emerald-800 font-bold' : 'bg-white text-slate-600 border border-slate-200'}`}>{m.replace('.safetensors', '')}</span>
-                            ))}
+                          <div className="mt-1.5 flex flex-col gap-1">
+                            {comfyuiModelList.map(m => {
+                              const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
+                              const styleHint = m.toLowerCase().includes('pony') ? '动漫' :
+                                                m.toLowerCase().includes('realistic') ? '写实' : '';
+                              return (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setLocalComfyuiSelectedModel(m)}
+                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] flex items-center justify-between gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600'}`}
+                                >
+                                  <span className="flex items-center gap-1.5 min-w-0">
+                                    <span className={`w-2.5 h-2.5 rounded-full border-2 shrink-0 ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`} />
+                                    <span className="font-mono truncate">{m.replace('.safetensors', '')}</span>
+                                  </span>
+                                  {styleHint && <span className="text-[9px] text-slate-500 shrink-0">{styleHint}</span>}
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -793,7 +810,7 @@ const ApiQuickFloat: React.FC = () => {
                         {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
                       </button>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-1">
-                        点底部"保存"启用 ComfyUI。后台写死 URL/Key/默认模型 RV，无需填字段。
+                        点底部"保存"启用 ComfyUI。{localComfyuiSelectedModel ? `当前选：${localComfyuiSelectedModel.replace('.safetensors', '')}` : '点上面 checkpoint 选一个'}。
                       </p>
                     </>
                   )}

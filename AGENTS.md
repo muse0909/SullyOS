@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-04 | ComfyUI 卡片加 checkpoint 选择（RV/Pony 可手动切换） | [`changelogs/2026-07-03-comfyui-checkpoint-picker.md`](./changelogs/2026-07-03-comfyui-checkpoint-picker.md) |
 | 2026-07-03 | 生图 section 重构 — 删 MCD / 3 独立卡片 / 保存即用 / 测试连接 | [`changelogs/2026-07-03-imagegen-redesign-and-test-connection.md`](./changelogs/2026-07-03-imagegen-redesign-and-test-connection.md) |
 | 2026-07-03 | 生图服务加 provider 切换（OpenAI 兼容 / ComfyUI 本地 / NAI / MCD） | [`changelogs/2026-07-03-imagegen-provider-switch.md`](./changelogs/2026-07-03-imagegen-provider-switch.md) |
 | 2026-07-03 | ComfyUI fp16 默认化 + Pony SDXL fp16 验证（无 NaN） | [`changelogs/2026-07-03-fp16-default-pony-validation.md`](./changelogs/2026-07-03-fp16-default-pony-validation.md) |

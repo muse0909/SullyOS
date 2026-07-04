@@ -149,6 +149,16 @@ export function getPostById(id: string): MomentPost | null {
   return getAllPosts().find((p) => p.id === id) || null;
 }
 
+// === 取最近 N 条朋友圈（用于 chat prompt awareness 注入，参考 330 qzone.js） ===
+// 暮色 2026-07-04：chat 调 LLM 前注入最近 5 条 post + 评论，让 AI 知道朋友圈发生了什么
+export function getRecentPosts(limit: number = 5): MomentPost[] {
+  const all = getAllPosts();
+  return all
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, Math.max(0, limit));
+}
+
 // === 签名 / 封面图 / 设置 ===
 
 export function getSignature(): string {

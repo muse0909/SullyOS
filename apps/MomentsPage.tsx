@@ -9,7 +9,7 @@
 //      修复：图片 canvas 压缩到 1080px / jpeg 0.7 + saveAllPosts 失败 addToast 提示
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { CaretLeft, Camera, X, Heart, ChatCircleDots } from '@phosphor-icons/react';
+import { CaretLeft, Camera, X, Heart, ChatCircleDots, Gear } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   MomentPost,
@@ -25,6 +25,7 @@ import {
 } from '../utils/momentsStorage';
 import { triggerAIReaction } from '../utils/momentsAI';
 import { DB } from '../utils/db';
+import MomentsSettingsPage from './MomentsSettingsPage';
 
 // 压缩图片到 max 1080px + jpeg 0.7 —— 避免 localStorage quota 超出
 async function compressImage(dataUrl: string, maxDim = 1080, quality = 0.7): Promise<string> {
@@ -68,6 +69,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [coverImage, setCoverImageState] = useState<string | null>(getCoverImage());
   const [editingSignature, setEditingSignature] = useState(false);
   const [showPublisher, setShowPublisher] = useState(false);
+  const [showSettings, setShowSettings] = useState(false); // 暮色 2026-07-04：齿轮入口放到工具栏相机左边
   const [showCoverOptions, setShowCoverOptions] = useState(false);
   const [selectedPost, setSelectedPost] = useState<MomentPost | null>(null);
   const [imageModal, setImageModal] = useState<string | null>(null);
@@ -295,7 +297,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed] overflow-hidden">
-      {/* 顶部工具栏（只留相机） */}
+      {/* 顶部工具栏（暮色 2026-07-04：齿轮入口从 DiscoverPage 迁到相机左边） */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-2 py-2 pointer-events-none">
         <button
           onClick={onBack}
@@ -304,13 +306,22 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         >
           <CaretLeft size={20} weight="bold" />
         </button>
-        <button
-          className="w-9 h-9 mr-1 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white pointer-events-auto active:scale-95 transition-transform"
-          aria-label="发表朋友圈"
-          onClick={() => setShowPublisher(true)}
-        >
-          <Camera size={18} weight="bold" />
-        </button>
+        <div className="flex items-center gap-1.5 pointer-events-auto">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-9 h-9 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white active:scale-95 transition-transform"
+            aria-label="朋友圈设置"
+          >
+            <Gear size={18} weight="bold" />
+          </button>
+          <button
+            className="w-9 h-9 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white active:scale-95 transition-transform"
+            aria-label="发表朋友圈"
+            onClick={() => setShowPublisher(true)}
+          >
+            <Camera size={18} weight="bold" />
+          </button>
+        </div>
       </div>
 
       {/* 可滚动主体 */}
@@ -448,6 +459,11 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           onClose={() => setShowPublisher(false)}
           onPublish={handlePublish}
         />
+      )}
+
+      {/* 朋友圈设置（暮色 2026-07-04：从 DiscoverPage 迁到这里，齿轮按钮触发） */}
+      {showSettings && (
+        <MomentsSettingsPage onBack={() => setShowSettings(false)} />
       )}
 
       {/* 动态详情 modal */}

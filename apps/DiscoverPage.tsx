@@ -2,7 +2,7 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState } from 'react';
-import { CaretRight, Gear, BookOpen, BookmarkSimple, Smiley } from '@phosphor-icons/react';
+import { CaretRight, BookOpen, BookmarkSimple, Smiley } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
@@ -61,24 +61,19 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   return (
     <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur shrink-0">
+<div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur shrink-0">
         <button
           onClick={onClose}
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
           aria-label="返回"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
+            <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
           </svg>
         </button>
         <h1 className="text-base font-semibold text-slate-800 tracking-wide">发现</h1>
-        <button
-          className="w-9 h-9 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-          aria-label="朋友圈设置"
-          onClick={() => setSubPage('moments-settings')}
-        >
-          <Gear size={20} weight="regular" />
-        </button>
+        {/* 暮色 2026-07-04：齿轮入口从 DiscoverPage 移除，迁到 MomentsPage 顶部工具栏（相机左边） */}
+        <div className="w-9 h-9" aria-hidden />
       </div>
 
       {/* 入口列表 */}

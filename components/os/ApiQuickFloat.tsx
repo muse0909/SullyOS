@@ -11,6 +11,17 @@ const PRESET_LONG_PRESS_MS = 550;
 type QuickModelTarget = 'main' | 'image' | 'vision';
 type QuickPresetKind = 'main' | 'image' | 'vision';
 
+// ComfyUI checkpoint 短标签：暮色 2026-07-12 要求"留个缩写和风格就行，全文件名太长"
+// 已知映射走短形式；未知 fallback 到去掉 .safetensors 截 16 字符
+const checkpointLabel = (filename: string): string => {
+  const lower = filename.toLowerCase();
+  if (lower.includes('realistic')) return '📷 RV · 写实';
+  if (lower.includes('pony')) return '🎨 Pony · 动漫';
+  const base = filename.replace('.safetensors', '').replace(/[_-]+/g, ' ').trim();
+  const short = base.length > 16 ? base.slice(0, 16) + '…' : base;
+  return `📦 ${short}`;
+};
+
 const KEY_INPUT_CLASS = 'w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-20 text-sm font-mono focus:bg-white focus:border-indigo-300 outline-none transition-all';
 
 const VisibleKeyInput: React.FC<{
@@ -208,6 +219,9 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
     setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
+    // 暮色 2026-07-12 bug 修复：ApiQuickFloat 之前不从此处初始化，弹窗打开时
+    // localComfyuiSelectedModel 永远为空 → 保存时被 fallback 静默覆盖成列表第 0 个
+    setLocalComfyuiSelectedModel(apiConfig.imageModel || '');
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
@@ -381,7 +395,8 @@ const ApiQuickFloat: React.FC = () => {
       visionModel: localVisionModel,
     });
     addToast(
-      localImageGenProvider === 'comfyui' ? 'ComfyUI 本地已启用'
+      localImageGenProvider === 'comfyui'
+        ? `ComfyUI 本地已启用 · ${imageConfig.imageModel ? checkpointLabel(imageConfig.imageModel) : '未选 checkpoint'}`
       : localImageGenProvider === 'nai' ? 'NAI 已启用（占位）'
       : 'API 配置已保存',
       'success'
@@ -635,16 +650,19 @@ const ApiQuickFloat: React.FC = () => {
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
                   {/* 顶部：当前使用状态条（暮色 2026-07-03 要求"保存即用"） */}
-                  <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-3 py-2 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-3 py-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <span className="text-sm">🎨</span>
                       <span className="text-[10px] text-slate-500">当前使用：</span>
-                      <span className="text-[11px] font-bold text-purple-700">
+                      <span className="text-[11px] font-bold text-purple-700 truncate">
                         {apiConfig.imageGenProvider === 'comfyui' ? 'ComfyUI 本地' : apiConfig.imageGenProvider === 'nai' ? 'NAI（占位未生效）' : 'OpenAI 兼容'}
                       </span>
                     </div>
+                    {/* 暮色 2026-07-12：之前是硬编码"默认 RV"，误导。现在动态显示真实选中（短标签） */}
                     {apiConfig.imageGenProvider === 'comfyui' && (
-                      <span className="text-[9px] text-slate-400 font-mono">默认 RV</span>
+                      <span className="text-[10px] text-slate-500 font-medium shrink-0">
+                        {apiConfig.imageModel ? checkpointLabel(apiConfig.imageModel) : '未选 checkpoint'}
+                      </span>
                     )}
                     {apiConfig.imageGenProvider === 'openai' && apiConfig.imageModel && (
                       <span className="text-[9px] text-slate-400 font-mono truncate max-w-[120px]">{apiConfig.imageModel}</span>
@@ -782,20 +800,16 @@ const ApiQuickFloat: React.FC = () => {
                           <div className="mt-1.5 flex flex-col gap-1">
                             {comfyuiModelList.map(m => {
                               const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
-                              const styleHint = m.toLowerCase().includes('pony') ? '动漫' :
-                                                m.toLowerCase().includes('realistic') ? '写实' : '';
                               return (
                                 <button
                                   key={m}
                                   type="button"
                                   onClick={() => setLocalComfyuiSelectedModel(m)}
-                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] flex items-center justify-between gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600'}`}
+                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] flex items-center gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600'}`}
                                 >
-                                  <span className="flex items-center gap-1.5 min-w-0">
-                                    <span className={`w-2.5 h-2.5 rounded-full border-2 shrink-0 ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`} />
-                                    <span className="font-mono truncate">{m.replace('.safetensors', '')}</span>
-                                  </span>
-                                  {styleHint && <span className="text-[9px] text-slate-500 shrink-0">{styleHint}</span>}
+                                  <span className={`w-2.5 h-2.5 rounded-full border-2 shrink-0 ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`} />
+                                  {/* 暮色 2026-07-12：全文件名太长，改短标签（缩写+风格） */}
+                                  <span className="truncate">{checkpointLabel(m)}</span>
                                 </button>
                               );
                             })}
@@ -810,7 +824,7 @@ const ApiQuickFloat: React.FC = () => {
                         {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
                       </button>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-1">
-                        点底部"保存"启用 ComfyUI。{localComfyuiSelectedModel ? `当前选：${localComfyuiSelectedModel.replace('.safetensors', '')}` : '点上面 checkpoint 选一个'}。
+                        点底部"保存"启用 ComfyUI。{localComfyuiSelectedModel ? `当前选：${checkpointLabel(localComfyuiSelectedModel)}` : '点上面 checkpoint 选一个'}。
                       </p>
                     </>
                   )}

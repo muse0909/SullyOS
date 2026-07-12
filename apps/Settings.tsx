@@ -621,6 +621,17 @@ const Settings: React.FC = () => {
 const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
 const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
 
+// ComfyUI checkpoint 短标签：暮色 2026-07-12 要求"留个缩写和风格就行，全文件名太长"
+// 与 ApiQuickFloat.tsx 同款，避免两边不一致
+const checkpointLabel = (filename: string): string => {
+  const lower = filename.toLowerCase();
+  if (lower.includes('realistic')) return '📷 RV · 写实';
+  if (lower.includes('pony')) return '🎨 Pony · 动漫';
+  const base = filename.replace('.safetensors', '').replace(/[_-]+/g, ' ').trim();
+  const short = base.length > 16 ? base.slice(0, 16) + '…' : base;
+  return `📦 ${short}`;
+};
+
 const handleSaveOpenaiImageApi = () => {
     updateApiConfig({
       ...apiConfig,
@@ -647,7 +658,7 @@ const handleSaveComfyuiImageApi = () => {
       imageModel: selectedModel,
       imageGenProvider: 'comfyui',
     });
-    setImageStatusMsg(`ComfyUI 本地已启用 · ${selectedModel.replace('.safetensors', '')}`);
+    setImageStatusMsg(`ComfyUI 本地已启用 · ${checkpointLabel(selectedModel)}`);
     setTimeout(() => setImageStatusMsg(''), 2500);
   };
 
@@ -1464,7 +1475,10 @@ const handleSaveTts = () => {
                 </span>
               </div>
               {apiConfig.imageGenProvider === 'comfyui' && (
-                <span className="text-[10px] text-slate-400 font-mono">默认模型：Realistic Vision V6.0 B1</span>
+                /* 暮色 2026-07-12：之前硬编码 "Realistic Vision V6.0 B1"，不管选了什么都不变。改成读 apiConfig.imageModel 动态显示（短标签） */
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {apiConfig.imageModel ? checkpointLabel(apiConfig.imageModel) : '未选 checkpoint'}
+                </span>
               )}
               {apiConfig.imageGenProvider === 'openai' && apiConfig.imageModel && (
                 <span className="text-[10px] text-slate-400 font-mono">{apiConfig.imageModel}</span>
@@ -1552,23 +1566,18 @@ const handleSaveTts = () => {
                       <div className="flex flex-col gap-1.5">
                         {comfyuiModelList.map(m => {
                           const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
-                          // 风格标签自动判断（暮色审美偏好）
-                          const styleHint = m.toLowerCase().includes('pony') ? '🎨 动漫' :
-                                            m.toLowerCase().includes('realistic') ? '📷 写实' : '';
                           return (
                             <button
                               key={m}
                               type="button"
                               onClick={() => setLocalComfyuiSelectedModel(m)}
-                              className={`w-full text-left px-3 py-2 rounded-xl text-[11px] flex items-center justify-between gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600 active:bg-slate-50'}`}
+                              className={`w-full text-left px-3 py-2 rounded-xl text-[11px] flex items-center gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600 active:bg-slate-50'}`}
                             >
-                              <span className="flex items-center gap-2 min-w-0">
-                                <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`}>
-                                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                </span>
-                                <span className="font-mono truncate">{m.replace('.safetensors', '')}</span>
+                              <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`}>
+                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
                               </span>
-                              <span className="text-[10px] text-slate-500 shrink-0">{styleHint}</span>
+                              {/* 暮色 2026-07-12：全文件名太长，改短标签（与 ApiQuickFloat 同款 helper） */}
+                              <span className="truncate">{checkpointLabel(m)}</span>
                             </button>
                           );
                         })}

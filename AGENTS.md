@@ -280,6 +280,20 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-12 | 主页评论项可点击 → 弹输入框（嵌套回复 replyTo） | [`changelogs/2026-07-12-moments-comment-item-clickable.md`](./changelogs/2026-07-12-moments-comment-item-clickable.md) |
+| 2026-07-12 | 列表卡片 in-page 评论输入框 + 长按进详情（仿微信） | [`changelogs/2026-07-12-moments-inline-comment-long-press.md`](./changelogs/2026-07-12-moments-inline-comment-long-press.md) |
+| 2026-07-12 | 朋友圈用户评论/点赞/嵌套回复 + AI 自动回复 | [`changelogs/2026-07-12-moments-user-comments-likes-replies.md`](./changelogs/2026-07-12-moments-user-comments-likes-replies.md) |
+| 2026-07-12 | 聊天页头部加发现页入口（星星按钮） | [`changelogs/2026-07-12-chat-header-discover-button.md`](./changelogs/2026-07-12-chat-header-discover-button.md) |
+| 2026-07-12 | 朋友圈 autoPostByChar 语义重定义 + 删旧 useEffect 钩子 + 频率 0-100 | [`changelogs/2026-07-12-moments-autopostbychar-rewrite.md`](./changelogs/2026-07-12-moments-autopostbychar-rewrite.md) |
+| 2026-07-12 | ComfyUI 选 model 同步 bug + 多胳膊防御 + checkpoint 短标签 + bridge prompt 注入 | [`changelogs/2026-07-12-comfyui-model-sync-and-multi-arms-fix.md`](./changelogs/2026-07-12-comfyui-model-sync-and-multi-arms-fix.md) |
+| 2026-07-12 | 朋友圈 AI 主动发工具（仿 330 qzone.js JSON action 模式） | [`changelogs/2026-07-12-ai-moments-tool.md`](./changelogs/2026-07-12-ai-moments-tool.md) |
+| 2026-07-12 | 朋友圈设置页 z-30 修复主页头像/签名/工具栏穿透 | [`changelogs/2026-07-12-moments-settings-z-index.md`](./changelogs/2026-07-12-moments-settings-z-index.md) |
+| 2026-07-04 | 朋友圈 ↔ Chat Awareness 互通（Layer 1）+ 设置入口迁移到 MomentsPage 工具栏相机左边 | [`changelogs/2026-07-04-moments-chat-awareness.md`](./changelogs/2026-07-04-moments-chat-awareness.md) |
+| 2026-07-04 | ChatInputArea 重复 import 修复（build 过但 dev 报错的隐藏 bug） | [`changelogs/2026-07-04-chatinputarea-dedupe-import.md`](./changelogs/2026-07-04-chatinputarea-dedupe-import.md) |
+| 2026-07-04 | ComfyUI 卡片加 checkpoint 选择（RV/Pony 可手动切换） | [`changelogs/2026-07-03-comfyui-checkpoint-picker.md`](./changelogs/2026-07-03-comfyui-checkpoint-picker.md) |
+| 2026-07-03 | 生图 section 重构 — 删 MCD / 3 独立卡片 / 保存即用 / 测试连接 | [`changelogs/2026-07-03-imagegen-redesign-and-test-connection.md`](./changelogs/2026-07-03-imagegen-redesign-and-test-connection.md) |
+| 2026-07-03 | 生图服务加 provider 切换（OpenAI 兼容 / ComfyUI 本地 / NAI / MCD） | [`changelogs/2026-07-03-imagegen-provider-switch.md`](./changelogs/2026-07-03-imagegen-provider-switch.md) |
+| 2026-07-03 | ComfyUI fp16 默认化 + Pony SDXL fp16 验证（无 NaN） | [`changelogs/2026-07-03-fp16-default-pony-validation.md`](./changelogs/2026-07-03-fp16-default-pony-validation.md) |
 | 2026-07-02 | SullyOS vs orangechat 工具调用对比报告（调研） | [`changelogs/2026-07-02-orangechat-tool-calling-comparison.md`](./changelogs/2026-07-02-orangechat-tool-calling-comparison.md) |
 | 2026-07-02 | ComfyUI 本地部署 + OpenAI 桥接到小手机 | [`changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md`](./changelogs/2026-07-02-comfyui-local-deploy-and-openai-bridge.md) |
 | 2026-07-02 | Pony V6 XL 模型部署 + Apple Silicon 16GB SDXL NaN 坑 | [`changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md`](./changelogs/2026-07-02-pony-v6xl-deploy-and-mps-nan.md) |

@@ -154,6 +154,12 @@ export interface APIConfig {
   imageBaseUrl?: string;
   imageApiKey?: string;
   imageModel?: string;
+  // 当前生效的生图 provider。决定 AI 调 generate_image 时用哪条通道。
+  // openai 兼容：URL/Key/Model 都用 apiConfig.imageBaseUrl/Key/Model（中转/OpenAI 官方）
+  // comfyui：写死走本地 127.0.0.1:8190 桥（默认模型 Realistic Vision V6.0 B1）
+  // nai：占位暂未实现
+  // Missing → 'openai'（向后兼容）
+  imageGenProvider?: 'openai' | 'comfyui' | 'nai';
   // Per-API streaming toggle. Some endpoints only support stream:true.
   // Missing → false (默认非流式).
   stream?: boolean;

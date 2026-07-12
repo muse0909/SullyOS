@@ -372,6 +372,86 @@ export async function triggerAIReaction(
   return result;
 }
 
+// === 用户评论后 → 触发 AI 决定是否回复（暮色 2026-07-12） ===
+// 流程：用户评论角色发的 post → AI 决定是否要回复这条评论
+// 跟 triggerAIReaction 不同：triggerAIReaction 是"用户发 post 后 AI 主动反应"；这里是"用户评论 post 后 AI 决定是否回复评论"
+// 输出：{ replied: boolean, comment?: string }，replied=true 时调用方写入新评论
+export interface AICommentReplyDecision {
+  replied: boolean;
+  comment?: string;
+}
+
+export async function triggerAICommentReply(
+  char: CharacterProfile,
+  post: MomentPost,
+  userCommentContent: string,
+  userCommentReplyTo: string | undefined,
+  apiConfig: { baseUrl: string; apiKey: string; model: string },
+  ctx: {
+    userName: string;
+    userPersona?: string;
+    memory?: string;
+  }
+): Promise<AICommentReplyDecision | null> {
+  // 只对角色 post 才触发回复（用户自己 post 不用 AI 决定）
+  if (post.authorType !== 'char' || post.charId !== char.id) {
+    return null;
+  }
+
+  // 构造 prompt：让 AI 决定是否要回复用户这条评论
+  const replyTarget = userCommentReplyTo
+    ? `（这是用户回复了你之前的某条评论）`
+    : '';
+
+  const systemPrompt = `# 你的任务
+${ctx.userName}在你的朋友圈动态下评论了：
+"${userCommentContent}"
+${replyTarget}
+
+# 这条动态
+- 内容: ${post.content}
+- ${post.images.length > 0 ? `配图: ${post.images.length} 张` : '无配图'}
+
+# 你的角色设定
+${char.persona || char.description || ''}
+
+${ctx.memory ? '# 你的记忆\n' + ctx.memory : ''}
+
+# 输出要求
+请以 JSON 格式返回（不要输出其他内容、不要代码块标记）：
+{
+  "shouldReply": true 或 false,
+  "comment": "如果决定回复，填这里（10-80 字自然评论）；不改写空字符串"
+}
+
+# 决策依据
+- 不强制每条都回，看情况决定
+- 如果评论很敷衍（"👍"、"哈哈"），可以简单回或不回
+- 如果评论表达了具体情绪/问题/想法，最好回
+- 你的性格决定回复的频率（外放的角色会回得多，内敛的会回得少）
+`;
+
+  try {
+    const raw = await callLLM(
+      apiConfig.baseUrl,
+      apiConfig.apiKey,
+      apiConfig.model,
+      systemPrompt,
+      '请决定要不要回复用户的这条评论。',
+      { jsonMode: true, temperature: 0.7 }
+    );
+    const parsed = extractJson(raw);
+    if (!parsed || typeof parsed.shouldReply !== 'boolean') return null;
+    return {
+      replied: parsed.shouldReply && typeof parsed.comment === 'string' && parsed.comment.trim().length > 0,
+      comment: parsed.shouldReply && typeof parsed.comment === 'string' ? parsed.comment.trim() : undefined,
+    };
+  } catch (e) {
+    console.warn('[momentsAI] triggerAICommentReply failed', e);
+    return null;
+  }
+}
+
 // === 工具：AI 点赞朋友圈（不调 API，纯本地操作） ===
 export function likePostAsChar(postId: string, charId: string): MomentPost | null {
   const all = getAllPosts();

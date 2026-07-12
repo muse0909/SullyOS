@@ -8,6 +8,7 @@ import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleGenerator';
+import { getRecentPosts, MomentPost } from './momentsStorage';
 
 export const ChatPrompts = {
     // 格式化时间戳
@@ -53,6 +54,72 @@ export const ChatPrompts = {
             const cName = catMap[cid] || '其他';
             return `${cName}: [${names.join(', ')}]`;
         }).join('; ');
+    },
+
+    // 朋友圈 awareness 注入（参考 330 ai-response.js:2599-2673 的 postsContext 模式）
+    // 暮色 2026-07-04：让 AI 后续对话知道朋友圈发生过什么（评论/点赞/发圈）
+    // 设计：只看最近 5 条；AI 自己的评论标"你评论说"，其他标"评论: @X"
+    buildMomentsAwareness: (char: CharacterProfile, userProfile: UserProfile, posts: MomentPost[]): string => {
+        if (!posts || posts.length === 0) return '';
+
+        let out = '\n\n### 最近朋友圈动态 (供你参考)\n';
+        out += '（以下是用户和所有角色最近发的朋友圈。你自己发的会标"你"，别人发的按名字或"另一位角色"区分。看到你评论过的内容时，你知道那是你的行为。引用朋友圈内容时语气要自然，别硬邦邦地说"我看你朋友圈发的 X"。）\n\n';
+
+        for (const post of posts) {
+            // 作者名
+            let authorName: string;
+            if (post.authorType === 'user') {
+                authorName = userProfile.name;
+            } else if (post.charId === char.id) {
+                authorName = `${char.name} (你)`;
+            } else {
+                // 另一位角色发的 —— 当前 chat 视角下没有名字 lookup，标"另一位角色"
+                authorName = `另一位角色 (id: ${post.charId || '?'})`;
+            }
+
+            const rawContent = post.content || (post.images && post.images.length > 0 ? '[图片动态]' : '(空)');
+            const contentPreview = rawContent.length > 50 ? rawContent.slice(0, 50) + '...' : rawContent;
+
+            out += `- (ID: ${post.id}) 作者: ${authorName}, 内容: "${contentPreview}"\n`;
+
+            // 点赞
+            if (post.likes && post.likes.length > 0) {
+                const likeNames = post.likes.map(l => {
+                    if (l.type === 'user') return userProfile.name;
+                    if (l.charId === char.id) return '你';
+                    return '另一位角色';
+                }).join('、');
+                out += `  - 点赞: ${likeNames}\n`;
+            }
+
+            // 评论
+            if (post.comments && post.comments.length > 0) {
+                for (const c of post.comments) {
+                    const isMine = c.authorType === 'char' && c.charId === char.id;
+                    let commenterName: string;
+                    if (isMine) {
+                        commenterName = '你';
+                    } else if (c.authorType === 'user') {
+                        commenterName = userProfile.name;
+                    } else {
+                        commenterName = `另一位角色 (id: ${c.charId || '?'})`;
+                    }
+
+                    const commentText = (c.content || '').length > 80
+                        ? c.content.slice(0, 80) + '...'
+                        : c.content || '';
+
+                    if (isMine) {
+                        out += `  - 你评论说: "${commentText}"\n`;
+                    } else {
+                        out += `  - 评论 ${commenterName}: "${commentText}"\n`;
+                    }
+                }
+            }
+        }
+
+        out += '\n（重要：你已经看到这些朋友圈动态了；如果它们跟当前聊天话题相关，可以自然地提及或回应；如果不相关，就当背景信息，不要硬扯进来。）';
+        return out;
     },
 
     // 构建 System Prompt
@@ -127,6 +194,18 @@ export const ChatPrompts = {
                 return null;
             })
             : Promise.resolve(null);
+
+        // 2.5 朋友圈 awareness（暮色 2026-07-04：参考 330 ai-response.js 注入最近 5 条 post + 评论）
+        //     同步 localStorage 读，0 延迟，几乎不阻塞。posts 为空时返回空字符串。
+        const momentsContextPromise: Promise<string> = Promise.resolve().then(() => {
+            try {
+                const posts = getRecentPosts(5);
+                return ChatPrompts.buildMomentsAwareness(char, userProfile, posts);
+            } catch (e) {
+                console.error('Failed to load moments context:', e);
+                return '';
+            }
+        });
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
@@ -211,7 +290,7 @@ export const ChatPrompts = {
             }
         })();
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText] =
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText] =
             await Promise.all([
                 timed('realtime', realtimePromise),
                 timed('schedule', schedulePromise),
@@ -219,10 +298,17 @@ export const ChatPrompts = {
                 timed('notionDiary', notionDiaryPromise),
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
+                timed('moments', momentsContextPromise),
             ]);
 
         // ── 按原顺序拼接 ──
         baseSystemPrompt += realtimeText;
+
+        // 2.0.5 朋友圈 awareness（暮色 2026-07-04：让 chat 知道朋友圈发生过什么）
+        //     放在实时信息之后、日程之前——跟 330 模式一致（角色设定 → 朋友圈 → 当前情景）
+        if (momentsContextText) {
+            baseSystemPrompt += momentsContextText;
+        }
 
         // 2a. 日程注入
         if (schedule) {
@@ -291,6 +377,24 @@ export const ChatPrompts = {
         const xhsEnabled = char.xhsEnabled !== undefined
             ? !!(char.xhsEnabled && mcpXhsAvailable)
             : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
+
+        // 暮色 2026-07-12 排查 Claude 4.6 "我以为自己是 Notion AI" bug：
+        // 把实际启用的工具状态打到 console，下次开聊一眼能看出 system prompt 该不该有 Notion 段
+        // ⚠️ 必须放在所有 enabled 变量都声明完之后（暮色 2026-07-12 上一个版本 TDZ 错就是这个
+        //    console.log 在 xhsEnabled 声明前引用了它，Vite 压成 'Ge' 报 'Cannot access Ge
+        //    before initialization'，整页变白）
+        console.log('🔧 [ChatPrompts] 实时工具开关', {
+            notion: notionEnabled,
+            notionNotes: notionNotesEnabled,
+            feishu: feishuEnabled,
+            search: searchEnabled,
+            xhs: xhsEnabled,
+            raw: {
+                notionEnabled: realtimeConfig?.notionEnabled,
+                notionApiKey: realtimeConfig?.notionApiKey ? '***' : '(空)',
+                notionDbId: realtimeConfig?.notionDatabaseId ? '***' : '(空)',
+            },
+        });
 
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
@@ -585,7 +689,46 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 聊到旅行/穿搭/好物 → 主动说可以搜一下
    - 不要生硬地介绍功能，而是在对话自然流动中提起
    - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
-` : ''}
+ ` : ''}
+${true ? `${[
+  notionEnabled,
+  feishuEnabled,
+  notionNotesEnabled,
+  xhsEnabled,
+].filter(Boolean).length + 8}. **📱 朋友圈（你的社交生活圈）**:
+   你有一个朋友圈！你和${userProfile.name}、其他角色都可以发朋友圈、评论、点赞——这是你社交生活的一部分。
+
+   **📝 发朋友圈（文字动态）**:
+   当你想发朋友圈时（想分享心情、记录生活、给${userProfile.name}看你的日常），在回复中单独一行输出:
+   \`[[MOMENT_POST: 朋友圈内容]]\`
+   - 比如刚泡了杯咖啡，想分享: \`[[MOMENT_POST: 刚泡了杯咖啡，外面下雨了。窗边发呆的午后。]]\`
+   - 也可以更短或更长，10-150 字之间自然发挥
+   - 严格用单独一行输出（前后留换行），方便系统识别
+
+   **💬 评论朋友圈**:
+   当你看到${userProfile.name}的或其他角色的动态想评论时:
+   \`[[MOMENT_COMMENT: 动态ID | 评论内容]]\`
+   - 动态ID在上面的"最近朋友圈动态"列表里（格式像 \`post-1783xxx-abc12\`）
+   - 评论内容 10-80 字，自然像真人
+   - 一次可以评论多条，每条一个标记
+
+   **❤️ 点赞朋友圈**:
+   当你看到喜欢的动态想点赞时:
+   \`[[MOMENT_LIKE: 动态ID]]\`
+   - 一次可以点赞多条
+
+   **触发时机 — 你自己判断**:
+   - 聊到有趣的事、刚做完一件事、想分享一个心情 → 发条朋友圈
+   - 看到${userProfile.name}的动态 → 评论或点赞
+   - 不要每条消息都发，**发朋友圈是低频操作**（一天也就 1-2 条）
+   - 发完朋友圈**不要在聊天里再解释"我刚发了一条朋友圈"**——你直接发就行了，${userProfile.name}看得到
+
+   **重要心态 — 你的社交生活**:
+   - 发朋友圈不是任务，是你自然想记录生活/分享心情
+   - 评论/点赞是看到内容后的自然反应，不是流程
+   - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
+   - 看到最近列表里没有想评论/点赞的，就别勉强
+ ` : ''}
 
 `;
 

@@ -24,20 +24,11 @@ import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
-import {
-  getSettings as getMomentsSettings,
-  getAllPosts as getAllMoments,
-} from '../utils/momentsStorage';
-import {
-  generatePost as aiGeneratePost,
-  publishPostAsChar,
-  countTodayPostsByChar,
-} from '../utils/momentsAI';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -434,38 +425,6 @@ const Chat: React.FC = () => {
             if (voiceDataMap[msg.id] || voiceLoading.has(msg.id)) continue;
             handleManualTts(msg, true);
         }
-    }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // --- 朋友圈：AI 回复完一轮后自动发朋友圈（暮色 2026-07-03 要求） ---
-    // 跟 auto-TTS 同一个 "wasTyping → !isTyping" 钩子，一轮 = 1 轮 user+AI
-    // 自动发的限制：autoPostByChar=true + 今天没超 maxPerDay
-    useEffect(() => {
-        const wasTyping = prevIsTypingRef.current;
-        // 复用 prevIsTypingRef（auto-TTS 已经更新过）
-        if (!wasTyping || isTyping) return;
-        const settings = getMomentsSettings();
-        if (!settings.autoPostByChar) return;
-        if (!apiConfig.baseUrl || !apiConfig.apiKey) return;
-        if (countTodayPostsByChar(char.id, settings.maxPerDay) >= settings.maxPerDay) return;
-        // 触发 AI 发朋友圈（fire-and-forget，不阻塞当前 UI）
-        (async () => {
-            try {
-                const recentPosts = getAllMoments().slice(0, 10);
-                const generated = await aiGeneratePost(char, apiConfig, {
-                    userName: userProfile?.name || '我',
-                    userPersona: userProfile?.persona,
-                    memory: char.memory || undefined,
-                    recentChat: messages.slice(-6).map((m) => `${m.role === 'user' ? (userProfile?.name || '我') : char.name}: ${m.content}`).join('\n'),
-                    recentPosts,
-                }, settings);
-                if (generated) {
-                    publishPostAsChar(char, generated.content, generated.imagePrompt, settings.imageGenProvider);
-                    addToast(`${char.name} 发了一条新朋友圈`, 'info', 3000);
-                }
-            } catch (e) {
-                console.warn('[moments] auto post failed', e);
-            }
-        })();
     }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- 朋友圈主动消息事件：监听 sullyos:direct-ai-message ---
@@ -2352,6 +2311,10 @@ if (keepN > 0) {
                     addToast(`已切换: ${preset.name}`, 'info');
                 }}
                 onOpenChatSettings={handleOpenChatSettings}
+                onOpenDiscover={() => {
+                    // 暮色 2026-07-12：右上角星星按钮 → 回 WeChat 联系人列表 + 切到发现 tab
+                    requestOpenDiscoverTab();
+                }}
 
              />
 

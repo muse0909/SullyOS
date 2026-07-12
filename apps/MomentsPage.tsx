@@ -9,7 +9,7 @@
 //      修复：图片 canvas 压缩到 1080px / jpeg 0.7 + saveAllPosts 失败 addToast 提示
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { CaretLeft, Camera, X, Heart, ChatCircleDots, Gear } from '@phosphor-icons/react';
+import { CaretLeft, Camera, X, Heart, ChatCircleDots, Gear, PaperPlaneTilt } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   MomentPost,
@@ -22,8 +22,11 @@ import {
   saveAllPosts,
   genPostId,
   getSettings as getMomentsSettings,
+  likePostAsUser,
+  unlikePostAsUser,
+  commentPostAsUser,
 } from '../utils/momentsStorage';
-import { triggerAIReaction } from '../utils/momentsAI';
+import { triggerAIReaction, triggerAICommentReply, commentPostAsChar } from '../utils/momentsAI';
 import { DB } from '../utils/db';
 import MomentsSettingsPage from './MomentsSettingsPage';
 
@@ -295,6 +298,67 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     }
   };
 
+  // 暮色 2026-07-12：用户点赞/取消点赞朋友圈
+  const handleToggleLike = useCallback((postId: string) => {
+    const all = getAllPosts();
+    const post = all.find((p) => p.id === postId);
+    if (!post) return;
+    const alreadyLiked = post.likes.some((l) => l.authorType === 'user');
+    if (alreadyLiked) {
+      unlikePostAsUser(postId);
+    } else {
+      likePostAsUser(postId);
+    }
+    setPosts(getAllPosts());
+  }, []);
+
+  // 暮色 2026-07-12：用户评论/回复（replyTo 是另一条 comment.id）
+  // 写完 storage 后：
+  //  - 刷新 UI
+  //  - 如果评论的是角色 post → 调 triggerAICommentReply 让 AI 决定是否回复
+  const handleSubmitComment = useCallback(async (postId: string, content: string, replyTo?: string) => {
+    if (!content.trim()) return;
+    const updated = commentPostAsUser(postId, content.trim(), replyTo);
+    if (!updated) {
+      addToast('评论失败：找不到动态', 'error');
+      return;
+    }
+    setPosts(getAllPosts());
+    addToast(replyTo ? '已回复' : '已评论', 'success', 1500);
+
+    // 触发 AI 决定是否回复（仅当评论角色 post）
+    if (updated.authorType === 'char' && updated.charId && activeCharacterId && apiConfig.baseUrl && apiConfig.apiKey) {
+      const char = characters.find((c) => c.id === updated.charId);
+      if (char && char.id === activeCharacterId) {
+        // fire-and-forget
+        (async () => {
+          try {
+            const decision = await triggerAICommentReply(
+              char,
+              updated,
+              content.trim(),
+              replyTo,
+              apiConfig,
+              {
+                userName: userProfile?.name || '我',
+                userPersona: userProfile?.persona,
+                memory: char.memory || undefined,
+              }
+            );
+            if (decision?.replied && decision.comment) {
+              // 写 AI 回复评论
+              commentPostAsChar(postId, char.id, decision.comment);
+              setPosts(getAllPosts());
+              addToast(`${char.name} 回复了你的评论`, 'info', 2500);
+            }
+          } catch (e) {
+            console.warn('[moments] AI comment reply failed', e);
+          }
+        })();
+      }
+    }
+  }, [characters, activeCharacterId, apiConfig, userProfile, addToast]);
+
   return (
     <div className="absolute inset-0 flex flex-col bg-[#ededed] overflow-hidden">
       {/* 顶部工具栏（暮色 2026-07-04：齿轮入口从 DiscoverPage 迁到相机左边） */}
@@ -405,6 +469,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 avatarClass={avatarClass}
                 onOpenDetail={() => setSelectedPost(post)}
                 onOpenImage={(src) => setImageModal(src)}
+                onToggleLike={handleToggleLike}
                 renderCharAvatar={renderCharAvatar}
               />
             ))
@@ -473,6 +538,8 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           onClose={() => setSelectedPost(null)}
           onOpenImage={(src) => setImageModal(src)}
           avatarClass={avatarClass}
+          onToggleLike={handleToggleLike}
+          onSubmitComment={handleSubmitComment}
           renderCharAvatar={renderCharAvatar}
         />
       )}
@@ -570,8 +637,9 @@ const PostCard: React.FC<{
   avatarClass: string;
   onOpenDetail: () => void;
   onOpenImage: (src: string) => void;
+  onToggleLike: (postId: string) => void;
   renderCharAvatar: (charId: string | undefined, name: string, charColor: number | undefined, size?: 'sm' | 'md') => React.ReactNode;
-}> = ({ post, avatarClass, onOpenDetail, onOpenImage, renderCharAvatar }) => {
+}> = ({ post, avatarClass, onOpenDetail, onOpenImage, onToggleLike, renderCharAvatar }) => {
   const { characters, userProfile } = useOS();
   const authorChar = post.authorType === 'char' ? characters.find((c) => c.id === post.charId) : null;
   const authorName = post.authorType === 'user' ? userProfile.name : authorChar?.name || 'AI';
@@ -625,12 +693,30 @@ const PostCard: React.FC<{
         )}
         <div className="flex items-center justify-between mt-1.5">
           <div className="text-[10px] text-slate-400">{formatTime(post.createdAt)}</div>
-          <button
-            onClick={onOpenDetail}
-            className="text-[10px] text-slate-400 hover:text-slate-600"
-          >
-            <ChatCircleDots size={14} weight="regular" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 暮色 2026-07-12：列表卡片加点赞按钮 */}
+            <button
+              onClick={() => onToggleLike(post.id)}
+              className={`flex items-center gap-1 text-[10px] ${
+                post.likes.some((l) => l.authorType === 'user') ? 'text-red-500' : 'text-slate-400 hover:text-slate-600'
+              }`}
+              aria-label="点赞"
+            >
+              <Heart
+                size={14}
+                weight={post.likes.some((l) => l.authorType === 'user') ? 'fill' : 'regular'}
+              />
+              {post.likes.length > 0 && <span>{post.likes.length}</span>}
+            </button>
+            <button
+              onClick={onOpenDetail}
+              className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600"
+              aria-label="评论"
+            >
+              <ChatCircleDots size={14} weight="regular" />
+              {post.comments.length > 0 && <span>{post.comments.length}</span>}
+            </button>
+          </div>
         </div>
         {(post.likes.length > 0 || post.comments.length > 0) && (
           <div className="mt-2 bg-slate-50 rounded-lg p-2 text-xs space-y-1">
@@ -673,20 +759,59 @@ const PostDetailModal: React.FC<{
   onClose: () => void;
   onOpenImage: (src: string) => void;
   avatarClass: string;
+  onToggleLike: (postId: string) => void;
+  onSubmitComment: (postId: string, content: string, replyTo?: string) => void;
   renderCharAvatar: (charId: string | undefined, name: string, charColor: number | undefined, size?: 'sm' | 'md') => React.ReactNode;
-}> = ({ post, onClose, onOpenImage, avatarClass, renderCharAvatar }) => {
+}> = ({ post, onClose, onOpenImage, avatarClass, onToggleLike, onSubmitComment, renderCharAvatar }) => {
   const { characters, userProfile } = useOS();
   const authorChar = post.authorType === 'char' ? characters.find((c) => c.id === post.charId) : null;
   const authorName = post.authorType === 'user' ? userProfile.name : authorChar?.name || 'AI';
   const authorColor = post.authorType === 'user' ? undefined : authorChar?.themeColor;
 
+  // 暮色 2026-07-12：评论输入框 state
+  const [commentText, setCommentText] = useState('');
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isLikedByUser = post.likes.some((l) => l.authorType === 'user');
+
+  const handleSend = () => {
+    const text = commentText.trim();
+    if (!text) return;
+    onSubmitComment(post.id, text, replyTo?.id);
+    setCommentText('');
+    setReplyTo(null);
+  };
+
+  const startReply = (c: { id: string; authorType: 'user' | 'char'; charId?: string }) => {
+    const name = c.authorType === 'user'
+      ? userProfile.name
+      : characters.find((x) => x.id === c.charId)?.name || 'AI';
+    setReplyTo({ id: c.id, name });
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const cancelReply = () => {
+    setReplyTo(null);
+  };
+
   return (
     <div className="absolute inset-0 z-40 bg-[#ededed] flex flex-col">
-      <div className="flex items-center px-4 py-2.5 bg-white border-b border-slate-100">
+      {/* Header：返回 + 标题 + 点赞按钮 */}
+      <div className="flex items-center px-4 py-2.5 bg-white border-b border-slate-100 shrink-0">
         <button onClick={onClose} className="text-slate-500 text-lg">‹</button>
-        <h2 className="text-sm font-semibold text-slate-800 ml-2">动态详情</h2>
+        <h2 className="text-sm font-semibold text-slate-800 ml-2 flex-1">动态详情</h2>
+        <button
+          onClick={() => onToggleLike(post.id)}
+          className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
+            isLikedByUser ? 'text-red-500 bg-red-50' : 'text-slate-500 hover:bg-slate-100'
+          }`}
+          aria-label="点赞"
+        >
+          <Heart size={14} weight={isLikedByUser ? 'fill' : 'regular'} />
+          <span>{post.likes.length}</span>
+        </button>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pb-20">
         <div className="bg-white p-3 flex gap-2.5">
           <div className="shrink-0">
             {post.authorType === 'user' ? (
@@ -734,18 +859,76 @@ const PostDetailModal: React.FC<{
           )}
           {post.comments.length > 0 ? (
             <div className="bg-slate-50 rounded-lg p-2 text-xs space-y-1.5">
-              {post.comments.map((c) => (
-                <div key={c.id}>
-                  <span className="font-semibold text-slate-800">
-                    {c.authorType === 'user' ? userProfile.name : (characters.find((x) => x.id === c.charId)?.name || 'AI')}：
-                  </span>
-                  <span className="text-slate-700">{c.content}</span>
-                </div>
-              ))}
+              {post.comments.map((c) => {
+                const commenterName = c.authorType === 'user'
+                  ? userProfile.name
+                  : characters.find((x) => x.id === c.charId)?.name || 'AI';
+                const replyTarget = c.replyTo
+                  ? post.comments.find((x) => x.id === c.replyTo)
+                  : null;
+                const replyTargetName = replyTarget
+                  ? (replyTarget.authorType === 'user'
+                      ? userProfile.name
+                      : characters.find((x) => x.id === replyTarget.charId)?.name || 'AI')
+                  : null;
+                return (
+                  <div key={c.id}>
+                    <span className="font-semibold text-slate-800">
+                      {commenterName}
+                      {replyTargetName && <span className="text-slate-500 font-normal"> 回复 {replyTargetName}</span>}：
+                    </span>
+                    <span className="text-slate-700">{c.content}</span>
+                    {/* 暮色 2026-07-12：评论项加"回复"按钮 */}
+                    <button
+                      onClick={() => startReply({ id: c.id, authorType: c.authorType, charId: c.charId })}
+                      className="ml-2 text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      回复
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="text-center text-xs text-slate-400 py-3">还没有评论</div>
           )}
+        </div>
+      </div>
+
+      {/* 暮色 2026-07-12：底部评论输入框（fixed bottom） */}
+      <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-3 py-2 safe-area-bottom">
+        {replyTo && (
+          <div className="flex items-center justify-between mb-1.5 px-1">
+            <div className="text-[11px] text-slate-500">
+              回复 <span className="font-semibold text-slate-700">{replyTo.name}</span>
+            </div>
+            <button onClick={cancelReply} className="text-[11px] text-slate-400">取消</button>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={replyTo ? `回复 @${replyTo.name}` : '说点什么...'}
+            maxLength={200}
+            className="flex-1 px-3 py-2 bg-slate-100 rounded-full text-sm text-slate-700 focus:outline-none focus:bg-slate-200/70 placeholder:text-slate-400"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!commentText.trim()}
+            className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-transform shrink-0"
+            aria-label="发送"
+          >
+            <PaperPlaneTilt size={16} weight="fill" />
+          </button>
         </div>
       </div>
     </div>

@@ -131,6 +131,60 @@ export function addPost(post: MomentPost): MomentPost[] {
   return next;
 }
 
+// === 用户操作 API（暮色 2026-07-12：详情页加评论/点赞按钮 + 用户能回复角色评论） ===
+
+// 用户点赞朋友圈
+export function likePostAsUser(postId: string): MomentPost | null {
+  const all = getAllPosts();
+  const post = all.find((p) => p.id === postId);
+  if (!post) return null;
+  if (post.likes.some((l) => l.authorType === 'user')) {
+    return post; // 已赞过，幂等
+  }
+  const updated: MomentPost = {
+    ...post,
+    likes: [...post.likes, { authorType: 'user', createdAt: Date.now() }],
+  };
+  updatePost(postId, { likes: updated.likes });
+  return updated;
+}
+
+// 用户取消点赞朋友圈
+export function unlikePostAsUser(postId: string): MomentPost | null {
+  const all = getAllPosts();
+  const post = all.find((p) => p.id === postId);
+  if (!post) return null;
+  const filtered = post.likes.filter((l) => l.authorType !== 'user');
+  if (filtered.length === post.likes.length) return post; // 没赞过
+  const updated: MomentPost = { ...post, likes: filtered };
+  updatePost(postId, { likes: updated.likes });
+  return updated;
+}
+
+// 用户评论朋友圈（支持嵌套：replyTo 是另一条 comment.id）
+export function commentPostAsUser(
+  postId: string,
+  content: string,
+  replyTo?: string
+): MomentPost | null {
+  const all = getAllPosts();
+  const post = all.find((p) => p.id === postId);
+  if (!post) return null;
+  const newComment: MomentComment = {
+    id: genCommentId(),
+    authorType: 'user',
+    content,
+    createdAt: Date.now(),
+    replyTo,
+  };
+  const updated: MomentPost = {
+    ...post,
+    comments: [...post.comments, newComment],
+  };
+  updatePost(postId, { comments: updated.comments });
+  return updated;
+}
+
 export function updatePost(id: string, updates: Partial<MomentPost>): MomentPost[] {
   const all = getAllPosts();
   const next = all.map((p) => (p.id === id ? { ...p, ...updates } : p));

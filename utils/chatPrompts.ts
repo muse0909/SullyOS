@@ -372,6 +372,21 @@ export const ChatPrompts = {
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
         const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
         const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+
+        // 暮色 2026-07-12 排查 Claude 4.6 "我以为自己是 Notion AI" bug：
+        // 把实际启用的工具状态打到 console，下次开聊一眼能看出 system prompt 该不该有 Notion 段
+        console.log('🔧 [ChatPrompts] 实时工具开关', {
+            notion: notionEnabled,
+            notionNotes: notionNotesEnabled,
+            feishu: feishuEnabled,
+            search: searchEnabled,
+            xhs: xhsEnabled,
+            raw: {
+                notionEnabled: realtimeConfig?.notionEnabled,
+                notionApiKey: realtimeConfig?.notionApiKey ? '***' : '(空)',
+                notionDbId: realtimeConfig?.notionDatabaseId ? '***' : '(空)',
+            },
+        });
         // Per-character XHS override: MCP-only
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
         const xhsEnabled = char.xhsEnabled !== undefined

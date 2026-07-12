@@ -24,6 +24,13 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
+import {
+  publishPostAsChar,
+  commentPostAsChar,
+  likePostAsChar,
+  countTodayPostsByChar,
+} from '../utils/momentsAI';
+import { getSettings as getMomentsSettings } from '../utils/momentsStorage';
 
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
 const normalizeApiUrl = (url?: string): string => {
@@ -1978,6 +1985,77 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
             // 清理残留的读笔记标记
             aiContent = aiContent.replace(/\[\[READ_NOTE:.*?\]\]/g, '').trim();
+
+            // 5.9c Handle Moments (朋友圈) Actions
+            // 暮色 2026-07-12：让 AI 自己决定发朋友圈/评论/点赞（仿 330 qzone.js 的 JSON action 模式）
+            // 日志原文："我没有那个发朋友圈的工具。只能把内容写好给你，你帮我贴上去。"
+            // 修复：AI 在 chat reply 里输出 [[MOMENT_POST: ...]] [[MOMENT_COMMENT: postId | content]] [[MOMENT_LIKE: postId]]
+            //      → 这里解析 → 调用 momentsAI.publishPostAsChar/commentPostAsChar/likePostAsChar
+            try {
+                const momentsSettings = getMomentsSettings();
+
+                // 📝 [[MOMENT_POST: 内容]] - 发朋友圈
+                const postMatches = [...aiContent.matchAll(/\[\[MOMENT_POST:\s*([\s\S]+?)\]\]/g)];
+                if (postMatches.length > 0) {
+                    // 检查 maxPerDay 上限
+                    const todayCount = countTodayPostsByChar(char.id, momentsSettings.maxPerDay);
+                    let canPost = todayCount < momentsSettings.maxPerDay;
+                    if (momentsSettings.maxPerDay <= 0) {
+                        // 设为 0 = 关闭（与 Chat.tsx 的 fire-and-forget useEffect 一致）
+                        canPost = false;
+                    }
+
+                    if (!canPost) {
+                        console.log(`📱 [Moments] 今日已发满 ${momentsSettings.maxPerDay} 条，跳过 ${postMatches.length} 个 POST`);
+                        addToast(`${char.name} 今日朋友圈已发满`, 'info');
+                    } else {
+                        // 限制每次最多发 1 条（避免 AI 一次刷 N 条）
+                        const toPost = postMatches[0];
+                        const content = toPost[1].trim();
+                        if (content) {
+                            // 不带图（AI 主动发的动态都是纯文字，图片要走 imageGenProvider 这里不做）
+                            publishPostAsChar(char, content, undefined, 'none');
+                            console.log(`📱 [Moments] ${char.name} 发了一条朋友圈: ${content.slice(0, 30)}...`);
+                            addToast(`📱 ${char.name} 发了一条新朋友圈`, 'success', 2500);
+                        }
+                    }
+                }
+                // 移除所有 MOMENT_POST 标记（无论发没发出去）
+                aiContent = aiContent.replace(/\[\[MOMENT_POST:\s*[\s\S]+?\]\]/g, '').trim();
+
+                // 💬 [[MOMENT_COMMENT: postId | 评论内容]] - 评论朋友圈
+                const commentMatches = [...aiContent.matchAll(/\[\[MOMENT_COMMENT:\s*([^\s|]+)\s*\|\s*([\s\S]+?)\]\]/g)];
+                for (const m of commentMatches) {
+                    const postId = m[1].trim();
+                    const content = m[2].trim();
+                    if (postId && content) {
+                        const updated = commentPostAsChar(postId, char.id, content);
+                        if (updated) {
+                            console.log(`💬 [Moments] ${char.name} 评论了动态 ${postId}: ${content.slice(0, 30)}...`);
+                        } else {
+                            console.warn(`💬 [Moments] 评论失败：找不到动态 ${postId}`);
+                        }
+                    }
+                }
+                aiContent = aiContent.replace(/\[\[MOMENT_COMMENT:\s*[^\s|]+\s*\|\s*[\s\S]+?\]\]/g, '').trim();
+
+                // ❤️ [[MOMENT_LIKE: postId]] - 点赞朋友圈
+                const likeMatches = [...aiContent.matchAll(/\[\[MOMENT_LIKE:\s*([^\s\]]+)\s*\]\]/g)];
+                for (const m of likeMatches) {
+                    const postId = m[1].trim();
+                    if (postId) {
+                        const updated = likePostAsChar(postId, char.id);
+                        if (updated) {
+                            console.log(`❤️ [Moments] ${char.name} 点赞了动态 ${postId}`);
+                        } else {
+                            console.warn(`❤️ [Moments] 点赞失败：找不到动态 ${postId}`);
+                        }
+                    }
+                }
+                aiContent = aiContent.replace(/\[\[MOMENT_LIKE:\s*[^\s\]]+\s*\]\]/g, '').trim();
+            } catch (e) {
+                console.warn('📱 [Moments] 解析失败:', e);
+            }
 
             // 5.10 Handle XHS (小红书) Actions
             // Resolve per-character XHS config

@@ -1270,6 +1270,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 const imageUrl = imgData?.data?.[0]?.url || '';
 
+                // 暮色 2026-07-12：bridge 返回的 _meta.model_used 在 console 打出来，
+                // 下次出图能一眼确认是 RV 还是 Pony 出的
+                if (imgData?._meta?.model_used) {
+                    console.log('🎨 [ImageGen] 实际使用模型:', imgData._meta.model_used);
+                }
+
                 if (imageUrl) {
                     // 保存图片消息
                     await DB.saveMessage({

@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-12 | 朋友圈设置页 z-30 修复主页头像/签名/工具栏穿透 | [`changelogs/2026-07-12-moments-settings-z-index.md`](./changelogs/2026-07-12-moments-settings-z-index.md) |
 | 2026-07-04 | 朋友圈 ↔ Chat Awareness 互通（Layer 1）+ 设置入口迁移到 MomentsPage 工具栏相机左边 | [`changelogs/2026-07-04-moments-chat-awareness.md`](./changelogs/2026-07-04-moments-chat-awareness.md) |
 | 2026-07-04 | ChatInputArea 重复 import 修复（build 过但 dev 报错的隐藏 bug） | [`changelogs/2026-07-04-chatinputarea-dedupe-import.md`](./changelogs/2026-07-04-chatinputarea-dedupe-import.md) |
 | 2026-07-04 | ComfyUI 卡片加 checkpoint 选择（RV/Pony 可手动切换） | [`changelogs/2026-07-03-comfyui-checkpoint-picker.md`](./changelogs/2026-07-03-comfyui-checkpoint-picker.md) |

@@ -650,6 +650,7 @@ const PostCard: React.FC<{
   // 暮色 2026-07-12：评论输入框（仿微信） + 长按进详情
   const [commenting, setCommenting] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
+  const [replyTarget, setReplyTarget] = useState<{ id: string; name: string } | null>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
@@ -674,23 +675,34 @@ const PostCard: React.FC<{
     if (!longPressTriggeredRef.current) onOpenDetail();
   };
 
-  // 打开评论输入框 + 自动 focus
-  const openComment = () => {
+  // 打开评论输入框 + 自动 focus（可带 replyTo）
+  const openComment = (target?: { id: string; name: string }) => {
     setCommenting(true);
     setCommentDraft('');
+    setReplyTarget(target || null);
     // 等 DOM 渲染完再 focus
     setTimeout(() => commentInputRef.current?.focus(), 50);
   };
   const closeComment = () => {
     setCommenting(false);
     setCommentDraft('');
+    setReplyTarget(null);
   };
   const handleSend = () => {
     const text = commentDraft.trim();
     if (!text) return;
-    onSubmitComment(post.id, text);
+    onSubmitComment(post.id, text, replyTarget?.id);
     setCommentDraft('');
     setCommenting(false);
+    setReplyTarget(null);
+  };
+
+  // 暮色 2026-07-12：点评论项 → 弹输入框（带 replyTo）
+  const handleCommentItemClick = (c: { id: string; authorType: 'user' | 'char'; charId?: string }) => {
+    const name = c.authorType === 'user'
+      ? userProfile.name
+      : characters.find((x) => x.id === c.charId)?.name || 'AI';
+    openComment({ id: c.id, name });
   };
 
   return (
@@ -778,45 +790,60 @@ const PostCard: React.FC<{
 
         {/* 暮色 2026-07-12：in-page 评论输入框（仿微信朋友圈：键盘弹起时浮在底部）*/}
         {commenting && (
-          <div className="mt-2 flex items-center gap-2 bg-slate-50 rounded-2xl px-3 py-2">
-            <input
-              ref={commentInputRef}
-              type="text"
-              value={commentDraft}
-              onChange={(e) => setCommentDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  closeComment();
-                }
-              }}
-              onBlur={() => {
-                // 失焦且没内容时关闭
-                if (!commentDraft.trim()) {
-                  setTimeout(() => closeComment(), 100);
-                }
-              }}
-              maxLength={200}
-              placeholder={`评论 ${authorName}...`}
-              className="flex-1 bg-transparent text-sm text-slate-700 focus:outline-none placeholder:text-slate-400"
-            />
-            <button
-              onClick={handleSend}
-              disabled={!commentDraft.trim()}
-              className="text-xs px-2.5 py-1 bg-emerald-500 text-white rounded-full disabled:opacity-40 active:scale-95 transition-transform shrink-0"
-            >
-              发送
-            </button>
-            <button
-              onClick={closeComment}
-              className="text-xs text-slate-400 px-1 shrink-0"
-            >
-              取消
-            </button>
+          <div className="mt-2">
+            {replyTarget && (
+              <div className="flex items-center justify-between mb-1 px-1">
+                <div className="text-[11px] text-slate-500">
+                  回复 <span className="font-semibold text-slate-700">@{replyTarget.name}</span>
+                </div>
+                <button
+                  onClick={() => setReplyTarget(null)}
+                  className="text-[11px] text-slate-400 px-1"
+                >
+                  取消回复
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-2 bg-slate-50 rounded-2xl px-3 py-2">
+              <input
+                ref={commentInputRef}
+                type="text"
+                value={commentDraft}
+                onChange={(e) => setCommentDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeComment();
+                  }
+                }}
+                onBlur={() => {
+                  // 失焦且没内容时关闭
+                  if (!commentDraft.trim()) {
+                    setTimeout(() => closeComment(), 100);
+                  }
+                }}
+                maxLength={200}
+                placeholder={replyTarget ? `回复 @${replyTarget.name}` : `评论 ${authorName}...`}
+                className="flex-1 bg-transparent text-sm text-slate-700 focus:outline-none placeholder:text-slate-400"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!commentDraft.trim()}
+                className="text-xs px-2.5 py-1 bg-emerald-500 text-white rounded-full disabled:opacity-40 active:scale-95 transition-transform shrink-0"
+              >
+                发送
+              </button>
+              <button
+                onClick={closeComment}
+                className="text-xs text-slate-400 px-1 shrink-0"
+              >
+                取消
+              </button>
+            </div>
           </div>
         )}
 
@@ -835,13 +862,18 @@ const PostCard: React.FC<{
             )}
             {post.comments.length > 0 && (
               <div className="space-y-0.5 text-slate-700">
+                {/* 暮色 2026-07-12：评论项可点击 → 弹输入框回复（嵌套 replyTo）*/}
                 {post.comments.slice(0, 2).map((c) => (
-                  <div key={c.id}>
+                  <button
+                    key={c.id}
+                    onClick={() => handleCommentItemClick({ id: c.id, authorType: c.authorType, charId: c.charId })}
+                    className="w-full text-left hover:bg-slate-100 active:bg-slate-200/60 rounded px-1 -mx-1 transition-colors cursor-pointer"
+                  >
                     <span className="font-semibold text-slate-800">
                       {c.authorType === 'user' ? userProfile.name : (characters.find((x) => x.id === c.charId)?.name || 'AI')}：
                     </span>
                     <span>{c.content}</span>
-                  </div>
+                  </button>
                 ))}
                 {post.comments.length > 2 && (
                   <div className="text-slate-400 text-[10px]">共 {post.comments.length} 条评论</div>

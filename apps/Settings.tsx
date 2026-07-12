@@ -646,9 +646,11 @@ const handleSaveOpenaiImageApi = () => {
 
 const handleSaveComfyuiImageApi = () => {
     // 暮色 2026-07-04 要求：用户在 checkpoint 列表里选哪个就用哪个（不再写死 RV）
-    const selectedModel = localComfyuiSelectedModel || comfyuiModelList[0] || '';
-    if (!selectedModel) {
-      setImageStatusMsg('请先点 [测试连接] 拉取 checkpoint 列表');
+    // 暮色 2026-07-12 防御性：删 comfyuiModelList[0] fallback，没选过 model 不让保存
+    // （按钮已 disable，但这里再守一道，防御 setImageStatusMsg 后 user 强行 click）
+    const selectedModel = localComfyuiSelectedModel;
+    if (!selectedModel || !comfyuiModelList.includes(selectedModel)) {
+      setImageStatusMsg('请先点 [测试连接] 拉取 checkpoint 列表并选一个');
       return;
     }
     updateApiConfig({
@@ -1565,7 +1567,9 @@ const handleSaveTts = () => {
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">选择 checkpoint 出图</label>
                       <div className="flex flex-col gap-1.5">
                         {comfyuiModelList.map(m => {
-                          const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
+                          // 暮色 2026-07-12 防御性：不再 fallback 到 comfyuiModelList[0]，
+                          // 否则列表会自动高亮第一个，用户以为选过了实际没选
+                          const isSelected = localComfyuiSelectedModel === m;
                           return (
                             <button
                               key={m}
@@ -1589,7 +1593,12 @@ const handleSaveTts = () => {
                   <button onClick={testComfyuiConnection} disabled={comfyuiTestState === 'testing'} className="flex-1 py-3 rounded-2xl font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 active:scale-95 transition-all disabled:opacity-50">
                     {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
                   </button>
-                  <button onClick={handleSaveComfyuiImageApi} className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all">
+                  {/* 暮色 2026-07-12：未选 model 时 disable 启用按钮，避免再次出现'以为选了 RV 实际存了 Pony' */}
+                  <button
+                    onClick={handleSaveComfyuiImageApi}
+                    disabled={comfyuiTestState !== 'ok' || !localComfyuiSelectedModel || !comfyuiModelList.includes(localComfyuiSelectedModel)}
+                    className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
                     {imageStatusMsg || '启用 ComfyUI 本地'}
                   </button>
                 </div>

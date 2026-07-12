@@ -372,11 +372,12 @@ const ApiQuickFloat: React.FC = () => {
     // 暮色 2026-07-03 要求"在哪个 provider 页面保存就用哪个"
     // ComfyUI 页面：写死常量 + 用户选的 checkpoint model
     // OpenAI / NAI 页面：用 localImageUrl/Key/Model 字段值
+    // 暮色 2026-07-12 防御性：删 comfyuiModelList[0] fallback，没选过 model 不让走 ComfyUI
     const imageConfig = localImageGenProvider === 'comfyui'
       ? {
           imageBaseUrl: COMFYUI_FIXED_URL,
           imageApiKey: COMFYUI_FIXED_KEY,
-          imageModel: localComfyuiSelectedModel || comfyuiModelList[0] || '',
+          imageModel: localComfyuiSelectedModel,
         }
       : {
           imageBaseUrl: localImageUrl,
@@ -403,6 +404,11 @@ const ApiQuickFloat: React.FC = () => {
     );
     setShowPanel(false);
   };
+
+  // 暮色 2026-07-12：ComfyUI 模式下，没选 model 或没拿到 checkpoint 列表 → 不让保存
+  // 防御性，避免再次出现'以为选了 RV 实际存了 Pony'的事故
+  const comfyuiCanSave = localImageGenProvider !== 'comfyui'
+    || (comfyuiTestState === 'ok' && localComfyuiSelectedModel !== '' && comfyuiModelList.includes(localComfyuiSelectedModel));
 
   const toggleSection = (section: QuickPresetKind) => {
     setOpenSection((prev) => (prev === section ? null : section));
@@ -799,7 +805,9 @@ const ApiQuickFloat: React.FC = () => {
                         {comfyuiModelList.length > 0 && (
                           <div className="mt-1.5 flex flex-col gap-1">
                             {comfyuiModelList.map(m => {
-                              const isSelected = (localComfyuiSelectedModel || comfyuiModelList[0]) === m;
+                              // 暮色 2026-07-12 防御性：不再 fallback 到 comfyuiModelList[0]，
+                              // 否则列表会自动高亮第一个，用户以为选过了实际没选
+                              const isSelected = localComfyuiSelectedModel === m;
                               return (
                                 <button
                                   key={m}
@@ -961,10 +969,17 @@ const ApiQuickFloat: React.FC = () => {
             <div className="px-5 py-3 border-t border-slate-100 shrink-0">
               <button
                 onClick={handleSaveAndClose}
-                className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-600 active:scale-95 transition-all"
+                disabled={!comfyuiCanSave}
+                className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-600 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 保存并关闭
               </button>
+              {/* 暮色 2026-07-12：ComfyUI 模式下未选 model 时给个明确提示 */}
+              {localImageGenProvider === 'comfyui' && !comfyuiCanSave ? (
+                <p className="text-[10px] text-rose-500 text-center mt-2">
+                  请先点 [测试连接]，再选一个 checkpoint
+                </p>
+              ) : null}
             </div>
           </div>
 

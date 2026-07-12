@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-12 | 聊天页头部加发现页入口（星星按钮） | [`changelogs/2026-07-12-chat-header-discover-button.md`](./changelogs/2026-07-12-chat-header-discover-button.md) |
 | 2026-07-12 | 朋友圈 autoPostByChar 语义重定义 + 删旧 useEffect 钩子 + 频率 0-100 | [`changelogs/2026-07-12-moments-autopostbychar-rewrite.md`](./changelogs/2026-07-12-moments-autopostbychar-rewrite.md) |
 | 2026-07-12 | ComfyUI 选 model 同步 bug + 多胳膊防御 + checkpoint 短标签 + bridge prompt 注入 | [`changelogs/2026-07-12-comfyui-model-sync-and-multi-arms-fix.md`](./changelogs/2026-07-12-comfyui-model-sync-and-multi-arms-fix.md) |
 | 2026-07-12 | 朋友圈 AI 主动发工具（仿 330 qzone.js JSON action 模式） | [`changelogs/2026-07-12-ai-moments-tool.md`](./changelogs/2026-07-12-ai-moments-tool.md) |

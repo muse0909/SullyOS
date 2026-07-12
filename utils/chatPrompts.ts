@@ -372,9 +372,17 @@ export const ChatPrompts = {
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
         const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
         const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        // Per-character XHS override: MCP-only
+        const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
+        const xhsEnabled = char.xhsEnabled !== undefined
+            ? !!(char.xhsEnabled && mcpXhsAvailable)
+            : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
 
         // 暮色 2026-07-12 排查 Claude 4.6 "我以为自己是 Notion AI" bug：
         // 把实际启用的工具状态打到 console，下次开聊一眼能看出 system prompt 该不该有 Notion 段
+        // ⚠️ 必须放在所有 enabled 变量都声明完之后（暮色 2026-07-12 上一个版本 TDZ 错就是这个
+        //    console.log 在 xhsEnabled 声明前引用了它，Vite 压成 'Ge' 报 'Cannot access Ge
+        //    before initialization'，整页变白）
         console.log('🔧 [ChatPrompts] 实时工具开关', {
             notion: notionEnabled,
             notionNotes: notionNotesEnabled,
@@ -387,11 +395,6 @@ export const ChatPrompts = {
                 notionDbId: realtimeConfig?.notionDatabaseId ? '***' : '(空)',
             },
         });
-        // Per-character XHS override: MCP-only
-        const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
-        const xhsEnabled = char.xhsEnabled !== undefined
-            ? !!(char.xhsEnabled && mcpXhsAvailable)
-            : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
 
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**

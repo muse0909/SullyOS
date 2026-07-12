@@ -470,6 +470,7 @@ const MomentsPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 onOpenDetail={() => setSelectedPost(post)}
                 onOpenImage={(src) => setImageModal(src)}
                 onToggleLike={handleToggleLike}
+                onSubmitComment={handleSubmitComment}
                 renderCharAvatar={renderCharAvatar}
               />
             ))
@@ -638,12 +639,59 @@ const PostCard: React.FC<{
   onOpenDetail: () => void;
   onOpenImage: (src: string) => void;
   onToggleLike: (postId: string) => void;
+  onSubmitComment: (postId: string, content: string, replyTo?: string) => void;
   renderCharAvatar: (charId: string | undefined, name: string, charColor: number | undefined, size?: 'sm' | 'md') => React.ReactNode;
-}> = ({ post, avatarClass, onOpenDetail, onOpenImage, onToggleLike, renderCharAvatar }) => {
+}> = ({ post, avatarClass, onOpenDetail, onOpenImage, onToggleLike, onSubmitComment, renderCharAvatar }) => {
   const { characters, userProfile } = useOS();
   const authorChar = post.authorType === 'char' ? characters.find((c) => c.id === post.charId) : null;
   const authorName = post.authorType === 'user' ? userProfile.name : authorChar?.name || 'AI';
   const authorColor = post.authorType === 'user' ? undefined : authorChar?.themeColor;
+
+  // 暮色 2026-07-12：评论输入框（仿微信） + 长按进详情
+  const [commenting, setCommenting] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  const commentInputRef = useRef<HTMLInputElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  // 长按 500ms 进详情
+  const handleContentPointerDown = () => {
+    longPressTriggeredRef.current = false;
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      longPressTimerRef.current = null;
+      onOpenDetail();
+    }, 500);
+  };
+  const handleContentPointerEnd = () => {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+  const handleContentClick = () => {
+    if (!longPressTriggeredRef.current) onOpenDetail();
+  };
+
+  // 打开评论输入框 + 自动 focus
+  const openComment = () => {
+    setCommenting(true);
+    setCommentDraft('');
+    // 等 DOM 渲染完再 focus
+    setTimeout(() => commentInputRef.current?.focus(), 50);
+  };
+  const closeComment = () => {
+    setCommenting(false);
+    setCommentDraft('');
+  };
+  const handleSend = () => {
+    const text = commentDraft.trim();
+    if (!text) return;
+    onSubmitComment(post.id, text);
+    setCommentDraft('');
+    setCommenting(false);
+  };
 
   return (
     <div className="flex gap-3 p-3 border-b border-slate-100 bg-white">
@@ -669,9 +717,17 @@ const PostCard: React.FC<{
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold text-slate-800">{authorName}</div>
-        <button onClick={onOpenDetail} className="text-left w-full">
+        {/* 长按 500ms 进详情，短按不响应（避免误触）*/}
+        <div
+          onClick={handleContentClick}
+          onPointerDown={handleContentPointerDown}
+          onPointerUp={handleContentPointerEnd}
+          onPointerLeave={handleContentPointerEnd}
+          onPointerCancel={handleContentPointerEnd}
+          className="text-left w-full cursor-pointer select-none touch-manipulation"
+        >
           <div className="text-sm text-slate-700 mt-1 leading-relaxed whitespace-pre-wrap break-words">{post.content}</div>
-        </button>
+        </div>
         {post.images.length > 0 && (
           <div
             className="mt-2 grid gap-1"
@@ -708,16 +764,62 @@ const PostCard: React.FC<{
               />
               {post.likes.length > 0 && <span>{post.likes.length}</span>}
             </button>
+            {/* 暮色 2026-07-12：评论按钮 → 点开 in-page 输入框（仿微信）*/}
             <button
-              onClick={onOpenDetail}
-              className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600"
+              onClick={openComment}
+              className={`flex items-center gap-1 text-[10px] ${commenting ? 'text-emerald-500' : 'text-slate-400 hover:text-slate-600'}`}
               aria-label="评论"
             >
-              <ChatCircleDots size={14} weight="regular" />
+              <ChatCircleDots size={14} weight={commenting ? 'fill' : 'regular'} />
               {post.comments.length > 0 && <span>{post.comments.length}</span>}
             </button>
           </div>
         </div>
+
+        {/* 暮色 2026-07-12：in-page 评论输入框（仿微信朋友圈：键盘弹起时浮在底部）*/}
+        {commenting && (
+          <div className="mt-2 flex items-center gap-2 bg-slate-50 rounded-2xl px-3 py-2">
+            <input
+              ref={commentInputRef}
+              type="text"
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  closeComment();
+                }
+              }}
+              onBlur={() => {
+                // 失焦且没内容时关闭
+                if (!commentDraft.trim()) {
+                  setTimeout(() => closeComment(), 100);
+                }
+              }}
+              maxLength={200}
+              placeholder={`评论 ${authorName}...`}
+              className="flex-1 bg-transparent text-sm text-slate-700 focus:outline-none placeholder:text-slate-400"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!commentDraft.trim()}
+              className="text-xs px-2.5 py-1 bg-emerald-500 text-white rounded-full disabled:opacity-40 active:scale-95 transition-transform shrink-0"
+            >
+              发送
+            </button>
+            <button
+              onClick={closeComment}
+              className="text-xs text-slate-400 px-1 shrink-0"
+            >
+              取消
+            </button>
+          </div>
+        )}
+
         {(post.likes.length > 0 || post.comments.length > 0) && (
           <div className="mt-2 bg-slate-50 rounded-lg p-2 text-xs space-y-1">
             {post.likes.length > 0 && (

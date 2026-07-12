@@ -105,8 +105,8 @@ const MomentsSettingsPage: React.FC<MomentsSettingsPageProps> = ({ onBack }) => 
             onChange={(v) => updateSetting('autoCommentMine', v)}
           />
           <SettingToggle
-            label="角色自动发朋友圈"
-            desc="你们聊完一轮后，AI 按上限自动发"
+            label="AI 主动发朋友圈"
+            desc="开了：AI 在聊天中觉得合适时会自己发。关了：AI 完全不发朋友圈"
             checked={settings.autoPostByChar}
             onChange={(v) => updateSetting('autoPostByChar', v)}
           />
@@ -134,12 +134,12 @@ const MomentsSettingsPage: React.FC<MomentsSettingsPageProps> = ({ onBack }) => 
             <input
               type="range"
               min={0}
-              max={5}
+              max={100}
               value={settings.maxPerDay}
               onChange={(e) => updateSetting('maxPerDay', Number(e.target.value))}
               className="w-full accent-emerald-500"
             />
-            <div className="text-[10px] text-slate-400 mt-1">设为 0 关闭自动发朋友圈</div>
+            <div className="text-[10px] text-slate-400 mt-1">设为 0 完全不发；100 基本不限制</div>
           </div>
         </SectionCard>
 

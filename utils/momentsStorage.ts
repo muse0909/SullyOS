@@ -42,9 +42,9 @@ export interface MomentSettings {
 
 const DEFAULT_SETTINGS: MomentSettings = {
   autoCommentMine: true,
-  autoPostByChar: true,
+  autoPostByChar: false, // 暮色 2026-07-12：默认关。新语义 = "AI 能不能主动发朋友圈"。开了 AI 自己在 reply 里决定发不发。
   autoCharInteraction: false,
-  maxPerDay: 2,
+  maxPerDay: 100, // 暮色 2026-07-12：放开上限 0-100，0=关闭；100=基本不限制。
   notifyAIOnUserPost: true,
   imageGenProvider: 'none',
 };

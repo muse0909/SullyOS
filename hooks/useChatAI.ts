@@ -1996,18 +1996,21 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 // 📝 [[MOMENT_POST: 内容]] - 发朋友圈
                 const postMatches = [...aiContent.matchAll(/\[\[MOMENT_POST:\s*([\s\S]+?)\]\]/g)];
-                if (postMatches.length > 0) {
+                if (postMatches.length > 0 && !momentsSettings.autoPostByChar) {
+                    // 暮色 2026-07-12：autoPostByChar 现在语义是 "AI 能不能主动发"——关了就不发
+                    console.log(`📱 [Moments] autoPostByChar=off，跳过 ${postMatches.length} 个 POST`);
+                    addToast(`${char.name} 的主动发朋友圈已关闭`, 'info');
+                } else if (postMatches.length > 0) {
                     // 检查 maxPerDay 上限
                     const todayCount = countTodayPostsByChar(char.id, momentsSettings.maxPerDay);
                     let canPost = todayCount < momentsSettings.maxPerDay;
                     if (momentsSettings.maxPerDay <= 0) {
-                        // 设为 0 = 关闭（与 Chat.tsx 的 fire-and-forget useEffect 一致）
                         canPost = false;
                     }
 
                     if (!canPost) {
                         console.log(`📱 [Moments] 今日已发满 ${momentsSettings.maxPerDay} 条，跳过 ${postMatches.length} 个 POST`);
-                        addToast(`${char.name} 今日朋友圈已发满`, 'info');
+                        addToast(`${char.name} 今日朋友圈已达上限`, 'info');
                     } else {
                         // 限制每次最多发 1 条（避免 AI 一次刷 N 条）
                         const toPost = postMatches[0];

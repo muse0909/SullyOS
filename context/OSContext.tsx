@@ -255,6 +255,10 @@ interface OSContextType {
   consumeDirectEntry: () => boolean;
   // 收藏定位：点击收藏页"定位到聊天"时调，Chat 页面 mount/激活时 consume 决定 scroll/highlight
   consumePendingHighlightMessageId: () => string | null;
+  // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮触发
+  // → 回 WeChat 联系人列表 + 切到发现 tab
+  requestOpenDiscoverTab: () => void;
+  consumePendingDiscoverTab: () => boolean;
 
   // Call Suspend
   suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
@@ -591,6 +595,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // Direct Entry Flag — jumpToChat 同时设 true，WeChat mount 时 consume 决定 back 行为
   // — widget 直跳入口按一次返回直接回桌面；联系人列表点入仍走"联系人→桌面"两步
   const directEntryRef = useRef(false);
+  // Pending Discover Tab Ref — 暮色 2026-07-12：ChatHeaderShell 上"星星"按钮触发
+  // → 聊天页 → 回联系人列表 + 切到发现 tab
+  // 用 ref + trigger counter 双重机制：ref 防止重复 trigger，counter 让 WeChat 能用 useEffect 监听
+  const pendingDiscoverTabRef = useRef(false);
+  const [discoverTabRequestId, setDiscoverTabRequestId] = useState(0);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2810,6 +2819,18 @@ if (!isVisible || !isChattingWithThisChar) {
     return was;
   };
 
+  // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮 → 触发进入发现页
+  // 实现：ref 防重复 + trigger counter 让 WeChat 用 useEffect 监听
+  const requestOpenDiscoverTab = () => {
+    pendingDiscoverTabRef.current = true;
+    setDiscoverTabRequestId((n) => n + 1);
+  };
+  const consumePendingDiscoverTab = () => {
+    const was = pendingDiscoverTabRef.current;
+    pendingDiscoverTabRef.current = false;
+    return was;
+  };
+
   // 收藏定位 — 跳到 chat + 高亮某条 message（用于收藏页"定位到聊天"）
   // 复用 pendingDirectChatRef：WeChat mount 时会 consume，看到有值就直接 setOpenedCharId
   // 跳过联系人列表直接进 Chat（撤销之前反向同步 effect 的方案，避免破坏联系人列表入口）
@@ -2945,7 +2966,10 @@ if (!isVisible || !isChattingWithThisChar) {
     consumePendingDirectChat,
     consumeDirectEntry,
     jumpToMessage,
-    consumePendingHighlightMessageId
+    consumePendingHighlightMessageId,
+    requestOpenDiscoverTab,
+    consumePendingDiscoverTab,
+    discoverTabRequestId
   };
 
   return (

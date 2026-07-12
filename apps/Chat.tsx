@@ -28,7 +28,7 @@ import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -2311,6 +2311,10 @@ if (keepN > 0) {
                     addToast(`已切换: ${preset.name}`, 'info');
                 }}
                 onOpenChatSettings={handleOpenChatSettings}
+                onOpenDiscover={() => {
+                    // 暮色 2026-07-12：右上角星星按钮 → 回 WeChat 联系人列表 + 切到发现 tab
+                    requestOpenDiscoverTab();
+                }}
 
              />
 

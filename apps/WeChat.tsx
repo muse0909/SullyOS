@@ -96,6 +96,19 @@ const WeChat: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCharacterId]);
 
+  // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮触发 → 回联系人列表 + 切到发现 tab
+  // 监听 discoverTabRequestId：ChatHeaderShell 调 requestOpenDiscoverTab() 会自增这个 counter
+  // 这里 consume + setOpenedCharId(null) + setTab('discover')
+  const { consumePendingDiscoverTab, discoverTabRequestId } = useOS();
+  useEffect(() => {
+    if (discoverTabRequestId === 0) return; // 初始值 0 跳过
+    if (consumePendingDiscoverTab()) {
+      setOpenedCharId(null);
+      setTab('discover');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discoverTabRequestId]);
+
   // 已选角色 → 嵌套 Chat
   // 顶栏左侧 onClose 交给 Chat 自己的 ChatHeaderShell 处理：
   //   onClose → closeApp → handleBack → 我们的 registerBackHandler 优先级最高 → 自动回到联系人列表

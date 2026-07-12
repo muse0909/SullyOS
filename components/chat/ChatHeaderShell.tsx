@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft, GearSix } from '@phosphor-icons/react';
+import { CaretLeft, GearSix, Star } from '@phosphor-icons/react';
 import ChatMusicPlayer from './ChatMusicPlayer';
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
 import { getBuffColor, darkenHex, lightenHex } from '../../utils/buffColor';
@@ -33,6 +33,8 @@ interface ChatHeaderShellProps {
     onShowCharsPanel: () => void;
     onDeleteBuff?: (buffId: string) => void;
     onOpenChatSettings?: () => void;
+    // 暮色 2026-07-12：右上角星星按钮 → 触发回 WeChat 联系人列表 + 切到发现 tab
+    onOpenDiscover?: () => void;
     headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
     avatarShape?: 'circle' | 'rounded' | 'square';
     headerAlign?: 'left' | 'center';
@@ -99,6 +101,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     onShowCharsPanel,
     onDeleteBuff,
     onOpenChatSettings,
+    onOpenDiscover,
     headerStyle = 'default',
     avatarShape = 'circle',
     headerAlign = 'left',
@@ -359,6 +362,16 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         <ChatMusicPlayer />
+                        {onOpenDiscover && (
+                            <button
+                                onClick={onOpenDiscover}
+                                className={`p-2 ${iconButtonClass}`}
+                                title="发现页"
+                                aria-label="发现页"
+                            >
+                                <Star className="w-5 h-5" weight="bold" />
+                            </button>
+                        )}
                         {onOpenChatSettings && (
                             <button
                                 onClick={onOpenChatSettings}
@@ -384,6 +397,16 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div className="relative ml-auto flex items-center gap-1">
                         <ChatMusicPlayer />
+                        {onOpenDiscover && (
+                            <button
+                                onClick={onOpenDiscover}
+                                className={`p-2 ${iconButtonClass}`}
+                                title="发现页"
+                                aria-label="发现页"
+                            >
+                                <Star className="w-5 h-5" weight="bold" />
+                            </button>
+                        )}
                         {onOpenChatSettings && (
                             <button
                                 onClick={onOpenChatSettings}

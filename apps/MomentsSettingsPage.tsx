@@ -81,7 +81,7 @@ const MomentsSettingsPage: React.FC<MomentsSettingsPageProps> = ({ onBack }) => 
   };
 
   return (
-    <div className="absolute inset-0 flex flex-col bg-[#ededed]">
+    <div className="absolute inset-0 z-30 flex flex-col bg-[#ededed]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-3 bg-white border-b border-slate-200/60 shrink-0">
         <button

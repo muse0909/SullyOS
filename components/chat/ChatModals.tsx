@@ -963,7 +963,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                             onClick={() => toggleSelectEmoji(e.name)}
                                             onMouseDown={(ev) => handleReorderPointerDown(e.name, ev)}
                                             onTouchStart={(ev) => handleReorderPointerDown(e.name, ev)}
-                                            className={`relative aspect-square rounded-xl p-1 border-2 transition-all select-none flex items-center justify-center ${
+                                            className={`relative aspect-square rounded-xl p-1 border-2 transition-all select-none touch-none flex items-center justify-center ${
                                                 isSelected
                                                     ? 'border-primary bg-primary/5'
                                                     : 'border-slate-200/60 bg-white hover:border-slate-300 active:scale-95'

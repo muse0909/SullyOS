@@ -14,6 +14,7 @@ import {
   updateFavorite,
   markFavoriteInvalid,
   getFavoriteVoiceBlob,
+  deleteVoiceFavoriteCloud,
 } from '../utils/favoritesStorage';
 
 type TabKey = 'text' | 'voice';
@@ -56,6 +57,12 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     if (window.confirm(`确定要删除这条收藏吗？`)) {
       removeFavorite(item.id);
       setItems((prev) => prev.filter((i) => i.id !== item.id));
+      // 云端 blob 也清掉（fire-and-forget，失败不影响主流程）
+      if (item.type === 'voice') {
+        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
+          console.warn('[favorites] cloud delete failed', e);
+        });
+      }
       addToast('已删除', 'success');
     }
   };
@@ -94,6 +101,11 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const toDelete = items.filter((i) => selectedIds.has(i.id));
     toDelete.forEach((item) => {
       removeFavorite(item.id);
+      if (item.type === 'voice') {
+        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
+          console.warn('[favorites] cloud delete failed', e);
+        });
+      }
     });
     setItems((prev) => prev.filter((i) => !selectedIds.has(i.id)));
     addToast(`已删除 ${toDelete.length} 条`, 'success');
@@ -110,6 +122,11 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     if (!window.confirm(`清理 ${invalidItems.length} 条已失效的收藏？此操作不可撤销。`)) return;
     invalidItems.forEach((item) => {
       removeFavorite(item.id);
+      if (item.type === 'voice') {
+        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
+          console.warn('[favorites] cloud delete failed', e);
+        });
+      }
     });
     setItems((prev) => prev.filter((i) => !i.invalid));
     addToast(`已清理 ${invalidItems.length} 条失效收藏`, 'success');
@@ -250,36 +267,58 @@ const FavoriteCard: React.FC<{
   const isVoice = item.type === 'voice';
 
   // voice 卡片：mount 时从 IndexedDB 读 blob + 生成 blob URL（解决跨页面 blob 失效）
-  // 优先级：新方案（IndexedDB） > 老方案（item.url，blob URL 跨页面会失效）
-  // （云端 URL 升级将在下一步合并进来）
-  const [voiceSrc, setVoiceSrc] = React.useState<string | null>(item.url || null);
+  // voice 卡片：mount 时按优先级取音源
+  // 优先级（2026-07-13 升级）：云端 URL（item.url）> IndexedDB > invalid
+  // - 云端 URL 跨设备/换浏览器/清缓存都能用
+  // - IndexedDB 兜底老数据（升级前收藏 / 上传失败时）
+  // - blob URL（`blob:` 开头）跨页面失效，HEAD 探活不通过直接跳到下一级
+  const [voiceSrc, setVoiceSrc] = React.useState<string | null>(null);
+  const [voiceResolved, setVoiceResolved] = React.useState(false);
   React.useEffect(() => {
-    if (!isVoice || item.invalid) return;
+    if (!isVoice || item.invalid) {
+      setVoiceResolved(true);
+      return;
+    }
     let url: string | null = null;
     let cancelled = false;
     (async () => {
       try {
+        // 1) 优先云端 URL —— 跳过 blob URL（已经失效）
+        if (item.url && !item.url.startsWith('blob:')) {
+          const ok = await checkUrlAvailable(item.url);
+          if (cancelled) return;
+          if (ok) {
+            setVoiceSrc(item.url);
+            setVoiceResolved(true);
+            return;
+          }
+          // 云端没了（用户手动删 / 后端故障）→ 继续回退
+        }
+
+        // 2) 回退 IndexedDB —— 升级前的收藏或本次未上传成功的本地数据
         const blob = await getFavoriteVoiceBlob(item.sourceMessageId);
         if (cancelled) return;
         if (blob) {
           url = URL.createObjectURL(blob);
           setVoiceSrc(url);
         } else {
-          // IndexedDB 也没有 — 老数据（迁移前存的 blob URL，原始 blob 已 GC）或 Chat 没存过
+          // 3) 都没了 → 标 invalid
           markFavoriteInvalid(item.id);
           addToast('语音数据已丢失（升级前的老收藏）', 'warning');
         }
+        setVoiceResolved(true);
       } catch (e) {
-        console.warn('[favorites] read voice blob failed', e);
+        console.warn('[favorites] read voice failed', e);
         markFavoriteInvalid(item.id);
         addToast('语音读取失败', 'error');
+        setVoiceResolved(true);
       }
     })();
     return () => {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [item.id, item.sourceMessageId, isVoice, item.invalid, addToast]);
+  }, [item.id, item.url, item.sourceMessageId, isVoice, item.invalid, addToast]);
 
   const handleAudioError = () => {
     markFavoriteInvalid(item.id);
@@ -342,6 +381,10 @@ const FavoriteCard: React.FC<{
           <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
             语音已失效
           </div>
+        ) : !voiceResolved ? (
+          <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
+            加载中...
+          </div>
         ) : voiceSrc ? (
           <audio
             controls
@@ -350,11 +393,7 @@ const FavoriteCard: React.FC<{
             className="w-full h-9"
             preload="metadata"
           />
-        ) : (
-          <div className="bg-slate-50 rounded-2xl px-3 py-2.5 text-xs text-slate-400 text-center">
-            加载中...
-          </div>
-        )
+        ) : null
       )}
 
       {/* 文字版（voice 显示文字，text 显示原文） */}
@@ -365,15 +404,16 @@ const FavoriteCard: React.FC<{
   );
 };
 
-// 轻量探活占位 —— 云端 URL 升级时替换为 HEAD 请求
-// const checkUrlAvailable = async (url: string): Promise<boolean> => {
-//   try {
-//     const res = await fetch(url, { method: 'HEAD' });
-//     return res.ok;
-//   } catch {
-//     return false;
-//   }
-// };
+// 轻量探活 —— HEAD 请求检查云端 URL 是否还可用
+// 失败原因：用户手动删了 / 后端故障 / 跨域
+const checkUrlAvailable = async (url: string): Promise<boolean> => {
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
 // === 空状态 ===
 const EmptyState: React.FC<{ tab: TabKey }> = ({ tab }) => (

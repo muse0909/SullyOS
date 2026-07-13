@@ -36,9 +36,14 @@
   status = 200
 
 [[redirects]]
-  from = "/api/v1/send-notifications"
-  to = "/.netlify/functions/send-notifications"
-  status = 200
+from = "/api/v1/send-notifications"
+to = "/.netlify/functions/send-notifications"
+status = 200
+
+[[redirects]]
+from = "/api/v1/voice-favorite-store"
+to = "/.netlify/functions/voice-favorite-store"
+status = 200
 
 [[headers]]
   for = "/assets/*"

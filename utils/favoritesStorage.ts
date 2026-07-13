@@ -37,6 +37,55 @@ export async function getFavoriteVoiceBlob(sourceMessageId: string): Promise<Blo
   }
 }
 
+/**
+ * 云端音频 URL（拼出来，不发起请求）
+ * 升级方案：2026-07-13 把收藏的语音从 IndexedDB 搬到 Netlify Blobs。
+ * 浏览器跨设备/换浏览器/清缓存都能用，IndexedDB 跟着浏览器走会丢。
+ */
+export function getFavoriteVoiceCloudUrl(sourceMessageId: string): string {
+    return `/api/v1/voice-favorite-store?key=${encodeURIComponent(sourceMessageId)}`;
+}
+
+/**
+ * 上传语音到云端
+ * 成功返回 URL（其实就是 getFavoriteVoiceCloudUrl 的结果），失败返回 null
+ * 调用方拿到 URL 后调 updateFavorite(id, { url }) 存到元数据
+ */
+export async function uploadVoiceFavorite(sourceMessageId: string, blob: Blob): Promise<string | null> {
+    try {
+        const url = getFavoriteVoiceCloudUrl(sourceMessageId);
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': blob.type || 'audio/mpeg' },
+            body: blob,
+        });
+        if (!res.ok) {
+            console.warn('[favorites] cloud upload failed', res.status, await res.text().catch(() => ''));
+            return null;
+        }
+        return url;
+    } catch (e) {
+        console.warn('[favorites] cloud upload error', e);
+        return null;
+    }
+}
+
+/**
+ * 删除云端 blob（用户删收藏时调用）
+ * 失败仅 console.warn，不抛错（删除是清理性操作，不影响主流程）
+ */
+export async function deleteVoiceFavoriteCloud(sourceMessageId: string): Promise<void> {
+    try {
+        const url = getFavoriteVoiceCloudUrl(sourceMessageId);
+        const res = await fetch(url, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) {
+            console.warn('[favorites] cloud delete failed', res.status);
+        }
+    } catch (e) {
+        console.warn('[favorites] cloud delete error', e);
+    }
+}
+
 export function getAllFavorites(): FavoriteItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

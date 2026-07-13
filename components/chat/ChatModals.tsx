@@ -238,14 +238,13 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const isDragging = draggingName !== null;
 
     // 真正启动拖动：mouse 立即调（PC 鼠标长按太累），touch 由 longPressTimer 触发
-    const startDrag = (name: string, clientY: number, source: 'mouse' | 'touch') => {
+    // 关键：startDrag 不设 dragMovedRef，dragMovedRef 只在 updateDragAt（用户真移动）里置 true。
+    // 这保证 touch 长按但没移动 → 松手 → click 正常 → 选中（和 PC 短按行为一致）。
+    const startDrag = (name: string, clientY: number, _source: 'mouse' | 'touch') => {
         const itemEl = reorderItemRefs.current.get(name);
         if (!itemEl) return;
         const rect = itemEl.getBoundingClientRect();
         dragOffsetYRef.current = clientY - rect.top;
-        // touch 长按 = 拖动意图（即便没移动也要吞掉后续 click）；
-        // mouse 取决于是否真的移动了，dragMovedRef 在 updateDragAt 里置 true
-        if (source === 'touch') dragMovedRef.current = true;
         setDraggingName(name);
         setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
         // 触觉反馈（如果浏览器支持）

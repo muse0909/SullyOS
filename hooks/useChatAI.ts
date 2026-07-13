@@ -1379,39 +1379,62 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         let rawJson = emotionMatch[1].trim();
                         rawJson = rawJson.replace(/\n/g, '\\n').replace(/\r/g, '');
                         const emotionData = JSON.parse(rawJson);
-                        if (typeof emotionData.innerState === 'string' && emotionData.innerState.trim()) {
-                            const now = Date.now();
-                            const innerState = emotionData.innerState.trim();
-                            const label = (typeof emotionData.label === 'string' && emotionData.label.trim())
-                                ? emotionData.label.trim().slice(0, 12)
-                                : innerState.slice(0, 10);
-                            const rawIntensity = Number(emotionData.intensity);
-                            const intensity: 1 | 2 | 3 = rawIntensity === 2 || rawIntensity === 3 ? rawIntensity : 1;
-                            const newBuff: CharacterBuff = {
-                                id: `inner_state_${now}`,
-                                name: `inner_state_${now}`,
-                                label,
-                                innerState,
-                                intensity,
-                                emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
-                                createdAt: now,
-                                // 颜色：按 label 哈希到马卡龙色盘（12 色稳定多样化）
-                                // 不读 LLM 的 color——LLM 容易偷懒给示例色
-                                color: getBuffColor({ label }),
-                            };
-                            const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
-                            const updatedChar: CharacterProfile = {
-                                ...char,
-                                activeBuffs: [newBuff],
-                                emotionHistory,
-                                buffInjection: innerState,
-                            };
-                            DB.saveCharacter(updatedChar).catch(e => console.warn('🎭 [InlineEmotion] 保存失败:', e));
-                            window.dispatchEvent(new CustomEvent('emotion-updated', {
-                                detail: { charId: char.id, buffs: [newBuff], emotionHistory, buffInjection: innerState }
-                            }));
-                            console.log('🎭 [InlineEmotion] 心声解析成功:', innerState.slice(0, 50));
-                            setEvolvedNarrative(innerState);
+                            if (typeof emotionData.innerState === 'string' && emotionData.innerState.trim()) {
+                                const now = Date.now();
+                                const innerState = emotionData.innerState.trim();
+                                const label = (typeof emotionData.label === 'string' && emotionData.label.trim())
+                                    ? emotionData.label.trim().slice(0, 12)
+                                    : innerState.slice(0, 10);
+                                const rawIntensity = Number(emotionData.intensity);
+                                const intensity: 1 | 2 | 3 = rawIntensity === 2 || rawIntensity === 3 ? rawIntensity : 1;
+
+                                // 硬性去重：和最近 3 条 emotionHistory 比对 innerState
+                                // - 之前 line 812 注入了"最近 5 条 innerState"让 LLM 主动避免，
+                                //   但 LLM 偶发不遵守（换皮重复：label 变 / 内容一字不差）
+                                // - 前端兜底：完全相同 或 字符级 Jaccard > 0.85 视为重复，直接丢弃
+                                //   （不写新 buff、不 dispatch event、不污染 emotionHistory）
+                                const recentHistory = (char.emotionHistory || []).slice(0, 3);
+                                const isDuplicateBuff = recentHistory.some(prev => {
+                                    if (!prev.innerState) return false;
+                                    if (prev.innerState === innerState) return true; // 完全相同
+                                    // 字符级 Jaccard
+                                    const a = new Set(innerState);
+                                    const b = new Set(prev.innerState);
+                                    let inter = 0;
+                                    for (const ch of a) if (b.has(ch)) inter++;
+                                    const union = a.size + b.size - inter;
+                                    return union > 0 && inter / union > 0.85;
+                                });
+
+                                if (isDuplicateBuff) {
+                                    console.log(`🎭 [InlineEmotion] 跳过重复心声 label="${label}" content="${innerState.slice(0, 30)}..."`);
+                                } else {
+                                    const newBuff: CharacterBuff = {
+                                        id: `inner_state_${now}`,
+                                        name: `inner_state_${now}`,
+                                        label,
+                                        innerState,
+                                        intensity,
+                                        emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
+                                        createdAt: now,
+                                        // 颜色：按 label 哈希到马卡龙色盘（12 色稳定多样化）
+                                        // 不读 LLM 的 color——LLM 容易偷懒给示例色
+                                        color: getBuffColor({ label }),
+                                    };
+                                    const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
+                                    const updatedChar: CharacterProfile = {
+                                        ...char,
+                                        activeBuffs: [newBuff],
+                                        emotionHistory,
+                                        buffInjection: innerState,
+                                    };
+                                    DB.saveCharacter(updatedChar).catch(e => console.warn('🎭 [InlineEmotion] 保存失败:', e));
+                                    window.dispatchEvent(new CustomEvent('emotion-updated', {
+                                        detail: { charId: char.id, buffs: [newBuff], emotionHistory, buffInjection: innerState }
+                                    }));
+                                    console.log('🎭 [InlineEmotion] 心声解析成功:', innerState.slice(0, 50));
+                                    setEvolvedNarrative(innerState);
+                                }
                             console.log('🌊 [InnerState]', char.name, ':', innerState.slice(0, 50));
                         }
                     } catch (e: any) {

@@ -501,8 +501,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </div>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto no-scrollbar p-4">
-                                <div className="grid grid-cols-4 gap-3">
+                            <div className="flex-1 overflow-y-auto no-scrollbar p-3">
+                                <div className="grid grid-cols-5 gap-2">
                                     <button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
                                     {emojis.map((e, i) => (
                                         <button 

@@ -282,6 +282,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 |---|---|---|
 | 2026-07-12 | 主页评论项可点击 → 弹输入框（嵌套回复 replyTo） | [`changelogs/2026-07-12-moments-comment-item-clickable.md`](./changelogs/2026-07-12-moments-comment-item-clickable.md) |
 | 2026-07-13 | 表情包管理页改造（删长按弹窗 + 全屏 manager + 批量移动） | [`changelogs/2026-07-13-emoji-manager-fullscreen.md`](./changelogs/2026-07-13-emoji-manager-fullscreen.md) |
+| 2026-07-13 | 表情包管理页迭代 2（全屏化 + 5 列 + PC 鼠标拖动 + 取消按钮） | [`changelogs/2026-07-13-emoji-manager-fullscreen-and-pc-drag.md`](./changelogs/2026-07-13-emoji-manager-fullscreen-and-pc-drag.md) |
 | 2026-07-12 | 列表卡片 in-page 评论输入框 + 长按进详情（仿微信） | [`changelogs/2026-07-12-moments-inline-comment-long-press.md`](./changelogs/2026-07-12-moments-inline-comment-long-press.md) |
 | 2026-07-12 | 朋友圈用户评论/点赞/嵌套回复 + AI 自动回复 | [`changelogs/2026-07-12-moments-user-comments-likes-replies.md`](./changelogs/2026-07-12-moments-user-comments-likes-replies.md) |
 | 2026-07-12 | 聊天页头部加发现页入口（星星按钮） | [`changelogs/2026-07-12-chat-header-discover-button.md`](./changelogs/2026-07-12-chat-header-discover-button.md) |

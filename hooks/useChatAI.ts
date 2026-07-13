@@ -593,9 +593,6 @@ export const useChatAI = ({
     const commentAuthorNameCacheRef = useRef<Map<string, string>>(new Map());
     // commentId→parentCommentId 缓存，供 reply_comment 传递 parent_comment_id（xiaohongshu-mcp PR#440+）
     const commentParentIdCacheRef = useRef<Map<string, string>>(new Map());
-    // 心声硬性去重：连续丢弃计数——避免 LLM 跟新心声 100% 撞车时头像栏一直空着
-    // 连续 3 次被丢弃后强制接受一次（重置计数）
-    const emotionSkipStreakRef = useRef(0);
 
     /** 将笔记列表的 xsecToken 和 title 存入缓存 */
     const cacheXsecTokens = (notes: XhsNote[]) => {
@@ -1396,66 +1393,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 const rawIntensity = Number(emotionData.intensity);
                                 const intensity: 1 | 2 | 3 = rawIntensity === 2 || rawIntensity === 3 ? rawIntensity : 1;
 
-                                // 硬性去重：和最近 3 条 emotionHistory 比对 innerState
-                                // - 之前 line 812 注入了"最近 5 条 innerState"让 LLM 主动避免，
-                                //   但 LLM 偶发不遵守（换皮重复：label 变 / 内容一字不差）
-                                // - 前端兜底：完全相同 或 字符级 Jaccard > 0.7 视为重复，直接丢弃
-                                //   （不写新 buff、不 dispatch event、不污染 emotionHistory）
-                                // - 阈值 2026-07-13 从 0.85 降到 0.7：0.85 偏严，LLM 小幅改写就能绕过，
-                                //   但同义改写还是会被前端判为重复丢——结果 LLM 收到"心声中了几次没生效"信号
-                                //   后，prompt 越收越紧，开始绞尽脑汁想新角度，最后输出 0 条心声
-                                // - 连续 3 次丢弃强制接受一次（emotionSkipStreakRef），避免头像栏一直空着
-                                const recentHistory = (char.emotionHistory || []).slice(0, 3);
-                                const isDuplicateBuff = recentHistory.some(prev => {
-                                    if (!prev.innerState) return false;
-                                    if (prev.innerState === innerState) return true; // 完全相同
-                                    // 字符级 Jaccard
-                                    const a = new Set(innerState);
-                                    const b = new Set(prev.innerState);
-                                    let inter = 0;
-                                    for (const ch of a) if (b.has(ch)) inter++;
-                                    const union = a.size + b.size - inter;
-                                    return union > 0 && inter / union > 0.7;
-                                });
-
-                                // 兜底：连续 3 次被丢弃就强制接受（重置计数）——避免头像栏一直空着
-                                if (isDuplicateBuff && emotionSkipStreakRef.current < 3) {
-                                    emotionSkipStreakRef.current += 1;
-                                    console.log(`🎭 [InlineEmotion] 跳过重复心声 (第 ${emotionSkipStreakRef.current}/3 次) label="${label}" content="${innerState.slice(0, 30)}..."`);
-                                } else {
-                                    if (isDuplicateBuff) {
-                                        console.log(`🎭 [InlineEmotion] 强制接受重复心声（已连续丢弃 3 次）label="${label}" content="${innerState.slice(0, 30)}..."`);
-                                        emotionSkipStreakRef.current = 0;
-                                    } else {
-                                        emotionSkipStreakRef.current = 0;
-                                    }
-                                    const newBuff: CharacterBuff = {
-                                        id: `inner_state_${now}`,
-                                        name: `inner_state_${now}`,
-                                        label,
-                                        innerState,
-                                        intensity,
-                                        emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
-                                        createdAt: now,
-                                        // 颜色：按 label 哈希到马卡龙色盘（12 色稳定多样化）
-                                        // 不读 LLM 的 color——LLM 容易偷懒给示例色
-                                        color: getBuffColor({ label }),
-                                    };
-                                    const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
-                                    const updatedChar: CharacterProfile = {
-                                        ...char,
-                                        activeBuffs: [newBuff],
-                                        emotionHistory,
-                                        buffInjection: innerState,
-                                    };
-                                    DB.saveCharacter(updatedChar).catch(e => console.warn('🎭 [InlineEmotion] 保存失败:', e));
-                                    window.dispatchEvent(new CustomEvent('emotion-updated', {
-                                        detail: { charId: char.id, buffs: [newBuff], emotionHistory, buffInjection: innerState }
-                                    }));
-                                    console.log('🎭 [InlineEmotion] 心声解析成功:', innerState.slice(0, 50));
-                                    setEvolvedNarrative(innerState);
-                                }
-                            console.log('🌊 [InnerState]', char.name, ':', innerState.slice(0, 50));
+                                // 硬性去重已移除（2026-07-13 暮色提议）：
+                                // - 之前 0.85/0.7 阈值 + 完全相同判定的硬过滤 + 连续 3 次兜底，
+                                //   暮色测下来 6 条消息没出一条新心声——过滤过严反而把 LLM 逼到 0 输出
+                                // - 信任 prompt 三重保险：
+                                //   1) line 812 注入"最近 5 条 innerState"让 LLM 主动避免
+                                //   2) thought_chain 思维链前置（让 LLM 先想再写，不照抄）
+                                //   3) "灵魂的延续"措辞 + 措辞温和（"避免"而非"绝对不能"）
+                                // - 如果实测真出现重复再加回来——git log 4726d07 / bc302f7 / 79f9981 都在，
+                                //   一行 Jaccard 就能恢复
+                                const newBuff: CharacterBuff = {
+                                    id: `inner_state_${now}`,
+                                    name: `inner_state_${now}`,
+                                    label,
+                                    innerState,
+                                    intensity,
+                                    emoji: typeof emotionData.emoji === 'string' ? emotionData.emoji : undefined,
+                                    createdAt: now,
+                                    // 颜色：按 label 哈希到马卡龙色盘（12 色稳定多样化）
+                                    // 不读 LLM 的 color——LLM 容易偷懒给示例色
+                                    color: getBuffColor({ label }),
+                                };
+                                const emotionHistory = [newBuff, ...(char.emotionHistory || [])].slice(0, 100);
+                                const updatedChar: CharacterProfile = {
+                                    ...char,
+                                    activeBuffs: [newBuff],
+                                    emotionHistory,
+                                    buffInjection: innerState,
+                                };
+                                DB.saveCharacter(updatedChar).catch(e => console.warn('🎭 [InlineEmotion] 保存失败:', e));
+                                window.dispatchEvent(new CustomEvent('emotion-updated', {
+                                    detail: { charId: char.id, buffs: [newBuff], emotionHistory, buffInjection: innerState }
+                                }));
+                                console.log('🎭 [InlineEmotion] 心声解析成功:', innerState.slice(0, 50));
+                                setEvolvedNarrative(innerState);
+                                console.log('🌊 [InnerState]', char.name, ':', innerState.slice(0, 50));
                         }
                     } catch (e: any) {
                         console.warn('🎭 [InlineEmotion] 解析失败，跳过本轮心声更新:', e.message);

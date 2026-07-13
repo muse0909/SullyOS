@@ -432,8 +432,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 </div>
             </Modal>
             
-            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')} adaptiveHeight>
-                <div className="space-y-3">
+            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')} adaptiveHeight footer={<></>}>
+                <div className="grid grid-cols-2 gap-3">
                     <button onClick={onEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         多选 / 批量删除
                     </button>

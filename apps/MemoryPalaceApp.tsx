@@ -3748,23 +3748,39 @@ create table if not exists memory_vectors (
     // ─── 按日期时间线视图 ────────────────────────────
 
     if (view === 'timeline') {
-        // 按月 → 按日 group
-        const groupedByMonth = new Map<string, Map<string, MemoryNode[]>>();
+        // 3 层 group：年 → 月 → 日 → 记忆列表
+        const tree: Record<string, Record<string, Record<string, MemoryNode[]>>> = {};
         for (const n of allNodes) {
             const d = new Date(n.createdAt);
-            const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            const day = `${ym}-${String(d.getDate()).padStart(2, '0')}`;
-            if (!groupedByMonth.has(ym)) groupedByMonth.set(ym, new Map());
-            const monthMap = groupedByMonth.get(ym)!;
-            if (!monthMap.has(day)) monthMap.set(day, []);
-            monthMap.get(day)!.push(n);
+            const year = String(d.getFullYear());
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            if (!tree[year]) tree[year] = {};
+            if (!tree[year][month]) tree[year][month] = {};
+            if (!tree[year][month][day]) tree[year][month][day] = [];
+            tree[year][month][day].push(n);
         }
-        for (const monthMap of groupedByMonth.values()) {
-            for (const arr of monthMap.values()) {
-                arr.sort((a, b) => b.createdAt - a.createdAt);
-            }
-        }
-        const monthKeys = Array.from(groupedByMonth.keys()).sort().reverse();
+        // 每层排序：年/月/日倒序；日内的记忆按时间倒序
+        const sortedTree: typeof tree = {};
+        Object.keys(tree).sort((a, b) => b.localeCompare(a)).forEach(y => {
+            sortedTree[y] = {};
+            Object.keys(tree[y]).sort((a, b) => b.localeCompare(a)).forEach(m => {
+                sortedTree[y][m] = {};
+                Object.keys(tree[y][m]).sort((a, b) => b.localeCompare(a)).forEach(d => {
+                    sortedTree[y][m][d] = tree[y][m][d].sort((a, b) => b.createdAt - a.createdAt);
+                });
+            });
+        });
+
+        // 工具：把 "07" "13" 转成 "7月13日 周日"
+        const weekdayCn = ['日', '一', '二', '三', '四', '五', '六'];
+        const formatDay = (year: string, month: string, day: string) => {
+            const dt = new Date(Number(year), Number(month) - 1, Number(day));
+            return `${Number(month)}月${Number(day)}日 周${weekdayCn[dt.getDay()]}`;
+        };
+
+        // 统计
+        const yearKeys = Object.keys(sortedTree);
 
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
@@ -3774,64 +3790,92 @@ create table if not exists memory_vectors (
                     <div style={{ width: 50 }} />
                 </div>
                 <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', marginBottom: 12 }}>
-                    {allNodes.length} 条记忆 · 按月分组 · 日内按时间倒序
+                    {allNodes.length} 条记忆 · 按 年 / 月 / 日 三级分组
                 </div>
 
-                {monthKeys.length === 0 && (
+                {yearKeys.length === 0 && (
                     <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 13 }}>
                         还没有记忆
                     </div>
                 )}
 
-                {monthKeys.map(ym => {
-                    const monthMap = groupedByMonth.get(ym)!;
-                    const dayKeys = Array.from(monthMap.keys()).sort().reverse();
-                    const monthNodes = dayKeys.reduce((sum, k) => sum + monthMap.get(k)!.length, 0);
+                {yearKeys.map(year => {
+                    const monthMap = sortedTree[year];
+                    const monthKeys = Object.keys(monthMap);
+                    const yearCount = monthKeys.reduce((s, m) =>
+                        s + Object.keys(monthMap[m]).reduce((s2, d) => s2 + monthMap[m][d].length, 0), 0);
                     return (
-                        <div key={ym} style={{ marginBottom: 16 }}>
+                        <div key={year} style={{ marginBottom: 18 }}>
+                            {/* 年标题（pill 大块） */}
                             <div style={{
-                                fontSize: 14, fontWeight: 700, color: '#0ea5e9',
-                                marginBottom: 8, padding: '8px 12px',
-                                background: '#0ea5e911', borderRadius: 8,
-                                border: '1px solid #0ea5e933',
+                                fontSize: 15, fontWeight: 700, color: 'white',
+                                background: '#0ea5e9',
+                                padding: '8px 14px', borderRadius: 999,
+                                marginBottom: 10, display: 'inline-block',
+                                boxShadow: '0 1px 3px rgba(14,165,233,0.25)',
                             }}>
-                                {ym} · {monthNodes} 条
+                                {year} 年 · {yearCount} 条
                             </div>
-                            {dayKeys.map(day => {
-                                const nodes = monthMap.get(day)!;
+                            {monthKeys.map(month => {
+                                const dayMap = monthMap[month];
+                                const dayKeys = Object.keys(dayMap);
+                                const monthCount = dayKeys.reduce((s, d) => s + dayMap[d].length, 0);
                                 return (
-                                    <div key={day} style={{ marginBottom: 8, marginLeft: 4 }}>
-                                        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4, paddingLeft: 4 }}>
-                                            {day} · {nodes.length} 条
+                                    <div key={month} style={{ marginBottom: 12, marginLeft: 6 }}>
+                                        {/* 月标题（浅蓝底） */}
+                                        <div style={{
+                                            fontSize: 13, fontWeight: 600, color: '#0e7490',
+                                            padding: '6px 12px', borderRadius: 8,
+                                            background: '#ecfeff', border: '1px solid #a5f3fc',
+                                            marginBottom: 6, display: 'inline-block',
+                                        }}>
+                                            {year}-{month} · {monthCount} 条
                                         </div>
-                                        {nodes.map(n => (
-                                            <div key={n.id} onClick={() => openMemory(n, 'timeline')}
-                                                style={{
-                                                    padding: 10, marginBottom: 4, borderRadius: 8,
-                                                    background: 'white', border: '1px solid #e5e7eb',
-                                                    cursor: 'pointer', fontSize: 13,
-                                                }}
-                                            >
-                                                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
-                                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                        {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                                                    </span>
-                                                    <span style={{
-                                                        fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                                                        background: ROOM_COLORS[n.room] + '22',
-                                                        color: ROOM_COLORS[n.room],
+                                        {dayKeys.map(day => {
+                                            const nodes = dayMap[day];
+                                            return (
+                                                <div key={day} style={{ marginBottom: 8, marginLeft: 8 }}>
+                                                    {/* 日标题（淡） */}
+                                                    <div style={{
+                                                        fontSize: 11, color: '#6b7280',
+                                                        padding: '4px 0 4px 8px',
+                                                        borderLeft: '2px solid #cffafe',
+                                                        marginBottom: 4, fontWeight: 600,
                                                     }}>
-                                                        {getRoomLabel(n.room, userProfile?.name)}
-                                                    </span>
-                                                    {n.accessCount > 0 && (
-                                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                            被想起 {n.accessCount} 次
-                                                        </span>
-                                                    )}
+                                                        {formatDay(year, month, day)} · {nodes.length} 条
+                                                    </div>
+                                                    {nodes.map(n => (
+                                                        <div key={n.id} onClick={() => openMemory(n, 'timeline')}
+                                                            style={{
+                                                                padding: 10, marginBottom: 4, marginLeft: 4,
+                                                                borderRadius: 8,
+                                                                background: 'white', border: '1px solid #e5e7eb',
+                                                                cursor: 'pointer', fontSize: 13,
+                                                            }}
+                                                        >
+                                                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                    {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                                                                </span>
+                                                                <span style={{
+                                                                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                                                    background: ROOM_COLORS[n.room] + '22',
+                                                                    color: ROOM_COLORS[n.room],
+                                                                }}>
+                                                                    {getRoomLabel(n.room, userProfile?.name)}
+                                                                </span>
+                                                                {n.accessCount > 0 && (
+                                                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                        被想起 {n.accessCount} 次
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div style={{ color: '#374151' }}>{n.content}</div>
+                                                        </div>
+                                                    ))}
                                                 </div>
-                                                <div style={{ color: '#374151' }}>{n.content}</div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 );
                             })}

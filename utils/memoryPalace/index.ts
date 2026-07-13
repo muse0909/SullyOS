@@ -70,3 +70,7 @@ export {
 // 一键清空（本地 + 云端）
 export { wipeAllMemoryPalace } from './wipe';
 export type { WipeResult } from './wipe';
+
+// 查重工具（按相似度找重复 + 按访问次数筛）
+export { findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES } from './dedup';
+export type { DedupThreshold, AccessRange, DuplicatePair } from './dedup';

@@ -1463,8 +1463,8 @@ ${recentGroupMsgs}
             </Modal>
 
             {/* Message Options Modal */}
-            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => { setModalType('none'); setSelectedMessage(null); }}>
-                <div className="space-y-3">
+            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => { setModalType('none'); setSelectedMessage(null); }} footer={<></>}>
+                <div className="grid grid-cols-2 gap-3">
                     <button onClick={handleEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         多选 / 批量删除
                     </button>

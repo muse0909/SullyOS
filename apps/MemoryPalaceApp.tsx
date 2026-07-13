@@ -9,8 +9,9 @@ import {
     manuallyBindMemories, removeMemoryFromBox, unbindAllLiveMemories,
     reviveArchivedMemory,
     wipeAllMemoryPalace,
+    findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
 type LinkedMemoryUI = {
@@ -398,7 +399,7 @@ export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>('picker');
+    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes' | 'timeline' | 'dedup'>('picker');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -430,6 +431,27 @@ export default function MemoryPalaceApp() {
 
     // 全部记忆视图
     const [allNodes, setAllNodes] = useState<MemoryNode[]>([]);
+
+    // 时间线导航：root（年网格）→ year（月份网格）→ month（日 + 记忆）
+    const [tlLevel, setTlLevel] = useState<'root' | 'year' | 'month'>('root');
+    const [tlYear, setTlYear] = useState<string | null>(null);
+    const [tlMonth, setTlMonth] = useState<string | null>(null);
+    // tlInitialized：标记"是否已经初始化过 timeline 导航"。
+    //  - 首次进 timeline → 从 root 开始
+    //  - 在 timeline 内部跳转（root→year→month 或 month→memory→month）→ 保持位置
+    //  - 离开 timeline（回 palace）→ 重置标记，下次再进从 root 开始
+    // 修"点进记忆返回时跳到年分类页"bug：之前每次 view='timeline' 都重置，现在只在首次/重入时重置。
+    const [tlInitialized, setTlInitialized] = useState(false);
+    useEffect(() => {
+        if (view === 'timeline' && !tlInitialized) {
+            setTlLevel('root');
+            setTlYear(null);
+            setTlMonth(null);
+            setTlInitialized(true);
+        } else if (view !== 'timeline') {
+            setTlInitialized(false);
+        }
+    }, [view, tlInitialized]);
     const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
@@ -651,6 +673,19 @@ export default function MemoryPalaceApp() {
         setAllNodes(nodes);
         setView('all');
     };
+
+    const openTimeline = async () => {
+        if (!char) return;
+        const nodes = await MemoryNodeDB.getByCharId(char.id);
+        setAllNodes(nodes);
+        setView('timeline');
+    };
+
+    const reloadAllNodes = useCallback(async () => {
+        if (!char) return;
+        const nodes = await MemoryNodeDB.getByCharId(char.id);
+        setAllNodes(nodes);
+    }, [char?.id]);
 
     const openAllBoxes = async () => {
         if (!char) return;
@@ -3441,6 +3476,19 @@ create table if not exists memory_vectors (
                             <Icon name="box" size={13} />
                             <span>查看事件盒</span>
                         </div>
+                        <div
+                            onClick={() => setView('dedup')}
+                            style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
+                                fontSize: 11, fontWeight: 600, color: '#0891b2',
+                                cursor: 'pointer', padding: '4px 12px',
+                                borderRadius: 8, border: '1px solid #a5f3fc',
+                                background: '#ecfeff',
+                            }}
+                        >
+                            <Icon name="search" size={13} />
+                            <span>查重</span>
+                        </div>
                     </div>
 
                     {/* 全局搜索 */}
@@ -3653,6 +3701,29 @@ create table if not exists memory_vectors (
                                     </div>
                                 );
                             })}
+                            {/* 第 8 格：按日期时间线 */}
+                            <div
+                                key="timeline-card"
+                                onClick={openTimeline}
+                                style={{
+                                    padding: 14,
+                                    borderRadius: 12,
+                                    border: '1px solid #0ea5e933',
+                                    backgroundColor: '#0ea5e911',
+                                    cursor: 'pointer',
+                                    transition: 'transform 0.15s',
+                                }}
+                            >
+                                <div style={{ marginBottom: 6, color: '#0ea5e9' }}>
+                                    <Icon name="calendar" size={26} />
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#0ea5e9' }}>按日期时间线</div>
+                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>按时间顺序看重大事件</div>
+                                <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8, color: '#0ea5e9' }}>
+                                    {totalCount}
+                                    <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af', marginLeft: 4 }}>条</span>
+                                </div>
+                            </div>
                         </div>
                     </>
                 )}
@@ -3692,6 +3763,268 @@ create table if not exists memory_vectors (
                     </div>
                 )}
             </div>
+        );
+    }
+
+    // ─── 按日期时间线视图 ────────────────────────────
+
+    if (view === 'timeline') {
+        // 3 层 group：年 → 月 → 日 → 记忆列表
+        const tree: Record<string, Record<string, Record<string, MemoryNode[]>>> = {};
+        for (const n of allNodes) {
+            const d = new Date(n.createdAt);
+            const year = String(d.getFullYear());
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            if (!tree[year]) tree[year] = {};
+            if (!tree[year][month]) tree[year][month] = {};
+            if (!tree[year][month][day]) tree[year][month][day] = [];
+            tree[year][month][day].push(n);
+        }
+        const sortedTree: typeof tree = {};
+        Object.keys(tree).sort((a, b) => b.localeCompare(a)).forEach(y => {
+            sortedTree[y] = {};
+            Object.keys(tree[y]).sort((a, b) => b.localeCompare(a)).forEach(m => {
+                sortedTree[y][m] = {};
+                Object.keys(tree[y][m]).sort((a, b) => b.localeCompare(a)).forEach(d => {
+                    sortedTree[y][m][d] = tree[y][m][d].sort((a, b) => b.createdAt - a.createdAt);
+                });
+            });
+        });
+        const weekdayCn = ['日', '一', '二', '三', '四', '五', '六'];
+        const formatDay = (year: string, month: string, day: string) => {
+            const dt = new Date(Number(year), Number(month) - 1, Number(day));
+            return `${Number(month)}月${Number(day)}日 周${weekdayCn[dt.getDay()]}`;
+        };
+        const yearKeys = Object.keys(sortedTree);
+
+        // 通用：单张「年份/月份」卡片的视觉（参考神经连接 MemoryArchivist 截图）
+        const PeriodCard = ({
+            bigText, smallText, count, onClick,
+        }: { bigText: string; smallText: string; count: number; onClick: () => void }) => (
+            <div
+                onClick={onClick}
+                style={{
+                    position: 'relative',
+                    padding: '24px 12px 20px',
+                    borderRadius: 16,
+                    background: 'white',
+                    border: '1px solid #e5e7eb',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'transform 0.15s, box-shadow 0.15s',
+                }}
+            >
+                {/* 右上角小锚点装饰 */}
+                <div style={{
+                    position: 'absolute', top: 8, right: 8,
+                    width: 14, height: 14, borderRadius: '50%',
+                    background: '#e0f2fe', border: '1.5px solid #0ea5e9',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                    <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#0ea5e9' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 4 }}>
+                    <div style={{ fontSize: 32, fontWeight: 700, color: '#0f172a', lineHeight: 1 }}>{bigText}</div>
+                    <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>{smallText}</div>
+                </div>
+                <div style={{ width: 32, height: 1.5, background: '#cbd5e1', margin: '14px auto 12px' }} />
+                <div style={{ fontSize: 12, color: '#64748b' }}>{count} 条记忆</div>
+            </div>
+        );
+
+        // 面包屑
+        const Crumb = () => (
+            <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12, textAlign: 'right' }}>
+                {tlLevel === 'root' && '档案'}
+                {tlLevel === 'year' && <span>档案 / <b style={{ color: '#0ea5e9' }}>{tlYear}</b></span>}
+                {tlLevel === 'month' && (
+                    <span>
+                        档案 /{' '}
+                        <span onClick={() => setTlLevel('year')} style={{ cursor: 'pointer' }}>{tlYear}</span>
+                        {' / '}
+                        <b style={{ color: '#0ea5e9' }}>{Number(tlMonth)}月</b>
+                    </span>
+                )}
+            </div>
+        );
+
+        return (
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+                {/* Sticky 顶部条：返回 + 标题 + 面包屑 + 计数，滚动时一直吸顶 */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    background: 'rgba(255,255,255,0.92)',
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                    marginLeft: -16, marginRight: -16,
+                    paddingLeft: 16, paddingRight: 16,
+                    paddingBottom: 6,
+                    marginBottom: 8,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div
+                            onClick={() => {
+                                if (tlLevel === 'month') setTlLevel('year');
+                                else if (tlLevel === 'year') setTlLevel('root');
+                                else setView('palace');
+                            }}
+                            style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}
+                        >
+                            ← 返回
+                        </div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: '#0ea5e9' }}>按日期时间线</div>
+                        <div style={{ width: 50 }} />
+                    </div>
+                    <Crumb />
+                    <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
+                        {allNodes.length} 条记忆
+                    </div>
+                </div>
+
+                {/* ───── Root: 年份网格 ───── */}
+                {tlLevel === 'root' && (
+                    <>
+                        {yearKeys.length === 0 && (
+                            <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 13 }}>
+                                还没有记忆
+                            </div>
+                        )}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                            {yearKeys.map(year => {
+                                const monthMap = sortedTree[year];
+                                const yearCount = Object.keys(monthMap).reduce((s, m) =>
+                                    s + Object.keys(monthMap[m]).reduce((s2, d) => s2 + monthMap[m][d].length, 0), 0);
+                                return (
+                                    <PeriodCard
+                                        key={year}
+                                        bigText={year}
+                                        smallText="年"
+                                        count={yearCount}
+                                        onClick={() => { setTlYear(year); setTlLevel('year'); }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </>
+                )}
+
+                {/* ───── Year: 月份网格 ───── */}
+                {tlLevel === 'year' && tlYear && sortedTree[tlYear] && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                        {Object.keys(sortedTree[tlYear]).map(month => {
+                            const dayMap = sortedTree[tlYear][month];
+                            const monthCount = Object.keys(dayMap).reduce((s, d) => s + dayMap[d].length, 0);
+                            return (
+                                <PeriodCard
+                                    key={month}
+                                    bigText={String(Number(month))}
+                                    smallText="月"
+                                    count={monthCount}
+                                    onClick={() => { setTlMonth(month); setTlLevel('month'); }}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* ───── Month: 上中下旬 → 日 → 记忆列表 ───── */}
+                {tlLevel === 'month' && tlYear && tlMonth && sortedTree[tlYear]?.[tlMonth] && (() => {
+                    const dayMap = sortedTree[tlYear][tlMonth];
+                    // 倒序的 day keys
+                    const sortedDays = Object.keys(dayMap).sort((a, b) => b.localeCompare(a));
+                    // 按上中下旬分桶
+                    const groups: { key: string; label: string; days: string[] }[] = [
+                        { key: 'lower', label: '下旬 (21-31)', days: [] },
+                        { key: 'mid',   label: '中旬 (11-20)', days: [] },
+                        { key: 'upper', label: '上旬 (1-10)',  days: [] },
+                    ];
+                    for (const d of sortedDays) {
+                        const n = Number(d);
+                        if (n >= 21) groups[0].days.push(d);
+                        else if (n >= 11) groups[1].days.push(d);
+                        else groups[2].days.push(d);
+                    }
+                    return (
+                        <div>
+                            {groups.map(g => g.days.length === 0 ? null : (
+                                <div key={g.key} style={{ marginBottom: 16 }}>
+                                    {/* 旬标题（深一点的浅蓝 pill） */}
+                                    <div style={{
+                                        fontSize: 13, fontWeight: 700, color: 'white',
+                                        background: '#0e7490',
+                                        padding: '6px 14px', borderRadius: 999,
+                                        marginBottom: 8, display: 'inline-block',
+                                    }}>
+                                        {g.label} · {g.days.length} 天
+                                    </div>
+                                    {g.days.map(day => {
+                                        const nodes = dayMap[day];
+                                        return (
+                                            <div key={day} style={{ marginBottom: 10, marginLeft: 4 }}>
+                                                <div style={{
+                                                    fontSize: 12, fontWeight: 600, color: '#0e7490',
+                                                    padding: '5px 0 5px 10px',
+                                                    borderLeft: '3px solid #0ea5e9',
+                                                    background: '#ecfeff', borderRadius: '0 6px 6px 0',
+                                                    marginBottom: 6,
+                                                }}>
+                                                    {formatDay(tlYear, tlMonth, day)} · {nodes.length} 条
+                                                </div>
+                                                {nodes.map(n => (
+                                                    <div key={n.id} onClick={() => openMemory(n, 'timeline')}
+                                                        style={{
+                                                            padding: 10, marginBottom: 4, marginLeft: 4,
+                                                            borderRadius: 8,
+                                                            background: 'white', border: '1px solid #e5e7eb',
+                                                            cursor: 'pointer', fontSize: 13,
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                                                            <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                            <span style={{
+                                                                fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                                                background: ROOM_COLORS[n.room] + '22',
+                                                                color: ROOM_COLORS[n.room],
+                                                            }}>
+                                                                {getRoomLabel(n.room, userProfile?.name)}
+                                                            </span>
+                                                            {n.accessCount > 0 && (
+                                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                    被想起 {n.accessCount} 次
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ color: '#374151' }}>{n.content}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ))}
+                        </div>
+                    );
+                })()}
+            </div>
+        );
+    }
+
+    // ─── 查重视图（独立组件）───────────────────────────
+
+    if (view === 'dedup') {
+        return (
+            <DedupView
+                char={char}
+                onBack={() => setView('palace')}
+                onReload={reloadAllNodes}
+                addToast={addToast}
+            />
         );
     }
 
@@ -4472,4 +4805,390 @@ create table if not exists memory_vectors (
     }
 
     return null;
+}
+
+
+// ─── 查重视图（独立组件，自管 state） ─────────────────
+
+/**
+ * DedupeView — 查重 / 整理工具
+ *
+ * 两个 tab：
+ *  1. 「🔍 找重复」— 按相似度阈值跑两两 cosine 比对，结果分组展示
+ *     每对可 [合并到同一事件盒] / [都保留] / [跳过]
+ *  2. 「🧹 低访问清理」— 按访问次数筛（0 / 1-5 / 5+），批量勾选删除
+ *
+ * 设计原则：默认进「找重复」tab 但**不立即跑比对**（1794 条全量两两比 ~20s 太卡），
+ * 用户点「开始找重复」按钮才触发，进度条反馈。
+ */
+function DedupView({ char, onBack, onReload, addToast }: {
+    char: any;
+    onBack: () => void;
+    onReload: () => Promise<void>;
+    addToast: (msg: string, type: 'success' | 'error' | 'info') => void;
+}) {
+    const [tab, setTab] = useState<'find' | 'cleanup'>('find');
+
+    // ─── Tab 1: 找重复 ───
+    const [threshold, setThreshold] = useState<DedupThreshold>(0.80);
+    const [roomFilter, setRoomFilter] = useState<MemoryRoom | 'all'>('all');
+    const [pairs, setPairs] = useState<DuplicatePair[]>([]);
+    const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+    const [searching, setSearching] = useState(false);
+    const [processedKeys, setProcessedKeys] = useState<Set<string>>(new Set());
+    const [mergedKeys, setMergedKeys] = useState<Set<string>>(new Set());
+
+    const runFind = async () => {
+        setSearching(true);
+        setProgress({ done: 0, total: 0 });
+        setPairs([]);
+        setProcessedKeys(new Set());
+        setMergedKeys(new Set());
+        try {
+            const result = await findDuplicates(char.id, threshold, {
+                roomFilter,
+                onProgress: (done, total) => setProgress({ done, total }),
+            });
+            setPairs(result);
+            addToast(result.length === 0 ? '没有找到相似度 ≥ ' + threshold + ' 的重复' : `找到 ${result.length} 组重复`, result.length === 0 ? 'info' : 'success');
+        } catch (e: any) {
+            addToast('查重失败：' + e.message, 'error');
+        } finally {
+            setSearching(false);
+        }
+    };
+
+    const pairKey = (p: DuplicatePair) => p.aId < p.bId ? `${p.aId}_${p.bId}` : `${p.bId}_${p.aId}`;
+
+    const handleMerge = async (p: DuplicatePair) => {
+        try {
+            const box = await manuallyBindMemories(char.id, p.aId, p.bId);
+            if (box) {
+                setMergedKeys(prev => new Set(prev).add(pairKey(p)));
+                setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+                addToast('已合并到事件盒', 'success');
+                await onReload();
+            } else {
+                addToast('合并失败：未返回 box', 'error');
+            }
+        } catch (e: any) {
+            addToast('合并失败：' + e.message, 'error');
+        }
+    };
+
+    const handleKeepBoth = (p: DuplicatePair) => {
+        setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+    };
+
+    // 过滤掉已处理（合并 / 都保留）
+    const visiblePairs = pairs.filter(p => !processedKeys.has(pairKey(p)));
+
+    // ─── Tab 2: 低访问清理 ───
+    const [cleanAccessRange, setCleanAccessRange] = useState<AccessRange>('zero');
+    const [cleanRoomFilter, setCleanRoomFilter] = useState<MemoryRoom | 'all'>('all');
+    const [cleanNodes, setCleanNodes] = useState<MemoryNode[]>([]);
+    const [cleanSelected, setCleanSelected] = useState<Set<string>>(new Set());
+    const [cleaning, setCleaning] = useState(false);
+
+    const loadClean = useCallback(async () => {
+        let nodes = await MemoryNodeDB.getByCharId(char.id);
+        if (cleanRoomFilter !== 'all') {
+            nodes = nodes.filter(n => n.room === cleanRoomFilter);
+        }
+        nodes = filterByAccess(nodes, cleanAccessRange);
+        nodes.sort((a, b) => a.accessCount - b.accessCount);  // 0 次在前
+        setCleanNodes(nodes);
+        setCleanSelected(new Set());
+    }, [char.id, cleanRoomFilter, cleanAccessRange]);
+
+    useEffect(() => {
+        if (tab === 'cleanup') loadClean();
+    }, [tab, loadClean]);
+
+    const toggleClean = (id: string) => {
+        setCleanSelected(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+    const selectAllClean = () => {
+        if (cleanSelected.size === cleanNodes.length) setCleanSelected(new Set());
+        else setCleanSelected(new Set(cleanNodes.map(n => n.id)));
+    };
+
+    const handleBatchCleanDelete = async () => {
+        if (cleanSelected.size === 0) return;
+        if (!confirm(`确认删除选中的 ${cleanSelected.size} 条记忆？此操作不可恢复。`)) return;
+        setCleaning(true);
+        let ok = 0;
+        for (const id of cleanSelected) {
+            try {
+                await removeMemoryFromBox(id);
+                const { MemoryVectorDB } = await import('../utils/memoryPalace');
+                await MemoryVectorDB.delete(id);
+                const links = await MemoryLinkDB.getByNodeId(id);
+                for (const l of links) await MemoryLinkDB.delete(l.id);
+                await MemoryNodeDB.delete(id);
+                ok++;
+            } catch { /* ignore single fail */ }
+        }
+        setCleaning(false);
+        addToast(`已删除 ${ok} 条记忆`, 'success');
+        await onReload();
+        await loadClean();
+    };
+
+    // ─── 渲染 ───
+    return (
+        <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div onClick={onBack} style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}>← 返回</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#0ea5e9' }}>查重 · 整理</div>
+                <div style={{ width: 50 }} />
+            </div>
+
+            {/* Tab 切换 */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <div
+                    onClick={() => setTab('find')}
+                    style={{
+                        flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 12, fontWeight: 600,
+                        background: tab === 'find' ? '#0ea5e9' : '#f3f4f6',
+                        color: tab === 'find' ? 'white' : '#6b7280',
+                    }}
+                >
+                    🔍 找重复
+                </div>
+                <div
+                    onClick={() => setTab('cleanup')}
+                    style={{
+                        flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 12, fontWeight: 600,
+                        background: tab === 'cleanup' ? '#0ea5e9' : '#f3f4f6',
+                        color: tab === 'cleanup' ? 'white' : '#6b7280',
+                    }}
+                >
+                    🧹 低访问清理
+                </div>
+            </div>
+
+            {/* ─────── Tab 1: 找重复 ─────── */}
+            {tab === 'find' && (
+                <div>
+                    <div style={{ background: 'white', borderRadius: 12, padding: 12, border: '1px solid #e5e7eb', marginBottom: 12 }}>
+                        <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4, fontWeight: 600 }}>相似度阈值</div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                                {DEDUP_THRESHOLDS.map(t => (
+                                    <div key={t} onClick={() => setThreshold(t)}
+                                        style={{
+                                            flex: 1, textAlign: 'center', padding: '6px 0', borderRadius: 6,
+                                            cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                                            background: threshold === t ? '#0ea5e9' : '#f3f4f6',
+                                            color: threshold === t ? 'white' : '#6b7280',
+                                        }}>
+                                        ≥ {t.toFixed(2)}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4, fontWeight: 600 }}>房间</div>
+                            <select
+                                value={roomFilter}
+                                onChange={e => setRoomFilter(e.target.value as any)}
+                                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12, background: 'white' }}
+                            >
+                                <option value="all">全部</option>
+                                {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(r => (
+                                    <option key={r} value={r}>{getRoomLabel(r, char.userName || '')}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div
+                            onClick={searching ? undefined : runFind}
+                            style={{
+                                textAlign: 'center', padding: '8px 0', borderRadius: 8, cursor: searching ? 'wait' : 'pointer',
+                                fontSize: 13, fontWeight: 600,
+                                background: searching ? '#9ca3af' : '#0ea5e9',
+                                color: 'white',
+                            }}
+                        >
+                            {searching
+                                ? `🔍 找重复中... ${progress.done}/${progress.total}`
+                                : '🔍 开始找重复'}
+                        </div>
+                    </div>
+
+                    {pairs.length > 0 && (
+                        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+                            找到 {pairs.length} 组重复（已处理 {processedKeys.size} 组，其中合并 {mergedKeys.size} 组）
+                        </div>
+                    )}
+
+                    {visiblePairs.map((p, i) => {
+                        const pct = Math.round(p.similarity * 100);
+                        const mergedFlag = mergedKeys.has(pairKey(p));
+                        return (
+                            <div key={pairKey(p)} style={{
+                                background: 'white', borderRadius: 12, padding: 12, marginBottom: 10,
+                                border: '1px solid #e5e7eb',
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#0ea5e9' }}>重复 ①</div>
+                                    <div style={{
+                                        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+                                        background: pct >= 90 ? '#fee2e2' : pct >= 80 ? '#fef3c7' : '#e0f2fe',
+                                        color: pct >= 90 ? '#b91c1c' : pct >= 80 ? '#b45309' : '#0369a1',
+                                    }}>
+                                        相似 {pct}%
+                                    </div>
+                                </div>
+                                <div style={{ fontSize: 12, color: '#374151', padding: 8, background: '#f9fafb', borderRadius: 6, marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 10, color: ROOM_COLORS[p.aRoom] }}>{getRoomLabel(p.aRoom, char.userName || '')}</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>访问 {p.aAccess} 次</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>{new Date(p.aCreatedAt).toLocaleDateString('zh-CN')}</span>
+                                    </div>
+                                    {p.aContent}
+                                </div>
+                                <div style={{ fontSize: 12, color: '#374151', padding: 8, background: '#f9fafb', borderRadius: 6, marginBottom: 10 }}>
+                                    <div style={{ display: 'flex', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 10, color: ROOM_COLORS[p.bRoom] }}>{getRoomLabel(p.bRoom, char.userName || '')}</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>访问 {p.bAccess} 次</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>{new Date(p.bCreatedAt).toLocaleDateString('zh-CN')}</span>
+                                    </div>
+                                    {p.bContent}
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                                    <div onClick={() => handleMerge(p)}
+                                        style={{
+                                            flex: 1, minWidth: 80, textAlign: 'center', padding: '6px 0', borderRadius: 999, cursor: 'pointer',
+                                            fontSize: 11, fontWeight: 600, color: 'white', background: mergedFlag ? '#9ca3af' : '#0ea5e9',
+                                        }}>
+                                        {mergedFlag ? '✓ 已合并' : '合并到同一事件盒'}
+                                    </div>
+                                    <div onClick={() => handleKeepBoth(p)}
+                                        style={{
+                                            flex: 1, minWidth: 80, textAlign: 'center', padding: '6px 0', borderRadius: 999, cursor: 'pointer',
+                                            fontSize: 11, fontWeight: 600, color: '#6b7280', background: '#f3f4f6',
+                                        }}>
+                                        都保留
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {pairs.length > 0 && visiblePairs.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: 20, color: '#10b981', fontSize: 13, fontWeight: 600 }}>
+                            ✓ 已处理完所有重复
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ─────── Tab 2: 低访问清理 ─────── */}
+            {tab === 'cleanup' && (
+                <div>
+                    <div style={{ background: 'white', borderRadius: 12, padding: 12, border: '1px solid #e5e7eb', marginBottom: 12 }}>
+                        <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4, fontWeight: 600 }}>访问次数</div>
+                            <select
+                                value={cleanAccessRange}
+                                onChange={e => setCleanAccessRange(e.target.value as AccessRange)}
+                                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12, background: 'white' }}
+                            >
+                                {ACCESS_RANGES.map(r => (
+                                    <option key={r.value} value={r.value}>{r.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4, fontWeight: 600 }}>房间</div>
+                            <select
+                                value={cleanRoomFilter}
+                                onChange={e => setCleanRoomFilter(e.target.value as any)}
+                                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12, background: 'white' }}
+                            >
+                                <option value="all">全部</option>
+                                {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(r => (
+                                    <option key={r} value={r}>{getRoomLabel(r, char.userName || '')}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: '#6b7280' }}>
+                            <span>共 {cleanNodes.length} 条</span>
+                            <span>·</span>
+                            <span onClick={selectAllClean} style={{ color: '#0ea5e9', cursor: 'pointer', fontWeight: 600 }}>
+                                {cleanSelected.size === cleanNodes.length && cleanNodes.length > 0 ? '取消全选' : '全选'}
+                            </span>
+                        </div>
+                    </div>
+
+                    {cleanNodes.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>
+                            没有符合条件的记忆
+                        </div>
+                    )}
+
+                    {cleanNodes.map(n => {
+                        const selected = cleanSelected.has(n.id);
+                        return (
+                            <div key={n.id} onClick={() => toggleClean(n.id)}
+                                style={{
+                                    padding: 10, marginBottom: 6, borderRadius: 8,
+                                    background: selected ? '#0ea5e911' : 'white',
+                                    border: `1px solid ${selected ? '#0ea5e9' : '#e5e7eb'}`,
+                                    cursor: 'pointer', fontSize: 12,
+                                    display: 'flex', gap: 8, alignItems: 'center',
+                                }}>
+                                <div style={{
+                                    width: 18, height: 18, borderRadius: 4, flexShrink: 0,
+                                    background: selected ? '#0ea5e9' : 'white',
+                                    border: `1.5px solid ${selected ? '#0ea5e9' : '#d1d5db'}`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    color: 'white', fontSize: 12, fontWeight: 700,
+                                }}>
+                                    {selected ? '✓' : ''}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 10, color: ROOM_COLORS[n.room] }}>{getRoomLabel(n.room, char.userName || '')}</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>访问 {n.accessCount ?? 0} 次</span>
+                                        <span style={{ fontSize: 10, color: '#9ca3af' }}>{new Date(n.createdAt).toLocaleDateString('zh-CN')}</span>
+                                    </div>
+                                    <div style={{ color: '#374151' }}>{n.content}</div>
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {cleanSelected.size > 0 && (
+                        <div style={{
+                            position: 'sticky', bottom: 16, marginTop: 12,
+                            background: 'white', borderRadius: 12, padding: 10,
+                            border: '1px solid #e5e7eb', boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                            display: 'flex', gap: 8, alignItems: 'center',
+                        }}>
+                            <div style={{ flex: 1, fontSize: 12, color: '#374151' }}>
+                                已选 <b style={{ color: '#ef4444' }}>{cleanSelected.size}</b> 条
+                            </div>
+                            <div onClick={cleaning ? undefined : handleBatchCleanDelete}
+                                style={{
+                                    padding: '8px 16px', borderRadius: 999, cursor: cleaning ? 'wait' : 'pointer',
+                                    fontSize: 12, fontWeight: 600,
+                                    background: cleaning ? '#9ca3af' : '#ef4444', color: 'white',
+                                }}>
+                                {cleaning ? '删除中...' : '删除选中'}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
 }

@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>朋友圈 UI 预览 v3 — SullyOS</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body {
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+    min-height: 100dvh;
+  }
+
+  /* 手机框 */
+  .phone {
+    width: 300px;
+    height: 640px;
+    background: #ededed;
+    border-radius: 36px;
+    border: 8px solid #1a1a1a;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    overflow: hidden;
+    position: relative;
+  }
+  .phone-screen {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* status bar */
+  .status-bar {
+    height: 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 18px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #000;
+  }
+
+  /* post 卡片 */
+  .post-card {
+    background: white;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  /* 9 宫格 */
+  .img-grid {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  /* 互动区 */
+  .interact-box {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #4b5563;
+  }
+
+  /* 设置弹窗 */
+  .modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    z-index: 10;
+  }
+  .modal-card {
+    background: white;
+    border-radius: 24px;
+    width: 100%;
+    max-height: 88%;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .modal-card::-webkit-scrollbar { display: none; }
+
+  /* iOS style toggle */
+  .toggle {
+    width: 40px;
+    height: 24px;
+    background: #e0e0e0;
+    border-radius: 12px;
+    position: relative;
+    transition: background 0.2s;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: #4ade80; }
+  .toggle-thumb {
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  .toggle.on .toggle-thumb { left: 18px; }
+
+  /* 滑块 */
+  .slider {
+    width: 100%;
+    height: 4px;
+    background: #e0e0e0;
+    border-radius: 2px;
+    position: relative;
+    margin-top: 8px;
+  }
+  .slider-fill {
+    height: 100%;
+    background: #1a1a1a;
+    border-radius: 2px;
+    width: 10%;
+  }
+  .slider-thumb {
+    width: 20px;
+    height: 20px;
+    background: white;
+    border: 2px solid #1a1a1a;
+    border-radius: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    left: 10%;
+  }
+
+  /* checkbox */
+  .checkbox {
+    width: 18px;
+    height: 18px;
+    border: 1.5px solid #d0d0d0;
+    border-radius: 4px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .checkbox.checked {
+    background: #4ade80;
+    border-color: #4ade80;
+  }
+  .checkbox.checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* 主操作按钮 */
+  .btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: #1a1a1a;
+    color: white;
+    font-weight: 700;
+    border-radius: 16px;
+    text-align: center;
+  }
+  .btn-pill {
+    padding: 6px 16px;
+    background: #10b981;
+    color: white;
+    font-weight: 700;
+    border-radius: 9999px;
+    font-size: 13px;
+  }
+
+  /* 底部 tab */
+  .bottom-tab {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(0,0,0,0.06);
+    display: flex;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .bottom-tab > div {
+    flex: 1;
+    padding: 8px 0;
+    text-align: center;
+    font-size: 11px;
+    color: #64748b;
+  }
+  .bottom-tab > div.active {
+    color: #10b981;
+    font-weight: 600;
+    position: relative;
+  }
+  .bottom-tab > div.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 18px;
+    height: 2px;
+    background: #10b981;
+    border-radius: 1px;
+  }
+
+  /* 头像形状变体 */
+  .avatar-circle { border-radius: 50%; }
+  .avatar-square { border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="max-w-7xl mx-auto p-6 md:p-8">
+  <h1 class="text-2xl md:text-3xl font-bold text-slate-800 mb-2 text-center">朋友圈 UI 预览 v3</h1>
+  <p class="text-sm text-slate-500 text-center mb-10">6 个 mockup · 发现页（3 入口）/ 朋友圈主页（默认 + 滚动中）/ 设置 / 发布器 / 详情</p>
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 justify-items-center">
+
+    <!-- ============ Mockup 1: 发现页（仅朋友圈 + 日记）============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen" style="background: linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%);">
+          <div class="status-bar"><span>18:52</span><span>5G • 100%</span></div>
+          <div class="relative flex items-center justify-between px-4 py-3 bg-white/60 backdrop-blur">
+            <button class="text-slate-700 text-lg w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center">‹</button>
+            <h1 class="text-base font-semibold text-slate-800">发现</h1>
+            <button class="w-9 h-9 rounded-full bg-white shadow-sm flex items-center justify-center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#334155" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+          </div>
+
+          <div class="overflow-y-auto px-3 pt-3" style="height: calc(100% - 28px - 60px - 36px);">
+            <!-- 朋友圈 / 收藏 / 日记 -->
+            <div class="bg-white rounded-2xl mb-3 shadow-sm">
+              <button class="w-full flex items-center gap-3 px-4 py-4">
+                <div class="w-7 h-7 rounded-full bg-emerald-50 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>
+                </div>
+                <span class="flex-1 text-left text-sm font-medium text-slate-800">朋友圈</span>
+                <span class="text-slate-300">›</span>
+              </button>
+              <div class="border-t border-slate-100"></div>
+              <button class="w-full flex items-center gap-3 px-4 py-4">
+                <div class="w-7 h-7 rounded-full bg-sky-50 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <span class="flex-1 text-left text-sm font-medium text-slate-800">收藏</span>
+                <span class="text-slate-300">›</span>
+              </button>
+              <div class="border-t border-slate-100"></div>
+              <button class="w-full flex items-center gap-3 px-4 py-4">
+                <div class="w-7 h-7 rounded-full bg-amber-50 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                </div>
+                <span class="flex-1 text-left text-sm font-medium text-slate-800">日记</span>
+                <span class="text-slate-300">›</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="bottom-tab">
+            <div>消息</div>
+            <div class="active">发现</div>
+            <div>我</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">1 · 发现页（3 入口：朋友圈/收藏/日记）</div>
+    </div>
+
+    <!-- ============ Mockup 2: 朋友圈主页（默认 / 主题圆）============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen bg-[#ededed]">
+          <div class="status-bar"><span>19:16</span><span>5G • 100%</span></div>
+
+          <!-- 封面图（280px 高，随页面上滑）-->
+          <div class="relative" style="height: 280px; background: linear-gradient(180deg, #5d4037 0%, #8d6e63 30%, #d7a96e 60%, #f4e4bc 100%); flex-shrink: 0;">
+            <!-- 顶部工具栏（左箭头 + 齿轮设置 + 相机发表） -->
+            <div class="absolute top-3 left-0 right-0 flex items-center justify-between px-3 z-20">
+              <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                <span class="text-white text-lg leading-none">‹</span>
+              </button>
+              <div class="flex items-center gap-2">
+                <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
+                <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- 名字"暮色" — 右上方（白字，drop-shadow） -->
+            <div class="absolute z-10" style="top: 220px; right: 80px;">
+              <span class="text-white text-sm font-semibold drop-shadow-md">暮色</span>
+            </div>
+
+            <!-- 签名 — 名字下方，宽度大（白字，drop-shadow，可编辑） -->
+            <div class="absolute z-10" style="top: 240px; left: 16px; right: 80px;">
+              <span class="text-white/95 text-[12px] drop-shadow-md leading-snug">慢一点也没关系，走过的每一步都算数。</span>
+            </div>
+
+            <!-- 圆形头像 — 右下角（主题=圆） -->
+            <div class="absolute z-10" style="bottom: 12px; right: 12px;">
+              <div class="w-16 h-16 rounded-full border-2 border-white shadow-lg" style="background: linear-gradient(135deg, #fbbf24, #f59e0b); display: flex; align-items: center; justify-content: center;">
+                <span class="text-white text-xl font-bold drop-shadow">暮</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 列表（封面图下方） -->
+          <div class="bg-white overflow-y-auto" style="height: calc(100% - 280px - 28px - 36px);">
+            <div class="post-card flex gap-3">
+              <div class="w-10 h-10 rounded-full shrink-0" style="background: linear-gradient(135deg, #fbbf24, #f59e0b); display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 13px;">暮</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13px] font-semibold text-slate-800">暮色</div>
+                <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">今天天气真好，出门散步了 🌤️</div>
+                <div class="img-grid" style="grid-template-columns: repeat(3, 1fr);">
+                  <div style="background: linear-gradient(135deg, #fde68a, #fcd34d); aspect-ratio: 1; border-radius: 4px;"></div>
+                  <div style="background: linear-gradient(135deg, #fed7aa, #fb923c); aspect-ratio: 1; border-radius: 4px;"></div>
+                  <div style="background: linear-gradient(135deg, #fef3c7, #fbbf24); aspect-ratio: 1; border-radius: 4px;"></div>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1.5">5 分钟前</div>
+                <div class="mt-2 space-y-1.5">
+                  <div class="interact-box flex items-center gap-1">
+                    <span>❤️</span>
+                    <span class="text-slate-700">江澈，路屿</span>
+                  </div>
+                  <div class="interact-box space-y-0.5">
+                    <div><span class="font-semibold text-slate-800">江澈：</span><span>哇 出去了！我也想出门走走</span></div>
+                    <div><span class="font-semibold text-slate-800">路屿 🧪：</span><span>这天气太适合睡觉了</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="post-card flex gap-3">
+              <div class="w-10 h-10 rounded-full shrink-0" style="background: linear-gradient(135deg, #a78bfa, #8b5cf6);"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13px] font-semibold text-slate-800">江澈</div>
+                <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">今天在家研究了一个新东西，有点头大但挺好玩。数据库的索引优化原来这么讲究。</div>
+                <div class="text-[10px] text-slate-400 mt-1.5">2 小时前</div>
+                <div class="mt-2 interact-box">
+                  <div><span class="font-semibold text-slate-800">暮色：</span><span>加油，搞完教教我</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-tab">
+            <div>消息</div>
+            <div class="active">发现</div>
+            <div>我</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">2 · 朋友圈主页（主题=圆）</div>
+    </div>
+
+    <!-- ============ Mockup 3: 朋友圈主页（滚动中 / 主题方）============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen bg-[#ededed] overflow-hidden">
+          <div class="status-bar"><span>19:16</span><span>5G • 100%</span></div>
+
+          <!-- 整体内容上滑状态：封面图已经大部分滚出屏幕，列表占据更多空间 -->
+          <div class="relative" style="height: 100px; background: linear-gradient(180deg, #5d4037 0%, #8d6e63 30%, #d7a96e 60%, #f4e4bc 100%); flex-shrink: 0;">
+            <!-- 顶部工具栏（仍固定可见：左箭头 + 齿轮 + 相机） -->
+            <div class="absolute top-3 left-0 right-0 flex items-center justify-between px-3 z-20">
+              <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                <span class="text-white text-lg leading-none">‹</span>
+              </button>
+              <div class="flex items-center gap-2">
+                <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
+                <button class="w-8 h-8 rounded-full bg-black/30 backdrop-blur flex items-center justify-center">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- 滚动后：名字 + 签名 + 头像 跟着封面图一起上滑，封面图大部分滚出屏幕，只剩底部一段 -->
+            <div class="absolute z-10" style="top: 50px; right: 12px;">
+              <div class="w-12 h-12 rounded-lg border-2 border-white shadow-lg" style="background: linear-gradient(135deg, #fbbf24, #f59e0b); display: flex; align-items: center; justify-content: center;">
+                <span class="text-white text-base font-bold drop-shadow">暮</span>
+              </div>
+            </div>
+            <div class="absolute z-10" style="top: 70px; left: 12px; right: 70px;">
+              <span class="text-white/90 text-[10px] drop-shadow-md font-semibold">暮色</span>
+            </div>
+          </div>
+
+          <!-- 列表（滚动后占据更多空间） -->
+          <div class="bg-white overflow-y-auto" style="height: calc(100% - 100px - 28px - 36px);">
+            <div class="post-card flex gap-3">
+              <div class="w-10 h-10 rounded-lg shrink-0" style="background: linear-gradient(135deg, #fbbf24, #f59e0b); display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 13px;">暮</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13px] font-semibold text-slate-800">暮色</div>
+                <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">今天天气真好，出门散步了 🌤️</div>
+                <div class="img-grid" style="grid-template-columns: repeat(3, 1fr);">
+                  <div style="background: linear-gradient(135deg, #fde68a, #fcd34d); aspect-ratio: 1; border-radius: 4px;"></div>
+                  <div style="background: linear-gradient(135deg, #fed7aa, #fb923c); aspect-ratio: 1; border-radius: 4px;"></div>
+                  <div style="background: linear-gradient(135deg, #fef3c7, #fbbf24); aspect-ratio: 1; border-radius: 4px;"></div>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1.5">5 分钟前</div>
+              </div>
+            </div>
+            <div class="post-card flex gap-3">
+              <div class="w-10 h-10 rounded-lg shrink-0" style="background: linear-gradient(135deg, #a78bfa, #8b5cf6);"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13px] font-semibold text-slate-800">江澈</div>
+                <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">今天在家研究了一个新东西，有点头大但挺好玩。数据库的索引优化原来这么讲究。</div>
+                <div class="text-[10px] text-slate-400 mt-1.5">2 小时前</div>
+                <div class="mt-2 space-y-1.5">
+                  <div class="interact-box flex items-center gap-1">
+                    <span>❤️</span>
+                    <span class="text-slate-700">江澈，路屿</span>
+                  </div>
+                  <div class="interact-box space-y-0.5">
+                    <div><span class="font-semibold text-slate-800">江澈：</span><span>哇 出去了！我也想出门走走</span></div>
+                    <div><span class="font-semibold text-slate-800">路屿 🧪：</span><span>这天气太适合睡觉了</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="post-card flex gap-3">
+              <div class="w-10 h-10 rounded-lg shrink-0" style="background: linear-gradient(135deg, #f472b6, #ec4899);"></div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13px] font-semibold text-slate-800">路屿</div>
+                <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">深夜的实验室，泡面和论文双全。</div>
+                <div class="img-grid" style="grid-template-columns: 1fr; max-width: 200px;">
+                  <div style="background: linear-gradient(135deg, #1e1b4b, #312e81 60%, #4c1d95); aspect-ratio: 1.5; border-radius: 4px;"></div>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1.5">昨天 23:47</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-tab">
+            <div>消息</div>
+            <div class="active">发现</div>
+            <div>我</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">3 · 朋友圈主页（滚动中，主题=方）</div>
+    </div>
+
+    <!-- ============ Mockup 4: 朋友圈设置弹窗（按图3）============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen bg-[#ededed]">
+          <div class="status-bar"><span>19:16</span><span>5G • 100%</span></div>
+          <div class="relative" style="height: 180px; background: linear-gradient(180deg, #5d4037 0%, #8d6e63 30%, #d7a96e 60%, #f4e4bc 100%);">
+            <button class="absolute top-3 left-3 w-7 h-7 rounded-full bg-black/30 flex items-center justify-center text-white text-sm z-10">‹</button>
+            <div class="absolute bottom-3 right-3">
+              <div class="w-12 h-12 rounded-full border-2 border-white shadow" style="background: linear-gradient(135deg, #fbbf24, #f59e0b);"></div>
+            </div>
+          </div>
+          <div class="modal-overlay">
+            <div class="modal-card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-base font-bold text-slate-800">朋友圈设置</h2>
+                <button class="text-slate-400 text-base">✕</button>
+              </div>
+              <div class="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                <div class="text-[10px] text-slate-400 mb-2">自动化</div>
+                <div class="space-y-2.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[13px] font-bold text-slate-800">自动评论我的动态</span>
+                    <div class="toggle on"><div class="toggle-thumb"></div></div>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-[13px] font-bold text-slate-800">角色自动发朋友圈</span>
+                    <div class="toggle on"><div class="toggle-thumb"></div></div>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-[13px] font-bold text-slate-800">角色间自动互动</span>
+                    <div class="toggle"><div class="toggle-thumb"></div></div>
+                  </div>
+                </div>
+              </div>
+              <p class="text-[10px] text-slate-500 leading-relaxed my-3 px-1">
+                开启后，AI 好友将根据好感度和剧情发展，自动进行朋友圈互动。自动化十分消耗 API，请自行选择是否打开。不打开也可以手动生成朋友圈和评论。
+              </p>
+              <div class="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                <div class="text-[10px] text-slate-400 mb-2">手动生成（指定角色发朋友圈）</div>
+                <div class="mb-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-[13px] font-bold text-slate-800">每人生成篇数</span>
+                    <span class="text-[13px] text-slate-800">1 篇</span>
+                  </div>
+                  <div class="slider">
+                    <div class="slider-fill"></div>
+                    <div class="slider-thumb"></div>
+                  </div>
+                </div>
+                <div class="mb-3">
+                  <div class="text-[13px] font-bold text-slate-800 mb-1.5">选择角色（可多选）</div>
+                  <div class="bg-white border border-slate-200 rounded-xl p-2.5">
+                    <div class="flex items-center gap-2">
+                      <div class="checkbox"></div>
+                      <span class="text-[13px] text-slate-700">江澈</span>
+                    </div>
+                  </div>
+                </div>
+                <button class="btn-primary text-[13px]">开始生成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">4 · 朋友圈设置</div>
+    </div>
+
+    <!-- ============ Mockup 5: 发布器 ============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen bg-white">
+          <div class="status-bar"><span>19:16</span><span>5G • 100%</span></div>
+          <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+            <button class="text-[13px] text-slate-500">取消</button>
+            <h2 class="text-[14px] font-semibold text-slate-800">发表朋友圈</h2>
+            <button class="btn-pill">发表</button>
+          </div>
+          <div class="px-4 py-3">
+            <textarea class="w-full h-28 bg-transparent text-[14px] text-slate-800 placeholder-slate-400 resize-none focus:outline-none leading-relaxed">今天出门散步，阳光很舒服，顺便发现了一家新的咖啡店 ☕</textarea>
+          </div>
+          <div class="px-4 py-2">
+            <div class="img-grid" style="grid-template-columns: repeat(3, 76px);">
+              <div style="background: linear-gradient(135deg, #fde68a, #fcd34d); aspect-ratio: 1; border-radius: 6px;"></div>
+              <div style="background: linear-gradient(135deg, #fed7aa, #fb923c); aspect-ratio: 1; border-radius: 6px;"></div>
+              <div class="aspect-square bg-slate-50 border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center text-2xl text-slate-300">+</div>
+            </div>
+            <div class="text-[10px] text-slate-400 mt-2">还可上传 6 张</div>
+          </div>
+          <div class="absolute bottom-0 left-0 right-0 border-t border-slate-100 bg-white">
+            <div class="flex items-center justify-between px-4 py-2.5 border-b border-slate-50">
+              <span class="text-[13px] text-slate-700">谁可以看</span>
+              <span class="text-[13px] text-slate-400">公开 ›</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5 border-b border-slate-50">
+              <span class="text-[13px] text-slate-700">提醒谁看</span>
+              <span class="text-[13px] text-slate-400">›</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5">
+              <span class="text-[13px] text-slate-700">位置</span>
+              <span class="text-[13px] text-slate-400">不显示 ›</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">5 · 发布器</div>
+    </div>
+
+    <!-- ============ Mockup 6: 动态详情 ============ -->
+    <div>
+      <div class="phone mb-3">
+        <div class="phone-screen bg-[#ededed]">
+          <div class="status-bar"><span>19:16</span><span>5G • 100%</span></div>
+          <div class="flex items-center px-4 py-2.5 bg-white border-b border-slate-100">
+            <button class="text-slate-500 text-lg">‹</button>
+            <h2 class="text-[14px] font-semibold text-slate-800 ml-2">动态详情</h2>
+          </div>
+          <div class="bg-white p-3 flex gap-2.5">
+            <div class="w-10 h-10 rounded-full shrink-0" style="background: linear-gradient(135deg, #fbbf24, #f59e0b);"></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-[13px] font-semibold text-slate-800">暮色</div>
+              <div class="text-[13px] text-slate-700 mt-1 leading-relaxed">今天天气真好，出门散步了 🌤️</div>
+              <div class="img-grid" style="grid-template-columns: repeat(3, 1fr);">
+                <div style="background: linear-gradient(135deg, #fde68a, #fcd34d); aspect-ratio: 1; border-radius: 4px;"></div>
+                <div style="background: linear-gradient(135deg, #fed7aa, #fb923c); aspect-ratio: 1; border-radius: 4px;"></div>
+                <div style="background: linear-gradient(135deg, #fef3c7, #fbbf24); aspect-ratio: 1; border-radius: 4px;"></div>
+              </div>
+              <div class="text-[10px] text-slate-400 mt-1.5">5 分钟前</div>
+            </div>
+          </div>
+          <div class="bg-white px-3 pb-3 border-b border-slate-100">
+            <div class="interact-box flex items-center gap-1 mb-2">
+              <span>❤️</span>
+              <span class="text-slate-700">江澈，路屿，慕玄</span>
+            </div>
+            <div class="interact-box space-y-1.5">
+              <div><span class="font-semibold text-slate-800">江澈：</span><span>哇 出去了！我也想出门走走</span></div>
+              <div><span class="font-semibold text-slate-800">路屿 🧪：</span><span>这天气太适合睡觉了</span></div>
+              <div style="padding-left: 12px; border-left: 2px solid #cbd5e1;"><span class="font-semibold text-slate-800">江澈</span> <span class="text-[10px] text-slate-400">回复</span> <span class="font-semibold text-slate-800">路屿：</span><span>醒醒！出去浪</span></div>
+              <div><span class="font-semibold text-slate-800">慕玄：</span><span>+1</span></div>
+            </div>
+          </div>
+          <div class="absolute bottom-0 left-0 right-0 bg-white border-t border-slate-100 flex items-center gap-2 p-2.5">
+            <input type="text" placeholder="评论" class="flex-1 bg-slate-100 rounded-full px-3 py-1.5 text-[13px] focus:outline-none">
+            <button class="p-1.5">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </button>
+            <button class="p-1.5">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="text-center text-xs text-slate-500 font-medium">6 · 动态详情 + 评论</div>
+    </div>
+
+  </div>
+
+  <!-- 设计说明 -->
+  <div class="mt-12 max-w-4xl mx-auto bg-white rounded-2xl p-6 border border-slate-200/50 shadow-sm">
+    <h2 class="text-lg font-bold text-slate-800 mb-3">v4 调整（按你反馈）</h2>
+    <div class="space-y-2 text-[13px] text-slate-600">
+      <div>
+        <span class="font-bold text-slate-800">① 发现页 3 入口</span>：朋友圈 + 收藏 + 日记。收藏 / 日记先做 UI 占位（点进去"敬请期待"），朋友圈先实现。
+      </div>
+      <div>
+        <span class="font-bold text-slate-800">② 朋友圈主页顶部 2 按钮</span>：
+        <ul class="list-disc pl-5 mt-1 space-y-0.5 text-slate-600">
+          <li><b>齿轮</b> → 朋友圈设置弹窗（按图3）</li>
+          <li><b>相机</b> → 发表朋友圈（点开发布器）</li>
+          <li>去掉刷新（下拉刷新）和通知（移到朋友圈设置里）</li>
+        </ul>
+      </div>
+      <div>
+        <span class="font-bold text-slate-800">③ 签名可编辑</span>：点签名区域 → 弹输入框（沿用 FullScreenEditor v2 风格）→ 保存到 localStorage `os_moments_signature`
+      </div>
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-slate-100 text-[12px] text-slate-500">
+      <div class="font-bold text-slate-700 mb-1">朋友圈主页 v4 关键改动（实现注意）：</div>
+      <ul class="list-disc pl-5 space-y-0.5">
+        <li>封面图 + 名字/签名/头像 = 一个滚动单元，<strong>不 sticky</strong>，跟列表一起滚</li>
+        <li>顶部工具栏（左箭头 + 齿轮 + 相机）= <strong>独立 sticky</strong>，永远在顶部</li>
+        <li>头像形状 = 读 OSContext 的 `theme.bubbleStyle`（已有的"方/圆"主题设置）</li>
+        <li>签名可编辑：点签名 → 弹 FullScreenEditor v2 编辑 → localStorage 存 `os_moments_signature`</li>
+        <li>封面图长按 → 选图 / 重置</li>
+        <li>朋友圈设置弹窗（按图3）—— 4 个 toggle + 手动生成区</li>
+      </ul>
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-slate-100 text-[12px] text-slate-500">
+      <div class="font-bold text-slate-700 mb-1">这一轮（朋友圈）的范围：</div>
+      <ul class="list-disc pl-5 space-y-0.5">
+        <li>发现页（3 入口 UI，朋友圈可用）</li>
+        <li>朋友圈主页（封面图 + 名字/签名/头像 + 列表）</li>
+        <li>朋友圈设置弹窗（按图3）</li>
+        <li>发布器</li>
+        <li>动态详情 + 评论</li>
+        <li>用户发朋友圈 + 数据存储（localStorage）</li>
+        <li>签名可编辑（localStorage）</li>
+        <li>封面图长按换图</li>
+        <li>头像跟随主题方圆</li>
+      </ul>
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-slate-100 text-[12px] text-slate-500">
+      <div class="font-bold text-slate-700 mb-1">下一轮（朋友圈增强）：</div>
+      <ul class="list-disc pl-5 space-y-0.5">
+        <li>AI 主动发朋友圈（LLM 自由决定 + schedule 触发）</li>
+        <li>AI 自动评论/点赞（用户发朋友圈后 LLM 互动）</li>
+        <li>生图 API 集成（角色配图）</li>
+        <li>本地通知（AI 发朋友圈时）</li>
+      </ul>
+    </div>
+
+    <div class="mt-4 pt-4 border-t border-slate-100 text-[12px] text-slate-500">
+      <div class="font-bold text-slate-700 mb-1">后续轮：</div>
+      <ul class="list-disc pl-5 space-y-0.5">
+        <li>收藏：监听 char 发来的图片/语音自动归档 + 查看</li>
+        <li>日记：合并 JournalApp + 朋友圈统一入口 + 自动/手动模式</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>

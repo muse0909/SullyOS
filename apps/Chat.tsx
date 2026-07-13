@@ -23,7 +23,7 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { addFavorite, genFavoriteId } from '../utils/favoritesStorage';
+import { addFavorite, genFavoriteId, updateFavorite, uploadVoiceFavorite } from '../utils/favoritesStorage';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -376,17 +376,31 @@ const Chat: React.FC = () => {
             // Persist so the voice bar survives leaving and re-entering the chat.
             persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
             // Auto-archive to favorites (语音自动加入收藏，暮色要求)
-            // 关键：不传 url，favorites 播放时通过 sourceMessageId 找到 IndexedDB 里的 blob
-            // （blob URL 跨页面会失效，IndexedDB 不会）
+            // 升级 2026-07-13：收藏时同时上传到 Netlify Blobs，跨设备/换浏览器/清缓存都不丢
+            // 流程：addFavorite 元数据 → async uploadVoiceFavorite → 拿到 URL → updateFavorite({url})
+            // 上传失败不影响收藏（url 字段空，播放时回退 IndexedDB）
+            const favId = genFavoriteId();
             try {
                 addFavorite({
-                    id: genFavoriteId(),
+                    id: favId,
                     type: 'voice',
                     text: originalText,
                     charId: char.id,
                     charName: char.name,
                     sourceMessageId: msg.id,
                     createdAt: Date.now(),
+                });
+                // 后台上传（fire-and-forget，不阻塞 UI）
+                uploadVoiceFavorite(msg.id, blob).then((cloudUrl) => {
+                    if (cloudUrl) {
+                        try {
+                            updateFavorite(favId, { url: cloudUrl });
+                        } catch (e) {
+                            console.warn('[favorites] update favorite url failed', e);
+                        }
+                    }
+                }).catch((e) => {
+                    console.warn('[favorites] cloud upload rejected', e);
                 });
             } catch (e) {
                 console.warn('[favorites] auto-archive failed', e);

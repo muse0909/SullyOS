@@ -61,6 +61,8 @@ interface ChatSettingsDrawerProps {
     onForceVectorize: () => void;
 
     // 危险区域
+    preserveCount: number;
+    setPreserveCount: (v: number) => void;
     onClearHistory: () => void;
 }
 
@@ -76,6 +78,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, onSetHtmlModeCustomPrompt,
     onOpenHistoryManager,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
+    preserveCount, setPreserveCount,
     onClearHistory,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
@@ -346,12 +349,23 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                     {/* === 危险区域 === */}
                     <section className="pt-2 border-t border-red-100 mt-2">
                         <div className="text-[11px] font-bold text-red-400 uppercase mb-3">危险区域 (Danger Zone)</div>
+                        <div className="flex items-center gap-2 mb-3">
+                            <span className="text-[12px] text-slate-600 whitespace-nowrap">清空时建议保留最后</span>
+                            <input
+                                type="number"
+                                min={0}
+                                value={preserveCount ?? 10}
+                                onChange={(e) => setPreserveCount(Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-14 text-center text-sm font-bold border border-slate-300 rounded-lg py-1 px-1 focus:ring-1 focus:ring-primary/30 focus:border-primary"
+                            />
+                            <span className="text-[12px] text-slate-600 whitespace-nowrap">条记录以维持语境</span>
+                        </div>
                         <button
                             onClick={onClearHistory}
                             className="w-full py-3 bg-red-50 text-red-500 font-bold rounded-2xl border border-red-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
                         >
                             <Trash className="w-4 h-4" weight="bold" />
-                            清空当前角色聊天记录
+                            执行清空
                         </button>
                         <p className="text-[10px] text-red-300/80 mt-2 text-center leading-relaxed">
                             不可恢复。建议先到「记忆宫殿」一键向量化后再清空。

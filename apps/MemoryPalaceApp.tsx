@@ -436,14 +436,22 @@ export default function MemoryPalaceApp() {
     const [tlLevel, setTlLevel] = useState<'root' | 'year' | 'month'>('root');
     const [tlYear, setTlYear] = useState<string | null>(null);
     const [tlMonth, setTlMonth] = useState<string | null>(null);
-    // 每次进 timeline 视图都从 root 开始（避免上次停留位置被记住）
+    // tlInitialized：标记"是否已经初始化过 timeline 导航"。
+    //  - 首次进 timeline → 从 root 开始
+    //  - 在 timeline 内部跳转（root→year→month 或 month→memory→month）→ 保持位置
+    //  - 离开 timeline（回 palace）→ 重置标记，下次再进从 root 开始
+    // 修"点进记忆返回时跳到年分类页"bug：之前每次 view='timeline' 都重置，现在只在首次/重入时重置。
+    const [tlInitialized, setTlInitialized] = useState(false);
     useEffect(() => {
-        if (view === 'timeline') {
+        if (view === 'timeline' && !tlInitialized) {
             setTlLevel('root');
             setTlYear(null);
             setTlMonth(null);
+            setTlInitialized(true);
+        } else if (view !== 'timeline') {
+            setTlInitialized(false);
         }
-    }, [view]);
+    }, [view, tlInitialized]);
     const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
@@ -3844,23 +3852,37 @@ create table if not exists memory_vectors (
 
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <div
-                        onClick={() => {
-                            if (tlLevel === 'month') setTlLevel('year');
-                            else if (tlLevel === 'year') setTlLevel('root');
-                            else setView('palace');
-                        }}
-                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}
-                    >
-                        ← 返回
+                {/* Sticky 顶部条：返回 + 标题 + 面包屑 + 计数，滚动时一直吸顶 */}
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    background: 'rgba(255,255,255,0.92)',
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                    marginLeft: -16, marginRight: -16,
+                    paddingLeft: 16, paddingRight: 16,
+                    paddingBottom: 6,
+                    marginBottom: 8,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div
+                            onClick={() => {
+                                if (tlLevel === 'month') setTlLevel('year');
+                                else if (tlLevel === 'year') setTlLevel('root');
+                                else setView('palace');
+                            }}
+                            style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}
+                        >
+                            ← 返回
+                        </div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: '#0ea5e9' }}>按日期时间线</div>
+                        <div style={{ width: 50 }} />
                     </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#0ea5e9' }}>按日期时间线</div>
-                    <div style={{ width: 50 }} />
-                </div>
-                <Crumb />
-                <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 14 }}>
-                    {allNodes.length} 条记忆
+                    <Crumb />
+                    <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
+                        {allNodes.length} 条记忆
+                    </div>
                 </div>
 
                 {/* ───── Root: 年份网格 ───── */}
@@ -3909,56 +3931,86 @@ create table if not exists memory_vectors (
                     </div>
                 )}
 
-                {/* ───── Month: 日 + 记忆列表 ───── */}
-                {tlLevel === 'month' && tlYear && tlMonth && sortedTree[tlYear]?.[tlMonth] && (
-                    <div>
-                        {Object.keys(sortedTree[tlYear][tlMonth]).map(day => {
-                            const nodes = sortedTree[tlYear][tlMonth][day];
-                            return (
-                                <div key={day} style={{ marginBottom: 12 }}>
+                {/* ───── Month: 上中下旬 → 日 → 记忆列表 ───── */}
+                {tlLevel === 'month' && tlYear && tlMonth && sortedTree[tlYear]?.[tlMonth] && (() => {
+                    const dayMap = sortedTree[tlYear][tlMonth];
+                    // 倒序的 day keys
+                    const sortedDays = Object.keys(dayMap).sort((a, b) => b.localeCompare(a));
+                    // 按上中下旬分桶
+                    const groups: { key: string; label: string; days: string[] }[] = [
+                        { key: 'lower', label: '下旬 (21-31)', days: [] },
+                        { key: 'mid',   label: '中旬 (11-20)', days: [] },
+                        { key: 'upper', label: '上旬 (1-10)',  days: [] },
+                    ];
+                    for (const d of sortedDays) {
+                        const n = Number(d);
+                        if (n >= 21) groups[0].days.push(d);
+                        else if (n >= 11) groups[1].days.push(d);
+                        else groups[2].days.push(d);
+                    }
+                    return (
+                        <div>
+                            {groups.map(g => g.days.length === 0 ? null : (
+                                <div key={g.key} style={{ marginBottom: 16 }}>
+                                    {/* 旬标题（深一点的浅蓝 pill） */}
                                     <div style={{
-                                        fontSize: 12, fontWeight: 600, color: '#0e7490',
-                                        padding: '6px 0 6px 10px',
-                                        borderLeft: '3px solid #0ea5e9',
-                                        background: '#ecfeff', borderRadius: '0 6px 6px 0',
-                                        marginBottom: 6,
+                                        fontSize: 13, fontWeight: 700, color: 'white',
+                                        background: '#0e7490',
+                                        padding: '6px 14px', borderRadius: 999,
+                                        marginBottom: 8, display: 'inline-block',
                                     }}>
-                                        {formatDay(tlYear, tlMonth, day)} · {nodes.length} 条
+                                        {g.label} · {g.days.length} 天
                                     </div>
-                                    {nodes.map(n => (
-                                        <div key={n.id} onClick={() => openMemory(n, 'timeline')}
-                                            style={{
-                                                padding: 10, marginBottom: 4, marginLeft: 4,
-                                                borderRadius: 8,
-                                                background: 'white', border: '1px solid #e5e7eb',
-                                                cursor: 'pointer', fontSize: 13,
-                                            }}
-                                        >
-                                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
-                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                    {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                                                </span>
-                                                <span style={{
-                                                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                                                    background: ROOM_COLORS[n.room] + '22',
-                                                    color: ROOM_COLORS[n.room],
+                                    {g.days.map(day => {
+                                        const nodes = dayMap[day];
+                                        return (
+                                            <div key={day} style={{ marginBottom: 10, marginLeft: 4 }}>
+                                                <div style={{
+                                                    fontSize: 12, fontWeight: 600, color: '#0e7490',
+                                                    padding: '5px 0 5px 10px',
+                                                    borderLeft: '3px solid #0ea5e9',
+                                                    background: '#ecfeff', borderRadius: '0 6px 6px 0',
+                                                    marginBottom: 6,
                                                 }}>
-                                                    {getRoomLabel(n.room, userProfile?.name)}
-                                                </span>
-                                                {n.accessCount > 0 && (
-                                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                        被想起 {n.accessCount} 次
-                                                    </span>
-                                                )}
+                                                    {formatDay(tlYear, tlMonth, day)} · {nodes.length} 条
+                                                </div>
+                                                {nodes.map(n => (
+                                                    <div key={n.id} onClick={() => openMemory(n, 'timeline')}
+                                                        style={{
+                                                            padding: 10, marginBottom: 4, marginLeft: 4,
+                                                            borderRadius: 8,
+                                                            background: 'white', border: '1px solid #e5e7eb',
+                                                            cursor: 'pointer', fontSize: 13,
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                                                            <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                            <span style={{
+                                                                fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                                                background: ROOM_COLORS[n.room] + '22',
+                                                                color: ROOM_COLORS[n.room],
+                                                            }}>
+                                                                {getRoomLabel(n.room, userProfile?.name)}
+                                                            </span>
+                                                            {n.accessCount > 0 && (
+                                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                                    被想起 {n.accessCount} 次
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ color: '#374151' }}>{n.content}</div>
+                                                    </div>
+                                                ))}
                                             </div>
-                                            <div style={{ color: '#374151' }}>{n.content}</div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
-                            );
-                        })}
-                    </div>
-                )}
+                            ))}
+                        </div>
+                    );
+                })()}
             </div>
         );
     }

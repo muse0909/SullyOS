@@ -671,7 +671,9 @@ export const DB = {
           ...old,
           ...(typeof updates.name === 'string' ? { name: updates.name } : {}),
           ...(typeof updates.url === 'string' ? { url: updates.url } : {}),
-          ...(typeof updates.categoryId === 'string' ? { categoryId: updates.categoryId } : {}),
+          // categoryId 用 'in' 检测而不是 typeof === 'string'，这样 caller 显式传 undefined
+          // 可以清空 categoryId（搬到默认分类时关键）—— typeof undefined === 'undefined' 会被跳过
+          ...('categoryId' in updates ? { categoryId: updates.categoryId } : {}),
           ...(typeof updates.order === 'number' ? { order: updates.order } : {}),
         };
         if (oldName !== merged.name) {

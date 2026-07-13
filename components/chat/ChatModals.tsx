@@ -1,7 +1,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft } from '@phosphor-icons/react';
+import { ArrowLeft, CaretDown } from '@phosphor-icons/react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
@@ -77,6 +77,8 @@ interface ChatModalsProps {
     onBatchDeleteEmojis?: (names: string[]) => void;
     onMoveEmojisToCategory?: (names: string[], targetCategoryId: string) => void;
     onRenameEmojiInManager?: (oldName: string, newName: string) => void;
+    // 切换管理页当前分类（点顶部下拉菜单里其他分类时调）
+    onActiveCategoryChange?: (id: string) => void;
     // Category Visibility
     allCharacters?: CharacterProfile[];
     onSaveCategoryVisibility?: (categoryId: string, allowedCharacterIds: string[] | undefined) => void;
@@ -112,7 +114,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     editEmojiNewName, setEditEmojiNewName, onEditEmojiConfirm,
     reorderList, onSaveReorder, onCancelReorder, onMoveEmoji,
     categories, activeCategory,
-    onSaveManagerOrder, onBatchDeleteEmojis, onMoveEmojisToCategory, onRenameEmojiInManager,
+    onSaveManagerOrder, onBatchDeleteEmojis, onMoveEmojisToCategory, onRenameEmojiInManager, onActiveCategoryChange,
     allCharacters = [], onSaveCategoryVisibility,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange,
@@ -130,6 +132,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [showBatchDeleteEmojiConfirm, setShowBatchDeleteEmojiConfirm] = useState(false);
     // 重命名 inline 模式：1 个选中时点"重命名" → 上下文条变成输入条
     const [isRenamingEmoji, setIsRenamingEmoji] = useState(false);
+    // 顶部"管理表情包 · X"点击展开分类切换下拉
+    const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
     const [renameEmojiValue, setRenameEmojiValue] = useState('');
 
     // 关闭 manager 前保存顺序（拖动改的）— 父组件传 onSaveManagerOrder
@@ -699,9 +703,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             {/* ===== Emoji Manager — 全屏管理页（createPortal 到 body 绕开 backdrop-filter 祖先） ===== */}
             {modalType === 'emoji-manager' && createPortal(
                 <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col">
-                    {/* 顶部标题栏 — sticky */}
+                    {/* 顶部标题栏 — sticky（标题是可点开下拉切分类的按钮） */}
                     <div
-                        className="shrink-0 bg-white border-b border-slate-200 px-3 py-3 flex items-center gap-2"
+                        className="relative shrink-0 bg-white border-b border-slate-200 px-3 py-3 flex items-center gap-2"
                         style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}
                     >
                         <button
@@ -711,11 +715,49 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         >
                             <ArrowLeft className="w-4 h-4 text-slate-700" weight="bold" />
                         </button>
-                        <h1 className="flex-1 text-center text-base font-bold text-slate-800 truncate">
-                            管理表情包 · {(activeCategory || 'default') === 'default' ? '默认' : (categories?.find(c => c.id === activeCategory)?.name || '未知')}
-                        </h1>
+                        <button
+                            onClick={() => setShowCategoryDropdown(v => !v)}
+                            className="flex-1 flex items-center justify-center gap-1 text-base font-bold text-slate-800 active:opacity-70 min-w-0"
+                            title="点击切换分类"
+                        >
+                            <span className="truncate">管理表情包 · {(activeCategory || 'default') === 'default' ? '默认' : (categories?.find(c => c.id === activeCategory)?.name || '未知')}</span>
+                            <CaretDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform ${showCategoryDropdown ? 'rotate-180' : ''}`} weight="bold" />
+                        </button>
                         {/* 占位保持标题居中 */}
                         <div className="w-9 h-9 shrink-0" />
+                        {/* 分类切换下拉浮层（点空白处关闭） */}
+                        {showCategoryDropdown && (
+                            <>
+                                <div className="fixed inset-0 z-30" onClick={() => setShowCategoryDropdown(false)} />
+                                <div className="absolute top-full left-3 right-3 mt-1 bg-white border border-slate-200 rounded-2xl shadow-lg z-40 max-h-60 overflow-y-auto no-scrollbar">
+                                    {[{ id: 'default', name: '默认' }, ...(categories || [])].map(cat => {
+                                        const isActive = (activeCategory || 'default') === cat.id;
+                                        return (
+                                            <button
+                                                key={cat.id}
+                                                onClick={() => {
+                                                    onActiveCategoryChange?.(cat.id);
+                                                    setShowCategoryDropdown(false);
+                                                    // 切分类时清空之前选中状态，避免跨分类误操作
+                                                    setSelectedEmojiNames(new Set());
+                                                    setIsRenamingEmoji(false);
+                                                }}
+                                                className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-2 transition-colors ${isActive ? 'bg-primary/10 text-primary font-bold' : 'text-slate-700 active:bg-slate-50'}`}
+                                            >
+                                                {isActive ? (
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3 shrink-0 text-primary">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                                    </svg>
+                                                ) : (
+                                                    <span className="w-3 h-3 shrink-0" />
+                                                )}
+                                                <span className="truncate">{cat.name}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        )}
                     </div>
 
                     {/* 主体内容 — flex-1 滚动 */}

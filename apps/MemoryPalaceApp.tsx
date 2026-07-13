@@ -431,6 +431,19 @@ export default function MemoryPalaceApp() {
 
     // 全部记忆视图
     const [allNodes, setAllNodes] = useState<MemoryNode[]>([]);
+
+    // 时间线导航：root（年网格）→ year（月份网格）→ month（日 + 记忆）
+    const [tlLevel, setTlLevel] = useState<'root' | 'year' | 'month'>('root');
+    const [tlYear, setTlYear] = useState<string | null>(null);
+    const [tlMonth, setTlMonth] = useState<string | null>(null);
+    // 每次进 timeline 视图都从 root 开始（避免上次停留位置被记住）
+    useEffect(() => {
+        if (view === 'timeline') {
+            setTlLevel('root');
+            setTlYear(null);
+            setTlMonth(null);
+        }
+    }, [view]);
     const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
@@ -3760,7 +3773,6 @@ create table if not exists memory_vectors (
             if (!tree[year][month][day]) tree[year][month][day] = [];
             tree[year][month][day].push(n);
         }
-        // 每层排序：年/月/日倒序；日内的记忆按时间倒序
         const sortedTree: typeof tree = {};
         Object.keys(tree).sort((a, b) => b.localeCompare(a)).forEach(y => {
             sortedTree[y] = {};
@@ -3771,117 +3783,182 @@ create table if not exists memory_vectors (
                 });
             });
         });
-
-        // 工具：把 "07" "13" 转成 "7月13日 周日"
         const weekdayCn = ['日', '一', '二', '三', '四', '五', '六'];
         const formatDay = (year: string, month: string, day: string) => {
             const dt = new Date(Number(year), Number(month) - 1, Number(day));
             return `${Number(month)}月${Number(day)}日 周${weekdayCn[dt.getDay()]}`;
         };
-
-        // 统计
         const yearKeys = Object.keys(sortedTree);
+
+        // 通用：单张「年份/月份」卡片的视觉（参考神经连接 MemoryArchivist 截图）
+        const PeriodCard = ({
+            bigText, smallText, count, onClick,
+        }: { bigText: string; smallText: string; count: number; onClick: () => void }) => (
+            <div
+                onClick={onClick}
+                style={{
+                    position: 'relative',
+                    padding: '24px 12px 20px',
+                    borderRadius: 16,
+                    background: 'white',
+                    border: '1px solid #e5e7eb',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'transform 0.15s, box-shadow 0.15s',
+                }}
+            >
+                {/* 右上角小锚点装饰 */}
+                <div style={{
+                    position: 'absolute', top: 8, right: 8,
+                    width: 14, height: 14, borderRadius: '50%',
+                    background: '#e0f2fe', border: '1.5px solid #0ea5e9',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                    <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#0ea5e9' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 4 }}>
+                    <div style={{ fontSize: 32, fontWeight: 700, color: '#0f172a', lineHeight: 1 }}>{bigText}</div>
+                    <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>{smallText}</div>
+                </div>
+                <div style={{ width: 32, height: 1.5, background: '#cbd5e1', margin: '14px auto 12px' }} />
+                <div style={{ fontSize: 12, color: '#64748b' }}>{count} 条记忆</div>
+            </div>
+        );
+
+        // 面包屑
+        const Crumb = () => (
+            <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12, textAlign: 'right' }}>
+                {tlLevel === 'root' && '档案'}
+                {tlLevel === 'year' && <span>档案 / <b style={{ color: '#0ea5e9' }}>{tlYear}</b></span>}
+                {tlLevel === 'month' && (
+                    <span>
+                        档案 /{' '}
+                        <span onClick={() => setTlLevel('year')} style={{ cursor: 'pointer' }}>{tlYear}</span>
+                        {' / '}
+                        <b style={{ color: '#0ea5e9' }}>{Number(tlMonth)}月</b>
+                    </span>
+                )}
+            </div>
+        );
 
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <div onClick={() => setView('palace')} style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}>← 返回</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div
+                        onClick={() => {
+                            if (tlLevel === 'month') setTlLevel('year');
+                            else if (tlLevel === 'year') setTlLevel('root');
+                            else setView('palace');
+                        }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', padding: '4px 0' }}
+                    >
+                        ← 返回
+                    </div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: '#0ea5e9' }}>按日期时间线</div>
                     <div style={{ width: 50 }} />
                 </div>
-                <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', marginBottom: 12 }}>
-                    {allNodes.length} 条记忆 · 按 年 / 月 / 日 三级分组
+                <Crumb />
+                <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 14 }}>
+                    {allNodes.length} 条记忆
                 </div>
 
-                {yearKeys.length === 0 && (
-                    <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 13 }}>
-                        还没有记忆
-                    </div>
-                )}
-
-                {yearKeys.map(year => {
-                    const monthMap = sortedTree[year];
-                    const monthKeys = Object.keys(monthMap);
-                    const yearCount = monthKeys.reduce((s, m) =>
-                        s + Object.keys(monthMap[m]).reduce((s2, d) => s2 + monthMap[m][d].length, 0), 0);
-                    return (
-                        <div key={year} style={{ marginBottom: 18 }}>
-                            {/* 年标题（pill 大块） */}
-                            <div style={{
-                                fontSize: 15, fontWeight: 700, color: 'white',
-                                background: '#0ea5e9',
-                                padding: '8px 14px', borderRadius: 999,
-                                marginBottom: 10, display: 'inline-block',
-                                boxShadow: '0 1px 3px rgba(14,165,233,0.25)',
-                            }}>
-                                {year} 年 · {yearCount} 条
+                {/* ───── Root: 年份网格 ───── */}
+                {tlLevel === 'root' && (
+                    <>
+                        {yearKeys.length === 0 && (
+                            <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 13 }}>
+                                还没有记忆
                             </div>
-                            {monthKeys.map(month => {
-                                const dayMap = monthMap[month];
-                                const dayKeys = Object.keys(dayMap);
-                                const monthCount = dayKeys.reduce((s, d) => s + dayMap[d].length, 0);
+                        )}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                            {yearKeys.map(year => {
+                                const monthMap = sortedTree[year];
+                                const yearCount = Object.keys(monthMap).reduce((s, m) =>
+                                    s + Object.keys(monthMap[m]).reduce((s2, d) => s2 + monthMap[m][d].length, 0), 0);
                                 return (
-                                    <div key={month} style={{ marginBottom: 12, marginLeft: 6 }}>
-                                        {/* 月标题（浅蓝底） */}
-                                        <div style={{
-                                            fontSize: 13, fontWeight: 600, color: '#0e7490',
-                                            padding: '6px 12px', borderRadius: 8,
-                                            background: '#ecfeff', border: '1px solid #a5f3fc',
-                                            marginBottom: 6, display: 'inline-block',
-                                        }}>
-                                            {year}-{month} · {monthCount} 条
-                                        </div>
-                                        {dayKeys.map(day => {
-                                            const nodes = dayMap[day];
-                                            return (
-                                                <div key={day} style={{ marginBottom: 8, marginLeft: 8 }}>
-                                                    {/* 日标题（淡） */}
-                                                    <div style={{
-                                                        fontSize: 11, color: '#6b7280',
-                                                        padding: '4px 0 4px 8px',
-                                                        borderLeft: '2px solid #cffafe',
-                                                        marginBottom: 4, fontWeight: 600,
-                                                    }}>
-                                                        {formatDay(year, month, day)} · {nodes.length} 条
-                                                    </div>
-                                                    {nodes.map(n => (
-                                                        <div key={n.id} onClick={() => openMemory(n, 'timeline')}
-                                                            style={{
-                                                                padding: 10, marginBottom: 4, marginLeft: 4,
-                                                                borderRadius: 8,
-                                                                background: 'white', border: '1px solid #e5e7eb',
-                                                                cursor: 'pointer', fontSize: 13,
-                                                            }}
-                                                        >
-                                                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
-                                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                                    {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                                                                </span>
-                                                                <span style={{
-                                                                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                                                                    background: ROOM_COLORS[n.room] + '22',
-                                                                    color: ROOM_COLORS[n.room],
-                                                                }}>
-                                                                    {getRoomLabel(n.room, userProfile?.name)}
-                                                                </span>
-                                                                {n.accessCount > 0 && (
-                                                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
-                                                                        被想起 {n.accessCount} 次
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div style={{ color: '#374151' }}>{n.content}</div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                    <PeriodCard
+                                        key={year}
+                                        bigText={year}
+                                        smallText="年"
+                                        count={yearCount}
+                                        onClick={() => { setTlYear(year); setTlLevel('year'); }}
+                                    />
                                 );
                             })}
                         </div>
-                    );
-                })}
+                    </>
+                )}
+
+                {/* ───── Year: 月份网格 ───── */}
+                {tlLevel === 'year' && tlYear && sortedTree[tlYear] && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                        {Object.keys(sortedTree[tlYear]).map(month => {
+                            const dayMap = sortedTree[tlYear][month];
+                            const monthCount = Object.keys(dayMap).reduce((s, d) => s + dayMap[d].length, 0);
+                            return (
+                                <PeriodCard
+                                    key={month}
+                                    bigText={String(Number(month))}
+                                    smallText="月"
+                                    count={monthCount}
+                                    onClick={() => { setTlMonth(month); setTlLevel('month'); }}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* ───── Month: 日 + 记忆列表 ───── */}
+                {tlLevel === 'month' && tlYear && tlMonth && sortedTree[tlYear]?.[tlMonth] && (
+                    <div>
+                        {Object.keys(sortedTree[tlYear][tlMonth]).map(day => {
+                            const nodes = sortedTree[tlYear][tlMonth][day];
+                            return (
+                                <div key={day} style={{ marginBottom: 12 }}>
+                                    <div style={{
+                                        fontSize: 12, fontWeight: 600, color: '#0e7490',
+                                        padding: '6px 0 6px 10px',
+                                        borderLeft: '3px solid #0ea5e9',
+                                        background: '#ecfeff', borderRadius: '0 6px 6px 0',
+                                        marginBottom: 6,
+                                    }}>
+                                        {formatDay(tlYear, tlMonth, day)} · {nodes.length} 条
+                                    </div>
+                                    {nodes.map(n => (
+                                        <div key={n.id} onClick={() => openMemory(n, 'timeline')}
+                                            style={{
+                                                padding: 10, marginBottom: 4, marginLeft: 4,
+                                                borderRadius: 8,
+                                                background: 'white', border: '1px solid #e5e7eb',
+                                                cursor: 'pointer', fontSize: 13,
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                                                <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                    {new Date(n.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                                <span style={{
+                                                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                                    background: ROOM_COLORS[n.room] + '22',
+                                                    color: ROOM_COLORS[n.room],
+                                                }}>
+                                                    {getRoomLabel(n.room, userProfile?.name)}
+                                                </span>
+                                                {n.accessCount > 0 && (
+                                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                                        被想起 {n.accessCount} 次
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div style={{ color: '#374151' }}>{n.content}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         );
     }

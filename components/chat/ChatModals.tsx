@@ -779,29 +779,60 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                                     </svg>
                                                 </div>
                                             )}
-                                            {/* 上下浮动箭头：1 选中时显示，点 = 移动一格（管上下移动，左/右方向用工具栏的「移动到分类」） */}
-                                            {isSelected && (
-                                                <>
-                                                    <button
-                                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx - 1); }}
-                                                        disabled={idx === 0}
-                                                        title="上移一格"
-                                                        aria-label="上移一格"
-                                                        className={`absolute -top-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-md z-20 ${idx === 0 ? 'bg-slate-300' : 'bg-primary active:scale-90'}`}
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
-                                                    </button>
-                                                    <button
-                                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx + 1); }}
-                                                        disabled={idx === reorderList.length - 1}
-                                                        title="下移一格"
-                                                        aria-label="下移一格"
-                                                        className={`absolute -bottom-2 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-md z-20 ${idx === reorderList.length - 1 ? 'bg-slate-300' : 'bg-primary active:scale-90'}`}
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-                                                    </button>
-                                                </>
-                                            )}
+                                            {/* 上下左右 4 个浮动箭头：1 选中时显示，点 = 移动一格到正上/正下/正左/正右
+                                                注意：grid 是 5 列 1D 数组，idx ± 5 是上下方向（同一列），idx ± 1 是左右方向（同一行） */}
+                                            {isSelected && (() => {
+                                                const COLS = 5;
+                                                const canUp = idx - COLS >= 0;
+                                                const canDown = idx + COLS < reorderList.length;
+                                                const canLeft = idx % COLS !== 0;
+                                                const canRight = (idx + 1) % COLS !== 0 && idx + 1 < reorderList.length;
+                                                const arrowClass = (enabled: boolean) => `absolute w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-md z-20 ${enabled ? 'bg-primary active:scale-90' : 'bg-slate-300'}`;
+                                                return (
+                                                    <>
+                                                        {/* ↑ 上：移到正上方（同列上一行） */}
+                                                        <button
+                                                            onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx - COLS); }}
+                                                            disabled={!canUp}
+                                                            title="向上移"
+                                                            aria-label="向上移"
+                                                            className={`${arrowClass(canUp)} -top-2 left-1/2 -translate-x-1/2`}
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
+                                                        </button>
+                                                        {/* ↓ 下：移到正下方（同列下一行） */}
+                                                        <button
+                                                            onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx + COLS); }}
+                                                            disabled={!canDown}
+                                                            title="向下移"
+                                                            aria-label="向下移"
+                                                            className={`${arrowClass(canDown)} -bottom-2 left-1/2 -translate-x-1/2`}
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
+                                                        </button>
+                                                        {/* ← 左：移到正左方（同行前一列） */}
+                                                        <button
+                                                            onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx - 1); }}
+                                                            disabled={!canLeft}
+                                                            title="向左移"
+                                                            aria-label="向左移"
+                                                            className={`${arrowClass(canLeft)} top-1/2 -left-2 -translate-y-1/2`}
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                                                        </button>
+                                                        {/* → 右：移到正右方（同行后一列） */}
+                                                        <button
+                                                            onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx + 1); }}
+                                                            disabled={!canRight}
+                                                            title="向右移"
+                                                            aria-label="向右移"
+                                                            className={`${arrowClass(canRight)} top-1/2 -right-2 -translate-y-1/2`}
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                                        </button>
+                                                    </>
+                                                );
+                                            })()}
                                         </div>
                                     );
                                 })}

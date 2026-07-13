@@ -111,7 +111,10 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 }) => {
     const buffs: CharacterBuff[] = activeCharacter.activeBuffs || [];
     const emotionHistory: CharacterBuff[] = activeCharacter.emotionHistory || buffs;
-    const latestBuff = buffs[0] || emotionHistory[0] || null;
+    // 心声独立开关：emotionEnabled 显式 false 时不显示 buff（包括不 fallback 到 emotionHistory[0]）
+    // 老数据 emotionEnabled === undefined 默认按"开"处理（保持现有行为）
+    const emotionEnabled = activeCharacter.emotionEnabled !== false;
+    const latestBuff = emotionEnabled ? (buffs[0] || emotionHistory[0] || null) : null;
     const [isBuffListExpanded, setIsBuffListExpanded] = useState(false);
     const [confirmDeleteBuff, setConfirmDeleteBuff] = useState<CharacterBuff | null>(null);
     const buffPanelRef = useRef<HTMLDivElement>(null);

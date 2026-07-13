@@ -807,7 +807,10 @@ export const useChatAI = ({
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
                     : '你是生活系角色，innerState 的重心是你自己的生活和感受，不必每次都以用户为中心。';
-                systemPrompt += `\n\n[心声输出要求]\n每次回复结束后，必须在正文末尾附加一个心声块，格式如下：\n<emotion>{"label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- label：2-10字，短标签，像头像栏上的小心情贴纸，不要写完整句子\n- innerState：10-100字，第一人称，是你「${char.name}」脑子里真正在转的东西，直接写“我……”。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示，不能有真实换行符\n- 不要输出 description\n- 正文和 <emotion> 块之间不要有多余说明`;
+                // 借鉴 muse-330 的 thought_chain 思维链前置 + "灵魂的延续"措辞
+                // (commit 2026-07-13)：让 LLM 先想再生成心声，避免"作为xx我应该..."那种生硬模板
+                // 你的思绪是灵魂的延续——真人不会换皮重复上一轮
+                systemPrompt += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**绝对不能**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
 
                 // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
                 // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
@@ -820,7 +823,9 @@ export const useChatAI = ({
                         const timeHint = mins !== null ? `（${mins}分钟前）` : '';
                         return `${i + 1}. ${timeHint}${x.innerState}`;
                     }).join('\n');
-                    systemPrompt += `\n\n[最近心声 — 本次 innerState 必须跟以下明显不同，不能换个说法重复同样的事、不能写同样的情绪、不能继续上一条没解决的悬念]\n${recentBlock}`;
+                    // 防重复 prompt 借鉴 muse-330 措辞："灵魂的延续 / 思绪不断演进"（比"必须明显不同"更自然）
+                    // 配合前端硬性去重兜底（line 1382 之后）双保险
+                    systemPrompt += `\n\n[最近心声 — 你的思绪是灵魂的延续，**绝对不能**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
                 }
             }
 

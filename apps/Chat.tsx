@@ -2428,6 +2428,7 @@ if (keepN > 0) {
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}
+                preserveCount={preserveCount} setPreserveCount={setPreserveCount}
                 onClearHistory={handleClearHistory}
             />
 

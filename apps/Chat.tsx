@@ -105,7 +105,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'emoji-options' | 'edit-emoji' | 'emoji-reorder'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'emoji-manager'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
@@ -485,10 +485,11 @@ const Chat: React.FC = () => {
         }
     };
 
-    // 进入"调整顺序" modal 时，根据当前激活分类拷贝一份 emoji 列表到 reorderList。
+    // 进入"管理表情包" modal 时，根据当前激活分类拷贝一份 emoji 列表到 reorderList。
     // 用 useEffect 而非 panel action 链，避开跨组件回调的链路问题。
+    // 注：reorderList 在这里承担两个职责：拖动排序的工作列表 + 管理页网格的展示源。
     useEffect(() => {
-        if (modalType !== 'emoji-reorder') return;
+        if (modalType !== 'emoji-manager') return;
         const filtered = emojis.filter(e => (e.categoryId || 'default') === activeCategory);
         setReorderList(filtered.map((e, i) => ({ ...e, order: i })));
     }, [modalType, emojis, activeCategory]);
@@ -1061,7 +1062,7 @@ const Chat: React.FC = () => {
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
-            case 'emoji-options': setSelectedEmoji(payload); setEditEmojiNewName(payload?.name || ''); setModalType('emoji-options'); break;
+            case 'open-emoji-manager': setModalType('emoji-manager'); break;
             case 'edit-emoji-confirm': {
                 if (!selectedEmoji) break;
                 handleEditEmoji();
@@ -1869,6 +1870,66 @@ if (keepN > 0) {
         setReorderList([]);
     };
 
+    // --- Emoji Manager 新全屏管理页 handlers ---
+    // 关闭 manager 时调用：保存当前拖动改的顺序（reorderList）到 DB。
+    // 复用现有 handleSaveReorder 里的 DB.reorderEmojis 调用逻辑。
+    const handleSaveManagerOrder = async () => {
+        try {
+            await DB.reorderEmojis(reorderList);
+            // 不调 loadEmojiData（避免重渲染把 manager 列表打回原形），只在内存里同步
+            setEmojis(prev => {
+                const orderMap = new Map(reorderList.map((e, i) => [e.name, i]));
+                return prev.map(e => {
+                    const o = orderMap.get(e.name);
+                    return typeof o === 'number' ? { ...e, order: o } : e;
+                });
+            });
+        } catch (e: any) {
+            addToast(`保存顺序失败: ${e.message || e}`, 'error');
+        }
+    };
+
+    // 批量删除（manager 内 1+ 选中 → 点删除 → 确认）
+    const handleBatchDeleteEmojis = async (names: string[]) => {
+        if (!names || names.length === 0) return;
+        try {
+            await Promise.all(names.map(n => DB.deleteEmoji(n)));
+            await loadEmojiData();
+            addToast(`已删除 ${names.length} 个表情包`, 'success');
+        } catch (e: any) {
+            addToast(`删除失败: ${e.message || e}`, 'error');
+        }
+    };
+
+    // 批量移动到目标分类（manager 内 1+ 选中 → 点移动 → 选目标分类）
+    const handleMoveEmojisToCategory = async (names: string[], targetCategoryId: string) => {
+        if (!names || names.length === 0) return;
+        try {
+            // targetCategoryId === 'default' 表示搬到默认分类（清空 categoryId 字段）
+            const newCategoryId = targetCategoryId === 'default' ? undefined : targetCategoryId;
+            await Promise.all(names.map(n => DB.updateEmoji(n, { categoryId: newCategoryId as any })));
+            await loadEmojiData();
+            const targetName = targetCategoryId === 'default'
+                ? '默认'
+                : (categories.find(c => c.id === targetCategoryId)?.name || targetCategoryId);
+            addToast(`已移动 ${names.length} 个到「${targetName}」`, 'success');
+        } catch (e: any) {
+            addToast(`移动失败: ${e.message || e}`, 'error');
+        }
+    };
+
+    // 重命名（manager 内 1 选中 → 点重命名 → inline 输入 → 保存）
+    const handleRenameEmojiInManager = async (oldName: string, newName: string) => {
+        if (!oldName || !newName || oldName === newName) return;
+        try {
+            await DB.updateEmoji(oldName, { name: newName });
+            await loadEmojiData();
+            addToast('已更新名字', 'success');
+        } catch (e: any) {
+            addToast(`更新失败: ${e.message || e}`, 'error');
+        }
+    };
+
     // --- Batch Selection ---
     const handleEnterSelectionMode = () => {
         if (selectedMessage) {
@@ -2255,6 +2316,13 @@ if (keepN > 0) {
                         return next.map((e, i) => ({ ...e, order: i }));
                     });
                 }}
+                // Emoji Manager 新 props
+                categories={categories}
+                activeCategory={activeCategory}
+                onSaveManagerOrder={handleSaveManagerOrder}
+                onBatchDeleteEmojis={handleBatchDeleteEmojis}
+                onMoveEmojisToCategory={handleMoveEmojisToCategory}
+                onRenameEmojiInManager={handleRenameEmojiInManager}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}

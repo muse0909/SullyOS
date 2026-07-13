@@ -1,5 +1,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft } from '@phosphor-icons/react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
@@ -68,6 +70,13 @@ interface ChatModalsProps {
     onSaveReorder: () => void;
     onCancelReorder: () => void;
     onMoveEmoji: (from: number, to: number) => void;
+    // Emoji Manager（新全屏管理页）— 父组件 Chat.tsx 传入
+    categories: EmojiCategory[];
+    activeCategory: string;
+    onSaveManagerOrder?: () => void;
+    onBatchDeleteEmojis?: (names: string[]) => void;
+    onMoveEmojisToCategory?: (names: string[], targetCategoryId: string) => void;
+    onRenameEmojiInManager?: (oldName: string, newName: string) => void;
     // Category Visibility
     allCharacters?: CharacterProfile[];
     onSaveCategoryVisibility?: (categoryId: string, allowedCharacterIds: string[] | undefined) => void;
@@ -102,6 +111,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
     editEmojiNewName, setEditEmojiNewName, onEditEmojiConfirm,
     reorderList, onSaveReorder, onCancelReorder, onMoveEmoji,
+    categories, activeCategory,
+    onSaveManagerOrder, onBatchDeleteEmojis, onMoveEmojisToCategory, onRenameEmojiInManager,
     allCharacters = [], onSaveCategoryVisibility,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange,
@@ -113,6 +124,104 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
 
+    // --- Emoji Manager 状态（取代旧的 emoji-options / emoji-reorder 长按弹窗）---
+    const [selectedEmojiNames, setSelectedEmojiNames] = useState<Set<string>>(new Set());
+    const [showMoveEmojiModal, setShowMoveEmojiModal] = useState(false);
+    const [showBatchDeleteEmojiConfirm, setShowBatchDeleteEmojiConfirm] = useState(false);
+    // 重命名 inline 模式：1 个选中时点"重命名" → 上下文条变成输入条
+    const [isRenamingEmoji, setIsRenamingEmoji] = useState(false);
+    const [renameEmojiValue, setRenameEmojiValue] = useState('');
+
+    // 关闭 manager 前保存顺序（拖动改的）— 父组件传 onSaveManagerOrder
+    const handleCloseManager = () => {
+        if (reorderList.length > 0) {
+            onSaveManagerOrder?.();
+        }
+        // 清理 manager 内部状态，避免下次打开残留
+        setSelectedEmojiNames(new Set());
+        setIsRenamingEmoji(false);
+        setRenameEmojiValue('');
+        setShowMoveEmojiModal(false);
+        setShowBatchDeleteEmojiConfirm(false);
+        setModalType('none');
+    };
+
+    const toggleSelectEmoji = (name: string) => {
+        // 拖动刚结束 → 浏览器还会再发一次 click，这里吃掉它，避免误触发选中切换
+        if (wasDraggingRef.current) {
+            wasDraggingRef.current = false;
+            return;
+        }
+        setSelectedEmojiNames(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+        });
+    };
+
+    const toggleSelectAllEmojis = () => {
+        const allNames = reorderList.map(e => e.name);
+        if (selectedEmojiNames.size === reorderList.length) {
+            setSelectedEmojiNames(new Set());
+        } else {
+            setSelectedEmojiNames(new Set(allNames));
+        }
+    };
+
+    const clearEmojiSelection = () => setSelectedEmojiNames(new Set());
+
+    const startRenameEmoji = () => {
+        if (selectedEmojiNames.size !== 1) return;
+        const name = Array.from(selectedEmojiNames)[0];
+        setRenameEmojiValue(name);
+        setIsRenamingEmoji(true);
+    };
+
+    const handleConfirmRenameEmoji = () => {
+        const oldName = Array.from(selectedEmojiNames)[0];
+        const newName = renameEmojiValue.trim();
+        if (!oldName) {
+            setIsRenamingEmoji(false);
+            return;
+        }
+        if (!newName) {
+            addToast('名字不能为空', 'error');
+            return;
+        }
+        if (newName === oldName) {
+            setIsRenamingEmoji(false);
+            return;
+        }
+        if (reorderList.some(e => e.name === newName)) {
+            addToast('已存在同名表情包', 'error');
+            return;
+        }
+        // 直接调父组件的改名 handler
+        onRenameEmojiInManager?.(oldName, newName);
+        setIsRenamingEmoji(false);
+        setSelectedEmojiNames(new Set());
+    };
+
+    const handleMoveEmojisToCategory = (targetCategoryId: string) => {
+        const names = Array.from(selectedEmojiNames);
+        if (names.length === 0) return;
+        onMoveEmojisToCategory?.(names, targetCategoryId);
+        setShowMoveEmojiModal(false);
+        setSelectedEmojiNames(new Set());
+    };
+
+    const handleConfirmBatchDeleteEmojis = () => {
+        const names = Array.from(selectedEmojiNames);
+        if (names.length === 0) {
+            setShowBatchDeleteEmojiConfirm(false);
+            return;
+        }
+        onBatchDeleteEmojis?.(names);
+        setShowBatchDeleteEmojiConfirm(false);
+        setSelectedEmojiNames(new Set());
+    };
+
     // --- Emoji Reorder 拖拽排序 state ---
     // 用 position: fixed 浮层让被拖动项脱离文档流，避免 reorder 时 DOM 位置变化造成的视觉跳跃
     // 拖动时 mousemove/mouseup 挂到 document 上，确保鼠标移出容器也能继续拖
@@ -121,11 +230,29 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const dragStartPointerYRef = useRef<number>(0);
     const dragOffsetYRef = useRef<number>(0); // 长按启动时手指相对 item.top 的偏移
+    const dragMovedRef = useRef<boolean>(false); // 拖动期间是否真的移动过（区分"点击"vs"拖动"，决定是否吞掉后续 click）
     const scrollRafRef = useRef<number | null>(null);
     const scrollDirRef = useRef<-1 | 0 | 1>(0);
     const [draggingName, setDraggingName] = useState<string | null>(null);
     const [draggingStyle, setDraggingStyle] = useState<{ left: number; top: number; width: number } | null>(null);
     const isDragging = draggingName !== null;
+
+    // 真正启动拖动：mouse 立即调（PC 鼠标长按太累），touch 由 longPressTimer 触发
+    const startDrag = (name: string, clientY: number, source: 'mouse' | 'touch') => {
+        const itemEl = reorderItemRefs.current.get(name);
+        if (!itemEl) return;
+        const rect = itemEl.getBoundingClientRect();
+        dragOffsetYRef.current = clientY - rect.top;
+        // touch 长按 = 拖动意图（即便没移动也要吞掉后续 click）；
+        // mouse 取决于是否真的移动了，dragMovedRef 在 updateDragAt 里置 true
+        if (source === 'touch') dragMovedRef.current = true;
+        setDraggingName(name);
+        setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
+        // 触觉反馈（如果浏览器支持）
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            (navigator as any).vibrate?.(30);
+        }
+    };
 
     const clearLongPress = () => {
         if (longPressTimerRef.current) {
@@ -159,6 +286,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
     // 拖动核心逻辑（接收纯 clientY，文档级监听器复用同一函数）
     const updateDragAt = (clientY: number) => {
+        // 任何 mouse/touch 移动 = 真拖动，标记 dragMovedRef（用于 endDrag 决定是否吞掉 click）
+        dragMovedRef.current = true;
         // 1) 更新拖动浮层位置（position: fixed 跟随手指，不受 DOM 变化影响）
         setDraggingStyle(prev => prev ? { ...prev, top: clientY - dragOffsetYRef.current } : prev);
 
@@ -202,9 +331,19 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const endDrag = () => {
         clearLongPress();
         stopAutoScroll();
+        // 只有真移动过才吞掉后续 click（mouse 不动 = 普通点击，要让它正常选中）
+        if (dragMovedRef.current) {
+            wasDraggingRef.current = true;
+        }
+        dragMovedRef.current = false;
         setDraggingName(null);
         setDraggingStyle(null);
+        // 兜底重置：如果用户在 drag 之后点的不是表情（点空白/工具栏），那条 click 不会消费 ref；
+        // 下一次 macrotask 自动清掉，避免误伤后续任意 click
+        setTimeout(() => { wasDraggingRef.current = false; }, 50);
     };
+    // 拖动结束的哨兵 ref：在 endDrag 里置 true，下一次 click 事件消费后置 false
+    const wasDraggingRef = useRef(false);
 
     // draggingName 同步到 ref，供 updateDragAt 在 document mousemove 中读取（避免闭包过期）
     const draggingNameRef = useRef<string | null>(null);
@@ -244,21 +383,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         const target = e.target as HTMLElement;
         if (target.closest('button')) return;
 
-        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        const isTouch = 'touches' in e;
+        const clientY = isTouch ? e.touches[0].clientY : e.clientY;
         dragStartPointerYRef.current = clientY;
 
-        longPressTimerRef.current = setTimeout(() => {
-            const itemEl = reorderItemRefs.current.get(name);
-            if (!itemEl) return;
-            const rect = itemEl.getBoundingClientRect();
-            dragOffsetYRef.current = clientY - rect.top;
-            setDraggingName(name);
-            setDraggingStyle({ left: rect.left, top: rect.top, width: rect.width });
-            // 触觉反馈（如果浏览器支持）
-            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-                (navigator as any).vibrate?.(30);
-            }
-        }, 300);
+        if (isTouch) {
+            // 手机：300ms 长按启动（避免上下滚动列表时误触拖动）
+            longPressTimerRef.current = setTimeout(() => startDrag(name, clientY, 'touch'), 300);
+        } else {
+            // 电脑：mousedown 立即进 drag（PC 鼠标长按 300ms 太累，拖不了）
+            startDrag(name, clientY, 'mouse');
+        }
     };
 
     // 容器内 mousemove：仅用于长按计时器取消判断（>10px 自动取消）
@@ -564,31 +699,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 </div>
             </Modal>
 
-            {/* Emoji Options Menu (长按弹出) — 编辑名字 / 调整顺序 / 删除 */}
-            <Modal isOpen={modalType === 'emoji-options'} title="表情包操作" onClose={() => setModalType('none')}>
-                <div className="space-y-3">
-                    <button onClick={() => setModalType('edit-emoji')} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                        </svg>
-                        编辑名字
-                    </button>
-                    <button onClick={() => setModalType('emoji-reorder')} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
-                        </svg>
-                        调整顺序
-                    </button>
-                    <button onClick={() => setModalType('delete-emoji')} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                        </svg>
-                        删除
-                    </button>
-                </div>
-            </Modal>
-
-            {/* Edit Emoji (rename) Modal */}
+            {/* Edit Emoji (rename) Modal — 编辑名字仍走这里（从 manager 的 1 选中态触发） */}
             <Modal
                 isOpen={modalType === 'edit-emoji'} title="编辑表情包名字" onClose={() => setModalType('none')}
                 footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onEditEmojiConfirm} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
@@ -605,95 +716,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         autoFocus
                     />
                 </div>
-            </Modal>
-
-            {/* Reorder Emojis Modal — 列表 + ↑↓ 按钮 */}
-            <Modal
-                isOpen={modalType === 'emoji-reorder'} title="调整表情包顺序" onClose={onCancelReorder}
-                footer={<><button onClick={onCancelReorder} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onSaveReorder} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
-            >
-                <p className="text-xs text-slate-400 text-center pb-2">长按表情包 0.3s 后可拖动；贴近顶部/底部会自动滚动</p>
-                <div
-                    ref={reorderListRef}
-                    className="space-y-2 max-h-96 overflow-y-auto no-scrollbar -mx-1 px-1 py-1 select-none"
-                    onMouseMove={handleReorderContainerMove}
-                    onTouchMove={handleReorderContainerMove}
-                    onMouseLeave={handleReorderContainerLeave}
-                >
-                    {reorderList.length === 0 ? (
-                        <p className="text-center text-sm text-slate-400 py-6">当前分类下没有表情包</p>
-                    ) : reorderList.map((e, idx) => {
-                        const isDragging = draggingName === e.name;
-                        // 拖动中的项脱离列表，在 fixed 浮层渲染；原位置留虚线占位
-                        if (isDragging) {
-                            return (
-                                <div
-                                    key={e.name}
-                                    className="h-14 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50"
-                                />
-                            );
-                        }
-                        return (
-                            <div
-                                key={e.name}
-                                ref={(el) => {
-                                    if (el) reorderItemRefs.current.set(e.name, el);
-                                    else reorderItemRefs.current.delete(e.name);
-                                }}
-                                onMouseDown={(ev) => handleReorderPointerDown(e.name, ev)}
-                                onTouchStart={(ev) => handleReorderPointerDown(e.name, ev)}
-                                data-reorder-item
-                                className="flex items-center gap-3 bg-slate-50 rounded-2xl px-3 py-2 cursor-grab active:bg-slate-100"
-                            >
-                                {/* 拖拽手柄图标，提示用户可拖动 */}
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5h.008v.008H8.25V4.5Zm0 7.5h.008v.008H8.25V12Zm0 7.5h.008v.008H8.25V19.5Zm7.5-15h.008v.008h-.008V4.5Zm0 7.5h.008v.008h-.008V12Zm0 7.5h.008v.008h-.008V19.5Z" />
-                                </svg>
-                                <img src={e.url} className="w-10 h-10 object-contain rounded-lg shrink-0 pointer-events-none" />
-                                <span className="flex-1 text-sm text-slate-700 truncate font-medium pointer-events-none">{e.name}</span>
-                                <div className="flex flex-col gap-0.5 shrink-0">
-                                    <button
-                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx - 1); }}
-                                        disabled={idx === 0}
-                                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === 0 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
-                                        aria-label="上移"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
-                                    </button>
-                                    <button
-                                        onClick={(ev) => { ev.stopPropagation(); onMoveEmoji(idx, idx + 1); }}
-                                        disabled={idx === reorderList.length - 1}
-                                        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${idx === reorderList.length - 1 ? 'bg-slate-100 text-slate-300' : 'bg-white text-slate-600 active:bg-slate-200 border border-slate-200'}`}
-                                        aria-label="下移"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-                {/* 拖动浮层（position: fixed 脱离 reorderList 文档流，跟随手指不抖动） */}
-                {draggingName && draggingStyle && (() => {
-                    const e = reorderList.find(it => it.name === draggingName);
-                    if (!e) return null;
-                    return (
-                        <div
-                            className="fixed z-[60] flex items-center gap-3 bg-white rounded-2xl px-3 py-2 shadow-xl shadow-indigo-200/60 border border-indigo-200 scale-[1.03] cursor-grabbing touch-none select-none"
-                            style={{
-                                left: draggingStyle.left,
-                                top: draggingStyle.top,
-                                width: draggingStyle.width,
-                            }}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5h.008v.008H8.25V4.5Zm0 7.5h.008v.008H8.25V12Zm0 7.5h.008v.008H8.25V19.5Zm7.5-15h.008v.008h-.008V4.5Zm0 7.5h.008v.008h-.008V12Zm0 7.5h.008v.008h-.008V19.5Z" />
-                            </svg>
-                            <img src={e.url} className="w-10 h-10 object-contain rounded-lg shrink-0" />
-                            <span className="flex-1 text-sm text-slate-700 truncate font-medium">{e.name}</span>
-                        </div>
-                    );
-                })()}
             </Modal>
 
             {/* Delete Category Modal */}
@@ -861,6 +883,271 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     )}
                 </div>
             </Modal>
+
+            {/* ===== Emoji Manager — 全屏管理页（createPortal 到 body 绕开 backdrop-filter 祖先） ===== */}
+            {modalType === 'emoji-manager' && createPortal(
+                <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col">
+                    {/* 顶部标题栏 — sticky */}
+                    <div
+                        className="shrink-0 bg-white border-b border-slate-200 px-3 py-3 flex items-center gap-2"
+                        style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}
+                    >
+                        <button
+                            onClick={handleCloseManager}
+                            className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center shrink-0"
+                            aria-label="返回"
+                        >
+                            <ArrowLeft className="w-4 h-4 text-slate-700" weight="bold" />
+                        </button>
+                        <h1 className="flex-1 text-center text-base font-bold text-slate-800 truncate">
+                            管理表情包 · {(activeCategory || 'default') === 'default' ? '默认' : (categories?.find(c => c.id === activeCategory)?.name || '未知')}
+                        </h1>
+                        {/* 占位保持标题居中 */}
+                        <div className="w-9 h-9 shrink-0" />
+                    </div>
+
+                    {/* 主体内容 — flex-1 滚动 */}
+                    <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-3 py-3">
+                        <div className="space-y-3 max-w-2xl mx-auto">
+                            {/* 顶部状态条：选中数 / 重命名 inline 输入 / 提示 */}
+                            {isRenamingEmoji ? (
+                                <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-2xl">
+                                    <input
+                                        autoFocus
+                                        value={renameEmojiValue}
+                                        onChange={e => setRenameEmojiValue(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && handleConfirmRenameEmoji()}
+                                        maxLength={20}
+                                        className="flex-1 min-w-0 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-primary/30"
+                                    />
+                                    <button onClick={() => setIsRenamingEmoji(false)} className="px-3 py-1.5 text-xs bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-transform">取消</button>
+                                    <button onClick={handleConfirmRenameEmoji} className="px-3 py-1.5 text-xs bg-primary text-white font-bold rounded-full active:scale-95 transition-transform">保存</button>
+                                </div>
+                            ) : selectedEmojiNames.size > 0 ? (
+                                <div className="flex items-center justify-between px-3 py-2 bg-primary/5 border border-primary/20 rounded-2xl">
+                                    <span className="text-xs text-primary font-bold">已选 {selectedEmojiNames.size} 个</span>
+                                    <button
+                                        onClick={clearEmojiSelection}
+                                        className="px-3 py-1 text-xs text-slate-500 font-medium active:scale-95 transition-transform"
+                                    >
+                                        取消选择
+                                    </button>
+                                </div>
+                            ) : (
+                                <p className="text-[10px] text-slate-400 text-center">点击选择 · 电脑端可直接拖动 · 手机长按 0.3s 拖动</p>
+                            )}
+
+                            {/* 表情包网格（沿用 reorderList 作为工作列表，拖动改这个 state，关闭 manager 时保存） */}
+                            <div
+                                ref={reorderListRef}
+                                className="grid grid-cols-5 gap-2 select-none"
+                                onMouseMove={handleReorderContainerMove}
+                                onTouchMove={handleReorderContainerMove}
+                                onMouseLeave={handleReorderContainerLeave}
+                            >
+                                {reorderList.length === 0 ? (
+                                    <p className="col-span-5 text-center text-sm text-slate-400 py-6">当前分类下没有表情包</p>
+                                ) : reorderList.map(e => {
+                                    const isSelected = selectedEmojiNames.has(e.name);
+                                    const isDragging = draggingName === e.name;
+                                    if (isDragging) {
+                                        return (
+                                            <div
+                                                key={e.name}
+                                                className="aspect-square rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/50"
+                                            />
+                                        );
+                                    }
+                                    return (
+                                        <button
+                                            key={e.name}
+                                            onClick={() => toggleSelectEmoji(e.name)}
+                                            onMouseDown={(ev) => handleReorderPointerDown(e.name, ev)}
+                                            onTouchStart={(ev) => handleReorderPointerDown(e.name, ev)}
+                                            className={`relative aspect-square rounded-xl p-1 border-2 transition-all select-none flex items-center justify-center ${
+                                                isSelected
+                                                    ? 'border-primary bg-primary/5'
+                                                    : 'border-slate-200/60 bg-white hover:border-slate-300 active:scale-95'
+                                            }`}
+                                        >
+                                            <img src={e.url} className={`w-full h-full object-contain pointer-events-none transition-opacity ${isSelected ? 'opacity-60' : ''}`} />
+                                            {isSelected && (
+                                                <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-primary flex items-center justify-center shadow-sm">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-2.5 h-2.5 text-white">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                                    </svg>
+                                                </div>
+                                            )}
+                                            <span className="absolute bottom-0 left-0.5 right-0.5 text-[8px] text-slate-500 text-center truncate pointer-events-none leading-tight">{e.name}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 底部工具栏 — sticky 底部 */}
+                    <div
+                        className="shrink-0 bg-white border-t border-slate-200 px-3 py-3"
+                        style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+                    >
+                        <div className="max-w-2xl mx-auto flex gap-2">
+                            {selectedEmojiNames.size === 0 ? (
+                                // 0 选中：全选 + 完成
+                                <>
+                                    <button
+                                        onClick={toggleSelectAllEmojis}
+                                        disabled={reorderList.length === 0}
+                                        className={`flex-1 py-3 rounded-full font-bold transition-colors ${reorderList.length === 0 ? 'bg-slate-100 text-slate-300' : 'bg-slate-100 text-slate-700 active:bg-slate-200'}`}
+                                    >
+                                        {reorderList.length > 0 && selectedEmojiNames.size === reorderList.length ? '取消全选' : '全选'}
+                                    </button>
+                                    <button
+                                        onClick={handleCloseManager}
+                                        className="flex-1 py-3 bg-primary text-white font-bold rounded-full active:scale-95 transition-transform"
+                                    >
+                                        完成
+                                    </button>
+                                </>
+                            ) : selectedEmojiNames.size === 1 ? (
+                                // 1 选中：重命名 + 移动 + 删除
+                                <>
+                                    <button
+                                        onClick={startRenameEmoji}
+                                        className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold rounded-full active:bg-slate-200 transition-colors"
+                                    >
+                                        重命名
+                                    </button>
+                                    <button
+                                        onClick={() => setShowMoveEmojiModal(true)}
+                                        className="flex-1 py-3 bg-amber-50 text-amber-600 font-bold rounded-full active:bg-amber-100 transition-colors"
+                                    >
+                                        移动
+                                    </button>
+                                    <button
+                                        onClick={() => setShowBatchDeleteEmojiConfirm(true)}
+                                        className="flex-1 py-3 bg-red-500 text-white font-bold rounded-full active:bg-red-600 transition-colors"
+                                    >
+                                        删除
+                                    </button>
+                                </>
+                            ) : (
+                                // ≥2 选中：取消选择 + 移动 + 删除(N)
+                                <>
+                                    <button
+                                        onClick={clearEmojiSelection}
+                                        className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:bg-slate-200 transition-colors"
+                                    >
+                                        取消选择
+                                    </button>
+                                    <button
+                                        onClick={() => setShowMoveEmojiModal(true)}
+                                        className="flex-1 py-3 bg-amber-50 text-amber-600 font-bold rounded-full active:bg-amber-100 transition-colors"
+                                    >
+                                        移动
+                                    </button>
+                                    <button
+                                        onClick={() => setShowBatchDeleteEmojiConfirm(true)}
+                                        className="flex-1 py-3 bg-red-500 text-white font-bold rounded-full active:bg-red-600 transition-colors"
+                                    >
+                                        删除({selectedEmojiNames.size})
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 拖动浮层（position: fixed 脱离 reorderList 文档流，跟随手指不抖动） */}
+                    {draggingName && draggingStyle && (() => {
+                        const e = reorderList.find(it => it.name === draggingName);
+                        if (!e) return null;
+                        return (
+                            <div
+                                className="fixed z-[60] flex items-center gap-2 bg-white rounded-xl px-2 py-1.5 shadow-xl shadow-indigo-200/60 border-2 border-indigo-300 scale-105 cursor-grabbing touch-none select-none"
+                                style={{
+                                    left: draggingStyle.left,
+                                    top: draggingStyle.top,
+                                    width: draggingStyle.width,
+                                }}
+                            >
+                                <img src={e.url} className="w-8 h-8 object-contain rounded-lg shrink-0" />
+                                <span className="flex-1 text-xs text-slate-700 truncate font-medium">{e.name}</span>
+                            </div>
+                        );
+                    })()}
+
+                    {/* 子弹窗层（绝对定位覆盖在 manager 上面，z-10 相对父层） */}
+                    {showMoveEmojiModal && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center p-6 animate-fade-in">
+                            <div className="absolute inset-0 bg-black/40" onClick={() => setShowMoveEmojiModal(false)} />
+                            <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up max-h-[80vh] flex flex-col">
+                                <div className="px-6 pt-6 pb-2 shrink-0">
+                                    <h3 className="text-lg font-bold text-slate-800 text-center">移动到分类</h3>
+                                </div>
+                                <div className="px-6 py-4 flex-1 min-h-0 overflow-y-auto no-scrollbar">
+                                    <div className="space-y-2">
+                                        {(() => {
+                                            const others = (categories || []).filter(c => c.id !== activeCategory && c.id !== 'default');
+                                            const allTargets = activeCategory !== 'default'
+                                                ? [{ id: 'default', name: '默认' }, ...others]
+                                                : others;
+                                            if (allTargets.length === 0) {
+                                                return <p className="text-center text-sm text-slate-400 py-4">没有其他分类可移动</p>;
+                                            }
+                                            return allTargets.map(cat => (
+                                                <button
+                                                    key={cat.id}
+                                                    onClick={() => handleMoveEmojisToCategory(cat.id)}
+                                                    className="w-full py-3 px-4 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 rounded-2xl text-left font-bold text-sm text-slate-700 transition-colors flex items-center gap-2"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 text-slate-400 shrink-0">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
+                                                    </svg>
+                                                    {cat.name}
+                                                </button>
+                                            ));
+                                        })()}
+                                    </div>
+                                </div>
+                                <div className="px-6 pb-6 shrink-0">
+                                    <button
+                                        onClick={() => setShowMoveEmojiModal(false)}
+                                        className="w-full py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                                    >
+                                        取消
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showBatchDeleteEmojiConfirm && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center p-6 animate-fade-in">
+                            <div className="absolute inset-0 bg-black/40" onClick={() => setShowBatchDeleteEmojiConfirm(false)} />
+                            <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up flex flex-col">
+                                <div className="px-6 pt-6 pb-2 shrink-0">
+                                    <h3 className="text-lg font-bold text-slate-800 text-center">删除确认</h3>
+                                </div>
+                                <div className="px-6 py-4 flex-1 min-h-0">
+                                    <div className="py-4 text-center">
+                                        <p className="text-sm text-slate-600 leading-relaxed">
+                                            确认删除 <span className="font-bold text-red-500 text-base mx-1">{selectedEmojiNames.size}</span> 个表情包？
+                                        </p>
+                                        <p className="text-[10px] text-slate-400 mt-2">删除后无法恢复</p>
+                                    </div>
+                                </div>
+                                <div className="px-6 pb-6 flex gap-3 shrink-0">
+                                    <button onClick={() => setShowBatchDeleteEmojiConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:bg-slate-200">取消</button>
+                                    <button onClick={handleConfirmBatchDeleteEmojis} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl active:bg-red-600">删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>,
+                document.body
+            )}
+
+            {/* Move Emoji + Delete Confirm 子弹窗（已经包含在上面的 emoji-manager createPortal 里渲染） */}
         </>
     );
 };

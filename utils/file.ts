@@ -148,8 +148,12 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
     directLink.click();
     directLink.remove();
 
+    // 跨域图床（img.ai198.top / imgbb 等）浏览器 CORS 拦截直接 fetch，
+    // 走后端 /api/proxy-image 绕开 CORS（暮色 2026-07-13 调研后定的方案）。
+    const proxiedUrl = '/api/proxy-image?url=' + encodeURIComponent(url);
+
     try {
-        const res = await fetch(url);
+        const res = await fetch(proxiedUrl);
         if (!res.ok) throw new Error(`http_${res.status}`);
         const blob = await res.blob();
         const objectUrl = URL.createObjectURL(blob);
@@ -166,7 +170,7 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
             if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
                 const shareOk = await (async () => {
                     try {
-                        const res = await fetch(url);
+                        const res = await fetch(proxiedUrl);
                         if (!res.ok) return false;
                         const blob = await res.blob();
                         const file = new File([blob], finalFileName, { type: blob.type || `image/${ext}` });

@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-13 | 保存图片走 Vercel 代理绕开跨域图床 CORS | [`changelogs/2026-07-13-image-save-proxy.md`](./changelogs/2026-07-13-image-save-proxy.md) |
 | 2026-07-12 | 主页评论项可点击 → 弹输入框（嵌套回复 replyTo） | [`changelogs/2026-07-12-moments-comment-item-clickable.md`](./changelogs/2026-07-12-moments-comment-item-clickable.md) |
 | 2026-07-13 | 表情包管理页改造（删长按弹窗 + 全屏 manager + 批量移动） | [`changelogs/2026-07-13-emoji-manager-fullscreen.md`](./changelogs/2026-07-13-emoji-manager-fullscreen.md) |
 | 2026-07-13 | 危险区域补回「清空保留条数」输入框（10f8c9a 拆设置时漏的） | [`changelogs/2026-07-13-restore-preserve-count-input.md`](./changelogs/2026-07-13-restore-preserve-count-input.md) |

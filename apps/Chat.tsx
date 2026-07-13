@@ -1315,10 +1315,17 @@ const Chat: React.FC = () => {
     // 心声独立开关（2026-06-29 与 scheduleFeatureEnabled 解耦）
     // - char.emotionEnabled === undefined（老用户）：首次切换时把"等效值"作为基础 toggle，再写回明确值
     // - char.emotionEnabled === true/false（新用户 / 已显式切换）：直接 toggle
+    // 关闭时清空 activeBuffs：头像栏的心声气泡读的是 activeBuffs[0]，关闭后旧心声还显示是 bug
+    // （emotionHistory 是历史弹层用的，保留——只是"过去"的心声不消失，但不再"当前活跃"）
     const handleToggleEmotion = () => {
         if (!char) return;
         const isEmotionOnNow = isEmotionOn(char);
-        updateCharacter(char.id, { emotionEnabled: !isEmotionOnNow } as any);
+        const updates: any = { emotionEnabled: !isEmotionOnNow };
+        if (isEmotionOnNow) {
+            // 关闭：清空当前活跃 buff
+            updates.activeBuffs = [];
+        }
+        updateCharacter(char.id, updates);
         addToast(!isEmotionOnNow ? '心声已开启' : '心声已关闭', !isEmotionOnNow ? 'success' : 'info');
     };
 

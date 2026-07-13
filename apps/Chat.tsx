@@ -2323,6 +2323,7 @@ if (keepN > 0) {
                 onBatchDeleteEmojis={handleBatchDeleteEmojis}
                 onMoveEmojisToCategory={handleMoveEmojisToCategory}
                 onRenameEmojiInManager={handleRenameEmojiInManager}
+                onActiveCategoryChange={setActiveCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}

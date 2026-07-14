@@ -1012,12 +1012,63 @@ const Chat: React.FC = () => {
 
    const handleImageSelect = async (file: File) => {
     try {
-        const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+        // 暮色 2026-07-14：调高压缩参数（600/0.6 → 1600/0.85）— 之前双重压缩导致截图字小看不清
+        // 配合 Cloudflare R2（不压缩的图床），原图直接上
+        const base64 = await processImage(file, { maxWidth: 1600, quality: 0.85, forceJpeg: true });
         setShowPanel('none');
 
         const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
-        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
+        const r2 = (apiConfig as any);
+        const hasR2 = r2?.r2AccountId && r2?.r2AccessKeyId && r2?.r2SecretAccessKey && r2?.r2Bucket && r2?.r2PublicUrl;
 
+        // 优先 Cloudflare R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
+        // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
+        // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
+        // 暮色 2026-07-14：每个降级路径都 addToast 标注，让暮色知道图走 R2 / imgbb / base64 哪条路
+        if (hasR2) {
+            try {
+                const b64 = base64.includes(',') ? base64.split(',')[1] : base64;
+                const _presignRes = await fetch('/api/r2-presign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mime: 'image/jpeg',
+                        prefix: 'user',
+                        accountId: r2.r2AccountId,
+                        accessKeyId: r2.r2AccessKeyId,
+                        secretAccessKey: r2.r2SecretAccessKey,
+                        bucket: r2.r2Bucket,
+                        publicUrl: r2.r2PublicUrl,
+                    }),
+                });
+                const _presignData = await _presignRes.json().catch(() => ({} as any));
+                if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
+                    addToast('拿上传签名失败，尝试 imgbb 兜底', 'error');
+                } else {
+                    // 阶段2：浏览器 PUT 直传 R2
+                    const _bin = atob(b64);
+                    const _bytes = new Uint8Array(_bin.length);
+                    for (let i = 0; i < _bin.length; i++) _bytes[i] = _bin.charCodeAt(i);
+                    const _putRes = await fetch(_presignData.presignedUrl, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'image/jpeg' },
+                        body: _bytes,
+                    });
+                    if (_putRes.ok) {
+                        addToast('🎨 用户图已存 R2', 'success');
+                        await handleSendText(_presignData.publicUrl, 'image');
+                        return;
+                    }
+                    addToast(`R2 上传失败 (${_putRes.status})，尝试 imgbb 兜底`, 'error');
+                }
+            } catch {
+                addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
+            }
+            // R2 失败不回退到 base64（避免污染 localStorage），继续往下走 imgbb 兜底
+        }
+
+        // 回退到 imgbb（会压缩，但比 base64 好）
+        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
         if (imgbbKey) {
             try {
                 const formData = new FormData();
@@ -1028,13 +1079,14 @@ const Chat: React.FC = () => {
                 });
                 const json = await res.json();
                 if (json?.data?.url) {
+                    addToast('🖼️ R2 失败，imgbb 兜底成功', 'info');
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                addToast('图床上传失败，已改为直接发送原图', 'error');
+                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
             } catch {
-                addToast('图床上传失败，已改为直接发送原图', 'error');
+                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
             }
             return;
@@ -1060,6 +1112,7 @@ const Chat: React.FC = () => {
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
 
         // ③ 发当前图（base64），这一轮 AI 能识图
+        addToast('⚠️ 未配图床，已发 base64（卡浏览器风险）', 'info');
         await handleSendText(base64, 'image');
 
     } catch (err: any) {

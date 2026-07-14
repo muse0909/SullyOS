@@ -1869,7 +1869,8 @@ if (!isVisible || !isChattingWithThisChar) {
   // 暮色 2026-07-03 修复：
   //   1. String() 防御 — 任何调用方传 object 不会炸 React（之前 React error #31 一次因为 message 字段是 SyntheticEvent）
   //   2. 支持第 3 个参数 duration（毫秒，默认 3000）— 之前签名只接 2 个参数，调用方传 2000/3000 等被静默忽略
-  const addToast = (message: string, type: Toast['type'] = 'info', duration = 3000) => {
+  // 暮色 2026-07-14：默认 3 秒改 10 秒 — 反馈 3 秒一闪而过看不清字
+  const addToast = (message: string, type: Toast['type'] = 'info', duration = 10000) => {
     const safeMessage = typeof message === 'string' ? message : String(message);
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setToasts(prev => [...prev, { id, message: safeMessage, type }]);

@@ -281,6 +281,11 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-13 | 保存图片走 Vercel 代理绕开跨域图床 CORS | [`changelogs/2026-07-13-image-save-proxy.md`](./changelogs/2026-07-13-image-save-proxy.md) |
+| 2026-07-14 | 生图 b64 → Netlify Blobs 自动转永久 URL（解决中转站只返 b64 时的展示问题） | [`changelogs/2026-07-14-image-b64-blob-upload.md`](./changelogs/2026-07-14-image-b64-blob-upload.md) |
+| 2026-07-14 | 图床升级 imgbb → Cloudflare R2（不压缩，截图字清楚）| [`changelogs/2026-07-14-image-b64-blob-upload.md`](./changelogs/2026-07-14-image-b64-blob-upload.md) |
+| 2026-07-14 | R2 上传改两阶段 presign+直传（绕开 Vercel 10 秒超时） | [`changelogs/2026-07-14-r2-presign-two-stage.md`](./changelogs/2026-07-14-r2-presign-two-stage.md) |
+| 2026-07-14 | r2-presign 改自写 SigV4（去掉 AWS SDK，冷启动 3-5s → <100ms） | 同上 + 后续 commit `b476c0c` |
+| 2026-07-14 | 保存图片到相册 data URL 触发 proxy-image 超长 URL 失败（🟡 已登记，未修） | [`changelogs/2026-07-14-save-image-data-url-bug.md`](./changelogs/2026-07-14-save-image-data-url-bug.md) |
 | 2026-07-13 | 语音收藏批量删除 + 上 Netlify Blobs 云端持久化 | [`changelogs/2026-07-13-voice-favorites-cloud.md`](./changelogs/2026-07-13-voice-favorites-cloud.md) |
 | 2026-07-13 | 消息操作弹窗两列布局 + 去关闭按钮 | [`changelogs/2026-07-13-message-options-two-col.md`](./changelogs/2026-07-13-message-options-two-col.md) |
 | 2026-07-12 | 主页评论项可点击 → 弹输入框（嵌套回复 replyTo） | [`changelogs/2026-07-12-moments-comment-item-clickable.md`](./changelogs/2026-07-12-moments-comment-item-clickable.md) |

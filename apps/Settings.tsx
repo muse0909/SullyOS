@@ -170,6 +170,12 @@ const Settings: React.FC = () => {
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
   const [localImgbbApiKey, setLocalImgbbApiKey] = useState(apiConfig.imgbbApiKey || '');
+  // 暮色 2026-07-14：Cloudflare R2 图床（替代 imgbb，不压缩原图）
+  const [localR2AccountId, setLocalR2AccountId] = useState(apiConfig.r2AccountId || '');
+  const [localR2AccessKeyId, setLocalR2AccessKeyId] = useState(apiConfig.r2AccessKeyId || '');
+  const [localR2SecretAccessKey, setLocalR2SecretAccessKey] = useState(apiConfig.r2SecretAccessKey || '');
+  const [localR2Bucket, setLocalR2Bucket] = useState(apiConfig.r2Bucket || '');
+  const [localR2PublicUrl, setLocalR2PublicUrl] = useState(apiConfig.r2PublicUrl || '');
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
@@ -402,6 +408,8 @@ const Settings: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState('');
   const [testingApi, setTestingApi] = useState(false);
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
+  // 暮色 2026-07-14：图床独立卡的状态消息
+  const [imagebedStatusMsg, setImagebedStatusMsg] = useState('');
   const [imageStatusMsg, setImageStatusMsg] = useState('');
   // ComfyUI 本地状态：测试连接结果
   const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
@@ -422,6 +430,12 @@ const Settings: React.FC = () => {
       setLocalVisionKey(apiConfig.visionApiKey || '');
       setLocalVisionModel(apiConfig.visionModel || '');
       setLocalImgbbApiKey(apiConfig.imgbbApiKey || '');
+      // 暮色 2026-07-14：R2 状态同步（从识图卡迁到独立图床卡）
+      setLocalR2AccountId(apiConfig.r2AccountId || '');
+      setLocalR2AccessKeyId(apiConfig.r2AccessKeyId || '');
+      setLocalR2SecretAccessKey(apiConfig.r2SecretAccessKey || '');
+      setLocalR2Bucket(apiConfig.r2Bucket || '');
+      setLocalR2PublicUrl(apiConfig.r2PublicUrl || '');
       setLocalImageUrl(apiConfig.imageBaseUrl || '');
       setLocalImageKey(apiConfig.imageApiKey || '');
       setLocalImageModel(apiConfig.imageModel || '');
@@ -445,13 +459,14 @@ const Settings: React.FC = () => {
           if (kind === 'main') return preset.kind === 'main';
           return preset.kind === kind;
       });
-      return {
-          main: byKind('main'),
-          vision: byKind('vision'),
-          image: byKind('image'),
-          tts: byKind('tts'),
-          other: byKind('other'),
-      };
+    return {
+        main: byKind('main'),
+        vision: byKind('vision'),
+        image: byKind('image'),
+        imagebed: byKind('imagebed'),
+        tts: byKind('tts'),
+        other: byKind('other'),
+    };
   }, [apiPresets]);
 
   const loadPreset = (preset: typeof apiPresets[0], kind: PresetKind = 'main') => {
@@ -482,6 +497,25 @@ const Settings: React.FC = () => {
         imageGenProvider: c.imageGenProvider || 'openai',
       });
       addToast(`已加载生图预设: ${preset.name}`, 'info');
+      return;
+    }
+    // 暮色 2026-07-14：图床预设（独立 kind，暮色要把图床从识图里拆出来做独立卡片）
+    if (kind === 'imagebed') {
+      setLocalImgbbApiKey(c.imgbbApiKey || '');
+      setLocalR2AccountId(c.r2AccountId || '');
+      setLocalR2AccessKeyId(c.r2AccessKeyId || '');
+      setLocalR2SecretAccessKey(c.r2SecretAccessKey || '');
+      setLocalR2Bucket(c.r2Bucket || '');
+      setLocalR2PublicUrl(c.r2PublicUrl || '');
+      updateApiConfig({
+        imgbbApiKey: c.imgbbApiKey || '',
+        r2AccountId: c.r2AccountId || '',
+        r2AccessKeyId: c.r2AccessKeyId || '',
+        r2SecretAccessKey: c.r2SecretAccessKey || '',
+        r2Bucket: c.r2Bucket || '',
+        r2PublicUrl: c.r2PublicUrl || '',
+      });
+      addToast(`已加载图床预设: ${preset.name}`, 'info');
       return;
     }
     if (kind === 'tts') {
@@ -543,7 +577,7 @@ const Settings: React.FC = () => {
           visionBaseUrl: localVisionUrl,
           visionApiKey: localVisionKey,
           visionModel: localVisionModel,
-          imgbbApiKey: localImgbbApiKey,
+          // 暮色 2026-07-14：图床字段（imgbbApiKey）已迁出识图卡，改到独立图床卡保存
         };
         break;
       case 'image':
@@ -553,6 +587,18 @@ const Settings: React.FC = () => {
           imageApiKey: localImageKey,
           imageModel: localImageModel,
           imageGenProvider: localImageGenProvider,
+        };
+        break;
+      // 暮色 2026-07-14：图床预设只保存图床字段（imgbb + R2），不掺生图字段
+      case 'imagebed':
+        config = {
+          baseUrl: '', apiKey: '', model: '',
+          imgbbApiKey: localImgbbApiKey,
+          r2AccountId: localR2AccountId,
+          r2AccessKeyId: localR2AccessKeyId,
+          r2SecretAccessKey: localR2SecretAccessKey,
+          r2Bucket: localR2Bucket,
+          r2PublicUrl: localR2PublicUrl,
         };
         break;
       case 'tts':
@@ -610,10 +656,25 @@ const Settings: React.FC = () => {
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
-      imgbbApiKey: localImgbbApiKey,
+      // 暮色 2026-07-14：图床字段（imgbbApiKey + R2）已迁到独立图床卡，识图卡不再保存
     });
     setVisionStatusMsg('识图配置已保存'); 
     setTimeout(() => setVisionStatusMsg(''), 2000); 
+  };
+
+  // 暮色 2026-07-14：图床配置独立保存（imgbb + Cloudflare R2 一起存）
+  const handleSaveImagebed = () => {
+    updateApiConfig({
+      ...apiConfig,
+      imgbbApiKey: localImgbbApiKey,
+      r2AccountId: localR2AccountId,
+      r2AccessKeyId: localR2AccessKeyId,
+      r2SecretAccessKey: localR2SecretAccessKey,
+      r2Bucket: localR2Bucket,
+      r2PublicUrl: localR2PublicUrl,
+    });
+    setImagebedStatusMsg('图床配置已保存');
+    setTimeout(() => setImagebedStatusMsg(''), 2000);
   };
 
 // 生图配置：分两个 provider 独立保存（暮色 2026-07-03 要求"在哪个页面保存就用哪个"）
@@ -1360,16 +1421,6 @@ const handleSaveTts = () => {
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
                     </button>
                 </div>
-                <VisibleKeyInput
-                    label="图床 imgbb API Key"
-                    value={localImgbbApiKey}
-                    onChange={setLocalImgbbApiKey}
-                    placeholder="imgbb.com 注册后免费获取"
-                    visible={showImgbbKey}
-                    onToggle={() => setShowImgbbKey(v => !v)}
-                    hint="配置后发图自动上传图床转 URL，解决卡顿"
-                    className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
-                />
                 <button onClick={handleSaveVisionApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2">{visionStatusMsg || '保存识图配置'}</button>
                 <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
             </div>
@@ -1616,6 +1667,81 @@ const handleSaveTts = () => {
               </div>
             )}
         </section>
+        </SettingsSection>
+
+        {/* 7.5 - 图床配置（暮色 2026-07-14：从识图卡里抽出来做独立卡） */}
+        <SettingsSection id="imagebed" icon="🖼️" title="图床配置" subtitle="imgbb / Cloudflare R2 · 截图存储" isOpen={openSectionId === 'imagebed'} onToggle={toggleSection}
+          statusText={(apiConfig.r2AccountId || apiConfig.imgbbApiKey) ? '已配置' : '未配置'} statusColor="text-slate-400">
+          <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-13.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+                  </svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">图床配置</h2>
+              </div>
+              <button onClick={() => { setPresetSaveKind('imagebed'); setShowPresetModal(true); }} className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                保存为预设
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">用户发图 / 生图 b64 兜底时，会自动上传到配置的图床，转成永久 URL 存到消息库。<span className="font-semibold text-emerald-600">推荐用 R2（不压缩原图）</span>；imgbb 是回退方案（免费版会压缩）。</p>
+            {presetsByKind.imagebed.length > 0 && (
+              <div className="mb-4">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">图床预设</label>
+                <div className="flex gap-2 flex-wrap">
+                  {presetsByKind.imagebed.map(preset => (
+                    <PresetChip
+                      key={preset.id}
+                      preset={preset}
+                      activeClassName="bg-emerald-50 border-emerald-200"
+                      idleClassName="bg-white border-slate-200"
+                      textActiveClassName="text-emerald-600"
+                      textIdleClassName="text-slate-600 hover:text-emerald-500"
+                      onLoad={() => loadPreset(preset, 'imagebed')}
+                      onRequestDelete={() => setPresetPendingDelete(preset)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="space-y-4">
+              {/* imgbb 子区块 */}
+              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-slate-600">imgbb</span> — 免费图床公开 API，跨域天然支持。
+                  缺点是免费版会自动压缩图片，截图字小一点的会糊。<span className="text-amber-600">不推荐用，保留作回退</span>。
+                </p>
+              </div>
+              <VisibleKeyInput
+                label="imgbb API Key"
+                value={localImgbbApiKey}
+                onChange={setLocalImgbbApiKey}
+                placeholder="imgbb.com 注册后免费获取"
+                visible={showImgbbKey}
+                onToggle={() => setShowImgbbKey(v => !v)}
+                hint="配置后发图自动上传图床转 URL，解决卡顿"
+                className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
+              />
+              {/* R2 子区块 */}
+              <div className="pt-3 mt-2 border-t border-slate-200/60">
+                <div className="flex items-center gap-1.5 mb-2 pl-1">
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Cloudflare R2</span>
+                  <span className="text-[9px] text-slate-300">（推荐 · 不压缩原图）</span>
+                </div>
+                <div className="space-y-2.5">
+                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                  <VisibleKeyInput label="Access Key ID" value={localR2AccessKeyId} onChange={setLocalR2AccessKeyId} placeholder="R2 API Token 的 Access Key" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                  <VisibleKeyInput label="Secret Access Key" value={localR2SecretAccessKey} onChange={setLocalR2SecretAccessKey} placeholder="R2 API Token 的 Secret（**只显示一次**）" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Bucket 名</label><input type="text" value={localR2Bucket} onChange={(e) => setLocalR2Bucket(e.target.value)} placeholder="例 sullyos-images" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">公网 URL</label><input type="text" value={localR2PublicUrl} onChange={(e) => setLocalR2PublicUrl(e.target.value)} placeholder="https://pub-xxxxx.r2.dev" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                </div>
+              </div>
+              <button onClick={handleSaveImagebed} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all mt-2">{imagebedStatusMsg || '保存图床配置'}</button>
+              <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
+            </div>
+          </section>
         </SettingsSection>
 
         {/* 8 - 其他 API */}

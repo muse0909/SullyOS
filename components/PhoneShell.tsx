@@ -489,7 +489,7 @@ const PhoneShell: React.FC = () => {
                      {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
                      {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
                      {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
-                     <span className="text-xs font-bold text-slate-800 truncate leading-none">{toast.message}</span>
+                     <span className="text-xs font-bold text-slate-800 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
                  </div>
               ))}
            </div>

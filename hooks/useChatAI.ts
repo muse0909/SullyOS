@@ -1243,6 +1243,22 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
             try {
+                // 暮色 2026-07-14：生图失败排查 — 打印完整请求体，Netlify 日志里能看到实际发出去的 model 字符串
+                console.log('🎨 [ImageGen] 请求体:', {
+                    url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${(effectiveApi.imageApiKey || '').slice(0, 8)}...(已截断)`,
+                    },
+                    body: {
+                        model: effectiveApi.imageModel,
+                        prompt: imgPrompt,
+                        n: 1,
+                        size: '1024x1536',
+                    },
+                });
+
                 const imgResponse = await fetch(`${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`, {
                     method: 'POST',
                     headers: {
@@ -1264,6 +1280,31 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     const rawText = await imgResponse.text().catch(() => '');
                     throw new Error(`生图接口返回不是 JSON：${rawText.slice(0, 200)}`);
                 }
+
+                // 暮色 2026-07-14：拿到响应后立即打状态码 + data[0] 字段摘要
+                // Chrome devtools 会把 data 折叠成 `Array(1)` 看不清内容，手动拆开
+                const _data0 = imgData?.data?.[0];
+                console.log('🎨 [ImageGen] 响应:', {
+                    http_status: imgResponse.status,
+                    http_statusText: imgResponse.statusText,
+                    data0_keys: _data0 ? Object.keys(_data0) : '无 data[0]',
+                    data0_b64_length: _data0?.b64_json?.length || 0,
+                    data0_url: _data0?.url || null,
+                    data0_other_fields: _data0
+                        ? Object.fromEntries(
+                            Object.entries(_data0).filter(([k]) => !['b64_json', 'url'].includes(k))
+                          )
+                        : null,
+                    imgData_top_level: {
+                        created: imgData?.created,
+                        background: imgData?.background,
+                        output_format: imgData?.output_format,
+                        quality: imgData?.quality,
+                        size: imgData?.size,
+                        model: imgData?.model,
+                        _meta: imgData?._meta,
+                    },
+                });
 
                 if (!imgResponse.ok) {
                     const apiMsg =
@@ -1296,6 +1337,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 } else {
                     imageGenError = `生图接口没有返回图片 URL：${JSON.stringify(imgData).slice(0, 300)}`;
                     console.warn('🎨 [ImageGen] 生图返回为空:', imgData);
+                    // 暮色 2026-07-14：上面那行 Chrome devtools 会把 data 折叠成 `Array(1)` 看不清
+                    // 这里再补一行展开打印（剥掉 b64_json 避免日志爆炸）
+                    const _failData0 = imgData?.data?.[0];
+                    if (_failData0) {
+                        const { b64_json: _b64, ..._rest } = _failData0;
+                        console.warn('🎨 [ImageGen] data[0] 展开(已剥 b64_json):', {
+                            keys: Object.keys(_failData0),
+                            b64_json_length: _b64?.length || 0,
+                            ..._rest,
+                        });
+                    }
                 }
             } catch (imgErr: any) {
                 imageGenError = imgErr?.message || String(imgErr);

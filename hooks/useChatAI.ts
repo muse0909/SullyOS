@@ -1316,30 +1316,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 // 暮色 2026-07-14：兼容中转站两种返回格式
                 //   1) 直接 url（gemai.cc 转发 DALL-E 3）— 直接用，零开销
-                //   2) b64_json（jixiangai.xyz 转发 gpt-image-1）— 上传 Netlify Blobs 转 url，避免 2MB+ 塞 localStorage
+                //   2) b64_json（jixiangai.xyz 转发 gpt-image-1）— 上传 imgbb 转永久 url
+                //      跟"用户发图走 imgbb"一个模式（apps/Chat.tsx:1019），跨域天然支持
+                //      不用 Netlify 部署，Vercel 域名下也能用
                 const _imgData0 = imgData?.data?.[0];
                 let imageUrl = _imgData0?.url || '';
 
                 if (!imageUrl && _imgData0?.b64_json) {
-                    console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 Netlify Blobs...');
-                    try {
-                        const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
-                        const _uploadRes = await fetch('/api/v1/image-upload-store', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ b64: _imgData0.b64_json, mime: _mime }),
-                        });
-                        const _uploadData = await _uploadRes.json().catch(() => ({} as any));
-                        if (_uploadRes.ok && _uploadData?.success && _uploadData?.url) {
-                            imageUrl = _uploadData.url;
-                            console.log('🎨 [ImageGen] b64 已上传到 Netlify Blobs, url =', imageUrl);
-                        } else {
-                            console.warn('🎨 [ImageGen] b64 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
+                    const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
+
+                    if (_imgbbKey) {
+                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 imgbb...');
+                        try {
+                            const _formData = new FormData();
+                            // imgbb 接受 base64 字符串（不含 data: 前缀）
+                            _formData.append('image', _imgData0.b64_json);
+                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
+                                method: 'POST',
+                                body: _formData,
+                            });
+                            const _uploadData = await _uploadRes.json().catch(() => ({} as any));
+                            if (_uploadRes.ok && _uploadData?.data?.url) {
+                                imageUrl = _uploadData.data.url;
+                                console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
+                            } else {
+                                console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                            }
+                        } catch (uploadErr: any) {
+                            console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
-                    } catch (uploadErr: any) {
-                        console.warn('🎨 [ImageGen] b64 上传异常，临时用 data URL 兜底:', uploadErr?.message);
-                        const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
+                    } else {
+                        // 没配 imgbb key：直接 data URL（违反"不要 b64 存"原则但没办法，提示用户配 imgbb）
+                        console.warn('🎨 [ImageGen] 站点返 b64_json 但没配 imgbbApiKey, 临时用 data URL 兜底。请在 API 卡片配 imgbb key 以获得永久 URL。');
                         imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                     }
                 }

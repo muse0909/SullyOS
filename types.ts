@@ -240,7 +240,7 @@ export interface ApiPreset {
   id: string;
   name: string;
   config: APIConfig;
-  kind?: 'main' | 'vision' | 'image' | 'tts' | 'other' | 'emotion' | 'memoryPalaceLight';
+  kind?: 'main' | 'vision' | 'image' | 'imagebed' | 'tts' | 'other' | 'emotion' | 'memoryPalaceLight';
 }
 
 export interface CharacterBuff {

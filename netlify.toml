@@ -45,6 +45,11 @@ from = "/api/v1/voice-favorite-store"
 to = "/.netlify/functions/voice-favorite-store"
 status = 200
 
+[[redirects]]
+from = "/api/v1/image-upload-store"
+to = "/.netlify/functions/image-upload-store"
+status = 200
+
 [[headers]]
   for = "/assets/*"
 

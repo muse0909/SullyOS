@@ -1314,7 +1314,35 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     throw new Error(`生图接口报错 ${imgResponse.status}：${apiMsg}`);
                 }
 
-                const imageUrl = imgData?.data?.[0]?.url || '';
+                // 暮色 2026-07-14：兼容中转站两种返回格式
+                //   1) 直接 url（gemai.cc 转发 DALL-E 3）— 直接用，零开销
+                //   2) b64_json（jixiangai.xyz 转发 gpt-image-1）— 上传 Netlify Blobs 转 url，避免 2MB+ 塞 localStorage
+                const _imgData0 = imgData?.data?.[0];
+                let imageUrl = _imgData0?.url || '';
+
+                if (!imageUrl && _imgData0?.b64_json) {
+                    console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 Netlify Blobs...');
+                    try {
+                        const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
+                        const _uploadRes = await fetch('/api/v1/image-upload-store', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ b64: _imgData0.b64_json, mime: _mime }),
+                        });
+                        const _uploadData = await _uploadRes.json().catch(() => ({} as any));
+                        if (_uploadRes.ok && _uploadData?.success && _uploadData?.url) {
+                            imageUrl = _uploadData.url;
+                            console.log('🎨 [ImageGen] b64 已上传到 Netlify Blobs, url =', imageUrl);
+                        } else {
+                            console.warn('🎨 [ImageGen] b64 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                            imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                        }
+                    } catch (uploadErr: any) {
+                        console.warn('🎨 [ImageGen] b64 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                        const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
+                        imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                    }
+                }
 
                 // 暮色 2026-07-12：bridge 返回的 _meta.model_used 在 console 打出来，
                 // 下次出图能一眼确认是 RV 还是 Pony 出的

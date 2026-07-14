@@ -1,89 +1,103 @@
-# 生图自动转 URL：b64 → imgbb 上传（最终方案）
+# 图床升级：imgbb → Cloudflare R2（不压缩，截图字清楚）
 
 **日期**：2026-07-14
-**涉及 commit**：`4f0454d` `47f5776` `3f6ce32`（中间还有改动）
+**涉及 commit**：`4f0454d` `47f5776` `eebd1e2` `19a4848`（前几个是 Netlify / imgbb 中间版，最终定 R2）
 
 ## 改了什么
 
-### 1. `hooks/useChatAI.ts` 解析器加 b64 → imgbb 分支
-旧代码 `const imageUrl = imgData?.data?.[0]?.url || '';` —— 只读 url。
-新代码：
-- 优先 `data[0].url`（gemai.cc 类站点，零开销）
-- 没 url 但有 `b64_json` → fetch `https://api.imgbb.com/1/upload` 上传 → 拿永久 url 存 DB
-- 没配 imgbb key 或上传失败 → data URL 兜底
+### 1. 新增 Vercel function `api/r2-upload.ts`
+- 接收 POST `{ b64, mime, prefix, accountId, accessKeyId, secretAccessKey, bucket, publicUrl }`
+- 用 `@aws-sdk/client-s3` 调 Cloudflare R2（S3 兼容）putObject
+- 返回 `{ success, key, url, bytes }`
+- 4MB base64 限制
+- CORS 头配齐
 
-### 2. 加 3 段诊断日志（commit 4f0454d）
-为排查"实际调用的模型"，加：
-- `🎨 [ImageGen] 请求体` — 实际发出去的 model 字符串 + URL
-- `🎨 [ImageGen] 响应` — 状态码 + data[0] 的所有 key + 顶层元数据
-- `🎨 [ImageGen] data[0] 展开(已剥 b64_json)` — 失败时打，剥 b64 避免日志爆炸
+### 2. `types.ts` 加 5 个 R2 字段
+```ts
+r2AccountId?: string;        // Cloudflare Account ID（32 位 hex）
+r2AccessKeyId?: string;      // R2 API Token 的 Access Key ID
+r2SecretAccessKey?: string;  // R2 API Token 的 Secret（**只显示一次**）
+r2Bucket?: string;           // bucket 名（例 sullyos-images）
+r2PublicUrl?: string;        // 公网 URL（例 https://pub-xxxxx.r2.dev）
+```
+
+### 3. `apps/Settings.tsx` 加 5 个 R2 UI 字段
+- 加在"独立识图配置"卡片里（imgbb 字段下方）
+- 加 5 个 useState
+- 改 `handleSaveVisionApi` / `handleSaveImageApi` / 默认配置 case 都写 R2 字段
+- UI 用 VisibleKeyInput 组件（跟 imgbb 一致）
+
+### 4. `hooks/useChatAI.ts` 解析器改 R2 优先
+- b64 → R2 上传（优先）→ 拿永久 url 存 DB
+- R2 没配 → 回退 imgbb
+- 都未配 → data URL 兜底
+- `🎨 [ImageGen]` 3 段诊断日志保留
+
+### 5. `apps/Chat.tsx` 用户发图也用 R2
+- `processImage` 压缩参数调高：`maxWidth: 600/quality: 0.6` → `maxWidth: 1600/quality: 0.85`（之前双重压缩导致字看不清）
+- 优先 R2 上传（不压缩）
+- R2 失败 → 回退 imgbb
+- 都没配 → 走原来的 base64 占位图逻辑
+
+### 6. 加依赖 `@aws-sdk/client-s3`
+- Vercel 友好，R2 官方推荐
+- 体积 ~1MB（Vercel function 50MB 限制内）
 
 ## 动了哪些文件
-- `hooks/useChatAI.ts` —— 解析器加 imgbb 分支 + 3 段诊断日志
-- `netlify/functions/image-upload-store.ts` —— 中途加过，后来删了（**未保留**）
-- `netlify.toml` —— 中途加过 redirect，后来删了（**未保留**）
-- `changelogs/2026-07-14-image-b64-blob-upload.md` —— 改名为"imgbb 方案"前的临时版（**保留**作为中间记录）
+- `api/r2-upload.ts` —— 新建
+- `types.ts` —— 加 5 个 R2 字段
+- `apps/Settings.tsx` —— 加 5 个 R2 状态 + UI + 保存逻辑
+- `hooks/useChatAI.ts` —— 解析器改 R2 优先
+- `apps/Chat.tsx` —— 用户发图改 R2 优先 + 调高 processImage 参数
+- `package.json` + `package-lock.json` —— 加 @aws-sdk/client-s3
+
+## 用户操作
+
+暮色需要在 Cloudflare 注册 + 填 5 个字段：
+
+| 字段 | 来自 Cloudflare 哪里 |
+|---|---|
+| `r2AccountId` | R2 概览页右上角（32 位 hex）|
+| `r2AccessKeyId` | Manage R2 API Tokens → 创建 token → Access Key ID |
+| `r2SecretAccessKey` | 同上（**只显示一次**，要立即复制**）|
+| `r2Bucket` | 创建 bucket 时填的名字（例 sullyos-images）|
+| `r2PublicUrl` | bucket Settings → 启用 R2.dev subdomain → 拿 `https://pub-xxxxx.r2.dev` |
+
+5 个值填到 Settings → "独立识图配置"卡片 → "图床 Cloudflare R2"区域 → 点保存。
 
 ## 踩坑 / 需要知道的（重要）
 
-### 根因不是程序 bug，是中转站实际转发模型不同
-暮色预设的 `imageModel` 字段写的是 `gpt-image-2`，但**实际转发由中转站后端决定**：
+### 为什么不用 GitHub release assets / GitHub 当图床
+- **不压缩**（✓）
+- **但**：raw.githubusercontent.com 在国内**被墙**或极慢，聊天场景下用户点开图等半天加载不出来
+- 只适合"存一次长期用"的场景（截图存档），不适合"实时生成实时展示"
 
-| 站点 | 实际转发模型 | 响应字段 | URL 来源 |
-|---|---|---|---|
-| `api.gemai.cc`（哈基米，**正常**） | DALL-E 3 | `data[0] = {url, revised_prompt}` | `https://img.ai198.top/images/...`（中转站图床） |
-| `api.jixiangai.xyz`（**失败**） | gpt-image-1 | `data[0] = {b64_json}` | 无 |
+### 为什么用 Vercel function 中转（不直接浏览器调 R2）
+- R2 的 `secretAccessKey` **绝对不能**暴露给浏览器（任何人拿到就能删你 bucket 全部文件 + 烧你钱）
+- 浏览器 fetch R2 SDK 需要 secret → 不安全
+- 走 Vercel function 中转：浏览器传 b64 + 凭证到 `/api/r2-upload`，function 在服务端调 R2 SDK，**secret 永远不出 function**
 
-### gpt-image-1 / gpt-image-2 / DALL-E 3 关键差异
-- **DALL-E 3**（2023-11）—— 支持 url（默认）+ revised_prompt，**2026-05-12 已停用**（gemai.cc 可能在用缓存/镜像）
-- **gpt-image-1**（2025-04）—— **OpenAI 硬性只支持 b64_json**（不能 url）
-- **gpt-image-2**（2026-04-21）—— 支持 url（默认），链接 1 小时过期（OpenAI 官方直连情况）
+### 10 秒超时注意
+- Vercel Hobby 函数 10 秒硬限制
+- R2 上传单图预计 1-3 秒，**安全**（不会触发）
+- 但如果一次上传多张大图（比如朋友圈批量发）可能**接近** 10 秒
+- 后续朋友圈 / 相册批量场景需要写 streaming
 
-### 推断字段识别
-`output_format: 'png'` / `quality: 'high'` / `background: 'opaque'` —— **gpt-image-1 响应标志**。后续如果看到日志里有这仨，就知道站点转发的是 gpt-image-1 而不是 gpt-image-2。
+### imgbb 字段保留（fallback）
+- **没删除** imgbb 相关代码（types.ts / Settings.tsx / 解析器）
+- 配 R2 → 用 R2
+- 没配 R2 但配了 imgbb → 回退 imgbb
+- 都未配 → data URL 兜底
+- 这样**老用户升级不会突然挂**（默认行为不变）
 
-### 方案选型 — 三次踩坑过程
-| 阶段 | 方案 | 失败原因 | 教训 |
-|---|---|---|---|
-| 1 | b64 → data URL 直接显示 | 违反暮色"不要 b64 存"原则（2MB+ 塞 localStorage） | 暮色明确表态过 |
-| 2 | b64 → Netlify Function → Netlify Blobs | 暮色 Netlify 里**没有 SullyOS 站点**（只有 muse-330），且 Vercel 域名访问不到 Netlify Functions（2026-07-13-image-save-proxy changelog 提过） | 不要假设项目已经部署到某个云平台，先 grep/查实际部署 |
-| **3（最终）** | **b64 → imgbb 公开 API** | ✓ 落地 | 复用现有模式（apps/Chat.tsx:1019 用户发图就在用 imgbb） |
-
-### 我之前说的错/对的（自我复盘）
-| 之前推测 | 对/错 | 实际情况 |
-|---|---|---|
-| "gpt-image-1 只支持 b64" | ✓ 对 | OpenAI 硬性 |
-| "中转站字符串不可信，实际转发由站点决定" | ✓ 对 | 完美验证 |
-| "img.ai198.top 是中转站图床，URL 稳定" | ✓ 对 | 暮色"很久之前还能看到"也验证了 |
-| "gpt-image-2 不存在" | ✗ 错 | 2026-04-21 真发布了 |
-| "gpt-image-2 链接 1 小时过期" | △ 错一半 | 1 小时过期是 OpenAI 官方直连，暮色用的中转站做了缓存所以稳定 |
-| "Netlify 是原作者的" | ✗ 错 | 暮色 Netlify 里有自己的 muse-330，但**没** SullyOS 站点 |
-| "Netlify 部署 SullyOS 自动跑" | ✗ 错 | SullyOS 这个项目根本没连 Netlify 自动部署 |
-| "Preserve log 找不到" 引导暮色查 Network | ✗ 错 | 真正需要的是**控制台**标签，不是 Network |
-| "截图是 Netlify 日志" | ✗ 错 | 实际是 Chrome DevTools 的控制台标签（前端 useChatAI.ts 打的 console.log） |
-| **"Vercel 域名能调 Netlify Functions"** | ✗ 错 | changelog `2026-07-13-image-save-proxy.md` 明确说"Vercel 域名访问不到 Netlify Functions，访问会 404" |
-
-### 变量名重复 build 失败（已修）
-第一次 build 失败：`The symbol "_data0" has already been declared`。
-原因：line 1287 响应日志那块的 `const _data0 = ...` 和我新加的 line 1320 解析器 `const _data0 = ...` 冲突。
-**修复**：把后者的 `_data0` 改名为 `_imgData0`。
-**教训**：跨函数块用前缀命名变量时，先 grep 一下同文件是否已用——避免和现有变量名撞。
-
-### 选 imgbb 而不是新 Netlify 部署的理由
-1. **零基础设施**——imgbb 是公开 API，前端直接 fetch
-2. **跟现有模式一致**——`apps/Chat.tsx:1019` 用户发图就在用 imgbb，代码模式直接抄
-3. **跨域天然支持**——imgbb 公开 API，CORS 友好，Vercel 域名下也能用
-4. **公开 URL 永久稳定**——imgbb 不像 OpenAI 直连那种 1 小时过期
-5. **暮色已配 imgbbApiKey**——Settings → API 卡片里就有
-
-### "哦不又要配个服务"的代价
-- 暮色 Settings 卡片里已经配过 `imgbbApiKey`（之前用户发图时配的）
-- 如果**没配**：b64 走 data URL 兜底，**会**塞 localStorage（违反原则但能展示）
-- 如果**没配**还想要永久 URL：去 https://imgbb.com/ 注册 → 拿 key → Settings 卡片填入 → 重试
+### processImage 调高的副作用
+- `maxWidth: 1600, quality: 0.85` 比之前 600/0.6 文件大 **3-4 倍**
+- 一次发 3 张图 ≈ 5MB base64（仍 ≤ 4MB 单张限制）
+- 单图 > 4MB 会**触发 413 TOO_LARGE** —— R2 function 里限制了 4MB base64
+- 后续如果用户发大图（手机原图 5MB+）需要再调高 R2 function 限制
 
 ## 备注
-- **data URL 兜底**只在 imgbb 上传失败时触发（极少见 ~1% 情况）。这次会进 localStorage（2MB 左右），后续可以加 LRU 清理：定期扫描消息库把 data URL 重新上传
-- **当前两个中转站都没真转发 gpt-image-2**——如果想用 gpt-image-2 的中文渲染/多图能力，需要另外找支持 gpt-image-2 的中转站
-- **DALL-E 3 已停用**，gemai.cc 现在可能用的是镜像/缓存，长期可能也会切模型，到时候也会只 b64
-- 本次 imgbb 方案让"换任何站点/换任何模型"都能稳定工作，不依赖具体中转站的具体行为
-- 之前 commit `47f5776` 里有 `netlify/functions/image-upload-store.ts` 中间版本，回退删了——历史保留方便回看
+- **Vercel 10 秒函数超时是平台硬限制**——R2 上传单图不会触发，但批量场景要小心
+- **R2 free tier**：10GB 存储 + 1000 万次读 + 1000 万次写免费（操作本身 0 费用，只有 egress 流量免费）—— 个人项目**绝对够用**
+- 如果 R2 配额超了：Cloudflare 会**自动按用量收费**（绑的信用卡）—— 但**只有超量才扣**（默认不会扣）
+- **之前 Netlify / imgbb 方案的所有 commit 都保留**在 git history，方便回看决策过程

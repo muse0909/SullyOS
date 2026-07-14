@@ -1021,15 +1021,16 @@ const Chat: React.FC = () => {
         const r2 = (apiConfig as any);
         const hasR2 = r2?.r2AccountId && r2?.r2AccessKeyId && r2?.r2SecretAccessKey && r2?.r2Bucket && r2?.r2PublicUrl;
 
-        // 优先 Cloudflare R2（不压缩）
+        // 优先 Cloudflare R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
+        // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
+        // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
         if (hasR2) {
             try {
                 const b64 = base64.includes(',') ? base64.split(',')[1] : base64;
-                const res = await fetch('/api/r2-upload', {
+                const _presignRes = await fetch('/api/r2-presign', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        b64,
                         mime: 'image/jpeg',
                         prefix: 'user',
                         accountId: r2.r2AccountId,
@@ -1039,12 +1040,25 @@ const Chat: React.FC = () => {
                         publicUrl: r2.r2PublicUrl,
                     }),
                 });
-                const json = await res.json().catch(() => ({} as any));
-                if (json?.success && json?.url) {
-                    await handleSendText(json.url, 'image');
-                    return;
+                const _presignData = await _presignRes.json().catch(() => ({} as any));
+                if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
+                    addToast('拿上传签名失败，尝试 imgbb 兜底', 'error');
+                } else {
+                    // 阶段2：浏览器 PUT 直传 R2
+                    const _bin = atob(b64);
+                    const _bytes = new Uint8Array(_bin.length);
+                    for (let i = 0; i < _bin.length; i++) _bytes[i] = _bin.charCodeAt(i);
+                    const _putRes = await fetch(_presignData.presignedUrl, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'image/jpeg' },
+                        body: _bytes,
+                    });
+                    if (_putRes.ok) {
+                        await handleSendText(_presignData.publicUrl, 'image');
+                        return;
+                    }
+                    addToast(`R2 上传失败 (${_putRes.status})，尝试 imgbb 兜底`, 'error');
                 }
-                addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
             } catch {
                 addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
             }

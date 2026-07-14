@@ -1326,15 +1326,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     const _r2 = (effectiveApi as any);
                     const _hasR2 = _r2?.r2AccountId && _r2?.r2AccessKeyId && _r2?.r2SecretAccessKey && _r2?.r2Bucket && _r2?.r2PublicUrl;
 
-                    // 优先 R2（不压缩）
+                    // 优先 R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
+                    // 因为 Vercel Hobby 函数 10 秒超时，把 b64 整个 POST 过去 R2 容易超
+                    // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
+                    // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
                     if (_hasR2) {
-                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 Cloudflare R2...');
+                        console.log('🎨 [ImageGen] 站点返 b64_json，开始两阶段上传到 Cloudflare R2...');
                         try {
-                            const _uploadRes = await fetch('/api/r2-upload', {
+                            const _presignRes = await fetch('/api/r2-presign', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    b64: _imgData0.b64_json,
                                     mime: _mime,
                                     prefix: 'image',
                                     accountId: _r2.r2AccountId,
@@ -1344,13 +1346,27 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     publicUrl: _r2.r2PublicUrl,
                                 }),
                             });
-                            const _uploadData = await _uploadRes.json().catch(() => ({} as any));
-                            if (_uploadRes.ok && _uploadData?.success && _uploadData?.url) {
-                                imageUrl = _uploadData.url;
-                                console.log('🎨 [ImageGen] b64 已上传到 R2, url =', imageUrl);
-                            } else {
-                                console.warn('🎨 [ImageGen] R2 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                            const _presignData = await _presignRes.json().catch(() => ({} as any));
+                            if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
+                                console.warn('🎨 [ImageGen] 拿 presigned URL 失败:', _presignData?.error?.message);
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                            } else {
+                                // 阶段2：浏览器 PUT 直传 R2（绕开 Vercel function 10 秒限制）
+                                const _bin = atob(_imgData0.b64_json);
+                                const _bytes = new Uint8Array(_bin.length);
+                                for (let i = 0; i < _bin.length; i++) _bytes[i] = _bin.charCodeAt(i);
+                                const _putRes = await fetch(_presignData.presignedUrl, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': _mime },
+                                    body: _bytes,
+                                });
+                                if (_putRes.ok) {
+                                    imageUrl = _presignData.publicUrl;
+                                    console.log('🎨 [ImageGen] b64 已上传到 R2, url =', imageUrl);
+                                } else {
+                                    console.warn('🎨 [ImageGen] R2 PUT 失败，临时用 data URL 兜底:', _putRes.status, await _putRes.text().catch(() => ''));
+                                    imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                                }
                             }
                         } catch (uploadErr: any) {
                             console.warn('🎨 [ImageGen] R2 上传异常，临时用 data URL 兜底:', uploadErr?.message);

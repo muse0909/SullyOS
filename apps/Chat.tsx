@@ -1012,12 +1012,47 @@ const Chat: React.FC = () => {
 
    const handleImageSelect = async (file: File) => {
     try {
-        const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+        // 暮色 2026-07-14：调高压缩参数（600/0.6 → 1600/0.85）— 之前双重压缩导致截图字小看不清
+        // 配合 Cloudflare R2（不压缩的图床），原图直接上
+        const base64 = await processImage(file, { maxWidth: 1600, quality: 0.85, forceJpeg: true });
         setShowPanel('none');
 
         const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
-        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
+        const r2 = (apiConfig as any);
+        const hasR2 = r2?.r2AccountId && r2?.r2AccessKeyId && r2?.r2SecretAccessKey && r2?.r2Bucket && r2?.r2PublicUrl;
 
+        // 优先 Cloudflare R2（不压缩）
+        if (hasR2) {
+            try {
+                const b64 = base64.includes(',') ? base64.split(',')[1] : base64;
+                const res = await fetch('/api/r2-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        b64,
+                        mime: 'image/jpeg',
+                        prefix: 'user',
+                        accountId: r2.r2AccountId,
+                        accessKeyId: r2.r2AccessKeyId,
+                        secretAccessKey: r2.r2SecretAccessKey,
+                        bucket: r2.r2Bucket,
+                        publicUrl: r2.r2PublicUrl,
+                    }),
+                });
+                const json = await res.json().catch(() => ({} as any));
+                if (json?.success && json?.url) {
+                    await handleSendText(json.url, 'image');
+                    return;
+                }
+                addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
+            } catch {
+                addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
+            }
+            // R2 失败不回退到 base64（避免污染 localStorage），继续往下走 imgbb 兜底
+        }
+
+        // 回退到 imgbb（会压缩，但比 base64 好）
+        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
         if (imgbbKey) {
             try {
                 const formData = new FormData();

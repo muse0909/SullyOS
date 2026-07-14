@@ -151,6 +151,15 @@ export interface APIConfig {
   visionModel?: string;
   imgbbApiKey?: string;       // imgbb 图床 API Key，用于发送图片自动转URL
 
+  // Cloudflare R2 对象存储（暮色 2026-07-14 换 R2 替代 imgbb，因为 imgbb 免费版会压缩图片）
+  // 用于：1) 生图 b64 上传  2) 用户发图上传
+  // 优先用 R2；R2 没配才回退 imgbb；都未配用 data URL 兜底
+  r2AccountId?: string;        // Cloudflare Account ID（32 位 hex）
+  r2AccessKeyId?: string;      // R2 API Token 的 Access Key ID
+  r2SecretAccessKey?: string;  // R2 API Token 的 Secret Access Key（**只显示一次**）
+  r2Bucket?: string;           // bucket 名（例 sullyos-images）
+  r2PublicUrl?: string;        // 公网访问前缀（例 https://pub-xxxxx.r2.dev）
+
   imageBaseUrl?: string;
   imageApiKey?: string;
   imageModel?: string;

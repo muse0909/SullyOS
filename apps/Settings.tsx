@@ -170,6 +170,12 @@ const Settings: React.FC = () => {
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
   const [localImgbbApiKey, setLocalImgbbApiKey] = useState(apiConfig.imgbbApiKey || '');
+  // 暮色 2026-07-14：Cloudflare R2 图床（替代 imgbb，不压缩原图）
+  const [localR2AccountId, setLocalR2AccountId] = useState(apiConfig.r2AccountId || '');
+  const [localR2AccessKeyId, setLocalR2AccessKeyId] = useState(apiConfig.r2AccessKeyId || '');
+  const [localR2SecretAccessKey, setLocalR2SecretAccessKey] = useState(apiConfig.r2SecretAccessKey || '');
+  const [localR2Bucket, setLocalR2Bucket] = useState(apiConfig.r2Bucket || '');
+  const [localR2PublicUrl, setLocalR2PublicUrl] = useState(apiConfig.r2PublicUrl || '');
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
@@ -544,6 +550,11 @@ const Settings: React.FC = () => {
           visionApiKey: localVisionKey,
           visionModel: localVisionModel,
           imgbbApiKey: localImgbbApiKey,
+          r2AccountId: localR2AccountId,
+          r2AccessKeyId: localR2AccessKeyId,
+          r2SecretAccessKey: localR2SecretAccessKey,
+          r2Bucket: localR2Bucket,
+          r2PublicUrl: localR2PublicUrl,
         };
         break;
       case 'image':
@@ -553,6 +564,12 @@ const Settings: React.FC = () => {
           imageApiKey: localImageKey,
           imageModel: localImageModel,
           imageGenProvider: localImageGenProvider,
+          // 暮色 2026-07-14：R2 凭证跟生图共用（生图 b64 上传走 R2）
+          r2AccountId: localR2AccountId,
+          r2AccessKeyId: localR2AccessKeyId,
+          r2SecretAccessKey: localR2SecretAccessKey,
+          r2Bucket: localR2Bucket,
+          r2PublicUrl: localR2PublicUrl,
         };
         break;
       case 'tts':
@@ -611,6 +628,11 @@ const Settings: React.FC = () => {
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
       imgbbApiKey: localImgbbApiKey,
+      r2AccountId: localR2AccountId,
+      r2AccessKeyId: localR2AccessKeyId,
+      r2SecretAccessKey: localR2SecretAccessKey,
+      r2Bucket: localR2Bucket,
+      r2PublicUrl: localR2PublicUrl,
     });
     setVisionStatusMsg('识图配置已保存'); 
     setTimeout(() => setVisionStatusMsg(''), 2000); 
@@ -1370,6 +1392,20 @@ const handleSaveTts = () => {
                     hint="配置后发图自动上传图床转 URL，解决卡顿"
                     className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
                 />
+                {/* 暮色 2026-07-14：Cloudflare R2 图床配置（替代 imgbb，不压缩原图） */}
+                <div className="pt-3 mt-3 border-t border-slate-200/60">
+                    <div className="flex items-center gap-1.5 mb-2 pl-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">图床 Cloudflare R2</span>
+                        <span className="text-[9px] text-slate-300">（推荐 · 不压缩原图）</span>
+                    </div>
+                    <div className="space-y-2.5">
+                        <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                        <VisibleKeyInput label="Access Key ID" value={localR2AccessKeyId} onChange={setLocalR2AccessKeyId} placeholder="R2 API Token 的 Access Key" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                        <VisibleKeyInput label="Secret Access Key" value={localR2SecretAccessKey} onChange={setLocalR2SecretAccessKey} placeholder="R2 API Token 的 Secret（**只显示一次**）" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                        <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Bucket 名</label><input type="text" value={localR2Bucket} onChange={(e) => setLocalR2Bucket(e.target.value)} placeholder="例 sullyos-images" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                        <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">公网 URL</label><input type="text" value={localR2PublicUrl} onChange={(e) => setLocalR2PublicUrl(e.target.value)} placeholder="https://pub-xxxxx.r2.dev" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                    </div>
+                </div>
                 <button onClick={handleSaveVisionApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-blue-500/20 bg-blue-500 active:scale-95 transition-all mt-2">{visionStatusMsg || '保存识图配置'}</button>
                 <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
             </div>

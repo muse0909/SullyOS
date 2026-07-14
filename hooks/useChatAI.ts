@@ -1316,42 +1316,75 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 // 暮色 2026-07-14：兼容中转站两种返回格式
                 //   1) 直接 url（gemai.cc 转发 DALL-E 3）— 直接用，零开销
-                //   2) b64_json（jixiangai.xyz 转发 gpt-image-1）— 上传 imgbb 转永久 url
-                //      跟"用户发图走 imgbb"一个模式（apps/Chat.tsx:1019），跨域天然支持
-                //      不用 Netlify 部署，Vercel 域名下也能用
+                //   2) b64_json（jixiangai.xyz 转发 gpt-image-1）— 上传图床转永久 url
+                //      优先 Cloudflare R2（不压缩，截图字清楚），没配 R2 才回退 imgbb（会压缩）
                 const _imgData0 = imgData?.data?.[0];
                 let imageUrl = _imgData0?.url || '';
 
                 if (!imageUrl && _imgData0?.b64_json) {
-                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
                     const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
+                    const _r2 = (effectiveApi as any);
+                    const _hasR2 = _r2?.r2AccountId && _r2?.r2AccessKeyId && _r2?.r2SecretAccessKey && _r2?.r2Bucket && _r2?.r2PublicUrl;
 
-                    if (_imgbbKey) {
-                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 imgbb...');
+                    // 优先 R2（不压缩）
+                    if (_hasR2) {
+                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 Cloudflare R2...');
                         try {
-                            const _formData = new FormData();
-                            // imgbb 接受 base64 字符串（不含 data: 前缀）
-                            _formData.append('image', _imgData0.b64_json);
-                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
+                            const _uploadRes = await fetch('/api/r2-upload', {
                                 method: 'POST',
-                                body: _formData,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    b64: _imgData0.b64_json,
+                                    mime: _mime,
+                                    prefix: 'image',
+                                    accountId: _r2.r2AccountId,
+                                    accessKeyId: _r2.r2AccessKeyId,
+                                    secretAccessKey: _r2.r2SecretAccessKey,
+                                    bucket: _r2.r2Bucket,
+                                    publicUrl: _r2.r2PublicUrl,
+                                }),
                             });
                             const _uploadData = await _uploadRes.json().catch(() => ({} as any));
-                            if (_uploadRes.ok && _uploadData?.data?.url) {
-                                imageUrl = _uploadData.data.url;
-                                console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
+                            if (_uploadRes.ok && _uploadData?.success && _uploadData?.url) {
+                                imageUrl = _uploadData.url;
+                                console.log('🎨 [ImageGen] b64 已上传到 R2, url =', imageUrl);
                             } else {
-                                console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                                console.warn('🎨 [ImageGen] R2 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             }
                         } catch (uploadErr: any) {
-                            console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                            console.warn('🎨 [ImageGen] R2 上传异常，临时用 data URL 兜底:', uploadErr?.message);
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     } else {
-                        // 没配 imgbb key：直接 data URL（违反"不要 b64 存"原则但没办法，提示用户配 imgbb）
-                        console.warn('🎨 [ImageGen] 站点返 b64_json 但没配 imgbbApiKey, 临时用 data URL 兜底。请在 API 卡片配 imgbb key 以获得永久 URL。');
-                        imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                        // 回退到 imgbb（会压缩，但比 data URL 好）
+                        const _imgbbKey = _r2?.imgbbApiKey;
+                        if (_imgbbKey) {
+                            console.log('🎨 [ImageGen] 站点返 b64_json，R2 未配置，回退到 imgbb...');
+                            try {
+                                const _formData = new FormData();
+                                _formData.append('image', _imgData0.b64_json);
+                                const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
+                                    method: 'POST',
+                                    body: _formData,
+                                });
+                                const _uploadData = await _uploadRes.json().catch(() => ({} as any));
+                                if (_uploadRes.ok && _uploadData?.data?.url) {
+                                    imageUrl = _uploadData.data.url;
+                                    console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
+                                } else {
+                                    console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                                    imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                                }
+                            } catch (uploadErr: any) {
+                                console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                            }
+                        } else {
+                            // R2 + imgbb 都没配：data URL 兜底
+                            console.warn('🎨 [ImageGen] 站点返 b64_json 但 R2 + imgbb 都未配置，用 data URL 兜底。建议在 API 卡片配 R2 凭证以获得不压缩的永久 URL。');
+                            imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                        }
                     }
                 }
 

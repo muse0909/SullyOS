@@ -1330,6 +1330,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     // 因为 Vercel Hobby 函数 10 秒超时，把 b64 整个 POST 过去 R2 容易超
                     // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
                     // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
+                    // 暮色 2026-07-14：每个降级路径都 addToast 标注，让暮色知道图最终走 R2 / imgbb / base64 哪条路
                     if (_hasR2) {
                         console.log('🎨 [ImageGen] 站点返 b64_json，开始两阶段上传到 Cloudflare R2...');
                         try {
@@ -1348,7 +1349,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             });
                             const _presignData = await _presignRes.json().catch(() => ({} as any));
                             if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
-                                console.warn('🎨 [ImageGen] 拿 presigned URL 失败:', _presignData?.error?.message);
+                                const _errMsg = _presignData?.error?.message || `HTTP ${_presignRes.status}`;
+                                console.warn('🎨 [ImageGen] 拿 presigned URL 失败:', _errMsg);
+                                addToast(`R2 签名失败（${_errMsg}），降级 imgbb`, 'error');
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             } else {
                                 // 阶段2：浏览器 PUT 直传 R2（绕开 Vercel function 10 秒限制）
@@ -1363,13 +1366,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (_putRes.ok) {
                                     imageUrl = _presignData.publicUrl;
                                     console.log('🎨 [ImageGen] b64 已上传到 R2, url =', imageUrl);
+                                    addToast('🎨 生图已存 R2', 'success');
                                 } else {
-                                    console.warn('🎨 [ImageGen] R2 PUT 失败，临时用 data URL 兜底:', _putRes.status, await _putRes.text().catch(() => ''));
+                                    const _putText = await _putRes.text().catch(() => '');
+                                    console.warn('🎨 [ImageGen] R2 PUT 失败，临时用 data URL 兜底:', _putRes.status, _putText);
+                                    addToast(`R2 上传失败 (${_putRes.status})，降级 imgbb`, 'error');
                                     imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                                 }
                             }
                         } catch (uploadErr: any) {
                             console.warn('🎨 [ImageGen] R2 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                            addToast(`R2 异常（${uploadErr?.message || '网络'}），降级 imgbb`, 'error');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     } else {
@@ -1388,17 +1395,21 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (_uploadRes.ok && _uploadData?.data?.url) {
                                     imageUrl = _uploadData.data.url;
                                     console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
+                                    addToast('🖼️ R2 失败，imgbb 兜底成功', 'info');
                                 } else {
                                     console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                                    addToast('图床全失败，已降级 base64（卡浏览器风险！）', 'error');
                                     imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                                 }
                             } catch (uploadErr: any) {
                                 console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                                addToast('图床全失败，已降级 base64（卡浏览器风险！）', 'error');
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             }
                         } else {
                             // R2 + imgbb 都没配：data URL 兜底
                             console.warn('🎨 [ImageGen] 站点返 b64_json 但 R2 + imgbb 都未配置，用 data URL 兜底。建议在 API 卡片配 R2 凭证以获得不压缩的永久 URL。');
+                            addToast('未配图床，已用 base64 临时存（卡浏览器风险）', 'info');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     }

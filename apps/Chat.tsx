@@ -1024,6 +1024,7 @@ const Chat: React.FC = () => {
         // 优先 Cloudflare R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
         // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
         // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
+        // 暮色 2026-07-14：每个降级路径都 addToast 标注，让暮色知道图走 R2 / imgbb / base64 哪条路
         if (hasR2) {
             try {
                 const b64 = base64.includes(',') ? base64.split(',')[1] : base64;
@@ -1054,6 +1055,7 @@ const Chat: React.FC = () => {
                         body: _bytes,
                     });
                     if (_putRes.ok) {
+                        addToast('🎨 用户图已存 R2', 'success');
                         await handleSendText(_presignData.publicUrl, 'image');
                         return;
                     }
@@ -1077,13 +1079,14 @@ const Chat: React.FC = () => {
                 });
                 const json = await res.json();
                 if (json?.data?.url) {
+                    addToast('🖼️ R2 失败，imgbb 兜底成功', 'info');
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                addToast('图床上传失败，已改为直接发送原图', 'error');
+                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
             } catch {
-                addToast('图床上传失败，已改为直接发送原图', 'error');
+                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
             }
             return;
@@ -1109,6 +1112,7 @@ const Chat: React.FC = () => {
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
 
         // ③ 发当前图（base64），这一轮 AI 能识图
+        addToast('⚠️ 未配图床，已发 base64（卡浏览器风险）', 'info');
         await handleSendText(base64, 'image');
 
     } catch (err: any) {

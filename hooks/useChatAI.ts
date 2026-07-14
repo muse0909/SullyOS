@@ -1273,12 +1273,35 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     }),
                 });
 
+                // 暮色 2026-07-14：拿到响应就立即打 status + headers（成功/失败都打）
+                // 下次遇到 "返回不是 JSON / 5xx" 时能立刻知道上游返了什么
+                console.log('🎨 [ImageGen] 上游响应 (status):', {
+                    status: imgResponse.status,
+                    statusText: imgResponse.statusText,
+                    contentType: imgResponse.headers.get('content-type'),
+                    contentLength: imgResponse.headers.get('content-length'),
+                    request_url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
+                    request_model: effectiveApi.imageModel,
+                });
+
                 let imgData: any = null;
                 try {
                     imgData = await imgResponse.json();
                 } catch (jsonErr) {
+                    // 暮色 2026-07-14：JSON 解析失败时打完整上游响应（status + headers + raw body + 请求信息）
+                    // 之前只 throw 200 字符，排查时看不到 content-type / 真实 body / status 码
                     const rawText = await imgResponse.text().catch(() => '');
-                    throw new Error(`生图接口返回不是 JSON：${rawText.slice(0, 200)}`);
+                    console.error('🎨 [ImageGen] 上游响应（JSON 解析失败）:', {
+                        status: imgResponse.status,
+                        statusText: imgResponse.statusText,
+                        contentType: imgResponse.headers.get('content-type'),
+                        headers: Object.fromEntries(imgResponse.headers.entries()),
+                        body_preview: rawText.slice(0, 500),
+                        body_length: rawText.length,
+                        request_url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
+                        request_model: effectiveApi.imageModel,
+                    });
+                    throw new Error(`生图接口返回不是 JSON（HTTP ${imgResponse.status}）：${rawText.slice(0, 200)}`);
                 }
 
                 // 暮色 2026-07-14：拿到响应后立即打状态码 + data[0] 字段摘要
@@ -1311,6 +1334,16 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         imgData?.error?.message ||
                         imgData?.message ||
                         JSON.stringify(imgData).slice(0, 300);
+                    // 暮色 2026-07-14：status 非 200 也打完整上游响应，方便区分"中转站报 4xx"和"上游 5xx"
+                    console.error('🎨 [ImageGen] 上游响应（status 非 200）:', {
+                        status: imgResponse.status,
+                        statusText: imgResponse.statusText,
+                        contentType: imgResponse.headers.get('content-type'),
+                        api_msg: apiMsg,
+                        raw_data: imgData,
+                        request_url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
+                        request_model: effectiveApi.imageModel,
+                    });
                     throw new Error(`生图接口报错 ${imgResponse.status}：${apiMsg}`);
                 }
 

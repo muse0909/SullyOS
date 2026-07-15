@@ -2244,14 +2244,13 @@ const handleSaveTts = () => {
         title="删除预设"
         onClose={() => setPresetPendingDelete(null)}
         footer={
-        // 暮色 2026-07-15：按钮挤在 Modal 圆角边缘，胶囊左半圆被切。
-        // Modal 圆角 40px，footer px-6 (24px) — 按钮距 modal 左边只有 24px，在圆角范围内被裁。
-        // mx-4 (16px) 让按钮左右各缩 16px，总距离 = 24+16 = 40px = 圆角边缘，刚好不被切。
-        // 上次 mx-2 (8px) 算错了：24+8=32px 还在圆角内，按钮左半圆还是被切。
-        <div className="flex gap-3 mx-4">
+        // 暮色 2026-07-15：像左边"消息操作"弹窗那样两列平铺（不是 flex 挤一起）
+        // grid grid-cols-2 让两个按钮自动均分 footer 宽度
+        // mx-4 (16px) 让按钮距 modal 边缘 24+16=40px = 圆角边缘，胶囊左半圆不被切
+        <div className="grid grid-cols-2 gap-3 mx-4">
           <button
             onClick={() => setPresetPendingDelete(null)}
-            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+            className="py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
           >
             取消
           </button>
@@ -2262,7 +2261,7 @@ const handleSaveTts = () => {
               addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
               setPresetPendingDelete(null);
             }}
-            className="flex-1 py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+            className="py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
           >
             删除
           </button>

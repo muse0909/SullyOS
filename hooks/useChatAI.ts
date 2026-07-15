@@ -526,6 +526,9 @@ interface UseChatAIProps {
     updateCharacter?: (id: string, partial: Partial<CharacterProfile>) => void;
     /** 麦当劳小程序当前快照 (cart/menu/nutrition); open=true 时把这段实时状态追加到 system prompt 末尾, 让 char 协同选餐 */
     mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
+    // 暮色 2026-07-15：图床失败时调用，Chat.tsx 在 ChatInputArea 上方显示小提示条
+    // （之前用 addToast 'bell' 在顶部弹窗，暮色不喜欢，改成聊天框位置的小提示）
+    onImageBedWarning?: (msg: string | null) => void;
 }
 
 export const useChatAI = ({
@@ -542,6 +545,7 @@ export const useChatAI = ({
     memoryPalaceConfig,
     updateCharacter,
     mcdMiniAppRef,
+    onImageBedWarning,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -1376,18 +1380,18 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 // imgbb 成功：不弹 toast，正常流程不该打扰
                             } else {
                                 console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
-                                addToast('图床失败，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                                onImageBedWarning?.('图床失败，生图已用 base64 临时存储（占 localStorage 空间）');
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             }
                         } catch (uploadErr: any) {
                             console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
-                            addToast('图床失败，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                            onImageBedWarning?.('图床失败，生图已用 base64 临时存储（占 localStorage 空间）');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     } else {
                         // imgbb 没配：data URL 兜底
                         console.warn('🎨 [ImageGen] 站点返 b64_json 但 imgbb 未配置，用 data URL 兜底。建议在 API 卡片配 imgbb 凭证以获得永久 URL。');
-                        addToast('未配图床，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                        onImageBedWarning?.('未配图床，生图已用 base64 临时存储（占 localStorage 空间）');
                         imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                     }
                 }

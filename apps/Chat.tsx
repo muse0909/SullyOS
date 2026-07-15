@@ -83,6 +83,10 @@ const Chat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
+
+    // 暮色 2026-07-15：图床失败提示 — 不再用顶部 bell toast，改成在 ChatInputArea 上方显示小提示条
+    // 由 useChatAI（生图）+ handleImageSelect（发图）两路触发，input 变化时清空
+    const [imageBedWarning, setImageBedWarning] = useState<string | null>(null);
     
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
@@ -207,6 +211,7 @@ const Chat: React.FC = () => {
         memoryPalaceConfig,
         mcdMiniAppRef,
         updateCharacter,
+        onImageBedWarning: setImageBedWarning,
     });
 
     // --- Voice TTS for chat messages ---
@@ -792,6 +797,8 @@ const Chat: React.FC = () => {
     }, [char?.id, (char as any)?.personalityStyle, (char as any)?.ruminationTendency, memoryPalaceConfig?.lightLLM?.baseUrl, memoryPalaceConfig?.lightLLM?.apiKey, apiConfig?.baseUrl, apiConfig?.apiKey]);
 
     const handleInputChange = (val: string) => {
+        // 暮色 2026-07-15：用户开始输入时清空图床失败提示
+        if (imageBedWarning) setImageBedWarning(null);
         setInput(val);
         if (val.trim()) localStorage.setItem(draftKey, val);
         else localStorage.removeItem(draftKey);
@@ -1052,11 +1059,11 @@ const Chat: React.FC = () => {
                     image_size_kb: Math.round((_b64Clean.length * 3) / 4 / 1024),
                     response: json,
                 });
-                addToast('图床失败，已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                setImageBedWarning('图床失败，已用 base64 临时存储（占 localStorage 空间）');
                 await handleSendText(base64, 'image');
             } catch (e: any) {
                 console.warn('🖼️ [ImageBed] imgbb 抛异常:', e?.message || e);
-                addToast('图床失败，已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                setImageBedWarning('图床失败，已用 base64 临时存储（占 localStorage 空间）');
                 await handleSendText(base64, 'image');
             }
             return;
@@ -1082,7 +1089,7 @@ const Chat: React.FC = () => {
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
 
         // ③ 发当前图（base64），这一轮 AI 能识图
-        addToast('未配图床，已用 base64 临时存储（占 localStorage 空间）', 'bell');
+        setImageBedWarning('未配图床，已用 base64 临时存储（占 localStorage 空间）');
         await handleSendText(base64, 'image');
 
     } catch (err: any) {
@@ -2698,6 +2705,15 @@ if (keepN > 0) {
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
                         <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content.length > 10 ? replyTarget.content.slice(0, 10) + '...' : replyTarget.content}</span></div>
                         <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
+                    </div>
+                )}
+
+                {/* 暮色 2026-07-15：图床失败提示条 — 不用顶部 bell toast，改在 ChatInputArea 上方显示
+                    浅马卡龙胶囊 + 铃铛图标 + 居中，暮色审美 */}
+                {imageBedWarning && (
+                    <div className="mx-3 mb-2 px-3 py-2 rounded-2xl bg-gradient-to-r from-amber-50/80 to-emerald-50/80 border border-amber-200/40 text-[11px] text-slate-700 flex items-center gap-2 animate-fade-in">
+                        <svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" className="text-amber-500 shrink-0"><path d="M221.8 175.94c-5.55-9.56-13.8-36.61-13.8-71.94a80 80 0 0 0-160 0c0 35.34-8.26 62.38-13.81 71.94A16 16 0 0 0 48 200h40.81a40 40 0 0 0 78.38 0H208a16 16 0 0 0 13.8-24.06ZM128 216a24 24 0 0 1-22.62-16h45.24A24 24 0 0 1 128 216Z"/></svg>
+                        <span className="truncate">{imageBedWarning}</span>
                     </div>
                 )}
                 

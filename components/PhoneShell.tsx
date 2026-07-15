@@ -52,6 +52,8 @@ import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import ApiQuickFloat from './os/ApiQuickFloat';
 // 暮色 2026-07-15：'bell' 类型 toast 用的铃铛图标
 import { Bell as BellIcon } from '@phosphor-icons/react';
+// 暮色 2026-07-15：版本更新提醒已禁用（暮色嫌每次新开链接都弹）
+// UpdateNotificationEvent.tsx 保留以备后用，跟 R2 一样的处理
 
 
 /*
@@ -229,20 +231,9 @@ const PhoneShell: React.FC = () => {
     setShowDisclaimer(false);
   };
 
-  // Version update popup (2026-04) — forced once per user who hasn't seen it yet
-  const [showUpdateNotification, setShowUpdateNotification] = useState(() => {
-    try {
-      return !!(localStorage.getItem(DISCLAIMER_KEY)) && shouldShowUpdateNotification();
-    } catch { return false; }
-  });
-
-  useEffect(() => {
-    if (!showDisclaimer && !showUpdateNotification) {
-      if (shouldShowUpdateNotification()) {
-        setShowUpdateNotification(true);
-      }
-    }
-  }, [showDisclaimer]);
+  // 暮色 2026-07-15：版本更新提醒已禁用 — 删 state 和 useEffect
+  // 之前逻辑：localStorage 标记 + shouldShowUpdateNotification → 强制弹"2026 年 5 月更新"
+  // 现在不弹了
 
   // Capacitor Native Handling
   useEffect(() => {
@@ -492,7 +483,9 @@ const PhoneShell: React.FC = () => {
                   // 触发场景：图床失败已用 base64 兜底（提醒占 localStorage 空间）等
                   if (toast.type === 'bell') {
                       return (
-                          <div key={toast.id} className="animate-fade-in bg-gradient-to-r from-amber-50/95 to-emerald-50/95 backdrop-blur-xl px-5 py-3.5 rounded-full shadow-xl border border-amber-200/40 flex items-center gap-3 max-w-[88%] ring-1 ring-white/30">
+                          // 暮色 2026-07-15：加 max-h-[40vh] + overflow-y-auto — 之前长 innerState 文字进 bell 时，rounded-full + 高度变高圆角消失，看着像矩形+文字溢出
+                          // 现在限制最高 40vh，超出内部滚（滚动条自动隐藏 no-scrollbar）
+                          <div key={toast.id} className="animate-fade-in bg-gradient-to-r from-amber-50/95 to-emerald-50/95 backdrop-blur-xl px-5 py-3.5 rounded-full shadow-xl border border-amber-200/40 flex items-center gap-3 max-w-[88%] max-h-[40vh] overflow-y-auto no-scrollbar ring-1 ring-white/30">
                               <BellIcon size={20} weight="fill" className="text-amber-500 shrink-0" />
                               <span className="text-xs font-medium text-slate-700 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
                           </div>
@@ -513,10 +506,7 @@ const PhoneShell: React.FC = () => {
        {/* First-time disclaimer popup */}
        {showDisclaimer && <DisclaimerPopup onAccept={handleAcceptDisclaimer} />}
 
-       {/* Version update popup (2026-04) — forced until acknowledged */}
-       {!showDisclaimer && showUpdateNotification && (
-         <UpdateNotificationController onClose={() => setShowUpdateNotification(false)} />
-       )}
+       {/* 暮色 2026-07-15：版本更新提醒已禁用（之前这位置有 <UpdateNotificationController>，现在删了） */}
     </div>
   );
 };

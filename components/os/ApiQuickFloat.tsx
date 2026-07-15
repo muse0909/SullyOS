@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, CaretRight, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, Brain, CaretRight, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 import type { ApiPreset } from '../../types';
 
@@ -9,7 +9,7 @@ const BALL_SIZE = 40;
 const PRESET_LONG_PRESS_MS = 550;
 
 type QuickModelTarget = 'main' | 'image' | 'vision';
-type QuickPresetKind = 'main' | 'image' | 'vision';
+type QuickPresetKind = 'main' | 'image' | 'vision' | 'lightLLM';
 
 // 暮色 2026-07-15：删 checkpointLabel helper（ComfyUI 专用）— 生图只走 OpenAI 兼容
 
@@ -138,6 +138,9 @@ const ApiQuickFloat: React.FC = () => {
     addToast,
     isLocked,
     isDataLoaded,
+    // 暮色 2026-07-15：记忆宫殿副 API（lightLLM）接到悬浮窗 — 换时方便
+    memoryPalaceConfig,
+    updateMemoryPalaceConfig,
   } = useOS();
 
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -173,9 +176,17 @@ const ApiQuickFloat: React.FC = () => {
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
 
+  // 暮色 2026-07-15：副 API（记忆宫殿后台处理用 lightLLM）— local state
+  const [localLightUrl, setLocalLightUrl] = useState(memoryPalaceConfig?.lightLLM?.baseUrl || '');
+  const [localLightKey, setLocalLightKey] = useState(memoryPalaceConfig?.lightLLM?.apiKey || '');
+  const [localLightModel, setLocalLightModel] = useState(memoryPalaceConfig?.lightLLM?.model || '');
+
   const [showMainKey, setShowMainKey] = useState(false);
   const [showImageKey, setShowImageKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
+  const [showLightKey, setShowLightKey] = useState(false);
+  const [lightStatusMsg, setLightStatusMsg] = useState('');
+  const [lightTesting, setLightTesting] = useState(false);
 
   const [openSection, setOpenSection] = useState<QuickPresetKind | null>(null);
 
@@ -204,6 +215,12 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
+    // 暮色 2026-07-15：同步副 API（记忆宫殿 lightLLM）— 抽原始字段做 deps，避免对象新引用触发重跑
+    if (memoryPalaceConfig?.lightLLM) {
+      setLocalLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
+      setLocalLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
+      setLocalLightModel(memoryPalaceConfig.lightLLM.model || '');
+    }
   }, [
     apiConfig.baseUrl,
     apiConfig.apiKey,
@@ -215,6 +232,9 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.visionBaseUrl,
     apiConfig.visionApiKey,
     apiConfig.visionModel,
+    memoryPalaceConfig?.lightLLM?.baseUrl,
+    memoryPalaceConfig?.lightLLM?.apiKey,
+    memoryPalaceConfig?.lightLLM?.model,
   ]);
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -343,6 +363,62 @@ const ApiQuickFloat: React.FC = () => {
     setShowPanel(false);
   };
 
+  // 暮色 2026-07-15：副 API（lightLLM）— 单独保存，浮窗不自动关闭（跟主 API save 不同）
+  const handleSaveLightConfig = () => {
+    if (!memoryPalaceConfig || !updateMemoryPalaceConfig) {
+      addToast('记忆宫殿配置未就绪', 'error');
+      return;
+    }
+    updateMemoryPalaceConfig({
+      lightLLM: {
+        baseUrl: localLightUrl.trim(),
+        apiKey: localLightKey.trim(),
+        model: localLightModel.trim(),
+      },
+    });
+    setLightStatusMsg('副 API 配置已保存');
+    setTimeout(() => setLightStatusMsg(''), 2500);
+  };
+
+  // 暮色 2026-07-15：副 API 测试连接（fetch {url}/models HEAD，参考 MemoryPalaceApp 同款）
+  const handleTestLight = async () => {
+    const url = localLightUrl.trim();
+    if (!url) {
+      setLightStatusMsg('请先填 URL');
+      return;
+    }
+    setLightTesting(true);
+    setLightStatusMsg('正在连接...');
+    try {
+      const baseUrl = url.replace(/\/+$/, '');
+      const res = await fetch(`${baseUrl}/models`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${localLightKey.trim()}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await safeResponseJson(res);
+      const models = data?.data || data?.models || [];
+      const count = Array.isArray(models) ? models.length : 0;
+      setLightStatusMsg(`✓ 在线 · ${count} 个模型`);
+    } catch (e: any) {
+      setLightStatusMsg(`✗ 失败：${e?.message || '未知错误'}`);
+    } finally {
+      setLightTesting(false);
+    }
+  };
+
+  // 暮色 2026-07-15：副 API 预设保存 — 弹窗输入名字，存到 apiPresets（kind: memoryPalaceLight）
+  const handleSaveLightPreset = () => {
+    const name = window.prompt('预设名称', '记忆宫殿副 API')?.trim();
+    if (!name) return;
+    addApiPreset(name, {
+      baseUrl: localLightUrl.trim(),
+      apiKey: localLightKey.trim(),
+      model: localLightModel.trim(),
+    }, 'memoryPalaceLight');
+    addToast(`已保存副 API 预设: ${name}`, 'success');
+  };
+
   const toggleSection = (section: QuickPresetKind) => {
     setOpenSection((prev) => (prev === section ? null : section));
   };
@@ -364,6 +440,15 @@ const ApiQuickFloat: React.FC = () => {
       addToast(`已加载识图预设: ${preset.name}`, 'info');
       return;
     }
+    if (kind === 'lightLLM') {
+      // 暮色 2026-07-15：副 API 预设加载 — 用 preset.config.baseUrl/apiKey/model
+      // （apiConfig 字段就是 baseUrl/apiKey/model 三个 — 跟 memoryPalaceConfig.lightLLM 一致）
+      setLocalLightUrl(c.baseUrl || '');
+      setLocalLightKey(c.apiKey || '');
+      setLocalLightModel(c.model || '');
+      addToast(`已加载副 API 预设: ${preset.name}`, 'info');
+      return;
+    }
     setLocalUrl(c.baseUrl || '');
     setLocalKey(c.apiKey || '');
     setLocalModel(c.model || '');
@@ -380,6 +465,11 @@ const ApiQuickFloat: React.FC = () => {
   );
   const visionApiPresets = useMemo(
     () => apiPresets.filter((preset) => preset.kind === 'vision'),
+    [apiPresets]
+  );
+  // 暮色 2026-07-15：副 API 预设（已有 memoryPalaceLight 这个 kind）
+  const lightApiPresets = useMemo(
+    () => apiPresets.filter((preset) => preset.kind === 'memoryPalaceLight'),
     [apiPresets]
   );
 
@@ -694,6 +784,123 @@ const ApiQuickFloat: React.FC = () => {
                   </>
 
                   {imageStatusMsg ? <div className="text-xs text-center text-slate-500">{imageStatusMsg}</div> : null}
+                </section>
+              </QuickSection>
+
+              {/* 暮色 2026-07-15：副 API（记忆宫殿后台处理用 lightLLM）— 接到浮窗换 API 方便 */}
+              <QuickSection
+                icon={<Brain size={18} weight="bold" />}
+                title="副API"
+                subtitle="记忆宫殿后台处理"
+                isOpen={openSection === 'lightLLM'}
+                onToggle={() => toggleSection('lightLLM')}
+              >
+                <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
+                  {/* 顶部：副 API 橙色提示框 — 跟 MemoryPalaceApp 同款 */}
+                  <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5">
+                    <p className="text-[11px] text-amber-900 leading-relaxed">
+                      下方不填（URL 留空）时，记忆宫殿会自动回退用主 API 跑后台处理。
+                      想让后台任务走更便宜的账户 / 不想占主 API 额度，就在这里填一个便宜模型。
+                      后台任务不需要推理力，挑一个每百万 token 几毛钱的模型即可。
+                    </p>
+                  </div>
+
+                  {/* 副 API 预设（kind: memoryPalaceLight） */}
+                  {lightApiPresets.length > 0 ? (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">从预设导入</label>
+                        <button onClick={handleSaveLightPreset} className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                          保存为预设
+                        </button>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        {lightApiPresets.map((preset) => {
+                          const active = isPresetActive(preset, 'lightLLM');
+                          return (
+                            <PresetChip
+                              key={preset.id}
+                              preset={preset}
+                              active={active}
+                              activeClassName="bg-emerald-50 border-emerald-200"
+                              idleClassName="bg-white border-slate-200"
+                              textActiveClassName="text-emerald-600"
+                              textIdleClassName="text-slate-600 hover:text-emerald-500"
+                              onLoad={() => loadPreset(preset, 'lightLLM')}
+                              onRequestDelete={() => setPresetPendingDelete(preset)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end">
+                      <button onClick={handleSaveLightPreset} className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                        保存为预设
+                      </button>
+                    </div>
+                  )}
+
+                  {/* BASE URL */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">BASE URL</label>
+                    <input
+                      type="text"
+                      value={localLightUrl}
+                      onChange={(e) => setLocalLightUrl(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* API KEY（带显示 toggle） */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5 pl-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">API KEY</label>
+                      <button onClick={() => setShowLightKey((v) => !v)} className="text-[10px] text-emerald-500 font-bold flex items-center gap-1">
+                        {showLightKey ? '隐藏' : '显示'}
+                      </button>
+                    </div>
+                    <input
+                      type={showLightKey ? 'text' : 'password'}
+                      value={localLightKey}
+                      onChange={(e) => setLocalLightKey(e.target.value)}
+                      placeholder="sk-..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* MODEL */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MODEL</label>
+                    <input
+                      type="text"
+                      value={localLightModel}
+                      onChange={(e) => setLocalLightModel(e.target.value)}
+                      placeholder="例如 deepseek-ai/DeepSeek-V2.5"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1.5 pl-1 leading-relaxed">
+                      推荐：deepseek-ai/DeepSeek-V2.5 · Qwen/Qwen2.5-7B-Instruct · GLM-4-Flash
+                    </p>
+                  </div>
+
+                  {/* 保存 + 测试 */}
+                  <div className="space-y-2">
+                    <button
+                      onClick={handleSaveLightConfig}
+                      className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all"
+                    >
+                      {lightStatusMsg && !lightTesting ? lightStatusMsg : '保存副 API 配置'}
+                    </button>
+                    <button
+                      onClick={handleTestLight}
+                      disabled={lightTesting || !localLightUrl.trim()}
+                      className="w-full py-2.5 rounded-2xl font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 active:scale-95 transition-all disabled:opacity-50 text-sm"
+                    >
+                      {lightTesting ? '测试中...' : '测试 API 连接'}
+                    </button>
+                  </div>
                 </section>
               </QuickSection>
 

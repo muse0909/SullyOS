@@ -319,15 +319,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             : inputStyle === 'discord' ? 'bg-slate-800 border border-white/10 text-white'
             : inputStyle === 'pixel' ? 'bg-[#f8f0e0] border-2 border-[#8f674a]'
             : 'bg-slate-100';
-        // 圆角：撑大时统一降到 rounded-2xl（pixel/flat 例外）
-        // 暮色 2026-07-15：1 行也降 — default rounded-[24px] / ios rounded-[26px] 看着像大圆，降到 rounded-2xl (16px)
-        // rounded / wechat 是用户主动选的胶囊风格，保持 rounded-full
+        // 圆角：1-2 行 → 胶囊（rounded-full），3+ 行撑大 → 降到 rounded-2xl (16px)
+        // 暮色 2026-07-15 反馈：之前 1 行 default rounded-[24px] / ios rounded-[26px] 看着像大圆
+        //   1-2 行就应该是胶囊样式，不要那么"大圆"
+        //   撑大时（3+ 行）才降到 rounded-2xl，避免看着像气球
+        // flat / pixel 例外：rounded-none / rounded-[4px] 保持原样
         const rounding = isExpanded
             ? (inputStyle === 'flat' || inputStyle === 'pixel' ? '' : 'rounded-2xl')
-            : inputStyle === 'rounded' || inputStyle === 'wechat' ? 'rounded-full'
             : inputStyle === 'flat' ? 'rounded-none'
             : inputStyle === 'pixel' ? 'rounded-[4px]'
-            : 'rounded-2xl';
+            : 'rounded-full';
         return `${base} ${rounding}`.trim();
     })();
         const sendButtonClass =

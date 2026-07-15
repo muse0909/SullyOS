@@ -1,7 +1,7 @@
 
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
@@ -210,6 +210,28 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
     </div>
   </div>
 );
+
+// 暮色 2026-07-15：bell toast 独立组件 — 字少（≤2 行 ≈ 56px）保持 rounded-full 胶囊，
+// 字撑大时改 rounded-2xl 方形圆角（避免圆角消失 + 文字溢出椭圆底）
+const BELL_TALL_THRESHOLD = 56; // 2 行 line-height 阈值（text-xs + leading-snug ≈ 28px/行）
+const BellToast: React.FC<{ message: string }> = ({ message }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isTall, setIsTall] = useState(false);
+  useLayoutEffect(() => {
+    if (ref.current && ref.current.scrollHeight > BELL_TALL_THRESHOLD) {
+      setIsTall(true);
+    }
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className={`animate-fade-in bg-gradient-to-r from-amber-50/95 to-emerald-50/95 backdrop-blur-xl px-5 py-3.5 ${isTall ? 'rounded-2xl' : 'rounded-full'} shadow-xl border border-amber-200/40 flex items-center gap-3 max-w-[88%] max-h-[40vh] overflow-y-auto no-scrollbar ring-1 ring-white/30`}
+    >
+      <BellIcon size={20} weight="fill" className="text-amber-500 shrink-0" />
+      <span className="text-xs font-medium text-slate-700 whitespace-normal break-words text-center leading-snug">{message}</span>
+    </div>
+  );
+};
 
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId } = useOS();
@@ -480,16 +502,10 @@ const PhoneShell: React.FC = () => {
               {toasts.map(toast => {
                   // 暮色 2026-07-15：'bell' 类型是"重要但不阻塞"的提示
                   // 走专门的铃铛胶囊样式（浅马卡龙 + 居中大圆角）— 跟普通圆点 toast 视觉区分
+                  // 暮色 2026-07-15：字少（≤2 行 ≈ 56px）保持 rounded-full 胶囊，字撑大时改 rounded-2xl 方形圆角
                   // 触发场景：图床失败已用 base64 兜底（提醒占 localStorage 空间）等
                   if (toast.type === 'bell') {
-                      return (
-                          // 暮色 2026-07-15：加 max-h-[40vh] + overflow-y-auto — 之前长 innerState 文字进 bell 时，rounded-full + 高度变高圆角消失，看着像矩形+文字溢出
-                          // 现在限制最高 40vh，超出内部滚（滚动条自动隐藏 no-scrollbar）
-                          <div key={toast.id} className="animate-fade-in bg-gradient-to-r from-amber-50/95 to-emerald-50/95 backdrop-blur-xl px-5 py-3.5 rounded-full shadow-xl border border-amber-200/40 flex items-center gap-3 max-w-[88%] max-h-[40vh] overflow-y-auto no-scrollbar ring-1 ring-white/30">
-                              <BellIcon size={20} weight="fill" className="text-amber-500 shrink-0" />
-                              <span className="text-xs font-medium text-slate-700 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
-                          </div>
-                      );
+                      return <BellToast key={toast.id} message={toast.message} />;
                   }
                   return (
                       <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">

@@ -36,8 +36,10 @@ export interface MomentSettings {
   maxPerDay: number;            // 每天最多 N 条 AI 朋友圈，0 = 关闭
   // 用户发完是否触发 AI（暮色 2026-07-03 要求）
   notifyAIOnUserPost: boolean;  // 用户发完朋友圈后是否通知 AI（AI 点赞/评论 + AI 自己判断要不要主动发消息）
-  // 生图 API（暮色 2026-07-03 要求）
-  imageGenProvider: 'none' | 'comfyui' | 'nai' | 'mcd';
+  // 暮色 2026-07-15：AI 自主配图总开关
+  // 开 = AI 在发朋友圈时自己考虑要不要加图（不一定每次都配）— 配合 OpenAI 兼容生图接口
+  // 关 = 强制不配图（角色不允许配图）
+  aiCanUseImage: boolean;
 }
 
 const DEFAULT_SETTINGS: MomentSettings = {
@@ -46,7 +48,7 @@ const DEFAULT_SETTINGS: MomentSettings = {
   autoCharInteraction: false,
   maxPerDay: 100, // 暮色 2026-07-12：放开上限 0-100，0=关闭；100=基本不限制。
   notifyAIOnUserPost: true,
-  imageGenProvider: 'none',
+  aiCanUseImage: true, // 暮色 2026-07-15：默认开。AI 自主决定要不要配图
 };
 
 // === 用户发朋友圈 → 通知 AI 队列 ===

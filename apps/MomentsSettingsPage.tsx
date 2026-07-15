@@ -68,7 +68,7 @@ const MomentsSettingsPage: React.FC<MomentsSettingsPageProps> = ({ onBack }) => 
           }, settings);
           if (!generated) continue;
           // 发布到 localStorage
-          publishPostAsChar(char, generated.content, generated.imagePrompt, settings.imageGenProvider);
+          publishPostAsChar(char, generated.content, generated.imagePrompt);
           successCount++;
         }
       }
@@ -143,11 +143,13 @@ const MomentsSettingsPage: React.FC<MomentsSettingsPageProps> = ({ onBack }) => 
           </div>
         </SectionCard>
 
-        {/* 生图设置 */}
+        {/* 生图设置 — 暮色 2026-07-15：简化为单一 toggle，生图只走 OpenAI 兼容 */}
         <SectionCard title="配图" subtitle="AI 发朋友圈时是否配图" icon={<ImageIcon size={14} weight="fill" className="text-pink-500" />}>
-          <ImageGenProviderSelect
-            value={settings.imageGenProvider}
-            onChange={(v) => updateSetting('imageGenProvider', v)}
+          <SettingToggle
+            label="AI 自主配图"
+            desc="开启后，AI 根据朋友圈内容自己决定要不要加图；关闭后强制不配图"
+            checked={settings.aiCanUseImage}
+            onChange={(v) => updateSetting('aiCanUseImage', v)}
           />
         </SectionCard>
 
@@ -212,44 +214,6 @@ const SettingToggle: React.FC<{
       />
     </div>
   </button>
-);
-
-// === 生图 provider 选择 ===
-const PROVIDERS: { value: MomentSettings['imageGenProvider']; label: string; desc: string }[] = [
-  { value: 'none', label: '不配图', desc: '只发文字（最快）' },
-  { value: 'comfyui', label: 'ComfyUI', desc: '本地 ComfyUI（昨天搭的）' },
-  { value: 'nai', label: 'NovelAI', desc: 'NAI 漫画风格' },
-  { value: 'mcd', label: 'MCD', desc: 'MCD 工具（需配置）' },
-];
-
-const ImageGenProviderSelect: React.FC<{
-  value: MomentSettings['imageGenProvider'];
-  onChange: (v: MomentSettings['imageGenProvider']) => void;
-}> = ({ value, onChange }) => (
-  <div className="px-2 space-y-1">
-    {PROVIDERS.map((p) => (
-      <button
-        key={p.value}
-        type="button"
-        onClick={() => onChange(p.value)}
-        className={`w-full px-3 py-2.5 rounded-xl flex items-center gap-3 text-left transition-colors ${
-          value === p.value ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'hover:bg-slate-50'
-        }`}
-      >
-        <div
-          className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-            value === p.value ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'
-          }`}
-        >
-          {value === p.value && <div className="w-full h-full flex items-center justify-center"><div className="w-1.5 h-1.5 rounded-full bg-white" /></div>}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium text-slate-700">{p.label}</div>
-          <div className="text-[10px] text-slate-400 mt-0.5">{p.desc}</div>
-        </div>
-      </button>
-    ))}
-  </div>
 );
 
 // === 手动生成 ===

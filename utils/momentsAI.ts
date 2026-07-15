@@ -58,10 +58,10 @@ async function callLLM(
 
 // === 1. AI 发朋友圈 ===
 // 输出 JSON：{ content, imagePrompt, tags }
-// 暮色：imagePrompt 是英文生图提示词，配合 settings.imageGenProvider
+// 暮色 2026-07-15：imagePrompt 由 LLM 自主决定（settings.aiCanUseImage 控制是否允许输出）
 export interface AIGeneratedPost {
   content: string;
-  imagePrompt?: string; // 英文生图提示词（暮色 imageGenProvider 不为 'none' 时用）
+  imagePrompt?: string; // 英文生图提示词（AI 决定要不要输出，不要图就是 undefined）
   tags?: string[];
 }
 
@@ -89,7 +89,7 @@ export async function generatePost(
     )
     .join('\n');
 
-  const useImageGen = settings.imageGenProvider !== 'none';
+  const useImageGen = settings.aiCanUseImage;
 
   const systemPrompt = `# 你的任务
 你是"${char.name}"，现在要在朋友圈发一条动态。
@@ -114,7 +114,7 @@ ${new Date().toLocaleString('zh-CN')}
 请以 JSON 格式返回（不要输出任何其他内容、不要代码块标记）：
 {
   "content": "朋友圈文字内容（10-150字，像发朋友圈一样自然）",
-  ${useImageGen ? '"imagePrompt": "英文生图提示词，描述具体画面、光线、构图、风格",' : ''}
+  ${useImageGen ? '"imagePrompt": "英文生图提示词（不需要配图就写 null 或省略此字段）",' : ''}
   "tags": ["标签1", "标签2"]
 }
 
@@ -123,7 +123,7 @@ ${new Date().toLocaleString('zh-CN')}
 - 不要和最近发过的动态内容重复
 ${
   useImageGen
-    ? '- imagePrompt 用英文写，描述具体画面（自拍/风景/食物/日常/和伴侣相关等）'
+    ? '- imagePrompt 用英文写，描述具体画面（自拍/风景/食物/日常/和伴侣相关等）—— 但**你自己决定**这次要不要配图，不需要配图就写 null 或省略这个字段'
     : '- 不需要配图，不要输出 imagePrompt 字段'
 }
 - tags 是 1-3 个中文标签
@@ -493,11 +493,12 @@ export function commentPostAsChar(
 }
 
 // === 工具：AI 发朋友圈（不调 API，纯本地操作 + 生图 hook） ===
+// 暮色 2026-07-15：删 imageGenProvider 参数 — 生图只走 OpenAI 兼容接口（apiConfig.imageGenProvider === 'openai'），
+// 朋友圈这边不需关心。AI 是否要配图由 settings.aiCanUseImage + LLM 自主决定 imagePrompt 字段决定。
 export function publishPostAsChar(
   char: CharacterProfile,
   content: string,
-  imagePrompt: string | undefined,
-  imageGenProvider: 'none' | 'comfyui' | 'nai' | 'mcd'
+  imagePrompt: string | undefined
 ): MomentPost {
   const newPost: MomentPost = {
     id: genPostId(),
@@ -512,5 +513,4 @@ export function publishPostAsChar(
   };
   addPost(newPost);
   return newPost;
-  // 注意：imageGenProvider 在调用方处理（utils 不知道具体生图 API）
 }

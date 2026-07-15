@@ -2245,12 +2245,15 @@ const handleSaveTts = () => {
         onClose={() => setPresetPendingDelete(null)}
         footer={
         // 暮色 2026-07-15：像左边"消息操作"弹窗那样两列平铺（不是 flex 挤一起）
-        // grid grid-cols-2 让两个按钮自动均分 footer 宽度
-        // mx-4 (16px) 让按钮距 modal 边缘 24+16=40px = 圆角边缘，胶囊左半圆不被切
-        <div className="grid grid-cols-2 gap-3 mx-4">
+        // grid grid-cols-2 分两列 + 按钮 w-full 填满列 = 平铺
+        // 之前漏了 w-full，按钮宽度 = 文字宽度，渲染成两个小圆挤在列左
+        // Modal.tsx:34 把 footer 包在 flex 容器里，grid 是 flex 子项默认不撑满
+        // 所以 grid 容器本身也得 w-full，否则 flex 容器不知道给 grid 多少宽度
+        // 参考 ChatModals.tsx:435 消息操作弹窗（那个在 body 里，body 是 block 默认撑满）
+        <div className="w-full grid grid-cols-2 gap-3">
           <button
             onClick={() => setPresetPendingDelete(null)}
-            className="py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+            className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
           >
             取消
           </button>
@@ -2261,7 +2264,7 @@ const handleSaveTts = () => {
               addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
               setPresetPendingDelete(null);
             }}
-            className="py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+            className="w-full py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
           >
             删除
           </button>

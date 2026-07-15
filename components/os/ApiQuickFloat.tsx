@@ -994,8 +994,12 @@ const ApiQuickFloat: React.FC = () => {
           <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl">
             <div className="text-base font-bold text-slate-700">删除预设</div>
             <div className="mt-2 text-sm text-slate-500">确认删除预设“{presetPendingDelete.name}”？</div>
-            <div className="mt-5 grid grid-cols-2 gap-3 px-2">
-              <button onClick={() => setPresetPendingDelete(null)} className="py-3 rounded-full bg-slate-100 text-slate-600 font-bold active:scale-95 transition-all">
+            {/* 暮色 2026-07-15 反馈按钮挤在一起。前面 4 次只改了 footer 容器（flex→grid, mx-2→mx-4→px-2），
+                漏了关键一点：grid grid-cols-2 只分列，按钮还得 w-full 才能填满列宽度。
+                没 w-full 时按钮宽度 = 文字宽度（"取消"/"删除" 各 2 字），渲染成两个小圆挤在列左。
+                参考左边"消息操作"弹窗 ChatModals.tsx:435 的 pattern。 */}
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button onClick={() => setPresetPendingDelete(null)} className="w-full py-3 rounded-full bg-slate-100 text-slate-600 font-bold active:scale-95 transition-all">
                 取消
               </button>
               <button
@@ -1004,7 +1008,7 @@ const ApiQuickFloat: React.FC = () => {
                   addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
                   setPresetPendingDelete(null);
                 }}
-                className="py-3 rounded-full bg-red-500 text-white font-bold active:scale-95 transition-all"
+                className="w-full py-3 rounded-full bg-red-500 text-white font-bold active:scale-95 transition-all"
               >
                 删除
               </button>

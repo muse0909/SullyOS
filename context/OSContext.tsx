@@ -255,6 +255,10 @@ interface OSContextType {
   consumeDirectEntry: () => boolean;
   // 收藏定位：点击收藏页"定位到聊天"时调，Chat 页面 mount/激活时 consume 决定 scroll/highlight
   consumePendingHighlightMessageId: () => string | null;
+  // 暮色 2026-07-15：搜索抽屉内"点结果跳到聊天" — Chat 已在前台时复用 highlight 机制
+  // 只设 ref + counter，不切角色/不切 app（jumpToMessage 那条路径只在跨 app/跨角色时用）
+  requestHighlightMessage: (messageId: string) => void;
+  highlightRequestId: number;
   // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮触发
   // → 回 WeChat 联系人列表 + 切到发现 tab
   requestOpenDiscoverTab: () => void;
@@ -600,6 +604,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // 用 ref + trigger counter 双重机制：ref 防止重复 trigger，counter 让 WeChat 能用 useEffect 监听
   const pendingDiscoverTabRef = useRef(false);
   const [discoverTabRequestId, setDiscoverTabRequestId] = useState(0);
+
+  // 暮色 2026-07-15：搜索抽屉点结果跳到聊天 — 复用 highlight 机制的"trigger counter"
+  // Chat 已在聊天页时不能再用 jumpToMessage（它会 setActiveCharacterId 触发不必要 effect），
+  // 单独走这条路：只设 pendingHighlightMessageIdRef + 自增 counter，让 Chat 重新 consume
+  const [highlightRequestId, setHighlightRequestId] = useState(0);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2865,6 +2874,11 @@ if (!isVisible || !isChattingWithThisChar) {
     pendingHighlightMessageIdRef.current = null;
     return id;
   };
+  // 暮色 2026-07-15：搜索抽屉跳到聊天专用 — 不切角色不切 app，只触发 Chat 重新 consume
+  const requestHighlightMessage = (messageId: string) => {
+    pendingHighlightMessageIdRef.current = messageId;
+    setHighlightRequestId((n) => n + 1);
+  };
 
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
     setSuspendedCall(info);
@@ -2985,6 +2999,8 @@ if (!isVisible || !isChattingWithThisChar) {
     consumeDirectEntry,
     jumpToMessage,
     consumePendingHighlightMessageId,
+    requestHighlightMessage,
+    highlightRequestId,
     requestOpenDiscoverTab,
     consumePendingDiscoverTab,
     discoverTabRequestId

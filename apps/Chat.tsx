@@ -28,7 +28,7 @@ import { addFavorite, genFavoriteId, updateFavorite, uploadVoiceFavorite } from 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -44,7 +44,7 @@ const Chat: React.FC = () => {
             // 2 秒后清掉高亮
             setTimeout(() => setHighlightMessageId(null), 2000);
         }
-    }, [activeCharacterId]);
+    }, [activeCharacterId, highlightRequestId]);
 
     // scroll 到目标 message
     // NOTE: deps 只保留 highlightMessageId（不加 messages，否则 React 19 会在评估 deps 时触发 TDZ，
@@ -2494,6 +2494,10 @@ if (keepN > 0) {
                 onClose={() => setShowChatSearchDrawer(false)}
                 activeCharacter={char}
                 userName={userProfile?.name || '我'}
+                onJumpToMessage={(messageId) => {
+                    setShowChatSearchDrawer(false);
+                    requestHighlightMessage(messageId);
+                }}
             />
 
 

@@ -320,13 +320,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             : inputStyle === 'pixel' ? 'bg-[#f8f0e0] border-2 border-[#8f674a]'
             : 'bg-slate-100';
         // 圆角：撑大时统一降到 rounded-2xl（pixel/flat 例外）
+        // 暮色 2026-07-15：1 行也降 — default rounded-[24px] / ios rounded-[26px] 看着像大圆，降到 rounded-2xl (16px)
+        // rounded / wechat 是用户主动选的胶囊风格，保持 rounded-full
         const rounding = isExpanded
             ? (inputStyle === 'flat' || inputStyle === 'pixel' ? '' : 'rounded-2xl')
             : inputStyle === 'rounded' || inputStyle === 'wechat' ? 'rounded-full'
-            : inputStyle === 'ios' ? 'rounded-[26px]'
             : inputStyle === 'flat' ? 'rounded-none'
             : inputStyle === 'pixel' ? 'rounded-[4px]'
-            : 'rounded-[24px]';
+            : 'rounded-2xl';
         return `${base} ${rounding}`.trim();
     })();
         const sendButtonClass =
@@ -429,7 +430,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     <div className={`flex-1 min-w-0 flex items-center transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <button
                             onClick={openFullInput}
-                            className={`p-1.5 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
+                            className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
                             title="全屏输入"
                             aria-label="全屏输入"
                         >
@@ -446,11 +447,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-1 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            className={`flex-1 min-w-0 bg-transparent px-[2px] py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..."
                             style={{ height: 'auto', overflowY: 'hidden' }}
                         />
-                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-1.5 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>

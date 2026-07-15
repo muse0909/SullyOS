@@ -2244,7 +2244,8 @@ const handleSaveTts = () => {
         title="删除预设"
         onClose={() => setPresetPendingDelete(null)}
         footer={
-        <div className="flex gap-3">
+        // 暮色 2026-07-15：按钮挤在 Modal 圆角边缘，胶囊左半圆被切。mx-2 让按钮左右各缩 8px，离开 Modal 40px 圆角
+        <div className="flex gap-3 mx-2">
           <button
             onClick={() => setPresetPendingDelete(null)}
             className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"

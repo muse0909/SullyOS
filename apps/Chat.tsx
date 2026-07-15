@@ -1083,9 +1083,19 @@ const Chat: React.FC = () => {
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
+                // 暮色 2026-07-15：imgbb 失败时打印完整错误体，之前没打，看不到原因
+                // 截图里那条 400 Bad Request，console 没显示是啥错（key 失效 / 配额 / 格式 ？）
+                console.warn('🖼️ [ImageBed] imgbb 上传失败:', {
+                    status: res.status,
+                    statusText: res.statusText,
+                    key_preview: imgbbKey.slice(0, 12) + '...',
+                    image_size_kb: Math.round((base64.length * 3) / 4 / 1024),
+                    response: json,
+                });
                 addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
-            } catch {
+            } catch (e: any) {
+                console.warn('🖼️ [ImageBed] imgbb 抛异常:', e?.message || e);
                 addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
                 await handleSendText(base64, 'image');
             }

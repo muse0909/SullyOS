@@ -989,11 +989,13 @@ const ApiQuickFloat: React.FC = () => {
       {presetPendingDelete ? (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" onClick={() => setPresetPendingDelete(null)}>
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          {/* 暮色 2026-07-15：之前按钮 rounded-2xl (16px) + 圆角 24px + p-5(20px) — 按钮被切
+              改成 rounded-full 胶囊 + px-2 让按钮距 modal 边缘 20+8=28px > 24px 圆角，刚好不被切 */}
           <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl">
             <div className="text-base font-bold text-slate-700">删除预设</div>
             <div className="mt-2 text-sm text-slate-500">确认删除预设“{presetPendingDelete.name}”？</div>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button onClick={() => setPresetPendingDelete(null)} className="py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold">
+            <div className="mt-5 grid grid-cols-2 gap-3 px-2">
+              <button onClick={() => setPresetPendingDelete(null)} className="py-3 rounded-full bg-slate-100 text-slate-600 font-bold active:scale-95 transition-all">
                 取消
               </button>
               <button
@@ -1002,7 +1004,7 @@ const ApiQuickFloat: React.FC = () => {
                   addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
                   setPresetPendingDelete(null);
                 }}
-                className="py-3 rounded-2xl bg-red-500 text-white font-bold"
+                className="py-3 rounded-full bg-red-500 text-white font-bold active:scale-95 transition-all"
               >
                 删除
               </button>

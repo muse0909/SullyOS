@@ -1572,6 +1572,8 @@ export interface Emoji {
 export interface FullBackupData {
     timestamp: number;
     version: number;
+    /** 备份模式 — 导入时用这个判断合并策略（text_only → 合并；full → 整库替换） */
+    backupMode?: 'text_only' | 'media_only' | 'full';
     theme?: OSTheme;
     apiConfig?: APIConfig;
     apiPresets?: ApiPreset[];

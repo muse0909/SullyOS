@@ -7,13 +7,14 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import { DB } from '../utils/db';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import type { ApiPreset, APIConfig } from '../types';
+import type { ApiPreset, APIConfig, Message, CharacterProfile } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
@@ -161,6 +162,7 @@ const Settings: React.FC = () => {
       realtimeConfig, updateRealtimeConfig, // 实时感知配置
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
+      characters, // 聊天记录 (.txt) 导出用 — 列角色选择
   } = useOS();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -221,6 +223,10 @@ const Settings: React.FC = () => {
   const [showModelModal, setShowModelModal] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
+  // 聊天记录 (.txt) 导出 — 选角色 → 单 txt / 多 zip
+  const [showChatTxtModal, setShowChatTxtModal] = useState(false);
+  const [selectedCharIds, setSelectedCharIds] = useState<Set<string>>(new Set());
+  const [txtExporting, setTxtExporting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
@@ -860,6 +866,170 @@ const handleSaveTts = () => {
       }
   };
 
+  // ─── 聊天记录 (.txt) 导出 ──────────────────────────────────
+  // txt 只用于保留/阅读聊天记录，不参与设备间互通（互通走轻量同步）
+  const openChatTxtModal = () => {
+      setSelectedCharIds(new Set());
+      setShowChatTxtModal(true);
+  };
+  const toggleCharSelection = (charId: string) => {
+      setSelectedCharIds(prev => {
+          const next = new Set(prev);
+          if (next.has(charId)) next.delete(charId);
+          else next.add(charId);
+          return next;
+      });
+  };
+  const selectAllChars = () => {
+      setSelectedCharIds(new Set(characters.map(c => c.id)));
+  };
+  const handleExportChatTxt = async () => {
+      if (selectedCharIds.size === 0) {
+          addToast('请至少选一个角色', 'error');
+          return;
+      }
+      setTxtExporting(true);
+      try {
+          const targets = characters.filter(c => selectedCharIds.has(c.id));
+          // 先把所有角色的消息取出来（DB.getMessagesByCharId 是 async）
+          const charData: Array<{ char: CharacterProfile, messages: Message[] }> = [];
+          for (const char of targets) {
+              const all = await DB.getMessagesByCharId(char.id);
+              // 过滤 system + group 消息（群聊消息走 getGroupMessages，不在单人聊天里）
+              const messages = all
+                  .filter(m => m.type !== 'system')
+                  .sort((a, b) => a.timestamp - b.timestamp);
+              charData.push({ char, messages });
+          }
+
+          const formatDate = (ts: number) => {
+              const d = new Date(ts);
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          };
+          const formatHM = (ts: number) => {
+              const d = new Date(ts);
+              return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+          };
+          // content 总是 string — 非文本消息打标记
+          const contentLabel = (m: Message) => {
+              if (m.type === 'image') return '[图片]';
+              if (m.type === 'emoji') return '[表情]';
+              if (m.type === 'voice') return '[语音]';
+              if (m.type === 'social_card') return '[社交卡片]';
+              if (m.type === 'xhs_card') return '[小红书卡片]';
+              if (m.type === 'score_card') return '[账单卡片]';
+              if (m.type === 'music_card') return '[音乐卡片]';
+              if (m.type === 'mcd_card') return '[MCD 卡片]';
+              if (m.type === 'chat_forward') return '[转发]';
+              if (m.type === 'html_card') return '[卡片]';
+              if (m.type === 'transfer') return '[转账]';
+              if (m.type === 'interaction') return '[互动]';
+              return m.content || '';
+          };
+          const buildTxt = ({ char, messages }: { char: CharacterProfile, messages: Message[] }) => {
+              const lines: string[] = [];
+              lines.push(`【${char.name} 的聊天记录】`);
+              lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
+              lines.push(`共 ${messages.length} 条消息`);
+              lines.push('');
+
+              // 按日期分组
+              let lastDate = '';
+              for (const m of messages) {
+                  const dStr = formatDate(m.timestamp);
+                  if (dStr !== lastDate) {
+                      lines.push(`—— ${dStr} ——`);
+                      lastDate = dStr;
+                  }
+                  lines.push(formatHM(m.timestamp));
+                  const who = m.role === 'user' ? '我' : char.name;
+                  const content = contentLabel(m);
+                  lines.push(`${who}: ${content}`);
+                  lines.push('');
+              }
+              return lines.join('\n');
+          };
+
+          const fileBaseName = `Sully_ChatLog_${new Date().toISOString().slice(0, 10)}`;
+          const safeName = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_');
+
+          if (targets.length === 1) {
+              // 单角色 → 直接下载 .txt
+              const cd = charData[0];
+              const txt = buildTxt(cd);
+              const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+              const fileName = `${fileBaseName}_${safeName(cd.char.name)}.txt`;
+              if (Capacitor.isNativePlatform()) {
+                  const reader = new FileReader();
+                  reader.readAsDataURL(blob);
+                  reader.onloadend = async () => {
+                      const base64data = String(reader.result);
+                      try {
+                          await Filesystem.writeFile({ path: fileName, data: base64data, directory: Directory.Cache });
+                          const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                          await Share.share({ title: '聊天记录', files: [uriResult.uri] });
+                      } catch (e: any) {
+                          console.error(e);
+                          addToast('保存文件失败', 'error');
+                      }
+                  };
+              } else {
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = fileName;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+              }
+              addToast(`已导出 ${cd.char.name} 的聊天记录`, 'success');
+          } else {
+              // 多角色 → 打包 zip
+              const JSZipMod = await import('jszip');
+              const JSZipCtor = (JSZipMod as any).default || JSZipMod;
+              const zip = new JSZipCtor();
+              for (const cd of charData) {
+                  const txt = buildTxt(cd);
+                  zip.file(`${safeName(cd.char.name)}.txt`, txt);
+              }
+              const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+              const fileName = `${fileBaseName}.zip`;
+              if (Capacitor.isNativePlatform()) {
+                  const reader = new FileReader();
+                  reader.readAsDataURL(content);
+                  reader.onloadend = async () => {
+                      const base64data = String(reader.result);
+                      try {
+                          await Filesystem.writeFile({ path: fileName, data: base64data, directory: Directory.Cache });
+                          const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                          await Share.share({ title: '聊天记录', files: [uriResult.uri] });
+                      } catch (e: any) {
+                          console.error(e);
+                          addToast('保存文件失败', 'error');
+                      }
+                  };
+              } else {
+                  const url = URL.createObjectURL(content);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = fileName;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+              }
+              addToast(`已导出 ${targets.length} 个角色的聊天记录`, 'success');
+          }
+          setShowChatTxtModal(false);
+      } catch (e: any) {
+          console.error(e);
+          addToast(`导出失败: ${e.message}`, 'error');
+      } finally {
+          setTxtExporting(false);
+      }
+  };
+
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -1185,11 +1355,19 @@ const handleSaveTts = () => {
             <div className="grid grid-cols-2 gap-3 mb-3">
               <button onClick={() => handleExport('text_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
                 <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
-                <span>纯文字备份</span>
+                <span>轻量同步</span>
+                <span className="text-[9px] text-slate-400 font-normal">聊天+记忆+API</span>
               </button>
                <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                 <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
                 <span>媒体与美化素材</span>
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 mb-3">
+              <button onClick={openChatTxtModal} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 cursor-pointer hover:bg-emerald-50 hover:border-emerald-200">
+                <div className="p-2 bg-emerald-50 rounded-full text-emerald-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
+                <span>聊天记录 (.txt)</span>
+                <span className="text-[9px] text-slate-400 font-normal">只导出聊天文字，多角色可选</span>
               </button>
             </div>
             <div className="grid grid-cols-1 gap-3 mb-4">
@@ -1201,8 +1379,9 @@ const handleSaveTts = () => {
             </div>
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
                 • <b>整合导出</b>: 一次性导出所有数据（文字+媒体），适合设备性能充足的用户。<br/>
-                • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
+                • <b>轻量同步</b>: 聊天记录 + 记忆 + API 设置。不打包美化和图片，导入时按 ID 合并不会覆盖本机美化。适合手机电脑互导。<br/>
                 • <b>媒体与美化素材</b>: 导出相册、表情包、聊天图片、头像、主题气泡、壁纸、图标等图片资源和外观配置。<br/>
+                • <b>聊天记录 (.txt)</b>: 只导出聊天文字为纯文本格式，可选多个角色。txt 只用于保留/阅读，不参与互通。<br/>
                 • 兼容旧版 JSON 备份文件的导入。
             </p>
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
@@ -1985,6 +2164,81 @@ const handleSaveTts = () => {
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
           <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><p className="text-[11px] text-slate-400 px-1">当前所有 API 配置都会一起保存。</p></div>
+      </Modal>
+
+      {/* 聊天记录 (.txt) 导出 — 角色多选弹窗 */}
+      <Modal
+        isOpen={showChatTxtModal}
+        title="聊天记录 (.txt) 导出"
+        onClose={() => !txtExporting && setShowChatTxtModal(false)}
+        footer={
+          <div className="flex gap-3 w-full">
+            <button
+              onClick={() => setShowChatTxtModal(false)}
+              disabled={txtExporting}
+              className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleExportChatTxt}
+              disabled={txtExporting || selectedCharIds.size === 0}
+              className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-full active:scale-95 transition-all disabled:opacity-50"
+            >
+              {txtExporting ? '导出中...' : `导出 (${selectedCharIds.size})`}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+            选一个角色 → 1 个 .txt<br/>选多个 → 打包成 zip 下载<br/>
+            <span className="text-slate-400">txt 只用于阅读，设备互通请用「轻量同步」</span>
+          </p>
+          {characters.length === 0 ? (
+            <div className="text-center text-[11px] text-slate-400 py-4">还没有角色</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">选择角色 ({selectedCharIds.size}/{characters.length})</span>
+                <button
+                  onClick={selectAllChars}
+                  className="text-[10px] text-emerald-500 font-bold px-2 py-1 rounded-full hover:bg-emerald-50"
+                >
+                  全选
+                </button>
+              </div>
+              <div className="space-y-2 -mx-1 px-1">
+                {characters.map(char => {
+                  const isSelected = selectedCharIds.has(char.id);
+                  return (
+                    <button
+                      key={char.id}
+                      onClick={() => toggleCharSelection(char.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border transition-all ${isSelected ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100 hover:border-slate-200'}`}
+                    >
+                      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 bg-white'}`}>
+                        {isSelected && (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={3} className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </div>
+                      {char.avatar ? (
+                        <img src={char.avatar} alt={char.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-xs font-bold shrink-0">
+                          {char.name.slice(0, 1)}
+                        </div>
+                      )}
+                      <span className="text-sm font-bold text-slate-700 flex-1 text-left truncate">{char.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </Modal>
       <Modal
         isOpen={!!presetPendingDelete}

@@ -181,10 +181,7 @@ const Settings: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
-  // 生图 provider 切换（决定显示哪个 provider 的字段卡）— 3 档，删了 mcd
-  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai'>(
-    apiConfig.imageGenProvider || 'openai'
-  );
+  // 暮色 2026-07-15：删 localImageGenProvider — 生图只走 OpenAI 兼容
   const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
@@ -417,12 +414,7 @@ const Settings: React.FC = () => {
   // 暮色 2026-07-14：图床独立卡的状态消息
   const [imagebedStatusMsg, setImagebedStatusMsg] = useState('');
   const [imageStatusMsg, setImageStatusMsg] = useState('');
-  // ComfyUI 本地状态：测试连接结果
-  const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [comfyuiTestMsg, setComfyuiTestMsg] = useState('');
-  const [comfyuiModelList, setComfyuiModelList] = useState<string[]>([]);
-  // 暮色 2026-07-04 要求：checkpoint 列表可手动选哪个（写实 RV / 动漫 Pony）
-  const [localComfyuiSelectedModel, setLocalComfyuiSelectedModel] = useState<string>('');
+  // 暮色 2026-07-15：删 4 个 ComfyUI state — 生图只走 OpenAI 兼容
   const [ttsModelStatusMsg, setTtsModelStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -445,8 +437,7 @@ const Settings: React.FC = () => {
       setLocalImageUrl(apiConfig.imageBaseUrl || '');
       setLocalImageKey(apiConfig.imageApiKey || '');
       setLocalImageModel(apiConfig.imageModel || '');
-      setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
-      setLocalComfyuiSelectedModel(apiConfig.imageModel || '');
+      // 暮色 2026-07-15：删 setLocalImageGenProvider / setLocalComfyuiSelectedModel
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -495,12 +486,11 @@ const Settings: React.FC = () => {
       setLocalImageUrl(c.imageBaseUrl || '');
       setLocalImageKey(c.imageApiKey || '');
       setLocalImageModel(c.imageModel || '');
-      setLocalImageGenProvider(c.imageGenProvider || 'openai');
+      // 暮色 2026-07-15：删 setLocalImageGenProvider / imageGenProvider 字段
       updateApiConfig({
         imageBaseUrl: c.imageBaseUrl || '',
         imageApiKey: c.imageApiKey || '',
         imageModel: c.imageModel || '',
-        imageGenProvider: c.imageGenProvider || 'openai',
       });
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
@@ -592,7 +582,7 @@ const Settings: React.FC = () => {
           imageBaseUrl: localImageUrl,
           imageApiKey: localImageKey,
           imageModel: localImageModel,
-          imageGenProvider: localImageGenProvider,
+          // 暮色 2026-07-15：删 imageGenProvider — 永远 openai
         };
         break;
       // 暮色 2026-07-14：图床预设只保存图床字段（imgbb + R2），不掺生图字段
@@ -683,21 +673,7 @@ const Settings: React.FC = () => {
     setTimeout(() => setImagebedStatusMsg(''), 2000);
   };
 
-// 生图配置：分两个 provider 独立保存（暮色 2026-07-03 要求"在哪个页面保存就用哪个"）
-// ComfyUI 写死本地桥地址 + 占位 key。model 由用户在 UI 上选（暮色 2026-07-04 要求 RV/Pony 可切换）
-const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
-const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
-
-// ComfyUI checkpoint 短标签：暮色 2026-07-12 要求"留个缩写和风格就行，全文件名太长"
-// 与 ApiQuickFloat.tsx 同款，避免两边不一致
-const checkpointLabel = (filename: string): string => {
-  const lower = filename.toLowerCase();
-  if (lower.includes('realistic')) return '📷 RV · 写实';
-  if (lower.includes('pony')) return '🎨 Pony · 动漫';
-  const base = filename.replace('.safetensors', '').replace(/[_-]+/g, ' ').trim();
-  const short = base.length > 16 ? base.slice(0, 16) + '…' : base;
-  return `📦 ${short}`;
-};
+// 生图配置：暮色 2026-07-15 简化 — 只剩 OpenAI 兼容，删 ComfyUI/NAI 相关常量 + helper
 
 const handleSaveOpenaiImageApi = () => {
     updateApiConfig({
@@ -705,54 +681,14 @@ const handleSaveOpenaiImageApi = () => {
       imageBaseUrl: localImageUrl,
       imageApiKey: localImageKey,
       imageModel: localImageModel,
-      imageGenProvider: 'openai',
+      imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai'|'comfyui'|'nai' 防以后再加回
     });
     setImageStatusMsg('OpenAI 兼容配置已保存，当前生效');
     setTimeout(() => setImageStatusMsg(''), 2500);
   };
 
-const handleSaveComfyuiImageApi = () => {
-    // 暮色 2026-07-04 要求：用户在 checkpoint 列表里选哪个就用哪个（不再写死 RV）
-    // 暮色 2026-07-12 防御性：删 comfyuiModelList[0] fallback，没选过 model 不让保存
-    // （按钮已 disable，但这里再守一道，防御 setImageStatusMsg 后 user 强行 click）
-    const selectedModel = localComfyuiSelectedModel;
-    if (!selectedModel || !comfyuiModelList.includes(selectedModel)) {
-      setImageStatusMsg('请先点 [测试连接] 拉取 checkpoint 列表并选一个');
-      return;
-    }
-    updateApiConfig({
-      ...apiConfig,
-      imageBaseUrl: COMFYUI_FIXED_URL,
-      imageApiKey: COMFYUI_FIXED_KEY,
-      imageModel: selectedModel,
-      imageGenProvider: 'comfyui',
-    });
-    setImageStatusMsg(`ComfyUI 本地已启用 · ${checkpointLabel(selectedModel)}`);
-    setTimeout(() => setImageStatusMsg(''), 2500);
-  };
-
-// 测试 ComfyUI 连接（fetch /v1/models，不弹 model picker，只显示状态）
-const testComfyuiConnection = async () => {
-    setComfyuiTestState('testing');
-    setComfyuiTestMsg('正在连接...');
-    try {
-      const response = await fetch(`${COMFYUI_FIXED_URL}/models`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${COMFYUI_FIXED_KEY}` },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await safeResponseJson(response);
-      const list = data.data || data.models || [];
-      const modelIds: string[] = (Array.isArray(list) ? list : []).map((m: any) => m.id || m).filter(Boolean);
-      setComfyuiModelList(modelIds);
-      setComfyuiTestState('ok');
-      setComfyuiTestMsg(`在线 · ${modelIds.length} 个 checkpoint`);
-    } catch (e: any) {
-      setComfyuiTestState('fail');
-      setComfyuiTestMsg(`连接失败：${e?.message || '未知错误'} · 请先在 Mac 上 ~/ComfyUI/start_comfyui.sh 启 ComfyUI`);
-      setComfyuiModelList([]);
-    }
-  };
+// 暮色 2026-07-15：删 handleSaveComfyuiImageApi + testComfyuiConnection + checkpointLabel + COMFYUI_FIXED_URL/KEY
+//  — 生图只走 OpenAI 兼容
 
 const handleSaveTts = () => {
   updateApiConfig({
@@ -1676,7 +1612,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 7 - 生图服务 */}
-        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="OpenAI 兼容 / ComfyUI 本地" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
+        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="OpenAI 兼容" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
           statusText={apiConfig.imageBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-4">
@@ -1688,46 +1624,15 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
                 </div>
-                {localImageGenProvider === 'openai' && (
-                  <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                      保存为预设
-                  </button>
-                )}
+                <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    保存为预设
+                </button>
             </div>
-            {/* 顶部：当前使用状态条（暮色 2026-07-03 要求"保存即用"+ 一眼看出在用哪个） */}
-            <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-4 py-2.5 mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🎨</span>
-                <span className="text-[11px] text-slate-500">当前使用：</span>
-                <span className="text-[12px] font-bold text-purple-700">
-                  {apiConfig.imageGenProvider === 'comfyui' ? 'ComfyUI 本地' : apiConfig.imageGenProvider === 'nai' ? 'NAI（占位未生效）' : 'OpenAI 兼容'}
-                </span>
-              </div>
-              {apiConfig.imageGenProvider === 'comfyui' && (
-                /* 暮色 2026-07-12：之前硬编码 "Realistic Vision V6.0 B1"，不管选了什么都不变。改成读 apiConfig.imageModel 动态显示（短标签） */
-                <span className="text-[10px] text-slate-500 font-medium">
-                  {apiConfig.imageModel ? checkpointLabel(apiConfig.imageModel) : '未选 checkpoint'}
-                </span>
-              )}
-              {apiConfig.imageGenProvider === 'openai' && apiConfig.imageModel && (
-                <span className="text-[10px] text-slate-400 font-mono">{apiConfig.imageModel}</span>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。选择服务商后填写配置，<span className="font-semibold text-slate-500">在哪个页面点保存就用哪个</span>。</p>
-            {/* 生图服务商切换（3 档，删 MCD） */}
-            <div className="group mb-4">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图服务商</label>
-              <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
-                <button type="button" onClick={() => setLocalImageGenProvider('openai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'openai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>OpenAI 兼容</button>
-                <button type="button" onClick={() => setLocalImageGenProvider('comfyui')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'comfyui' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>ComfyUI 本地</button>
-                <button type="button" onClick={() => setLocalImageGenProvider('nai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'nai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>NAI</button>
-              </div>
-            </div>
+            {/* 暮色 2026-07-15：删"当前使用"状态条 + "AI 需要画图..."说明 + 3 档服务商切换 — 只剩 OpenAI 兼容，section 标题已经说"生图"+ subtitle "OpenAI 兼容"，全冗余 */}
 
-            {/* === OpenAI 兼容卡片 === */}
-            {localImageGenProvider === 'openai' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+            {/* === OpenAI 兼容卡片（暮色 2026-07-15：永远是 OpenAI，去掉条件渲染） === */}
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     <span className="font-semibold text-slate-600">OpenAI 兼容</span> — 支持 DALL·E 3 / GPT Image / Gemini 3 Pro Image / 各类 OpenAI 协议中转站。
                     URL 例：<span className="font-mono text-slate-600">https://api.openai.com/v1</span>，Model 例：<span className="font-mono text-slate-600">dall-e-3</span>。
@@ -1769,79 +1674,8 @@ const handleSaveTts = () => {
                 </div>
                 <button onClick={handleSaveOpenaiImageApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-2">{imageStatusMsg || '保存 OpenAI 配置'}</button>
               </div>
-            )}
 
-            {/* === ComfyUI 本地卡片（暮色 2026-07-03 要求简化：只显示 [测试连接] [保存]） === */}
-            {localImageGenProvider === 'comfyui' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-emerald-50/80 border border-emerald-200/50 px-4 py-3">
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    <span className="font-semibold text-emerald-700">ComfyUI 本地</span> — 走本地 ComfyUI 桥（OpenAI 协议兼容）。后台已写死 URL / Key / 默认模型，点下方"启用"即生效。先在 Mac 上 <span className="font-mono">~/ComfyUI/start_comfyui.sh</span> 启 ComfyUI。
-                  </p>
-                </div>
-                {/* 状态条：在线/离线 + checkpoint 列表 */}
-                <div className={`rounded-2xl border px-4 py-3 ${comfyuiTestState === 'ok' ? 'bg-emerald-50/50 border-emerald-200' : comfyuiTestState === 'fail' ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50/50 border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className={`text-[11px] font-bold ${comfyuiTestState === 'ok' ? 'text-emerald-700' : comfyuiTestState === 'fail' ? 'text-rose-700' : 'text-slate-500'}`}>
-                      {comfyuiTestState === 'ok' ? '✓ 在线' : comfyuiTestState === 'fail' ? '✗ 离线' : comfyuiTestState === 'testing' ? '⏳ 测试中...' : '○ 未测试'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">{COMFYUI_FIXED_URL}</span>
-                  </div>
-                  {comfyuiTestMsg && <p className="text-[10px] text-slate-500 mb-1.5">{comfyuiTestMsg}</p>}
-                  {/* checkpoint 列表：暮色 2026-07-04 要求 RV/Pony 可手动选哪个出图 */}
-                  {comfyuiModelList.length > 0 && (
-                    <div className="mt-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">选择 checkpoint 出图</label>
-                      <div className="flex flex-col gap-1.5">
-                        {comfyuiModelList.map(m => {
-                          // 暮色 2026-07-12 防御性：不再 fallback 到 comfyuiModelList[0]，
-                          // 否则列表会自动高亮第一个，用户以为选过了实际没选
-                          const isSelected = localComfyuiSelectedModel === m;
-                          return (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => setLocalComfyuiSelectedModel(m)}
-                              className={`w-full text-left px-3 py-2 rounded-xl text-[11px] flex items-center gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600 active:bg-slate-50'}`}
-                            >
-                              <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`}>
-                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                              </span>
-                              {/* 暮色 2026-07-12：全文件名太长，改短标签（与 ApiQuickFloat 同款 helper） */}
-                              <span className="truncate">{checkpointLabel(m)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={testComfyuiConnection} disabled={comfyuiTestState === 'testing'} className="flex-1 py-3 rounded-2xl font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 active:scale-95 transition-all disabled:opacity-50">
-                    {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
-                  </button>
-                  {/* 暮色 2026-07-12：未选 model 时 disable 启用按钮，避免再次出现'以为选了 RV 实际存了 Pony' */}
-                  <button
-                    onClick={handleSaveComfyuiImageApi}
-                    disabled={comfyuiTestState !== 'ok' || !localComfyuiSelectedModel || !comfyuiModelList.includes(localComfyuiSelectedModel)}
-                    className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {imageStatusMsg || '启用 ComfyUI 本地'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* === NAI 卡片（占位） === */}
-            {localImageGenProvider === 'nai' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-amber-50/80 border border-amber-200/50 px-4 py-3">
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    <span className="font-semibold text-amber-700">NAI（NovelAI）</span> — 占位中。NovelAI 也提供 OpenAI 兼容 API（<span className="font-mono">https://image.novelai.net</span>），后续会做专用分支。目前切换到这里不会生效，<span className="font-semibold">请用 OpenAI 兼容页填 NAI 的 URL</span>。
-                  </p>
-                </div>
-              </div>
-            )}
+            {/* 暮色 2026-07-15：删 ComfyUI 本地卡片 + NAI 卡片 — 生图只走 OpenAI 兼容 */}
         </section>
         </SettingsSection>
 

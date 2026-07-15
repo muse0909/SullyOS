@@ -588,17 +588,7 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
-                  {/* 顶部：当前使用状态条（暮色 2026-07-03 要求"保存即用"） */}
-                  <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-3 py-2 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm">🎨</span>
-                      <span className="text-[10px] text-slate-500">当前使用：</span>
-                      <span className="text-[11px] font-bold text-purple-700 truncate">OpenAI 兼容</span>
-                    </div>
-                    {apiConfig.imageModel && (
-                      <span className="text-[9px] text-slate-400 font-mono truncate max-w-[120px]">{apiConfig.imageModel}</span>
-                    )}
-                  </div>
+                  {/* 暮色 2026-07-15：删顶部"当前使用"状态条 — 只有一个 provider，section 标题已经说"生图"+ subtitle "OpenAI 兼容"，冗余 */}
                   {/* 暮色 2026-07-15：删 3 档服务商切换，只剩 OpenAI 兼容 */}
 
                   {/* === OpenAI 卡片（暮色 2026-07-15：永远是 OpenAI，去掉条件渲染） === */}

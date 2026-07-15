@@ -1356,95 +1356,39 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 if (!imageUrl && _imgData0?.b64_json) {
                     const _mime = imgData?.output_format === 'jpeg' ? 'image/jpeg' : 'image/png';
-                    const _r2 = (effectiveApi as any);
-                    const _hasR2 = _r2?.r2AccountId && _r2?.r2AccessKeyId && _r2?.r2SecretAccessKey && _r2?.r2Bucket && _r2?.r2PublicUrl;
-
-                    // 优先 R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
-                    // 因为 Vercel Hobby 函数 10 秒超时，把 b64 整个 POST 过去 R2 容易超
-                    // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
-                    // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
-                    // 暮色 2026-07-14：每个降级路径都 addToast 标注，让暮色知道图最终走 R2 / imgbb / base64 哪条路
-                    if (_hasR2) {
-                        console.log('🎨 [ImageGen] 站点返 b64_json，开始两阶段上传到 Cloudflare R2...');
+                    // 暮色 2026-07-15：图床顺序调整 — R2 已放弃（试过一直卡 Vercel 函数 10 秒超时）
+                    // 默认直接走 imgbb。imgbb 成功不弹 toast（正常流程不该打扰）；
+                    // imgbb 失败时用 'bell' 样式 toast 提示"已用 base64 临时存储，会占 localStorage 空间"
+                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
+                    if (_imgbbKey) {
+                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 imgbb...');
                         try {
-                            const _presignRes = await fetch('/api/r2-presign', {
+                            const _formData = new FormData();
+                            _formData.append('image', _imgData0.b64_json);
+                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    mime: _mime,
-                                    prefix: 'image',
-                                    accountId: _r2.r2AccountId,
-                                    accessKeyId: _r2.r2AccessKeyId,
-                                    secretAccessKey: _r2.r2SecretAccessKey,
-                                    bucket: _r2.r2Bucket,
-                                    publicUrl: _r2.r2PublicUrl,
-                                }),
+                                body: _formData,
                             });
-                            const _presignData = await _presignRes.json().catch(() => ({} as any));
-                            if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
-                                const _errMsg = _presignData?.error?.message || `HTTP ${_presignRes.status}`;
-                                console.warn('🎨 [ImageGen] 拿 presigned URL 失败:', _errMsg);
-                                addToast(`R2 签名失败（${_errMsg}），降级 imgbb`, 'error');
-                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                            const _uploadData = await _uploadRes.json().catch(() => ({} as any));
+                            if (_uploadRes.ok && _uploadData?.data?.url) {
+                                imageUrl = _uploadData.data.url;
+                                console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
+                                // imgbb 成功：不弹 toast，正常流程不该打扰
                             } else {
-                                // 阶段2：浏览器 PUT 直传 R2（绕开 Vercel function 10 秒限制）
-                                const _bin = atob(_imgData0.b64_json);
-                                const _bytes = new Uint8Array(_bin.length);
-                                for (let i = 0; i < _bin.length; i++) _bytes[i] = _bin.charCodeAt(i);
-                                const _putRes = await fetch(_presignData.presignedUrl, {
-                                    method: 'PUT',
-                                    headers: { 'Content-Type': _mime },
-                                    body: _bytes,
-                                });
-                                if (_putRes.ok) {
-                                    imageUrl = _presignData.publicUrl;
-                                    console.log('🎨 [ImageGen] b64 已上传到 R2, url =', imageUrl);
-                                    addToast('🎨 生图已存 R2', 'success');
-                                } else {
-                                    const _putText = await _putRes.text().catch(() => '');
-                                    console.warn('🎨 [ImageGen] R2 PUT 失败，临时用 data URL 兜底:', _putRes.status, _putText);
-                                    addToast(`R2 上传失败 (${_putRes.status})，降级 imgbb`, 'error');
-                                    imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
-                                }
+                                console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
+                                addToast('图床失败，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             }
                         } catch (uploadErr: any) {
-                            console.warn('🎨 [ImageGen] R2 上传异常，临时用 data URL 兜底:', uploadErr?.message);
-                            addToast(`R2 异常（${uploadErr?.message || '网络'}），降级 imgbb`, 'error');
+                            console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                            addToast('图床失败，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     } else {
-                        // 回退到 imgbb（会压缩，但比 data URL 好）
-                        const _imgbbKey = _r2?.imgbbApiKey;
-                        if (_imgbbKey) {
-                            console.log('🎨 [ImageGen] 站点返 b64_json，R2 未配置，回退到 imgbb...');
-                            try {
-                                const _formData = new FormData();
-                                _formData.append('image', _imgData0.b64_json);
-                                const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
-                                    method: 'POST',
-                                    body: _formData,
-                                });
-                                const _uploadData = await _uploadRes.json().catch(() => ({} as any));
-                                if (_uploadRes.ok && _uploadData?.data?.url) {
-                                    imageUrl = _uploadData.data.url;
-                                    console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
-                                    addToast('🖼️ R2 失败，imgbb 兜底成功', 'info');
-                                } else {
-                                    console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
-                                    addToast('图床全失败，已降级 base64（卡浏览器风险！）', 'error');
-                                    imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
-                                }
-                            } catch (uploadErr: any) {
-                                console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
-                                addToast('图床全失败，已降级 base64（卡浏览器风险！）', 'error');
-                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
-                            }
-                        } else {
-                            // R2 + imgbb 都没配：data URL 兜底
-                            console.warn('🎨 [ImageGen] 站点返 b64_json 但 R2 + imgbb 都未配置，用 data URL 兜底。建议在 API 卡片配 R2 凭证以获得不压缩的永久 URL。');
-                            addToast('未配图床，已用 base64 临时存（卡浏览器风险）', 'info');
-                            imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
-                        }
+                        // imgbb 没配：data URL 兜底
+                        console.warn('🎨 [ImageGen] 站点返 b64_json 但 imgbb 未配置，用 data URL 兜底。建议在 API 卡片配 imgbb 凭证以获得永久 URL。');
+                        addToast('未配图床，生图已用 base64 临时存储（占 localStorage 空间）', 'bell');
+                        imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                     }
                 }
 

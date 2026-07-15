@@ -1884,10 +1884,11 @@ const handleSaveTts = () => {
             )}
             <div className="space-y-4">
               {/* imgbb 子区块 */}
-              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+              <div className="rounded-2xl bg-emerald-50/60 border border-emerald-200/50 px-4 py-3">
                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                  <span className="font-semibold text-slate-600">imgbb</span> — 免费图床公开 API，跨域天然支持。
-                  缺点是免费版会自动压缩图片，截图字小一点的会糊。<span className="text-amber-600">不推荐用，保留作回退</span>。
+                  <span className="font-semibold text-emerald-700">imgbb</span> — 免费图床公开 API，跨域天然支持。
+                  当前主图床（发图 / 生图默认走这个）。缺点是免费版会自动压缩图片，截图字小一点的会糊。
+                  <span className="text-slate-400">注意：imgbb 对香港/部分 IP 段会触发 CloudFlare 风控（code 103），换 🇯🇵 日本节点一般可解。</span>
                 </p>
               </div>
               <VisibleKeyInput
@@ -1900,11 +1901,12 @@ const handleSaveTts = () => {
                 hint="配置后发图自动上传图床转 URL，解决卡顿"
                 className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
               />
-              {/* R2 子区块 */}
-              <div className="pt-3 mt-2 border-t border-slate-200/60">
+              {/* R2 子区块 — 暮色 2026-07-15：已废弃（试过一直卡 Vercel 函数 10 秒超时），代码已不再调用
+                  字段保留以备后用（比如以后想换别的 R2 调用方式或自建后端） */}
+              <div className="pt-3 mt-2 border-t border-slate-200/60 opacity-60">
                 <div className="flex items-center gap-1.5 mb-2 pl-1">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Cloudflare R2</span>
-                  <span className="text-[9px] text-slate-300">（推荐 · 不压缩原图）</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest line-through">Cloudflare R2</span>
+                  <span className="text-[9px] text-amber-600">（已废弃 · 试过卡 Vercel 10 秒超时 · 字段保留以备后用）</span>
                 </div>
                 <div className="space-y-2.5">
                   <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>

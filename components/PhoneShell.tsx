@@ -50,6 +50,8 @@ import { isIOSStandaloneWebApp } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import ApiQuickFloat from './os/ApiQuickFloat';
+// 暮色 2026-07-15：'bell' 类型 toast 用的铃铛图标
+import { Bell as BellIcon } from '@phosphor-icons/react';
 
 
 /*
@@ -484,14 +486,27 @@ const PhoneShell: React.FC = () => {
     <ApiQuickFloat />
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
-              {toasts.map(toast => (
-                 <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
-                     {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
-                     {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
-                     {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
-                     <span className="text-xs font-bold text-slate-800 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
-                 </div>
-              ))}
+              {toasts.map(toast => {
+                  // 暮色 2026-07-15：'bell' 类型是"重要但不阻塞"的提示
+                  // 走专门的铃铛胶囊样式（浅马卡龙 + 居中大圆角）— 跟普通圆点 toast 视觉区分
+                  // 触发场景：图床失败已用 base64 兜底（提醒占 localStorage 空间）等
+                  if (toast.type === 'bell') {
+                      return (
+                          <div key={toast.id} className="animate-fade-in bg-gradient-to-r from-amber-50/95 to-emerald-50/95 backdrop-blur-xl px-5 py-3.5 rounded-full shadow-xl border border-amber-200/40 flex items-center gap-3 max-w-[88%] ring-1 ring-white/30">
+                              <BellIcon size={20} weight="fill" className="text-amber-500 shrink-0" />
+                              <span className="text-xs font-medium text-slate-700 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
+                          </div>
+                      );
+                  }
+                  return (
+                      <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
+                          {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
+                          {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
+                          {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
+                          <span className="text-xs font-bold text-slate-800 whitespace-normal break-words text-center leading-snug">{toast.message}</span>
+                      </div>
+                  );
+              })}
            </div>
        </div>
 

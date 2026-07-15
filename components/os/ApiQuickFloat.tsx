@@ -177,7 +177,7 @@ const ApiQuickFloat: React.FC = () => {
   const [showImageKey, setShowImageKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
 
-  const [openSection, setOpenSection] = useState<QuickPresetKind>('main');
+  const [openSection, setOpenSection] = useState<QuickPresetKind | null>(null);
 
   const [showMainModelPicker, setShowMainModelPicker] = useState(false);
   const [showImageModelPicker, setShowImageModelPicker] = useState(false);
@@ -255,8 +255,8 @@ const ApiQuickFloat: React.FC = () => {
       dragRef.current.moved = false;
       return;
     }
-    // 不重置 openSection：保留用户上次选择，关闭再开还是同一个 section 展开
-    // （之前 setOpenSection(null) 会强制全部折叠，造成"折叠→展开"的视觉跳变）
+    // 暮色 2026-07-15：每次点 WiFi 球都重置 openSection=null — 浮窗始终折叠（不让上次打开的 section 残留）
+    setOpenSection(null);
     setShowMainModelPicker(false);
     setShowImageModelPicker(false);
     setShowVisionModelPicker(false);

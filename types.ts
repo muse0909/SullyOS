@@ -1082,7 +1082,9 @@ export interface UserProfile {
 export interface Toast {
     id: string;
     message: string;
-    type: 'success' | 'error' | 'info';
+    // 暮色 2026-07-15：加 'bell' 类型 — 重要提示用铃铛胶囊样式（浅马卡龙背景 + 橙色铃铛）
+    // 跟普通 info/error 区分开，触发"提醒占空间"那种需要用户注意但不阻塞的提示
+    type: 'success' | 'error' | 'info' | 'bell';
 }
 
 export interface XhsStockImage {
@@ -1572,6 +1574,8 @@ export interface Emoji {
 export interface FullBackupData {
     timestamp: number;
     version: number;
+    /** 备份模式 — 导入时用这个判断合并策略（text_only → 合并；full → 整库替换） */
+    backupMode?: 'text_only' | 'media_only' | 'full';
     theme?: OSTheme;
     apiConfig?: APIConfig;
     apiPresets?: ApiPreset[];

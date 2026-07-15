@@ -255,6 +255,10 @@ interface OSContextType {
   consumeDirectEntry: () => boolean;
   // 收藏定位：点击收藏页"定位到聊天"时调，Chat 页面 mount/激活时 consume 决定 scroll/highlight
   consumePendingHighlightMessageId: () => string | null;
+  // 暮色 2026-07-15：搜索抽屉内"点结果跳到聊天" — Chat 已在前台时复用 highlight 机制
+  // 只设 ref + counter，不切角色/不切 app（jumpToMessage 那条路径只在跨 app/跨角色时用）
+  requestHighlightMessage: (messageId: string) => void;
+  highlightRequestId: number;
   // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮触发
   // → 回 WeChat 联系人列表 + 切到发现 tab
   requestOpenDiscoverTab: () => void;
@@ -600,6 +604,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // 用 ref + trigger counter 双重机制：ref 防止重复 trigger，counter 让 WeChat 能用 useEffect 监听
   const pendingDiscoverTabRef = useRef(false);
   const [discoverTabRequestId, setDiscoverTabRequestId] = useState(0);
+
+  // 暮色 2026-07-15：搜索抽屉点结果跳到聊天 — 复用 highlight 机制的"trigger counter"
+  // Chat 已在聊天页时不能再用 jumpToMessage（它会 setActiveCharacterId 触发不必要 effect），
+  // 单独走这条路：只设 pendingHighlightMessageIdRef + 自增 counter，让 Chat 重新 consume
+  const [highlightRequestId, setHighlightRequestId] = useState(0);
 
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
@@ -2137,7 +2146,20 @@ if (!isVisible || !isChattingWithThisChar) {
           if (mode === 'full') {
               storesToProcess = allStores; // Include everything
           } else if (mode === 'text_only') {
-              storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
+              // 轻量同步：只打包文字+记忆+基础数据，不打包任何图片/美化 store
+              // 明确不带：themes（聊天气泡背景图）、emojis/emoji_categories（表情包）、
+              //   assets（资源池）、gallery（相册）、journal_stickers（日记贴纸）、
+              //   social_posts（Spark 社交）、xhs_stock（小红书股票图）、
+              //   pixel_home_assets/layouts（像素房间图）
+              storesToProcess = [
+                  'characters', 'messages', 'user_profile',
+                  'diaries', 'tasks', 'anniversaries', 'room_todos', 'room_notes',
+                  'groups', 'courses', 'games', 'worldbooks', 'novels', 'songs',
+                  'bank_transactions', 'bank_data', 'xhs_activities',
+                  'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
+                  'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+                  'daily_schedule', 'memory_batches',
+              ];
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
@@ -2152,27 +2174,31 @@ if (!isVisible || !isChattingWithThisChar) {
           const backupData: Partial<FullBackupData> = {
               timestamp: Date.now(),
               version: 3,
+              // 备份模式 — 导入时判断合并策略
+              backupMode: mode,
               apiConfig: (mode === 'text_only' || mode === 'full') ? apiConfig : undefined,
               apiPresets: (mode === 'text_only' || mode === 'full') ? apiPresets : undefined,
               availableModels: (mode === 'text_only' || mode === 'full') ? availableModels : undefined,
               realtimeConfig: (mode === 'text_only' || mode === 'full') ? realtimeConfig : undefined,
               memoryPalaceConfig: (mode === 'text_only' || mode === 'full') ? memoryPalaceConfig : undefined,
-              theme: theme, // Include theme in all modes (text/media)
-              customIcons: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
+              // theme/customIcons/appearancePresets 都是美化数据，text_only 不带
+              // → 导入时这些字段不存在 → 本机美化完全保留
+              theme: undefined,
+              customIcons: (mode === 'media_only' || mode === 'full')
                   ? { ...customIcons }
                   : undefined,
-              appearancePresets: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
+              appearancePresets: (mode === 'media_only' || mode === 'full')
                   ? appearancePresets.map(p => ({ ...p }))
                   : undefined,
               
-              socialAppData: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? {
+              socialAppData: (mode === 'media_only' || mode === 'full') ? {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
                   userProfile: sparkSocialProfile ? JSON.parse(sparkSocialProfile) : undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
                   userBg: sparkUserBg || undefined
               } : undefined,
-              
-              roomCustomAssets: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
+
+              roomCustomAssets: (mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
               mediaAssets: [], // Initialize mediaAssets array
 
               // Study Room settings (localStorage)
@@ -2848,6 +2874,11 @@ if (!isVisible || !isChattingWithThisChar) {
     pendingHighlightMessageIdRef.current = null;
     return id;
   };
+  // 暮色 2026-07-15：搜索抽屉跳到聊天专用 — 不切角色不切 app，只触发 Chat 重新 consume
+  const requestHighlightMessage = (messageId: string) => {
+    pendingHighlightMessageIdRef.current = messageId;
+    setHighlightRequestId((n) => n + 1);
+  };
 
   const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
     setSuspendedCall(info);
@@ -2968,6 +2999,8 @@ if (!isVisible || !isChattingWithThisChar) {
     consumeDirectEntry,
     jumpToMessage,
     consumePendingHighlightMessageId,
+    requestHighlightMessage,
+    highlightRequestId,
     requestOpenDiscoverTab,
     consumePendingDiscoverTab,
     discoverTabRequestId

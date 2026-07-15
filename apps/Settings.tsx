@@ -7,13 +7,14 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import { DB } from '../utils/db';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import type { ApiPreset, APIConfig } from '../types';
+import type { ApiPreset, APIConfig, Message, CharacterProfile } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
@@ -161,6 +162,7 @@ const Settings: React.FC = () => {
       realtimeConfig, updateRealtimeConfig, // 实时感知配置
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
+      characters, // 聊天记录 (.txt) 导出用 — 列角色选择
   } = useOS();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -179,10 +181,7 @@ const Settings: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
-  // 生图 provider 切换（决定显示哪个 provider 的字段卡）— 3 档，删了 mcd
-  const [localImageGenProvider, setLocalImageGenProvider] = useState<'openai' | 'comfyui' | 'nai'>(
-    apiConfig.imageGenProvider || 'openai'
-  );
+  // 暮色 2026-07-15：删 localImageGenProvider — 生图只走 OpenAI 兼容
   const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
@@ -221,6 +220,10 @@ const Settings: React.FC = () => {
   const [showModelModal, setShowModelModal] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
+  // 聊天记录 (.txt) 导出 — 选角色 → 单 txt / 多 zip
+  const [showChatTxtModal, setShowChatTxtModal] = useState(false);
+  const [selectedCharIds, setSelectedCharIds] = useState<Set<string>>(new Set());
+  const [txtExporting, setTxtExporting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
@@ -411,12 +414,7 @@ const Settings: React.FC = () => {
   // 暮色 2026-07-14：图床独立卡的状态消息
   const [imagebedStatusMsg, setImagebedStatusMsg] = useState('');
   const [imageStatusMsg, setImageStatusMsg] = useState('');
-  // ComfyUI 本地状态：测试连接结果
-  const [comfyuiTestState, setComfyuiTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [comfyuiTestMsg, setComfyuiTestMsg] = useState('');
-  const [comfyuiModelList, setComfyuiModelList] = useState<string[]>([]);
-  // 暮色 2026-07-04 要求：checkpoint 列表可手动选哪个（写实 RV / 动漫 Pony）
-  const [localComfyuiSelectedModel, setLocalComfyuiSelectedModel] = useState<string>('');
+  // 暮色 2026-07-15：删 4 个 ComfyUI state — 生图只走 OpenAI 兼容
   const [ttsModelStatusMsg, setTtsModelStatusMsg] = useState('');
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -439,8 +437,7 @@ const Settings: React.FC = () => {
       setLocalImageUrl(apiConfig.imageBaseUrl || '');
       setLocalImageKey(apiConfig.imageApiKey || '');
       setLocalImageModel(apiConfig.imageModel || '');
-      setLocalImageGenProvider(apiConfig.imageGenProvider || 'openai');
-      setLocalComfyuiSelectedModel(apiConfig.imageModel || '');
+      // 暮色 2026-07-15：删 setLocalImageGenProvider / setLocalComfyuiSelectedModel
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -489,12 +486,11 @@ const Settings: React.FC = () => {
       setLocalImageUrl(c.imageBaseUrl || '');
       setLocalImageKey(c.imageApiKey || '');
       setLocalImageModel(c.imageModel || '');
-      setLocalImageGenProvider(c.imageGenProvider || 'openai');
+      // 暮色 2026-07-15：删 setLocalImageGenProvider / imageGenProvider 字段
       updateApiConfig({
         imageBaseUrl: c.imageBaseUrl || '',
         imageApiKey: c.imageApiKey || '',
         imageModel: c.imageModel || '',
-        imageGenProvider: c.imageGenProvider || 'openai',
       });
       addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
@@ -586,7 +582,7 @@ const Settings: React.FC = () => {
           imageBaseUrl: localImageUrl,
           imageApiKey: localImageKey,
           imageModel: localImageModel,
-          imageGenProvider: localImageGenProvider,
+          // 暮色 2026-07-15：删 imageGenProvider — 永远 openai
         };
         break;
       // 暮色 2026-07-14：图床预设只保存图床字段（imgbb + R2），不掺生图字段
@@ -677,21 +673,7 @@ const Settings: React.FC = () => {
     setTimeout(() => setImagebedStatusMsg(''), 2000);
   };
 
-// 生图配置：分两个 provider 独立保存（暮色 2026-07-03 要求"在哪个页面保存就用哪个"）
-// ComfyUI 写死本地桥地址 + 占位 key。model 由用户在 UI 上选（暮色 2026-07-04 要求 RV/Pony 可切换）
-const COMFYUI_FIXED_URL = 'http://127.0.0.1:8190/v1';
-const COMFYUI_FIXED_KEY = 'comfyui-local-bridge';
-
-// ComfyUI checkpoint 短标签：暮色 2026-07-12 要求"留个缩写和风格就行，全文件名太长"
-// 与 ApiQuickFloat.tsx 同款，避免两边不一致
-const checkpointLabel = (filename: string): string => {
-  const lower = filename.toLowerCase();
-  if (lower.includes('realistic')) return '📷 RV · 写实';
-  if (lower.includes('pony')) return '🎨 Pony · 动漫';
-  const base = filename.replace('.safetensors', '').replace(/[_-]+/g, ' ').trim();
-  const short = base.length > 16 ? base.slice(0, 16) + '…' : base;
-  return `📦 ${short}`;
-};
+// 生图配置：暮色 2026-07-15 简化 — 只剩 OpenAI 兼容，删 ComfyUI/NAI 相关常量 + helper
 
 const handleSaveOpenaiImageApi = () => {
     updateApiConfig({
@@ -699,54 +681,14 @@ const handleSaveOpenaiImageApi = () => {
       imageBaseUrl: localImageUrl,
       imageApiKey: localImageKey,
       imageModel: localImageModel,
-      imageGenProvider: 'openai',
+      imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai'|'comfyui'|'nai' 防以后再加回
     });
     setImageStatusMsg('OpenAI 兼容配置已保存，当前生效');
     setTimeout(() => setImageStatusMsg(''), 2500);
   };
 
-const handleSaveComfyuiImageApi = () => {
-    // 暮色 2026-07-04 要求：用户在 checkpoint 列表里选哪个就用哪个（不再写死 RV）
-    // 暮色 2026-07-12 防御性：删 comfyuiModelList[0] fallback，没选过 model 不让保存
-    // （按钮已 disable，但这里再守一道，防御 setImageStatusMsg 后 user 强行 click）
-    const selectedModel = localComfyuiSelectedModel;
-    if (!selectedModel || !comfyuiModelList.includes(selectedModel)) {
-      setImageStatusMsg('请先点 [测试连接] 拉取 checkpoint 列表并选一个');
-      return;
-    }
-    updateApiConfig({
-      ...apiConfig,
-      imageBaseUrl: COMFYUI_FIXED_URL,
-      imageApiKey: COMFYUI_FIXED_KEY,
-      imageModel: selectedModel,
-      imageGenProvider: 'comfyui',
-    });
-    setImageStatusMsg(`ComfyUI 本地已启用 · ${checkpointLabel(selectedModel)}`);
-    setTimeout(() => setImageStatusMsg(''), 2500);
-  };
-
-// 测试 ComfyUI 连接（fetch /v1/models，不弹 model picker，只显示状态）
-const testComfyuiConnection = async () => {
-    setComfyuiTestState('testing');
-    setComfyuiTestMsg('正在连接...');
-    try {
-      const response = await fetch(`${COMFYUI_FIXED_URL}/models`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${COMFYUI_FIXED_KEY}` },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await safeResponseJson(response);
-      const list = data.data || data.models || [];
-      const modelIds: string[] = (Array.isArray(list) ? list : []).map((m: any) => m.id || m).filter(Boolean);
-      setComfyuiModelList(modelIds);
-      setComfyuiTestState('ok');
-      setComfyuiTestMsg(`在线 · ${modelIds.length} 个 checkpoint`);
-    } catch (e: any) {
-      setComfyuiTestState('fail');
-      setComfyuiTestMsg(`连接失败：${e?.message || '未知错误'} · 请先在 Mac 上 ~/ComfyUI/start_comfyui.sh 启 ComfyUI`);
-      setComfyuiModelList([]);
-    }
-  };
+// 暮色 2026-07-15：删 handleSaveComfyuiImageApi + testComfyuiConnection + checkpointLabel + COMFYUI_FIXED_URL/KEY
+//  — 生图只走 OpenAI 兼容
 
 const handleSaveTts = () => {
   updateApiConfig({
@@ -857,6 +799,170 @@ const handleSaveTts = () => {
           }
       } catch (e: any) {
           addToast(e.message, 'error');
+      }
+  };
+
+  // ─── 聊天记录 (.txt) 导出 ──────────────────────────────────
+  // txt 只用于保留/阅读聊天记录，不参与设备间互通（互通走轻量同步）
+  const openChatTxtModal = () => {
+      setSelectedCharIds(new Set());
+      setShowChatTxtModal(true);
+  };
+  const toggleCharSelection = (charId: string) => {
+      setSelectedCharIds(prev => {
+          const next = new Set(prev);
+          if (next.has(charId)) next.delete(charId);
+          else next.add(charId);
+          return next;
+      });
+  };
+  const selectAllChars = () => {
+      setSelectedCharIds(new Set(characters.map(c => c.id)));
+  };
+  const handleExportChatTxt = async () => {
+      if (selectedCharIds.size === 0) {
+          addToast('请至少选一个角色', 'error');
+          return;
+      }
+      setTxtExporting(true);
+      try {
+          const targets = characters.filter(c => selectedCharIds.has(c.id));
+          // 先把所有角色的消息取出来（DB.getMessagesByCharId 是 async）
+          const charData: Array<{ char: CharacterProfile, messages: Message[] }> = [];
+          for (const char of targets) {
+              const all = await DB.getMessagesByCharId(char.id);
+              // 过滤 system + group 消息（群聊消息走 getGroupMessages，不在单人聊天里）
+              const messages = all
+                  .filter(m => m.type !== 'system')
+                  .sort((a, b) => a.timestamp - b.timestamp);
+              charData.push({ char, messages });
+          }
+
+          const formatDate = (ts: number) => {
+              const d = new Date(ts);
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          };
+          const formatHM = (ts: number) => {
+              const d = new Date(ts);
+              return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+          };
+          // content 总是 string — 非文本消息打标记
+          const contentLabel = (m: Message) => {
+              if (m.type === 'image') return '[图片]';
+              if (m.type === 'emoji') return '[表情]';
+              if (m.type === 'voice') return '[语音]';
+              if (m.type === 'social_card') return '[社交卡片]';
+              if (m.type === 'xhs_card') return '[小红书卡片]';
+              if (m.type === 'score_card') return '[账单卡片]';
+              if (m.type === 'music_card') return '[音乐卡片]';
+              if (m.type === 'mcd_card') return '[MCD 卡片]';
+              if (m.type === 'chat_forward') return '[转发]';
+              if (m.type === 'html_card') return '[卡片]';
+              if (m.type === 'transfer') return '[转账]';
+              if (m.type === 'interaction') return '[互动]';
+              return m.content || '';
+          };
+          const buildTxt = ({ char, messages }: { char: CharacterProfile, messages: Message[] }) => {
+              const lines: string[] = [];
+              lines.push(`【${char.name} 的聊天记录】`);
+              lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
+              lines.push(`共 ${messages.length} 条消息`);
+              lines.push('');
+
+              // 按日期分组
+              let lastDate = '';
+              for (const m of messages) {
+                  const dStr = formatDate(m.timestamp);
+                  if (dStr !== lastDate) {
+                      lines.push(`—— ${dStr} ——`);
+                      lastDate = dStr;
+                  }
+                  lines.push(formatHM(m.timestamp));
+                  const who = m.role === 'user' ? '我' : char.name;
+                  const content = contentLabel(m);
+                  lines.push(`${who}: ${content}`);
+                  lines.push('');
+              }
+              return lines.join('\n');
+          };
+
+          const fileBaseName = `Sully_ChatLog_${new Date().toISOString().slice(0, 10)}`;
+          const safeName = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_');
+
+          if (targets.length === 1) {
+              // 单角色 → 直接下载 .txt
+              const cd = charData[0];
+              const txt = buildTxt(cd);
+              const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+              const fileName = `${fileBaseName}_${safeName(cd.char.name)}.txt`;
+              if (Capacitor.isNativePlatform()) {
+                  const reader = new FileReader();
+                  reader.readAsDataURL(blob);
+                  reader.onloadend = async () => {
+                      const base64data = String(reader.result);
+                      try {
+                          await Filesystem.writeFile({ path: fileName, data: base64data, directory: Directory.Cache });
+                          const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                          await Share.share({ title: '聊天记录', files: [uriResult.uri] });
+                      } catch (e: any) {
+                          console.error(e);
+                          addToast('保存文件失败', 'error');
+                      }
+                  };
+              } else {
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = fileName;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+              }
+              addToast(`已导出 ${cd.char.name} 的聊天记录`, 'success');
+          } else {
+              // 多角色 → 打包 zip
+              const JSZipMod = await import('jszip');
+              const JSZipCtor = (JSZipMod as any).default || JSZipMod;
+              const zip = new JSZipCtor();
+              for (const cd of charData) {
+                  const txt = buildTxt(cd);
+                  zip.file(`${safeName(cd.char.name)}.txt`, txt);
+              }
+              const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+              const fileName = `${fileBaseName}.zip`;
+              if (Capacitor.isNativePlatform()) {
+                  const reader = new FileReader();
+                  reader.readAsDataURL(content);
+                  reader.onloadend = async () => {
+                      const base64data = String(reader.result);
+                      try {
+                          await Filesystem.writeFile({ path: fileName, data: base64data, directory: Directory.Cache });
+                          const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                          await Share.share({ title: '聊天记录', files: [uriResult.uri] });
+                      } catch (e: any) {
+                          console.error(e);
+                          addToast('保存文件失败', 'error');
+                      }
+                  };
+              } else {
+                  const url = URL.createObjectURL(content);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = fileName;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+              }
+              addToast(`已导出 ${targets.length} 个角色的聊天记录`, 'success');
+          }
+          setShowChatTxtModal(false);
+      } catch (e: any) {
+          console.error(e);
+          addToast(`导出失败: ${e.message}`, 'error');
+      } finally {
+          setTxtExporting(false);
       }
   };
 
@@ -1182,14 +1288,18 @@ const handleSaveTts = () => {
               </button>
             </div>
             <p className="text-[10px] text-slate-400 px-1 mb-3 text-center">以下为分步导出，适合低配设备分次备份</p>
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               <button onClick={() => handleExport('text_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
                 <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
                 <span>纯文字备份</span>
               </button>
-               <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
+              <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                 <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
                 <span>媒体与美化素材</span>
+              </button>
+              <button onClick={openChatTxtModal} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 cursor-pointer hover:bg-emerald-50 hover:border-emerald-200">
+                <div className="p-2 bg-emerald-50 rounded-full text-emerald-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
+                <span>聊天记录 (.txt)</span>
               </button>
             </div>
             <div className="grid grid-cols-1 gap-3 mb-4">
@@ -1203,6 +1313,7 @@ const handleSaveTts = () => {
                 • <b>整合导出</b>: 一次性导出所有数据（文字+媒体），适合设备性能充足的用户。<br/>
                 • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
                 • <b>媒体与美化素材</b>: 导出相册、表情包、聊天图片、头像、主题气泡、壁纸、图标等图片资源和外观配置。<br/>
+                • <b>聊天记录 (.txt)</b>: 只导出聊天文字为纯文本格式，可选多个角色。txt 只用于保留/阅读。<br/>
                 • 兼容旧版 JSON 备份文件的导入。
             </p>
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
@@ -1273,13 +1384,14 @@ const handleSaveTts = () => {
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => handleCloudBackup('text_only')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-                    <span>备份到云端</span><span className="text-[9px] text-slate-400">(纯文字)</span>
+                    <span>备份到云端</span><span className="text-[9px] text-slate-400">(轻量同步)</span>
                   </button>
                   <button onClick={() => handleCloudBackup('full')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-violet-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
                     <span>备份到云端</span><span className="text-[9px] text-slate-400">(完整)</span>
                   </button>
                 </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed text-center px-1">• <b>轻量同步</b>：只上传文字+记忆+API，体积通常 1-3MB，导入时按 ID 合并，不会覆盖本机美化。<br/>• <b>完整</b>：所有数据（含图片/美化），体积较大但可整机恢复。</p>
                 <button onClick={handleOpenCloudRestore} className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-emerald-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
                   从云端恢复
@@ -1500,7 +1612,7 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 7 - 生图服务 */}
-        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="OpenAI 兼容 / ComfyUI 本地" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
+        <SettingsSection id="imageGen" icon="🎨" title="生图服务" subtitle="OpenAI 兼容" isOpen={openSectionId === 'imageGen'} onToggle={toggleSection}
           statusText={apiConfig.imageBaseUrl ? '' : '未配置'} statusColor="text-slate-400">
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-4">
@@ -1512,46 +1624,15 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立生图配置</h2>
                 </div>
-                {localImageGenProvider === 'openai' && (
-                  <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                      保存为预设
-                  </button>
-                )}
+                <button onClick={() => { setPresetSaveKind('image'); setShowPresetModal(true); }} className="text-[10px] bg-purple-100 text-purple-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    保存为预设
+                </button>
             </div>
-            {/* 顶部：当前使用状态条（暮色 2026-07-03 要求"保存即用"+ 一眼看出在用哪个） */}
-            <div className="rounded-2xl bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50 border border-purple-200/60 px-4 py-2.5 mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🎨</span>
-                <span className="text-[11px] text-slate-500">当前使用：</span>
-                <span className="text-[12px] font-bold text-purple-700">
-                  {apiConfig.imageGenProvider === 'comfyui' ? 'ComfyUI 本地' : apiConfig.imageGenProvider === 'nai' ? 'NAI（占位未生效）' : 'OpenAI 兼容'}
-                </span>
-              </div>
-              {apiConfig.imageGenProvider === 'comfyui' && (
-                /* 暮色 2026-07-12：之前硬编码 "Realistic Vision V6.0 B1"，不管选了什么都不变。改成读 apiConfig.imageModel 动态显示（短标签） */
-                <span className="text-[10px] text-slate-500 font-medium">
-                  {apiConfig.imageModel ? checkpointLabel(apiConfig.imageModel) : '未选 checkpoint'}
-                </span>
-              )}
-              {apiConfig.imageGenProvider === 'openai' && apiConfig.imageModel && (
-                <span className="text-[10px] text-slate-400 font-mono">{apiConfig.imageModel}</span>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">AI 需要画图时将调用此通道。选择服务商后填写配置，<span className="font-semibold text-slate-500">在哪个页面点保存就用哪个</span>。</p>
-            {/* 生图服务商切换（3 档，删 MCD） */}
-            <div className="group mb-4">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">生图服务商</label>
-              <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
-                <button type="button" onClick={() => setLocalImageGenProvider('openai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'openai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>OpenAI 兼容</button>
-                <button type="button" onClick={() => setLocalImageGenProvider('comfyui')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'comfyui' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>ComfyUI 本地</button>
-                <button type="button" onClick={() => setLocalImageGenProvider('nai')} className={`flex-1 py-2 rounded-lg text-[11px] font-semibold transition-all ${localImageGenProvider === 'nai' ? 'bg-primary text-white shadow-sm' : 'text-slate-600 active:bg-white/60'}`}>NAI</button>
-              </div>
-            </div>
+            {/* 暮色 2026-07-15：删"当前使用"状态条 + "AI 需要画图..."说明 + 3 档服务商切换 — 只剩 OpenAI 兼容，section 标题已经说"生图"+ subtitle "OpenAI 兼容"，全冗余 */}
 
-            {/* === OpenAI 兼容卡片 === */}
-            {localImageGenProvider === 'openai' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+            {/* === OpenAI 兼容卡片（暮色 2026-07-15：永远是 OpenAI，去掉条件渲染） === */}
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     <span className="font-semibold text-slate-600">OpenAI 兼容</span> — 支持 DALL·E 3 / GPT Image / Gemini 3 Pro Image / 各类 OpenAI 协议中转站。
                     URL 例：<span className="font-mono text-slate-600">https://api.openai.com/v1</span>，Model 例：<span className="font-mono text-slate-600">dall-e-3</span>。
@@ -1593,79 +1674,8 @@ const handleSaveTts = () => {
                 </div>
                 <button onClick={handleSaveOpenaiImageApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-2">{imageStatusMsg || '保存 OpenAI 配置'}</button>
               </div>
-            )}
 
-            {/* === ComfyUI 本地卡片（暮色 2026-07-03 要求简化：只显示 [测试连接] [保存]） === */}
-            {localImageGenProvider === 'comfyui' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-emerald-50/80 border border-emerald-200/50 px-4 py-3">
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    <span className="font-semibold text-emerald-700">ComfyUI 本地</span> — 走本地 ComfyUI 桥（OpenAI 协议兼容）。后台已写死 URL / Key / 默认模型，点下方"启用"即生效。先在 Mac 上 <span className="font-mono">~/ComfyUI/start_comfyui.sh</span> 启 ComfyUI。
-                  </p>
-                </div>
-                {/* 状态条：在线/离线 + checkpoint 列表 */}
-                <div className={`rounded-2xl border px-4 py-3 ${comfyuiTestState === 'ok' ? 'bg-emerald-50/50 border-emerald-200' : comfyuiTestState === 'fail' ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50/50 border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className={`text-[11px] font-bold ${comfyuiTestState === 'ok' ? 'text-emerald-700' : comfyuiTestState === 'fail' ? 'text-rose-700' : 'text-slate-500'}`}>
-                      {comfyuiTestState === 'ok' ? '✓ 在线' : comfyuiTestState === 'fail' ? '✗ 离线' : comfyuiTestState === 'testing' ? '⏳ 测试中...' : '○ 未测试'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">{COMFYUI_FIXED_URL}</span>
-                  </div>
-                  {comfyuiTestMsg && <p className="text-[10px] text-slate-500 mb-1.5">{comfyuiTestMsg}</p>}
-                  {/* checkpoint 列表：暮色 2026-07-04 要求 RV/Pony 可手动选哪个出图 */}
-                  {comfyuiModelList.length > 0 && (
-                    <div className="mt-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">选择 checkpoint 出图</label>
-                      <div className="flex flex-col gap-1.5">
-                        {comfyuiModelList.map(m => {
-                          // 暮色 2026-07-12 防御性：不再 fallback 到 comfyuiModelList[0]，
-                          // 否则列表会自动高亮第一个，用户以为选过了实际没选
-                          const isSelected = localComfyuiSelectedModel === m;
-                          return (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => setLocalComfyuiSelectedModel(m)}
-                              className={`w-full text-left px-3 py-2 rounded-xl text-[11px] flex items-center gap-2 transition-all ${isSelected ? 'bg-emerald-200/70 border border-emerald-400 text-emerald-800 font-bold' : 'bg-white border border-slate-200 text-slate-600 active:bg-slate-50'}`}
-                            >
-                              <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 flex items-center justify-center ${isSelected ? 'border-emerald-600 bg-emerald-500' : 'border-slate-300'}`}>
-                                {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                              </span>
-                              {/* 暮色 2026-07-12：全文件名太长，改短标签（与 ApiQuickFloat 同款 helper） */}
-                              <span className="truncate">{checkpointLabel(m)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={testComfyuiConnection} disabled={comfyuiTestState === 'testing'} className="flex-1 py-3 rounded-2xl font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 active:scale-95 transition-all disabled:opacity-50">
-                    {comfyuiTestState === 'testing' ? '测试中...' : '测试连接'}
-                  </button>
-                  {/* 暮色 2026-07-12：未选 model 时 disable 启用按钮，避免再次出现'以为选了 RV 实际存了 Pony' */}
-                  <button
-                    onClick={handleSaveComfyuiImageApi}
-                    disabled={comfyuiTestState !== 'ok' || !localComfyuiSelectedModel || !comfyuiModelList.includes(localComfyuiSelectedModel)}
-                    className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {imageStatusMsg || '启用 ComfyUI 本地'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* === NAI 卡片（占位） === */}
-            {localImageGenProvider === 'nai' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl bg-amber-50/80 border border-amber-200/50 px-4 py-3">
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    <span className="font-semibold text-amber-700">NAI（NovelAI）</span> — 占位中。NovelAI 也提供 OpenAI 兼容 API（<span className="font-mono">https://image.novelai.net</span>），后续会做专用分支。目前切换到这里不会生效，<span className="font-semibold">请用 OpenAI 兼容页填 NAI 的 URL</span>。
-                  </p>
-                </div>
-              </div>
-            )}
+            {/* 暮色 2026-07-15：删 ComfyUI 本地卡片 + NAI 卡片 — 生图只走 OpenAI 兼容 */}
         </section>
         </SettingsSection>
 
@@ -1708,10 +1718,11 @@ const handleSaveTts = () => {
             )}
             <div className="space-y-4">
               {/* imgbb 子区块 */}
-              <div className="rounded-2xl bg-slate-50/80 border border-slate-200/50 px-4 py-3">
+              <div className="rounded-2xl bg-emerald-50/60 border border-emerald-200/50 px-4 py-3">
                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                  <span className="font-semibold text-slate-600">imgbb</span> — 免费图床公开 API，跨域天然支持。
-                  缺点是免费版会自动压缩图片，截图字小一点的会糊。<span className="text-amber-600">不推荐用，保留作回退</span>。
+                  <span className="font-semibold text-emerald-700">imgbb</span> — 免费图床公开 API，跨域天然支持。
+                  当前主图床（发图 / 生图默认走这个）。缺点是免费版会自动压缩图片，截图字小一点的会糊。
+                  <span className="text-slate-400">注意：imgbb 对香港/部分 IP 段会触发 CloudFlare 风控（code 103），换 🇯🇵 日本节点一般可解。</span>
                 </p>
               </div>
               <VisibleKeyInput
@@ -1724,11 +1735,12 @@ const handleSaveTts = () => {
                 hint="配置后发图自动上传图床转 URL，解决卡顿"
                 className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
               />
-              {/* R2 子区块 */}
-              <div className="pt-3 mt-2 border-t border-slate-200/60">
+              {/* R2 子区块 — 暮色 2026-07-15：已废弃（试过一直卡 Vercel 函数 10 秒超时），代码已不再调用
+                  字段保留以备后用（比如以后想换别的 R2 调用方式或自建后端） */}
+              <div className="pt-3 mt-2 border-t border-slate-200/60 opacity-60">
                 <div className="flex items-center gap-1.5 mb-2 pl-1">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Cloudflare R2</span>
-                  <span className="text-[9px] text-slate-300">（推荐 · 不压缩原图）</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest line-through">Cloudflare R2</span>
+                  <span className="text-[9px] text-amber-600">（已废弃 · 试过卡 Vercel 10 秒超时 · 字段保留以备后用）</span>
                 </div>
                 <div className="space-y-2.5">
                   <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
@@ -1986,15 +1998,96 @@ const handleSaveTts = () => {
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
           <div className="space-y-3"><label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label><input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." /><p className="text-[11px] text-slate-400 px-1">当前所有 API 配置都会一起保存。</p></div>
       </Modal>
+
+      {/* 聊天记录 (.txt) 导出 — 角色多选弹窗 */}
+      <Modal
+        isOpen={showChatTxtModal}
+        title="聊天记录 (.txt) 导出"
+        onClose={() => !txtExporting && setShowChatTxtModal(false)}
+        footer={
+          <div className="flex gap-3 w-full">
+            <button
+              onClick={() => setShowChatTxtModal(false)}
+              disabled={txtExporting}
+              className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleExportChatTxt}
+              disabled={txtExporting || selectedCharIds.size === 0}
+              className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-full active:scale-95 transition-all disabled:opacity-50"
+            >
+              {txtExporting ? '导出中...' : `导出 (${selectedCharIds.size})`}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+            选一个角色 → 1 个 .txt<br/>选多个 → 打包成 zip 下载<br/>
+            <span className="text-slate-400">txt 只用于阅读/保留</span>
+          </p>
+          {characters.length === 0 ? (
+            <div className="text-center text-[11px] text-slate-400 py-4">还没有角色</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">选择角色 ({selectedCharIds.size}/{characters.length})</span>
+                <button
+                  onClick={selectAllChars}
+                  className="text-[10px] text-emerald-500 font-bold px-2 py-1 rounded-full hover:bg-emerald-50"
+                >
+                  全选
+                </button>
+              </div>
+              <div className="space-y-2 -mx-1 px-1">
+                {characters.map(char => {
+                  const isSelected = selectedCharIds.has(char.id);
+                  return (
+                    <button
+                      key={char.id}
+                      onClick={() => toggleCharSelection(char.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border transition-all ${isSelected ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100 hover:border-slate-200'}`}
+                    >
+                      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 bg-white'}`}>
+                        {isSelected && (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={3} className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </div>
+                      {char.avatar ? (
+                        <img src={char.avatar} alt={char.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-xs font-bold shrink-0">
+                          {char.name.slice(0, 1)}
+                        </div>
+                      )}
+                      <span className="text-sm font-bold text-slate-700 flex-1 text-left truncate">{char.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
       <Modal
         isOpen={!!presetPendingDelete}
         title="删除预设"
         onClose={() => setPresetPendingDelete(null)}
         footer={
-        <div className="flex gap-3">
+        // 暮色 2026-07-15：像左边"消息操作"弹窗那样两列平铺（不是 flex 挤一起）
+        // grid grid-cols-2 分两列 + 按钮 w-full 填满列 = 平铺
+        // 之前漏了 w-full，按钮宽度 = 文字宽度，渲染成两个小圆挤在列左
+        // Modal.tsx:34 把 footer 包在 flex 容器里，grid 是 flex 子项默认不撑满
+        // 所以 grid 容器本身也得 w-full，否则 flex 容器不知道给 grid 多少宽度
+        // 参考 ChatModals.tsx:435 消息操作弹窗（那个在 body 里，body 是 block 默认撑满）
+        <div className="w-full grid grid-cols-2 gap-3">
           <button
             onClick={() => setPresetPendingDelete(null)}
-            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+            className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
           >
             取消
           </button>
@@ -2005,7 +2098,7 @@ const handleSaveTts = () => {
               addToast(`已删除预设: ${presetPendingDelete.name}`, 'success');
               setPresetPendingDelete(null);
             }}
-            className="flex-1 py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+            className="w-full py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
           >
             删除
           </button>

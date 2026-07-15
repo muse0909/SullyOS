@@ -75,7 +75,7 @@ npm run dev
 - **Neon PostgreSQL** - 云端数据库备份，怕你把浏览器炸了
 - **Capacitor** - 可打包成安卓 App，真·手机模拟器
 - **Phosphor Icons** - 图标库，看起来挺酷的
-- **Netlify Functions + Blobs** - 边缘计算和文件存储
+- **Vercel Functions + Cloudflare R2** - 云函数和文件存储
 - **AMSG** - 消息系统，不知道是什么缩写但反正有用
 - **Web Push** - 推送通知，叮叮叮
 - **JSZip** - 压缩文件，导出数据用

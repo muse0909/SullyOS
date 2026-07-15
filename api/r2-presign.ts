@@ -1,10 +1,16 @@
 /**
  * Cloudflare R2 Presigned URL — 自写 SigV4 签名版（去掉 AWS SDK，冷启动 < 100ms）
  *
+ * ⚠️ 暮色 2026-07-15：已废弃 — R2 试过一直卡 Vercel 函数 10 秒超时
+ *    当前图床链路：用户发图 / 生图 → 直接走 imgbb，**不再调用本 endpoint**
+ *    本文件 + Settings.tsx 里的 R2 字段**保留以备后用**（万一以后想换调用方式或自建后端）
+ *    不删除是 git 历史决策的一部分，删了反而看不出当时为什么试过又放弃
+ *
  * 历史背景：
  *   - 2026-07-14 v1: 用 @aws-sdk/s3-request-presigner 签 URL → Vercel function 冷启动 3-5 秒（SDK 包 1MB+）
  *     经常 504 Gateway Timeout（Vercel Hobby 10 秒硬限制），后端接 ~100ms 承诺实际 8-10 秒
- *   - 2026-07-14 v2 (当前): 自己写 SigV4 签名，Node.js 内置 crypto 模块，冷启动 < 100ms
+ *   - 2026-07-14 v2: 自己写 SigV4 签名，Node.js 内置 crypto 模块，冷启动 < 100ms
+ *   - 2026-07-15: 暮色决定弃用 R2，回到 imgbb（详见 changelogs/2026-07-15-imagebed-imgbb-default.md）
  *
  * AWS S3 SigV4 签名规范：https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
  * R2 是 S3 兼容，所以签名逻辑跟 S3 一样；region 固定 'auto'

@@ -10,6 +10,8 @@ interface ChatSearchDrawerProps {
     onClose: () => void;
     activeCharacter: CharacterProfile;
     userName: string;
+    // 暮色 2026-07-15：点结果跳到聊天 — Chat 注入，Drawer 调一下 + 自己关掉
+    onJumpToMessage?: (messageId: string) => void;
 }
 
 const FOLD_PREVIEW_LEN = 60; // 折叠时显示的字数
@@ -29,6 +31,7 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
     onClose,
     activeCharacter,
     userName,
+    onJumpToMessage,
 }) => {
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -200,10 +203,23 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
                                 ? content.slice(0, FOLD_PREVIEW_LEN)
                                 : content;
                             const speakerName = m.role === 'user' ? userName : activeCharacter.name;
+                            // 暮色 2026-07-15：整张卡片可点跳转，展开按钮 stopPropagation 防误触
+                            const handleJump = onJumpToMessage
+                                ? () => onJumpToMessage(String(m.id))
+                                : undefined;
                             return (
                                 <div
                                     key={m.id}
-                                    className="bg-slate-50/80 rounded-2xl px-4 py-3 border border-slate-100/60"
+                                    className={`bg-slate-50/80 rounded-2xl px-4 py-3 border border-slate-100/60 ${onJumpToMessage ? 'cursor-pointer active:scale-[0.99] transition-transform' : ''}`}
+                                    onClick={handleJump}
+                                    role={onJumpToMessage ? 'button' : undefined}
+                                    tabIndex={onJumpToMessage ? 0 : undefined}
+                                    onKeyDown={onJumpToMessage ? (e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            handleJump?.();
+                                        }
+                                    } : undefined}
                                 >
                                     <div className="flex items-baseline justify-between mb-1.5">
                                         <span className="text-[12px] text-slate-500 font-medium">{speakerName}</span>
@@ -216,7 +232,7 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
                                     {isLong && (
                                         <div className="flex justify-center mt-1.5">
                                             <button
-                                                onClick={() => toggleExpand(m.id)}
+                                                onClick={(e) => { e.stopPropagation(); toggleExpand(m.id); }}
                                                 className="w-7 h-7 rounded-full hover:bg-white/80 flex items-center justify-center text-slate-400 active:scale-90 transition-transform"
                                                 title={isExpanded ? '收起' : '展开全部'}
                                             >

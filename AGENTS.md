@@ -23,7 +23,7 @@
 **核心特性：**
 - 角色卡系统（Character）+ 世界书（Worldbook）→ 拼成 LLM prompt
 - 聊天/见面/群聊/电话 走同一个 worker API（云函数）
-- 所有数据 localStorage 持久化（个别 app 走 Netlify Blobs / Neon DB）
+- 所有数据 localStorage 持久化（个别 app 走 Cloudflare R2 / Neon DB）
 - 节日活动系统（情人节、白色情人节、Like520…）
 - 像素房间 / 像素人生 Sim 等小游戏
 
@@ -42,7 +42,7 @@
 | 路由 | 自研（无 react-router，状态机式切换） |
 | 样式 | Tailwind-like 内联 className 为主（**不是**纯 Tailwind 配置文件） |
 | 图标 | `@phosphor-icons/react` |
-| 后端 | Netlify Functions（`api/`、`netlify/`）+ Neon Postgres + Netlify Blobs |
+| 后端 | Vercel Functions（`api/`）+ Neon Postgres + Cloudflare R2 |
 | 实时 | `@rei-standard/amsg-*`（WebSocket 推送） |
 | 推送 | `web-push` |
 
@@ -76,9 +76,8 @@ SullyOS-master/
 │   └── ... 按主题分
 ├── context/                   # React Context（全局状态）
 ├── hooks/                     # 自定义 hooks
-├── api/                       # Netlify Functions（云端 API）
+├── api/                       # Vercel Functions（云端 API）
 ├── server/                    # 本地开发用 Node 服务
-├── netlify/                   # Netlify 配置 + Functions
 ├── scripts/                   # 构建/数据脚本
 ├── notes/                     # 专题调研笔记（背景保活、Minimax T2A…）
 ├── progress.md                # ★ 历史变更日志（2026-03 之前都在这）
@@ -221,7 +220,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 ### 6.3 调试
 - 暮色**不**本地跑 dev——所有调试都靠 Vercel 部署链接
 - 真要本地复现：`npm run dev`，但暮色不这么干
-- 云函数日志看 Netlify dashboard
+- 云函数日志看 Vercel dashboard（`api/` 下的 functions）
 
 ---
 
@@ -280,6 +279,17 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
+| 2026-07-15 | Bell toast 撑大变方形 + 输入框撑大降圆角 + 输入区 padding 缩小 | [`changelogs/2026-07-15-bell-toast-and-input-area-shape.md`](./changelogs/2026-07-15-bell-toast-and-input-area-shape.md) |
+| 2026-07-15 | 聊天图片预览支持单击/双击图片退出 | [`changelogs/2026-07-15-image-preview-click-to-exit.md`](./changelogs/2026-07-15-image-preview-click-to-exit.md) |
+| 2026-07-15 | 朋友圈配图简化为单 toggle + 生图 API 两处都删 ComfyUI/NAI | [`changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md`](./changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md) |
+| 2026-07-15 | 聊天记录搜索 → 跳转定位（点结果滚到那条消息 + 高亮 2 秒） | [`changelogs/2026-07-15-chat-search-jump-to-message.md`](./changelogs/2026-07-15-chat-search-jump-to-message.md) |
+| 2026-07-15 | 备份模式重构 — 轻量同步 + 聊天记录 .txt 导出 | [`changelogs/2026-07-15-backup-lite-and-txt-export.md`](./changelogs/2026-07-15-backup-lite-and-txt-export.md) |
+| 2026-07-15 | 删除预设 Modal 按钮加 w-full — 真正铺开（前面 4 次改 footer 容器漏了按钮） | [`changelogs/2026-07-15-delete-preset-w-full.md`](./changelogs/2026-07-15-delete-preset-w-full.md) |
+| 2026-07-15 | 图床警告文案改版 + 加关闭按钮 + 去掉 truncate | [`changelogs/2026-07-15-image-bed-warning-text-revamp.md`](./changelogs/2026-07-15-image-bed-warning-text-revamp.md) |
+| 2026-07-15 | 图床警告改成推系统消息进聊天流（不是固定 div）+ 顺序：图→警告 | [`changelogs/2026-07-15-image-bed-warning-as-system-message.md`](./changelogs/2026-07-15-image-bed-warning-as-system-message.md) |
+| 2026-07-15 | 删未使用的 Netlify fork 残留（13 文件 + 3 文档 + 2 依赖） | [`changelogs/2026-07-15-netlify-cleanup.md`](./changelogs/2026-07-15-netlify-cleanup.md) |
+| 2026-07-15 | 图床顺序调整 — 弃用 R2，imgbb 作主图床 + 'bell' 提示样式 | [`changelogs/2026-07-15-imagebed-imgbb-default.md`](./changelogs/2026-07-15-imagebed-imgbb-default.md) |
 | 2026-07-13 | 保存图片走 Vercel 代理绕开跨域图床 CORS | [`changelogs/2026-07-13-image-save-proxy.md`](./changelogs/2026-07-13-image-save-proxy.md) |
 | 2026-07-14 | 生图 b64 → Netlify Blobs 自动转永久 URL（解决中转站只返 b64 时的展示问题） | [`changelogs/2026-07-14-image-b64-blob-upload.md`](./changelogs/2026-07-14-image-b64-blob-upload.md) |
 | 2026-07-14 | 图床升级 imgbb → Cloudflare R2（不压缩，截图字清楚）| [`changelogs/2026-07-14-image-b64-blob-upload.md`](./changelogs/2026-07-14-image-b64-blob-upload.md) |

@@ -429,7 +429,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="fixed inset-0 z-[100] bg-slate-900/45 backdrop-blur-[1px]" onClick={() => setIsBuffListExpanded(false)}>
                     <div
                         ref={buffPanelRef}
-                        className="absolute left-1/2 top-1/2 w-[min(88vw,360px)] max-h-[68vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-5 shadow-2xl shadow-slate-900/25 flex flex-col"
+                        className="absolute left-1/2 top-1/2 w-[min(92vw,400px)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/40 bg-white/95 p-5 shadow-2xl shadow-slate-900/25 flex flex-col"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部居中标题：角色名·心声 */}
@@ -475,8 +475,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                                         {INTENSITY_DOTS(buff.intensity)}
                                                     </span>
                                                 </div>
-                                                {/* 正文（不加粗 font-normal，跟日程黄色框字重一致） */}
-                                                <div className="text-[12px] leading-relaxed" style={{ color: style.text }}>
+                                                {/* 正文（不加粗 font-normal，跟日程黄色框字重一致）— 加 max-h + overflow 让超长文本在卡片内滚动，不再溢出弹窗 */}
+                                                <div className="text-[12px] leading-relaxed max-h-[42vh] overflow-y-auto pr-1" style={{ color: style.text }}>
                                                     {getBuffInnerState(buff)}
                                                 </div>
                                             </div>

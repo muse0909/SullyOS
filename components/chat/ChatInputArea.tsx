@@ -278,6 +278,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     // --- 自动撑高：1 行 → 最多 5 行（max-h-40 = 160px，按 32px 行高算 5 行） ---
     const MAX_INPUT_HEIGHT = 160;
+    // 暮色 2026-07-15：撑大判定 — scrollHeight > 40px ≈ 1.3 行（text-[15px] + py-3 + line-height ~24px）
+    const EXPAND_THRESHOLD = 40;
+    const [isExpanded, setIsExpanded] = useState(false);
     useEffect(() => {
         const el = textareaRef.current;
         if (!el) return;
@@ -287,6 +290,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         el.style.height = `${next}px`;
         // 超过 max 时开启滚动
         el.style.overflowY = el.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
+        // 撑大时降圆角（避免 rounded-full 圆得过头），1 行内保持原风格
+        setIsExpanded(el.scrollHeight > EXPAND_THRESHOLD);
     }, [input]);
 
     const isDiscordStyle = inputStyle === 'discord';
@@ -303,22 +308,29 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         : isDiscordStyle
           ? 'w-11 h-11 shrink-0 rounded-full bg-slate-800 flex items-center justify-center text-slate-200 hover:bg-slate-700 transition-colors'
           : 'w-11 h-11 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors';
-    const inputWrapClass =
-        inputStyle === 'rounded'
-            ? 'bg-slate-100 rounded-full'
-            : inputStyle === 'flat'
-              ? 'bg-transparent border-b border-slate-200 rounded-none'
-              : inputStyle === 'wechat'
-                ? 'bg-white border border-slate-200 rounded-full'
-                : inputStyle === 'ios'
-                  ? 'bg-white/80 border border-white/80 shadow-inner rounded-[26px]'
-                  : inputStyle === 'telegram'
-                    ? 'bg-white border border-sky-100 rounded-2xl'
-                    : inputStyle === 'discord'
-                      ? 'bg-slate-800 border border-white/10 rounded-2xl text-white'
-                      : inputStyle === 'pixel'
-                        ? 'bg-[#f8f0e0] border-2 border-[#8f674a] rounded-[4px]'
-                        : 'bg-slate-100 rounded-[24px]';
+    // 暮色 2026-07-15：撑大时降圆角到 rounded-2xl（rounded-full 看着圆得像气球）
+    // flat / pixel 保持原样（rounded-none / rounded-[4px] 本来就不圆）
+    const inputWrapClass = (() => {
+        const base = inputStyle === 'rounded' ? 'bg-slate-100'
+            : inputStyle === 'flat' ? 'bg-transparent border-b border-slate-200'
+            : inputStyle === 'wechat' ? 'bg-white border border-slate-200'
+            : inputStyle === 'ios' ? 'bg-white/80 border border-white/80 shadow-inner'
+            : inputStyle === 'telegram' ? 'bg-white border border-sky-100'
+            : inputStyle === 'discord' ? 'bg-slate-800 border border-white/10 text-white'
+            : inputStyle === 'pixel' ? 'bg-[#f8f0e0] border-2 border-[#8f674a]'
+            : 'bg-slate-100';
+        // 圆角：1-2 行 → 胶囊（rounded-full），3+ 行撑大 → 降到 rounded-2xl (16px)
+        // 暮色 2026-07-15 反馈：之前 1 行 default rounded-[24px] / ios rounded-[26px] 看着像大圆
+        //   1-2 行就应该是胶囊样式，不要那么"大圆"
+        //   撑大时（3+ 行）才降到 rounded-2xl，避免看着像气球
+        // flat / pixel 例外：rounded-none / rounded-[4px] 保持原样
+        const rounding = isExpanded
+            ? (inputStyle === 'flat' || inputStyle === 'pixel' ? '' : 'rounded-2xl')
+            : inputStyle === 'flat' ? 'rounded-none'
+            : inputStyle === 'pixel' ? 'rounded-[4px]'
+            : 'rounded-full';
+        return `${base} ${rounding}`.trim();
+    })();
         const sendButtonClass =
         sendButtonStyle === 'pill'
             ? isPixelStyle
@@ -412,14 +424,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     </div>
 ) : (
 
-                <div className="p-3 px-4 flex gap-3 items-end">
+                <div className="p-2.5 px-2.5 flex gap-1.5 items-end">
                     <button ref={toggleActionsBtnRef} onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
-                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                    <div className={`flex-1 min-w-0 flex items-center transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <button
                             onClick={openFullInput}
-                            className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
+                            className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
                             title="全屏输入"
                             aria-label="全屏输入"
                         >
@@ -436,11 +448,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            className={`flex-1 min-w-0 bg-transparent px-[2px] py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..."
                             style={{ height: 'auto', overflowY: 'hidden' }}
                         />
-                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>

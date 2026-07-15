@@ -28,7 +28,7 @@ import { addFavorite, genFavoriteId, updateFavorite, uploadVoiceFavorite } from 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -44,7 +44,7 @@ const Chat: React.FC = () => {
             // 2 秒后清掉高亮
             setTimeout(() => setHighlightMessageId(null), 2000);
         }
-    }, [activeCharacterId]);
+    }, [activeCharacterId, highlightRequestId]);
 
     // scroll 到目标 message
     // NOTE: deps 只保留 highlightMessageId（不加 messages，否则 React 19 会在评估 deps 时触发 TDZ，
@@ -83,7 +83,12 @@ const Chat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
-    
+
+    // 暮色 2026-07-15：图床失败提示 — 推系统消息进聊天流（[系统: ...] 铃铛胶囊）
+    // 跟 [连接中断: ...] 一样，MessageItem 自动渲染成中间胶囊，留作历史
+    // 不再用 state 也不放固定位置 — 由 pushImageBedWarning 函数统一处理
+    // 触发源：useChatAI（生图）+ handleImageSelect（发图）
+
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
     const [categories, setCategories] = useState<EmojiCategory[]>([]);
@@ -191,6 +196,19 @@ const Chat: React.FC = () => {
     const mcdMiniAppRef = useRef<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>(undefined);
 
     // --- Initialize Hook ---
+    // 暮色 2026-07-15：图床失败/未配图床时调，把警告作为系统消息推入聊天流
+    // MessageItem 会按 [系统: ...] 渲染成铃铛胶囊留在聊天历史里
+    // 跟 [连接中断: ...] 一个模式 (useChatAI.ts:3297)
+    const pushImageBedWarning = useCallback(async (msg: string) => {
+        if (!char?.id || !msg) return;
+        try {
+            await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${msg}]` });
+            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        } catch (e) {
+            console.warn('🖼️ [ImageBed] 推警告系统消息失败:', e);
+        }
+    }, [char?.id]);
+
     const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
@@ -207,6 +225,7 @@ const Chat: React.FC = () => {
         memoryPalaceConfig,
         mcdMiniAppRef,
         updateCharacter,
+        onImageBedWarning: pushImageBedWarning,
     });
 
     // --- Voice TTS for chat messages ---
@@ -1013,86 +1032,56 @@ const Chat: React.FC = () => {
    const handleImageSelect = async (file: File) => {
     try {
         // 暮色 2026-07-14：调高压缩参数（600/0.6 → 1600/0.85）— 之前双重压缩导致截图字小看不清
-        // 配合 Cloudflare R2（不压缩的图床），原图直接上
+        // 暮色 2026-07-15：图床顺序调整 — R2 已放弃（试过一直卡 Vercel 函数 10 秒超时）
+        // 默认直接走 imgbb。imgbb 成功不弹 toast（正常流程不该打扰）；
+        // imgbb 失败时用 'bell' 样式 toast 提示"已用 base64 临时存储，会占 localStorage 空间"
         const base64 = await processImage(file, { maxWidth: 1600, quality: 0.85, forceJpeg: true });
         setShowPanel('none');
 
         const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
-        const r2 = (apiConfig as any);
-        const hasR2 = r2?.r2AccountId && r2?.r2AccessKeyId && r2?.r2SecretAccessKey && r2?.r2Bucket && r2?.r2PublicUrl;
 
-        // 优先 Cloudflare R2（不压缩）— 暮色 2026-07-14：改成两阶段 presigned URL 上传
-        // 阶段1：POST /api/r2-presign 拿签名 URL（~100ms）
-        // 阶段2：浏览器 PUT 直传 R2（不进 Vercel，秒传）
-        // 暮色 2026-07-14：每个降级路径都 addToast 标注，让暮色知道图走 R2 / imgbb / base64 哪条路
-        if (hasR2) {
-            try {
-                const b64 = base64.includes(',') ? base64.split(',')[1] : base64;
-                const _presignRes = await fetch('/api/r2-presign', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        mime: 'image/jpeg',
-                        prefix: 'user',
-                        accountId: r2.r2AccountId,
-                        accessKeyId: r2.r2AccessKeyId,
-                        secretAccessKey: r2.r2SecretAccessKey,
-                        bucket: r2.r2Bucket,
-                        publicUrl: r2.r2PublicUrl,
-                    }),
-                });
-                const _presignData = await _presignRes.json().catch(() => ({} as any));
-                if (!_presignRes.ok || !_presignData?.success || !_presignData?.presignedUrl || !_presignData?.publicUrl) {
-                    addToast('拿上传签名失败，尝试 imgbb 兜底', 'error');
-                } else {
-                    // 阶段2：浏览器 PUT 直传 R2
-                    const _bin = atob(b64);
-                    const _bytes = new Uint8Array(_bin.length);
-                    for (let i = 0; i < _bin.length; i++) _bytes[i] = _bin.charCodeAt(i);
-                    const _putRes = await fetch(_presignData.presignedUrl, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'image/jpeg' },
-                        body: _bytes,
-                    });
-                    if (_putRes.ok) {
-                        addToast('🎨 用户图已存 R2', 'success');
-                        await handleSendText(_presignData.publicUrl, 'image');
-                        return;
-                    }
-                    addToast(`R2 上传失败 (${_putRes.status})，尝试 imgbb 兜底`, 'error');
-                }
-            } catch {
-                addToast('R2 上传失败，尝试 imgbb 兜底', 'error');
-            }
-            // R2 失败不回退到 base64（避免污染 localStorage），继续往下走 imgbb 兜底
-        }
-
-        // 回退到 imgbb（会压缩，但比 base64 好）
+        // 默认走 imgbb（用户发图主图床）
         const imgbbKey = (apiConfig as any)?.imgbbApiKey;
         if (imgbbKey) {
             try {
                 const formData = new FormData();
-                formData.append('image', base64.includes(',') ? base64.split(',')[1] : base64);
+                const _b64Clean = (base64.includes(',') ? base64.split(',')[1] : base64).replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
+                formData.append('image', _b64Clean);
                 const res = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbKey}`, {
                     method: 'POST',
                     body: formData,
                 });
                 const json = await res.json();
                 if (json?.data?.url) {
-                    addToast('🖼️ R2 失败，imgbb 兜底成功', 'info');
+                    // imgbb 成功：不弹 toast，正常发送
                     await handleSendText(json.data.url, 'image');
                     return;
                 }
-                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
+                // imgbb 失败：打印完整错误体，下次排查更快
+                console.warn('🖼️ [ImageBed] imgbb 上传失败:', {
+                    status: res.status,
+                    statusText: res.statusText,
+                    key_preview: imgbbKey.slice(0, 12) + '...',
+                    key_length: imgbbKey.length,
+                    base64_length: base64.length,
+                    base64_cleaned_length: _b64Clean.length,
+                    base64_first_80: _b64Clean.slice(0, 80),
+                    base64_last_40: _b64Clean.slice(-40),
+                    base64_starts_with_data: base64.startsWith('data:'),
+                    image_size_kb: Math.round((_b64Clean.length * 3) / 4 / 1024),
+                    response: json,
+                });
                 await handleSendText(base64, 'image');
-            } catch {
-                addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');
+                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
+            } catch (e: any) {
+                console.warn('🖼️ [ImageBed] imgbb 抛异常:', e?.message || e);
                 await handleSendText(base64, 'image');
+                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
             }
             return;
         }
 
-        // 没配 key：把所有旧的 base64 图片立刻替换成占位图（state + DB同步）
+        // 没配 imgbb key：把所有旧的 base64 图片立刻替换成占位图（state + DB同步）
         const isBase64Img = (c: unknown): c is string =>
             typeof c === 'string' && c.startsWith('data:image');
 
@@ -1112,8 +1101,8 @@ const Chat: React.FC = () => {
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
 
         // ③ 发当前图（base64），这一轮 AI 能识图
-        addToast('⚠️ 未配图床，已发 base64（卡浏览器风险）', 'info');
         await handleSendText(base64, 'image');
+        pushImageBedWarning('未配图床，已用原图发送，占内存，建议看完删除');
 
     } catch (err: any) {
         addToast(err.message || '图片处理失败', 'error');
@@ -2505,6 +2494,10 @@ if (keepN > 0) {
                 onClose={() => setShowChatSearchDrawer(false)}
                 activeCharacter={char}
                 userName={userProfile?.name || '我'}
+                onJumpToMessage={(messageId) => {
+                    setShowChatSearchDrawer(false);
+                    requestHighlightMessage(messageId);
+                }}
             />
 
 
@@ -2730,6 +2723,10 @@ if (keepN > 0) {
                         <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
                     </div>
                 )}
+
+                {/* 暮色 2026-07-15：图床失败提示 — 改成推系统消息进聊天流（[系统: ...] 铃铛胶囊）
+                    跟 [连接中断: ...] 一样，MessageItem 自动渲染成中间胶囊，留作历史
+                    实现见 handleImageSelect + useChatAI.ts onImageBedWarning callback */}
                 
                 <ChatInputArea
                     input={input} setInput={handleInputChange}

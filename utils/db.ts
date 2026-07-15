@@ -1739,6 +1739,9 @@ export const DB = {
           } as CharacterProfile;
       };
 
+      // characters 处理：
+      //   - text_only 模式：按 charId 合并 — 文字字段用 backup，图片/美化字段保留本机
+      //   - full / media_only 模式：维持现状（media_only 是叠加图片，full 是整库替换）
       if (data.characters) {
           if (data.mediaAssets) {
               data.characters = data.characters.map(c => {
@@ -1746,7 +1749,39 @@ export const DB = {
                   return media ? applyMediaToChar(c, media) : c;
               });
           }
-          clearAndAdd(STORE_CHARACTERS, data.characters);
+          if (data.backupMode === 'text_only') {
+              // 轻量同步：merge by charId — 本机有同 id 角色 → 文字字段覆盖，图片保留本机
+              const charStore = tx.objectStore(STORE_CHARACTERS);
+              const req = charStore.getAll();
+              req.onsuccess = () => {
+                  const existing = (req.result || []) as CharacterProfile[];
+                  const existingMap = new Map(existing.map(c => [c.id, c]));
+                  for (const bc of data.characters!) {
+                      const ec = existingMap.get(bc.id);
+                      if (ec) {
+                          // 文字/逻辑字段用 backup；图片/美化字段强制用本机
+                          charStore.put({
+                              ...bc,
+                              avatar: ec.avatar,
+                              chatBackground: ec.chatBackground,
+                              dateBackground: ec.dateBackground,
+                              sprites: ec.sprites,
+                              customDateSprites: ec.customDateSprites,
+                              spriteConfig: ec.spriteConfig,
+                              dateSkinSets: ec.dateSkinSets,
+                              activeSkinSetId: ec.activeSkinSetId,
+                              roomConfig: ec.roomConfig,
+                              bubbleStyle: ec.bubbleStyle,
+                          });
+                      } else {
+                          // 本机没有这个角色 → 用 backup 新建（图片字段可能是空字符串）
+                          charStore.put(bc);
+                      }
+                  }
+              };
+          } else {
+              clearAndAdd(STORE_CHARACTERS, data.characters);
+          }
       } else if (data.mediaAssets && availableStores.includes(STORE_CHARACTERS)) {
           const charStore = tx.objectStore(STORE_CHARACTERS);
           const request = charStore.getAll();
@@ -1762,14 +1797,17 @@ export const DB = {
           };
       }
 
+      // messages 处理：
+      //   - text_only 模式：patch mode（按 id 合并不清空），本设备独有消息保留
+      //   - full / media_only 模式：整库替换
       if (data.messages) {
            if (availableStores.includes(STORE_MESSAGES) && data.messages.length > 0) {
                const store = tx.objectStore(STORE_MESSAGES);
-               const isPatchMode = !data.characters;
+               const isPatchMode = !data.characters || data.backupMode === 'text_only';
                if (!isPatchMode) {
                    store.clear();
                }
-               data.messages.forEach(m => store.put(m)); 
+               data.messages.forEach(m => store.put(m));
            }
       }
       

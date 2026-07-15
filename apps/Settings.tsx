@@ -1352,22 +1352,18 @@ const handleSaveTts = () => {
               </button>
             </div>
             <p className="text-[10px] text-slate-400 px-1 mb-3 text-center">以下为分步导出，适合低配设备分次备份</p>
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               <button onClick={() => handleExport('text_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
                 <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
-                <span>轻量同步</span>
-                <span className="text-[9px] text-slate-400 font-normal">聊天+记忆+API</span>
+                <span>纯文字备份</span>
               </button>
-               <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
+              <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                 <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
                 <span>媒体与美化素材</span>
               </button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 mb-3">
               <button onClick={openChatTxtModal} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 cursor-pointer hover:bg-emerald-50 hover:border-emerald-200">
                 <div className="p-2 bg-emerald-50 rounded-full text-emerald-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
                 <span>聊天记录 (.txt)</span>
-                <span className="text-[9px] text-slate-400 font-normal">只导出聊天文字，多角色可选</span>
               </button>
             </div>
             <div className="grid grid-cols-1 gap-3 mb-4">
@@ -1379,9 +1375,9 @@ const handleSaveTts = () => {
             </div>
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
                 • <b>整合导出</b>: 一次性导出所有数据（文字+媒体），适合设备性能充足的用户。<br/>
-                • <b>轻量同步</b>: 聊天记录 + 记忆 + API 设置。不打包美化和图片，导入时按 ID 合并不会覆盖本机美化。适合手机电脑互导。<br/>
+                • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
                 • <b>媒体与美化素材</b>: 导出相册、表情包、聊天图片、头像、主题气泡、壁纸、图标等图片资源和外观配置。<br/>
-                • <b>聊天记录 (.txt)</b>: 只导出聊天文字为纯文本格式，可选多个角色。txt 只用于保留/阅读，不参与互通。<br/>
+                • <b>聊天记录 (.txt)</b>: 只导出聊天文字为纯文本格式，可选多个角色。txt 只用于保留/阅读。<br/>
                 • 兼容旧版 JSON 备份文件的导入。
             </p>
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
@@ -1452,13 +1448,14 @@ const handleSaveTts = () => {
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => handleCloudBackup('text_only')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-                    <span>备份到云端</span><span className="text-[9px] text-slate-400">(纯文字)</span>
+                    <span>备份到云端</span><span className="text-[9px] text-slate-400">(轻量同步)</span>
                   </button>
                   <button onClick={() => handleCloudBackup('full')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-violet-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
                     <span>备份到云端</span><span className="text-[9px] text-slate-400">(完整)</span>
                   </button>
                 </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed text-center px-1">• <b>轻量同步</b>：只上传文字+记忆+API，体积通常 1-3MB，导入时按 ID 合并，不会覆盖本机美化。<br/>• <b>完整</b>：所有数据（含图片/美化），体积较大但可整机恢复。</p>
                 <button onClick={handleOpenCloudRestore} className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-emerald-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
                   从云端恢复
@@ -2193,7 +2190,7 @@ const handleSaveTts = () => {
         <div className="space-y-3">
           <p className="text-[11px] text-slate-500 leading-relaxed text-center">
             选一个角色 → 1 个 .txt<br/>选多个 → 打包成 zip 下载<br/>
-            <span className="text-slate-400">txt 只用于阅读，设备互通请用「轻量同步」</span>
+            <span className="text-slate-400">txt 只用于阅读/保留</span>
           </p>
           {characters.length === 0 ? (
             <div className="text-center text-[11px] text-slate-400 py-4">还没有角色</div>

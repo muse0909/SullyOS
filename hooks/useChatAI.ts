@@ -1380,18 +1380,18 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 // imgbb 成功：不弹 toast，正常流程不该打扰
                             } else {
                                 console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
-                                onImageBedWarning?.('图床失败，生图已用 base64 临时存储（占 localStorage 空间）');
+                                onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
                                 imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                             }
                         } catch (uploadErr: any) {
                             console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
-                            onImageBedWarning?.('图床失败，生图已用 base64 临时存储（占 localStorage 空间）');
+                            onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }
                     } else {
                         // imgbb 没配：data URL 兜底
                         console.warn('🎨 [ImageGen] 站点返 b64_json 但 imgbb 未配置，用 data URL 兜底。建议在 API 卡片配 imgbb 凭证以获得永久 URL。');
-                        onImageBedWarning?.('未配图床，生图已用 base64 临时存储（占 localStorage 空间）');
+                        onImageBedWarning?.('未配图床，生图已用原图发送，占内存，建议看完删除');
                         imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                     }
                 }

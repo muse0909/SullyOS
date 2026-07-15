@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-15 | 备份模式重构 — 轻量同步 + 聊天记录 .txt 导出 | [`changelogs/2026-07-15-backup-lite-and-txt-export.md`](./changelogs/2026-07-15-backup-lite-and-txt-export.md) |
 | 2026-07-15 | 删未使用的 Netlify fork 残留（13 文件 + 3 文档 + 2 依赖） | [`changelogs/2026-07-15-netlify-cleanup.md`](./changelogs/2026-07-15-netlify-cleanup.md) |
 | 2026-07-13 | 保存图片走 Vercel 代理绕开跨域图床 CORS | [`changelogs/2026-07-13-image-save-proxy.md`](./changelogs/2026-07-13-image-save-proxy.md) |
 | 2026-07-14 | 生图 b64 → Netlify Blobs 自动转永久 URL（解决中转站只返 b64 时的展示问题） | [`changelogs/2026-07-14-image-b64-blob-upload.md`](./changelogs/2026-07-14-image-b64-blob-upload.md) |

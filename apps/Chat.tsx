@@ -84,10 +84,11 @@ const Chat: React.FC = () => {
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
 
-    // 暮色 2026-07-15：图床失败提示 — 不再用顶部 bell toast，改成在 ChatInputArea 上方显示小提示条
-    // 由 useChatAI（生图）+ handleImageSelect（发图）两路触发，input 变化时清空
-    const [imageBedWarning, setImageBedWarning] = useState<string | null>(null);
-    
+    // 暮色 2026-07-15：图床失败提示 — 推系统消息进聊天流（[系统: ...] 铃铛胶囊）
+    // 跟 [连接中断: ...] 一样，MessageItem 自动渲染成中间胶囊，留作历史
+    // 不再用 state 也不放固定位置 — 由 pushImageBedWarning 函数统一处理
+    // 触发源：useChatAI（生图）+ handleImageSelect（发图）
+
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
     const [categories, setCategories] = useState<EmojiCategory[]>([]);
@@ -195,6 +196,19 @@ const Chat: React.FC = () => {
     const mcdMiniAppRef = useRef<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>(undefined);
 
     // --- Initialize Hook ---
+    // 暮色 2026-07-15：图床失败/未配图床时调，把警告作为系统消息推入聊天流
+    // MessageItem 会按 [系统: ...] 渲染成铃铛胶囊留在聊天历史里
+    // 跟 [连接中断: ...] 一个模式 (useChatAI.ts:3297)
+    const pushImageBedWarning = useCallback(async (msg: string) => {
+        if (!char?.id || !msg) return;
+        try {
+            await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${msg}]` });
+            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        } catch (e) {
+            console.warn('🖼️ [ImageBed] 推警告系统消息失败:', e);
+        }
+    }, [char?.id]);
+
     const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
@@ -211,7 +225,7 @@ const Chat: React.FC = () => {
         memoryPalaceConfig,
         mcdMiniAppRef,
         updateCharacter,
-        onImageBedWarning: setImageBedWarning,
+        onImageBedWarning: pushImageBedWarning,
     });
 
     // --- Voice TTS for chat messages ---
@@ -797,8 +811,6 @@ const Chat: React.FC = () => {
     }, [char?.id, (char as any)?.personalityStyle, (char as any)?.ruminationTendency, memoryPalaceConfig?.lightLLM?.baseUrl, memoryPalaceConfig?.lightLLM?.apiKey, apiConfig?.baseUrl, apiConfig?.apiKey]);
 
     const handleInputChange = (val: string) => {
-        // 暮色 2026-07-15：用户开始输入时清空图床失败提示
-        if (imageBedWarning) setImageBedWarning(null);
         setInput(val);
         if (val.trim()) localStorage.setItem(draftKey, val);
         else localStorage.removeItem(draftKey);
@@ -1059,12 +1071,12 @@ const Chat: React.FC = () => {
                     image_size_kb: Math.round((_b64Clean.length * 3) / 4 / 1024),
                     response: json,
                 });
-                setImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
                 await handleSendText(base64, 'image');
+                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
             } catch (e: any) {
                 console.warn('🖼️ [ImageBed] imgbb 抛异常:', e?.message || e);
-                setImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
                 await handleSendText(base64, 'image');
+                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
             }
             return;
         }
@@ -1089,8 +1101,8 @@ const Chat: React.FC = () => {
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
 
         // ③ 发当前图（base64），这一轮 AI 能识图
-        setImageBedWarning('未配图床，已用原图发送，占内存，建议看完删除');
         await handleSendText(base64, 'image');
+        pushImageBedWarning('未配图床，已用原图发送，占内存，建议看完删除');
 
     } catch (err: any) {
         addToast(err.message || '图片处理失败', 'error');
@@ -2708,22 +2720,9 @@ if (keepN > 0) {
                     </div>
                 )}
 
-                {/* 暮色 2026-07-15：图床失败提示条 — 不用顶部 bell toast，改在 ChatInputArea 上方显示
-                    浅马卡龙胶囊 + 铃铛图标 + 文字 + 关闭按钮
-                    新文案格式：[原因]，已用原图发送，占内存，建议看完删除 */}
-                {imageBedWarning && (
-                    <div className="mx-3 mb-2 px-3 py-2 rounded-2xl bg-gradient-to-r from-amber-50/80 to-emerald-50/80 border border-amber-200/40 text-[11px] text-slate-700 flex items-center gap-2 animate-fade-in">
-                        <svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" className="text-amber-500 shrink-0"><path d="M221.8 175.94c-5.55-9.56-13.8-36.61-13.8-71.94a80 80 0 0 0-160 0c0 35.34-8.26 62.38-13.81 71.94A16 16 0 0 0 48 200h40.81a40 40 0 0 0 78.38 0H208a16 16 0 0 0 13.8-24.06ZM128 216a24 24 0 0 1-22.62-16h45.24A24 24 0 0 1 128 216Z"/></svg>
-                        <span className="flex-1 whitespace-normal leading-snug">{imageBedWarning}</span>
-                        <button
-                            onClick={() => setImageBedWarning(null)}
-                            className="shrink-0 text-slate-400 hover:text-slate-600 active:scale-90 transition-transform text-sm leading-none w-5 h-5 flex items-center justify-center"
-                            aria-label="关闭"
-                        >
-                            ×
-                        </button>
-                    </div>
-                )}
+                {/* 暮色 2026-07-15：图床失败提示 — 改成推系统消息进聊天流（[系统: ...] 铃铛胶囊）
+                    跟 [连接中断: ...] 一样，MessageItem 自动渲染成中间胶囊，留作历史
+                    实现见 handleImageSelect + useChatAI.ts onImageBedWarning callback */}
                 
                 <ChatInputArea
                     input={input} setInput={handleInputChange}

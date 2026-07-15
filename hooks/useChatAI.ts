@@ -528,7 +528,7 @@ interface UseChatAIProps {
     mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
     // 暮色 2026-07-15：图床失败时调用，Chat.tsx 在 ChatInputArea 上方显示小提示条
     // （之前用 addToast 'bell' 在顶部弹窗，暮色不喜欢，改成聊天框位置的小提示）
-    onImageBedWarning?: (msg: string | null) => void;
+    onImageBedWarning?: (msg: string) => void;
 }
 
 export const useChatAI = ({

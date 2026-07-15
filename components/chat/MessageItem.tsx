@@ -1179,8 +1179,10 @@ const MessageItem = React.memo(({
                 >
                     <img
     src={lightboxUrl}
-    className="max-w-full max-h-full object-contain"
-    onClick={(e) => e.stopPropagation()}
+    className="max-w-full max-h-full object-contain cursor-pointer"
+    // 暮色 2026-07-15：单击图片 / 双击图片 都退出预览（之前 stopPropagation 是反逻辑 — 用户点图片想退反而关不掉）
+    onClick={() => setLightboxUrl(null)}
+    onDoubleClick={() => setLightboxUrl(null)}
     onError={(e) => {
         const img = e.currentTarget;
         const retried = Number(img.dataset.retry || 0);

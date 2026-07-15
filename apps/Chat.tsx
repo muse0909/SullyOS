@@ -1072,7 +1072,8 @@ const Chat: React.FC = () => {
         if (imgbbKey) {
             try {
                 const formData = new FormData();
-                formData.append('image', base64.includes(',') ? base64.split(',')[1] : base64);
+                const _b64Clean = (base64.includes(',') ? base64.split(',')[1] : base64).replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
+                formData.append('image', _b64Clean);
                 const res = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbKey}`, {
                     method: 'POST',
                     body: formData,
@@ -1089,7 +1090,13 @@ const Chat: React.FC = () => {
                     status: res.status,
                     statusText: res.statusText,
                     key_preview: imgbbKey.slice(0, 12) + '...',
-                    image_size_kb: Math.round((base64.length * 3) / 4 / 1024),
+                    key_length: imgbbKey.length,
+                    base64_length: base64.length,
+                    base64_cleaned_length: _b64Clean.length,
+                    base64_first_80: _b64Clean.slice(0, 80),
+                    base64_last_40: _b64Clean.slice(-40),
+                    base64_starts_with_data: base64.startsWith('data:'),
+                    image_size_kb: Math.round((_b64Clean.length * 3) / 4 / 1024),
                     response: json,
                 });
                 addToast('图床全失败，已发 base64（卡浏览器风险！）', 'error');

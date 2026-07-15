@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
 | 2026-07-15 | Bell toast 撑大变方形 + 输入框撑大降圆角 + 输入区 padding 缩小 | [`changelogs/2026-07-15-bell-toast-and-input-area-shape.md`](./changelogs/2026-07-15-bell-toast-and-input-area-shape.md) |
 | 2026-07-15 | 聊天图片预览支持单击/双击图片退出 | [`changelogs/2026-07-15-image-preview-click-to-exit.md`](./changelogs/2026-07-15-image-preview-click-to-exit.md) |
 | 2026-07-15 | 朋友圈配图简化为单 toggle + 生图 API 两处都删 ComfyUI/NAI | [`changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md`](./changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md) |

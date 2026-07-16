@@ -708,10 +708,16 @@ export const useChatAI = ({
                 })
                 : Promise.resolve(null);
 
-            let [systemPrompt, fullHistory] = await Promise.all([
+            let [systemPromptResult, fullHistory] = await Promise.all([
                 stageT('systemPrompt', systemPromptPromise),
                 stageT('dbHistory', fullHistoryPromise),
             ]);
+            // ⚠️ 2026-07-16 暮色提议：buildSystemPrompt 现在返回 { systemPrompt, dynamicTail }
+            //   - systemPrompt: 稳定段（角色卡+世界书+schedule slotHeader+朋友圈+音乐+工具说明+心声要求）
+            //   - dynamicTail: 每轮必变段（realtime 时间戳 + innerState 意识流）→ 挪到 messages 末尾
+            //   效果：systemPrompt + history 前缀稳定，Anthropic cache 命中率大幅提升
+            let systemPrompt = systemPromptResult.systemPrompt;
+            const dynamicTail = systemPromptResult.dynamicTail;
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -847,6 +853,21 @@ export const useChatAI = ({
             // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
             if (bilingualActive) {
                 fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
+            }
+
+            // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪到 messages 末尾
+            //   - realtimeText: 含时间戳（"2026-07-16 22:00"），每分钟变 → 挪出 system prompt
+            //   - innerState: 每轮 LLM 新生成的意识流独白 → 挪出 system prompt
+            //   放末尾：LLM 仍能读到，Anthropic cache prefix 不会断在 system 段
+            //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
+            if (dynamicTail?.realtimeText && dynamicTail.realtimeText.trim()) {
+                fullMessages.push({ role: 'system', content: dynamicTail.realtimeText.trim() });
+            }
+            if (dynamicTail?.innerState && dynamicTail.innerState.trim()) {
+                fullMessages.push({
+                    role: 'system',
+                    content: `[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`
+                });
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成

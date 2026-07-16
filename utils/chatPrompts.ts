@@ -302,7 +302,9 @@ export const ChatPrompts = {
             ]);
 
         // ── 按原顺序拼接 ──
-        baseSystemPrompt += realtimeText;
+        // ⚠️ 2026-07-16 暮色提议：realtimeText 含时间戳（每分钟变）会破坏 cache
+        //   挪到 messages 末尾单独追加，不再拼进 system prompt
+        // baseSystemPrompt += realtimeText;  // ← 改前
 
         // 2.0.5 朋友圈 awareness（暮色 2026-07-04：让 chat 知道朋友圈发生过什么）
         //     放在实时信息之后、日程之前——跟 330 模式一致（角色设定 → 朋友圈 → 当前情景）
@@ -807,7 +809,17 @@ ${true ? `${[
             .join(' ');
         console.log(`⏱ [buildSystemPrompt] total=${perfTotal}ms | ${timingStr}`);
 
-        return baseSystemPrompt;
+        // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪出 system prompt
+        //   - realtimeText: 含时间戳（每分钟变），会让 Anthropic cache prefix 断
+        //   - innerState: 每轮 LLM 重新生成，放 system prompt 中间会让 system 末尾字符变化
+        //   → 挪到 messages 末尾（独立 system 消息），前面稳定 system + history 仍能命中 cache
+        return {
+            systemPrompt: baseSystemPrompt,
+            dynamicTail: {
+                realtimeText: realtimeText || '',
+                innerState: evolvedNarrative || '',
+            },
+        };
     },
 
     // 格式化消息历史

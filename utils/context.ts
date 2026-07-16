@@ -371,7 +371,10 @@ export const ContextBuilder = {
      * 1) 当前时段硬事实——每轮都注入，不受 evolvedNarrative 影响
      * 2) 意识流独白——evolvedNarrative > flowNarrative > 当前 slot innerThought
      */
-    buildScheduleInjection: (schedule: DailySchedule | null, evolvedNarrative?: string): string => {
+    buildScheduleInjection: (schedule: DailySchedule | null, _evolvedNarrative?: string): string => {
+        // ⚠️ evolvedNarrative 参数保留（避免破坏调用方签名）但不再使用——
+        // 它现在由 useChatAI.ts 单独追加到 messages 末尾，挪出 system prompt
+        // 提升 prompt cache 命中率（2026-07-16 暮色提议）
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
         const now = new Date();
@@ -403,20 +406,16 @@ export const ContextBuilder = {
             slotHeader = `今天还没开始活动，稍后先${nextSlot.activity}（${nextSlot.startTime}）\n`;
         }
 
-        // 3. 意识流独白
-        let narrative = '';
-        if (evolvedNarrative) {
-            narrative = evolvedNarrative;
-        } else if (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0) {
-            const key = getFlowNarrativeKey(now.getHours());
-            narrative = schedule.flowNarrative[key]
+        // 3. 意识流独白——优先用 schedule 自带的 flowNarrative / innerThought（变化频率低）
+        //    evolvedNarrative 已挪到 messages 末尾（每轮 LLM 重新生成，放 system prompt 会断 cache）
+        const key = getFlowNarrativeKey(now.getHours());
+        const narrative = (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0)
+            ? (schedule.flowNarrative[key]
                 || schedule.flowNarrative['evening']
                 || schedule.flowNarrative['afternoon']
                 || schedule.flowNarrative['morning']
-                || '';
-        } else if (currentSlot?.innerThought) {
-            narrative = currentSlot.innerThought;
-        }
+                || '')
+            : (currentSlot?.innerThought || '');
 
         // 4. 拼接：硬事实 → 意识流（可选）
         const preamble = `此刻你的心中盘旋着这些想法……\n`;

@@ -804,6 +804,7 @@ const handleSaveTts = () => {
 
   // ─── 聊天记录 (.txt) 导出 ──────────────────────────────────
   // txt 只用于保留/阅读聊天记录，不参与设备间互通（互通走轻量同步）
+  // 按月切文件 + 同一回合合并：同角色相邻 ≤ 5 分钟的多条消息合并成一段
   const openChatTxtModal = () => {
       setSelectedCharIds(new Set());
       setShowChatTxtModal(true);
@@ -827,11 +828,11 @@ const handleSaveTts = () => {
       setTxtExporting(true);
       try {
           const targets = characters.filter(c => selectedCharIds.has(c.id));
-          // 先把所有角色的消息取出来（DB.getMessagesByCharId 是 async）
+          // 拿全量：第二个参数 includeProcessed=true 拿所有物理消息
+          // （默认会过滤掉被记忆宫殿处理过的老消息，但 txt 导出要全量保留）
           const charData: Array<{ char: CharacterProfile, messages: Message[] }> = [];
           for (const char of targets) {
-              const all = await DB.getMessagesByCharId(char.id);
-              // 过滤 system + group 消息（群聊消息走 getGroupMessages，不在单人聊天里）
+              const all = await DB.getMessagesByCharId(char.id, true);
               const messages = all
                   .filter(m => m.type !== 'system')
                   .sort((a, b) => a.timestamp - b.timestamp);
@@ -842,11 +843,14 @@ const handleSaveTts = () => {
               const d = new Date(ts);
               return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
           };
+          const formatMonth = (ts: number) => {
+              const d = new Date(ts);
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          };
           const formatHM = (ts: number) => {
               const d = new Date(ts);
               return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
           };
-          // content 总是 string — 非文本消息打标记
           const contentLabel = (m: Message) => {
               if (m.type === 'image') return '[图片]';
               if (m.type === 'emoji') return '[表情]';
@@ -862,25 +866,50 @@ const handleSaveTts = () => {
               if (m.type === 'interaction') return '[互动]';
               return m.content || '';
           };
-          const buildTxt = ({ char, messages }: { char: CharacterProfile, messages: Message[] }) => {
+          // 同一回合合并：相邻同角色消息间隔 ≤ 5 分钟则合并成一段
+          // 这样 AI 一次回复的多个气泡、用户连发几条都合并成一段
+          const MERGE_GAP_MS = 5 * 60 * 1000;
+          type Block = { role: 'user' | 'assistant'; firstTime: number; parts: string[] };
+          const buildMergedBlocks = (msgs: Message[]): Block[] => {
+              const blocks: Block[] = [];
+              let prevMsg: Message | null = null;
+              for (const m of msgs) {
+                  const last = blocks[blocks.length - 1];
+                  const gap = prevMsg ? m.timestamp - prevMsg.timestamp : 0;
+                  // 必须是相邻消息 + 同角色 + 间隔 ≤ 5 分钟才合并
+                  if (last && last.role === m.role && gap <= MERGE_GAP_MS) {
+                      last.parts.push(contentLabel(m));
+                  } else {
+                      blocks.push({
+                          role: m.role,
+                          firstTime: m.timestamp,
+                          parts: [contentLabel(m)],
+                      });
+                  }
+                  prevMsg = m;
+              }
+              return blocks;
+          };
+          const buildTxt = (char: CharacterProfile, msgs: Message[], monthLabel?: string) => {
               const lines: string[] = [];
-              lines.push(`【${char.name} 的聊天记录】`);
+              const titleSuffix = monthLabel ? `（${monthLabel}）` : '';
+              lines.push(`【${char.name} 的聊天记录${titleSuffix}】`);
               lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
-              lines.push(`共 ${messages.length} 条消息`);
+              lines.push(`共 ${msgs.length} 条消息`);
               lines.push('');
 
-              // 按日期分组
+              const blocks = buildMergedBlocks(msgs);
               let lastDate = '';
-              for (const m of messages) {
-                  const dStr = formatDate(m.timestamp);
+              for (const block of blocks) {
+                  const dStr = formatDate(block.firstTime);
                   if (dStr !== lastDate) {
                       lines.push(`—— ${dStr} ——`);
                       lastDate = dStr;
                   }
-                  lines.push(formatHM(m.timestamp));
-                  const who = m.role === 'user' ? '我' : char.name;
-                  const content = contentLabel(m);
-                  lines.push(`${who}: ${content}`);
+                  lines.push(formatHM(block.firstTime));
+                  const who = block.role === 'user' ? '我' : char.name;
+                  // 同一回合多条用换行分隔
+                  lines.push(`${who}: ${block.parts.join('\n')}`);
                   lines.push('');
               }
               return lines.join('\n');
@@ -889,12 +918,26 @@ const handleSaveTts = () => {
           const fileBaseName = `Sully_ChatLog_${new Date().toISOString().slice(0, 10)}`;
           const safeName = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_');
 
-          if (targets.length === 1) {
-              // 单角色 → 直接下载 .txt
-              const cd = charData[0];
-              const txt = buildTxt(cd);
+          // 按月切分：每个角色 → 多个 (月份, messages) 块
+          type Slice = { char: CharacterProfile; month: string; messages: Message[] };
+          const slices: Slice[] = [];
+          for (const { char, messages } of charData) {
+              if (messages.length === 0) continue;
+              const byMonth = new Map<string, Message[]>();
+              for (const m of messages) {
+                  const mk = formatMonth(m.timestamp);
+                  if (!byMonth.has(mk)) byMonth.set(mk, []);
+                  byMonth.get(mk)!.push(m);
+              }
+              // 按月份排序（早 → 晚）
+              const sortedMonths = Array.from(byMonth.keys()).sort();
+              for (const month of sortedMonths) {
+                  slices.push({ char, month, messages: byMonth.get(month)! });
+              }
+          }
+
+          const downloadTxt = async (txt: string, fileName: string) => {
               const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
-              const fileName = `${fileBaseName}_${safeName(cd.char.name)}.txt`;
               if (Capacitor.isNativePlatform()) {
                   const reader = new FileReader();
                   reader.readAsDataURL(blob);
@@ -919,18 +962,10 @@ const handleSaveTts = () => {
                   document.body.removeChild(a);
                   URL.revokeObjectURL(url);
               }
-              addToast(`已导出 ${cd.char.name} 的聊天记录`, 'success');
-          } else {
-              // 多角色 → 打包 zip
-              const JSZipMod = await import('jszip');
-              const JSZipCtor = (JSZipMod as any).default || JSZipMod;
-              const zip = new JSZipCtor();
-              for (const cd of charData) {
-                  const txt = buildTxt(cd);
-                  zip.file(`${safeName(cd.char.name)}.txt`, txt);
-              }
+          };
+
+          const downloadZip = async (zip: any, fileName: string) => {
               const content = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } });
-              const fileName = `${fileBaseName}.zip`;
               if (Capacitor.isNativePlatform()) {
                   const reader = new FileReader();
                   reader.readAsDataURL(content);
@@ -955,7 +990,29 @@ const handleSaveTts = () => {
                   document.body.removeChild(a);
                   URL.revokeObjectURL(url);
               }
-              addToast(`已导出 ${targets.length} 个角色的聊天记录`, 'success');
+          };
+
+          if (slices.length === 1) {
+              // 只有 1 个 (角色, 月份) → 直接下载 txt
+              const s = slices[0];
+              const txt = buildTxt(s.char, s.messages, s.month);
+              const fileName = `${fileBaseName}_${safeName(s.char.name)}_${s.month}.txt`;
+              await downloadTxt(txt, fileName);
+              addToast(`已导出 ${s.char.name} ${s.month} 的聊天记录`, 'success');
+          } else {
+              // 多个 (角色, 月份) → 打包 zip
+              const JSZipMod = await import('jszip');
+              const JSZipCtor = (JSZipMod as any).default || JSZipMod;
+              const zip = new JSZipCtor();
+              for (const s of slices) {
+                  const txt = buildTxt(s.char, s.messages, s.month);
+                  zip.file(`${safeName(s.char.name)}_${s.month}.txt`, txt);
+              }
+              const fileName = `${fileBaseName}.zip`;
+              await downloadZip(zip, fileName);
+              const monthCount = new Set(slices.map(s => s.month)).size;
+              const charCount = new Set(slices.map(s => s.char.id)).size;
+              addToast(`已导出 ${charCount} 个角色 × ${monthCount} 个月 = ${slices.length} 个 txt`, 'success');
           }
           setShowChatTxtModal(false);
       } catch (e: any) {

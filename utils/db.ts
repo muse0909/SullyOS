@@ -1740,46 +1740,33 @@ export const DB = {
       };
 
       // characters 处理：
-      //   - text_only 模式：按 charId 合并 — 文字字段用 backup，图片/美化字段保留本机
+      //   - text_only 模式：不修改本机已有角色；如果本机没该角色则创建空壳
+      //     （带文字无图，暮色要求"轻量不覆盖"——phone A 自导自导保留本机；
+      //      phone B 新设备没角色则创建空壳，让聊天流能用）
       //   - full / media_only 模式：维持现状（media_only 是叠加图片，full 是整库替换）
       if (data.characters) {
-          if (data.mediaAssets) {
-              data.characters = data.characters.map(c => {
-                  const media = data.mediaAssets?.find(m => m.charId === c.id);
-                  return media ? applyMediaToChar(c, media) : c;
-              });
-          }
           if (data.backupMode === 'text_only') {
-              // 轻量同步：merge by charId — 本机有同 id 角色 → 文字字段覆盖，图片保留本机
               const charStore = tx.objectStore(STORE_CHARACTERS);
               const req = charStore.getAll();
               req.onsuccess = () => {
                   const existing = (req.result || []) as CharacterProfile[];
                   const existingMap = new Map(existing.map(c => [c.id, c]));
                   for (const bc of data.characters!) {
-                      const ec = existingMap.get(bc.id);
-                      if (ec) {
-                          // 文字/逻辑字段用 backup；图片/美化字段强制用本机
-                          charStore.put({
-                              ...bc,
-                              avatar: ec.avatar,
-                              chatBackground: ec.chatBackground,
-                              dateBackground: ec.dateBackground,
-                              sprites: ec.sprites,
-                              customDateSprites: ec.customDateSprites,
-                              spriteConfig: ec.spriteConfig,
-                              dateSkinSets: ec.dateSkinSets,
-                              activeSkinSetId: ec.activeSkinSetId,
-                              roomConfig: ec.roomConfig,
-                              bubbleStyle: ec.bubbleStyle,
-                          });
-                      } else {
-                          // 本机没有这个角色 → 用 backup 新建（图片字段可能是空字符串）
-                          charStore.put(bc);
+                      if (existingMap.has(bc.id)) {
+                          // 本机已有该角色 → 跳过，不覆盖（保留本机美化/头像）
+                          continue;
                       }
+                      // 本机没该角色 → 创建空壳（带文字，图片字段是 stripBase64 清空的空字符串）
+                      charStore.put(bc);
                   }
               };
           } else {
+              if (data.mediaAssets) {
+                  data.characters = data.characters.map(c => {
+                      const media = data.mediaAssets?.find(m => m.charId === c.id);
+                      return media ? applyMediaToChar(c, media) : c;
+                  });
+              }
               clearAndAdd(STORE_CHARACTERS, data.characters);
           }
       } else if (data.mediaAssets && availableStores.includes(STORE_CHARACTERS)) {

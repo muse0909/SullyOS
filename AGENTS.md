@@ -280,11 +280,13 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
+| 2026-07-16 | innerState + realtime 挪到 messages 末尾，提升 prompt cache 命中率 | [`changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md`](./changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md) |
 | 2026-07-15 | Bell toast 撑大变方形 + 输入框撑大降圆角 + 输入区 padding 缩小 | [`changelogs/2026-07-15-bell-toast-and-input-area-shape.md`](./changelogs/2026-07-15-bell-toast-and-input-area-shape.md) |
 | 2026-07-15 | 聊天图片预览支持单击/双击图片退出 | [`changelogs/2026-07-15-image-preview-click-to-exit.md`](./changelogs/2026-07-15-image-preview-click-to-exit.md) |
 | 2026-07-15 | 朋友圈配图简化为单 toggle + 生图 API 两处都删 ComfyUI/NAI | [`changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md`](./changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md) |
 | 2026-07-15 | 聊天记录搜索 → 跳转定位（点结果滚到那条消息 + 高亮 2 秒） | [`changelogs/2026-07-15-chat-search-jump-to-message.md`](./changelogs/2026-07-15-chat-search-jump-to-message.md) |
 | 2026-07-15 | 备份模式重构 — 轻量同步 + 聊天记录 .txt 导出 | [`changelogs/2026-07-15-backup-lite-and-txt-export.md`](./changelogs/2026-07-15-backup-lite-and-txt-export.md) |
+| 2026-07-15 | 备份回归 bug 修复 — theme 丢失 + 头像被覆盖 | [`changelogs/2026-07-15-backup-theme-and-merge-fixes.md`](./changelogs/2026-07-15-backup-theme-and-merge-fixes.md) |
 | 2026-07-15 | 删除预设 Modal 按钮加 w-full — 真正铺开（前面 4 次改 footer 容器漏了按钮） | [`changelogs/2026-07-15-delete-preset-w-full.md`](./changelogs/2026-07-15-delete-preset-w-full.md) |
 | 2026-07-15 | 图床警告文案改版 + 加关闭按钮 + 去掉 truncate | [`changelogs/2026-07-15-image-bed-warning-text-revamp.md`](./changelogs/2026-07-15-image-bed-warning-text-revamp.md) |
 | 2026-07-15 | 图床警告改成推系统消息进聊天流（不是固定 div）+ 顺序：图→警告 | [`changelogs/2026-07-15-image-bed-warning-as-system-message.md`](./changelogs/2026-07-15-image-bed-warning-as-system-message.md) |

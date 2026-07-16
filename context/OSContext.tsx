@@ -2183,7 +2183,8 @@ if (!isVisible || !isChattingWithThisChar) {
               memoryPalaceConfig: (mode === 'text_only' || mode === 'full') ? memoryPalaceConfig : undefined,
               // theme/customIcons/appearancePresets 都是美化数据，text_only 不带
               // → 导入时这些字段不存在 → 本机美化完全保留
-              theme: undefined,
+              // 但完整/媒体模式要带 theme（壁纸/桌面主题是整机恢复的一部分）
+              theme: (mode === 'media_only' || mode === 'full') ? theme : undefined,
               customIcons: (mode === 'media_only' || mode === 'full')
                   ? { ...customIcons }
                   : undefined,

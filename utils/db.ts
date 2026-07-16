@@ -1751,6 +1751,9 @@ export const DB = {
           }
           if (data.backupMode === 'text_only') {
               // 轻量同步：merge by charId — 本机有同 id 角色 → 文字字段覆盖，图片保留本机
+              // 关键设计：先以本机 ec 为底，再把 bc 里的非空字段覆盖过来（空字符串是 stripBase64
+              // 清掉的图片 base64，不应该覆盖本机的图）。这样既保留本机美化，又能把文字描述、
+              // systemPrompt、memories 等逻辑字段同步过来。
               const charStore = tx.objectStore(STORE_CHARACTERS);
               const req = charStore.getAll();
               req.onsuccess = () => {
@@ -1759,20 +1762,32 @@ export const DB = {
                   for (const bc of data.characters!) {
                       const ec = existingMap.get(bc.id);
                       if (ec) {
-                          // 文字/逻辑字段用 backup；图片/美化字段强制用本机
-                          charStore.put({
-                              ...bc,
-                              avatar: ec.avatar,
-                              chatBackground: ec.chatBackground,
-                              dateBackground: ec.dateBackground,
-                              sprites: ec.sprites,
-                              customDateSprites: ec.customDateSprites,
-                              spriteConfig: ec.spriteConfig,
-                              dateSkinSets: ec.dateSkinSets,
-                              activeSkinSetId: ec.activeSkinSetId,
-                              roomConfig: ec.roomConfig,
-                              bubbleStyle: ec.bubbleStyle,
-                          });
+                          const merged: any = { ...ec };
+                          for (const key in bc) {
+                              const bv = (bc as any)[key];
+                              // 空字符串/null/undefined 跳过（stripBase64 清的图、不存在的字段）
+                              if (bv === '' || bv === null || bv === undefined) continue;
+                              // 对象递归清空字符串元素（sprites/roomConfig 内部可能含空字符串 base64）
+                              if (typeof bv === 'object' && !Array.isArray(bv) && bv !== null) {
+                                  const cleaned: any = {};
+                                  let hasValue = false;
+                                  for (const k in bv) {
+                                      if (bv[k] !== '' && bv[k] !== null && bv[k] !== undefined) {
+                                          cleaned[k] = bv[k];
+                                          hasValue = true;
+                                      }
+                                  }
+                                  // 对象全空 → 跳过（保留本机）
+                                  if (hasValue) merged[key] = cleaned;
+                              } else if (Array.isArray(bv)) {
+                                  // 数组里也清空字符串元素
+                                  const cleaned = bv.filter((item: any) => item !== '' && item !== null && item !== undefined);
+                                  if (cleaned.length > 0) merged[key] = cleaned;
+                              } else {
+                                  merged[key] = bv;
+                              }
+                          }
+                          charStore.put(merged as CharacterProfile);
                       } else {
                           // 本机没有这个角色 → 用 backup 新建（图片字段可能是空字符串）
                           charStore.put(bc);

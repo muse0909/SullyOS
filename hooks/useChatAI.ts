@@ -804,8 +804,8 @@ export const useChatAI = ({
             const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
-        
-            const cleanedApiMessages = apiMessages.map((msg: any) => {
+
+            let cleanedApiMessages = apiMessages.map((msg: any) => {
             // 如果 content 是数组（包含图片），提取纯文字部分，丢弃图片数据
             if (Array.isArray(msg.content)) {
                 const textParts = msg.content
@@ -909,6 +909,22 @@ export const useChatAI = ({
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeCache = apiProtocol === 'claude';
             const cacheControlEphemeral = { type: 'ephemeral', ttl: '1h' as const };
+            // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
+            //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
+            //         system 必须放在顶层 system 字段，不能穿插在 messages 中间
+            //         末尾 system 消息可以，但 content 必须是空 array（directive-only form）
+            //   我们的 history 里混了 system 消息（日记/小红书/记事本/连接中断等，
+            //     来自 useChatAI 多处 DB.saveMessage({...role:'system'...})），
+            //     这些会原样进 apiMessages，违反 Anthropic 协议。
+            //   修法：Claude 协议下把 history 里的 system 转成 user（前面加 [系统消息] 前缀），
+            //         信息保留、协议合规；OpenAI 协议不受影响。
+            if (useClaudeCache) {
+                cleanedApiMessages = cleanedApiMessages.map((m: any) => {
+                    if (m.role !== 'system') return m;
+                    const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                    return { role: 'user', content: `[系统消息] ${text}` };
+                });
+            }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
             // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
             const fullMessages: any[] = useClaudeCache
@@ -922,6 +938,10 @@ export const useChatAI = ({
                     ...cleanedApiMessages
                 ];
             // Claude 协议专用：顶层 system 字段（4 断点 cache_control）
+            //   bp1/bp2/bp3 段都挂 cache_control（1h TTL）
+            //   bpDynamic 段不带 cache_control（每轮必变的动态尾巴：时间戳/innerState/私密记事/最近心声/记忆宫殿）
+            //   这段之前被 push 到 messages 末尾（Anthropic 不允许带内容的末尾 system 消息），
+            //   合并到顶层 system 字段后既协议合规又不影响 bp1-bp3 cache 命中。
             const claudeSystemField: any[] | null = useClaudeCache ? [
                 // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
                 { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
@@ -1018,46 +1038,64 @@ export const useChatAI = ({
             // Save for dev debug viewer
             setLastSystemPrompt(systemPrompt);
 
-            // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
-            if (bilingualActive) {
-                fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
-            }
-
-            // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪到 messages 末尾
-            //   - realtimeText: 含时间戳（"2026-07-16 22:00"），每分钟变 → 挪出 system prompt
-            //   - innerState: 每轮 LLM 新生成的意识流独白 → 挪出 system prompt
-            //   放末尾：LLM 仍能读到，Anthropic cache prefix 不会断在 system 段
+            // ⚠️ 2026-07-17 暮色反馈：把"动态尾巴"挪到合适的位置
+            //   原实现：push 到 messages 末尾当 system 消息
+            //   问题：Anthropic 协议下 messages 数组里不允许有 role='system'（除非 directive-only form content:[]）
+            //   修法：
+            //     - Claude 协议：合并到顶层 system 字段的最后一个 text block（不带 cache_control，纯动态）
+            //                  不再 push 到 messages，bp1-bp3 cache 命中完全不受影响
+            //     - OpenAI 协议：保留原样 push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
+            //
+            //   6 段：bilingual reminder / realtimeText / innerState / privateNotesText / recentEmotions / memoryPalace
+            //   都不挂 cache_control（每轮必变），进 bpDynamic 段。
+            //
+            // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪出 systemPrompt
+            //   - realtimeText: 含时间戳（"2026-07-16 22:00"），每分钟变
+            //   - innerState: 每轮 LLM 新生成的意识流独白
+            //   挪出 systemPrompt：让 bp3Context 段真正稳定
             //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
             //
-            // ⚠️ 2026-07-17 4 断点优化：再加两段「末尾不缓存」内容
-            //   - privateNotesText: 最近 5 条私密记事（每次写一条列表变）→ 不参与 cache
-            //   - recentEmotions:   最近 5 条心声（每次新心声 5 条滚动）→ 不参与 cache
-            //   这两段 token 都很小（合计 ≈ 360 token），但能让 bp3Context 段真正稳定
-            //   4 段 cache（bp1/bp2/bp3/bp4）命中率从「江澈老窗口 0%」提升到 90%+
+            // ⚠️ 2026-07-17 4 断点优化：再加 3 段
+            //   - privateNotesText: 最近 5 条私密记事
+            //   - recentEmotions:   最近 5 条心声
+            //   - memoryPalace:     向量检索结果
+            const dynamicTailParts: string[] = [];
+            if (bilingualActive) {
+                dynamicTailParts.push(`[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`);
+            }
             if (dynamicTail?.realtimeText && dynamicTail.realtimeText.trim()) {
-                fullMessages.push({ role: 'system', content: dynamicTail.realtimeText.trim() });
+                dynamicTailParts.push(dynamicTail.realtimeText.trim());
             }
             if (dynamicTail?.innerState && dynamicTail.innerState.trim()) {
-                fullMessages.push({
-                    role: 'system',
-                    content: `[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`
-                });
+                dynamicTailParts.push(`[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`);
             }
-            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness 末尾追加
-            //   5 条滚动列表（每次新写一条）→ token ≈ 160，但能让 bp3Context 段稳定
+            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness
             if (dynamicTail?.privateNotesText && dynamicTail.privateNotesText.trim()) {
-                fullMessages.push({ role: 'system', content: dynamicTail.privateNotesText.trim() });
+                dynamicTailParts.push(dynamicTail.privateNotesText.trim());
             }
-            // ⚠️ 2026-07-17 4 断点优化：最近心声末尾追加
-            //   5 条滚动列表（每次新心声）→ token ≈ 200，但能让 bp3Context 段稳定
+            // ⚠️ 2026-07-17 4 断点优化：最近心声
             if (dynamicRecentEmotions) {
-                fullMessages.push({ role: 'system', content: dynamicRecentEmotions });
+                dynamicTailParts.push(dynamicRecentEmotions);
             }
-            // ⚠️ 2026-07-17 4 断点优化：记忆宫殿末尾追加
-            //   每次 query 向量检索结果（4600-5200 chars）→ 变长但能让 bp3Context 段稳定
-            //   这是 4 段 cache 命中的最后一个关键修复
+            // ⚠️ 2026-07-17 4 断点优化：记忆宫殿
             if (dynamicMemoryPalace) {
-                fullMessages.push({ role: 'system', content: dynamicMemoryPalace });
+                dynamicTailParts.push(dynamicMemoryPalace);
+            }
+
+            if (useClaudeCache) {
+                // Claude 协议：合并到顶层 system 字段（bpDynamic 段，不带 cache_control）
+                //   Anthropic 协议要求顶层 system 是 array of text blocks，多个 block 都会被模型看到
+                if (claudeSystemField && dynamicTailParts.length > 0) {
+                    claudeSystemField.push({
+                        type: 'text',
+                        text: dynamicTailParts.join('\n\n'),
+                    });
+                }
+            } else {
+                // OpenAI 协议：push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
+                for (const part of dynamicTailParts) {
+                    fullMessages.push({ role: 'system', content: part });
+                }
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成

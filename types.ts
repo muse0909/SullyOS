@@ -333,7 +333,18 @@ export interface RoomNote {
     timestamp: number;
     content: string;
     type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
-    relatedMessageId?: number; 
+    relatedMessageId?: number;
+    // ── 暮色 2026-07-17：私密记事独立成发现页子页，加 replies 字段
+    //   用户对 AI 写的便签的回复（最多几十条，存进 RoomNote 一起拉，不用单独建表）
+    replies?: NoteReply[];
+}
+
+export interface NoteReply {
+    id: string;
+    parentNoteId: string;
+    author: 'user' | 'character';   // 用户回复 / AI 后续追加
+    content: string;                 // 纯文本
+    timestamp: number;
 }
 
 export interface ScheduleSlot {

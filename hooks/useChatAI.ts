@@ -839,7 +839,25 @@ export const useChatAI = ({
                 }
             }
 
-            const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
+            const fullMessages = [
+                // ⚠️ 2026-07-17 暮色提议：加显式 cache_control 标记拿 1h TTL
+                //   - 之前 SullyOS 不标记，依赖 provider 默认 5m TTL
+                //   - 显式标记后，Anthropic 原生 / 即享 / 青屿 都按 cache_control 处理
+                //   - 1h TTL 跨长间隔聊天也能命中（10-12 点实测 cache 还在）
+                //   - 1h TTL 账户需开通（青屿/即享 0.1x kiro 不一定能用，先用 5m 兜底）
+                //   - 如果 provider 不认 cache_control 字段，会被忽略
+                {
+                    role: 'system',
+                    content: [
+                        {
+                            type: 'text',
+                            text: systemPrompt,
+                            cache_control: { type: 'ephemeral', ttl: '1h' }
+                        }
+                    ]
+                },
+                ...cleanedApiMessages
+            ];
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;

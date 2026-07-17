@@ -156,7 +156,18 @@ export const ChatPrompts = {
 
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         const coreT0 = performance.now();
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
+        // ⚠️ 2026-07-17 暮色提议：拆 3 段独立 cache（4 断点方案第一段）
+        //   - bp3Context: 角色上下文（角色卡+世界书+朋友圈+音乐+群聊+日记列表+slotHeader+心声底色）
+        //                 最稳定的一段。改其中任何子段只重建本段 cache。
+        //   - bp2Rules:   行为规范（Chat App Rules 1-5 项+date/call 模式提示+心声输出要求+语音禁用提示）
+        //                 第二稳定。工具开关变化或 date/call 模式触发时失效。
+        //   - bp1Tools:   工具说明（Chat App Rules 6 项起的各种工具语法+语音消息功能+表情库）
+        //                 第三稳定。工具开关变化时失效。
+        //   - dynamicTail: 每轮必变（realtime 时间戳 + innerState 意识流）→ 仍走 messages 末尾，不缓存
+        //   4 断点方案 = bp1 + bp2 + bp3 + history(bp4) 各自独立 cache TTL
+        let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, true);
+        let bp2Rules = '';
+        let bp1Tools = '';
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
@@ -305,18 +316,19 @@ export const ChatPrompts = {
         // ⚠️ 2026-07-16 暮色提议：realtimeText 含时间戳（每分钟变）会破坏 cache
         //   挪到 messages 末尾单独追加，不再拼进 system prompt
         // baseSystemPrompt += realtimeText;  // ← 改前
+        // 2026-07-17 拆分 3 段：以下朋友圈/日程/音乐/群聊/日记/笔记 全部归 bp3Context（角色上下文）
 
         // 2.0.5 朋友圈 awareness（暮色 2026-07-04：让 chat 知道朋友圈发生过什么）
         //     放在实时信息之后、日程之前——跟 330 模式一致（角色设定 → 朋友圈 → 当前情景）
         if (momentsContextText) {
-            baseSystemPrompt += momentsContextText;
+            bp3Context += momentsContextText;
         }
 
         // 2a. 日程注入
         if (schedule) {
             try {
                 const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
-                if (scheduleContext) baseSystemPrompt += `\n${scheduleContext}\n`;
+                if (scheduleContext) bp3Context += `\n${scheduleContext}\n`;
             } catch (e) {
                 console.error('Failed to inject schedule context:', e);
             }
@@ -355,19 +367,19 @@ export const ChatPrompts = {
                 isListeningTogether,
             );
             if (musicBlock) {
-                baseSystemPrompt += `\n${musicBlock}\n`;
+                bp3Context += `\n${musicBlock}\n`;
                 if (userListeningContext) {
-                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
+                    bp3Context += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
             }
         } catch (e) {
             console.error('Failed to inject music atmosphere:', e);
         }
 
-        baseSystemPrompt += groupContextText;
-        baseSystemPrompt += notionDiaryText;
-        baseSystemPrompt += feishuDiaryText;
-        baseSystemPrompt += notionNotesText;
+        bp3Context += groupContextText;
+        bp3Context += notionDiaryText;
+        bp3Context += feishuDiaryText;
+        bp3Context += notionNotesText;
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
@@ -398,7 +410,11 @@ export const ChatPrompts = {
             },
         });
 
-        baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
+        // ⚠️ 2026-07-17 4 断点方案：Chat App Rules 整段归 bp1Tools
+        //   - 包含「严格注意」开头 + 1-5 项行为规范 + 6 项起各种工具 + 朋友圈/小红书/Notion/飞书/搜索
+        //   - 偶尔变化源：用户改工具开关（启用 Notion 会让 "8. ..." 编号变）→ bp1Tools 失效重建
+        //   - 但其他 3 段（bp2Rules / bp3Context / bp4History）继续命中
+        bp1Tools += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
 1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化风格。
 2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要”任性”或”以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
@@ -735,20 +751,24 @@ ${true ? `${[
 `;
 
         const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
+        // ⚠️ 2026-07-17 4 断点方案：date/call 模式提示归 bp2Rules
+        //   - 行为约束类（不是工具），变化频率低（跨模式时才动）
+        //   - 与 Chat App Rules（bp1Tools）分开，bp1 失效不影响 bp2 命中
         if (previousMsg && previousMsg.metadata?.source === 'date') {
-            baseSystemPrompt += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
+            bp2Rules += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
         }
         if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
-            baseSystemPrompt += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
+            bp2Rules += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
         }
 
         // Voice message prompt injection
+        // ⚠️ 2026-07-17 4 断点方案：语音功能归 bp1Tools（属工具类，跟 Notion/朋友圈同类）
         if (char.chatVoiceEnabled) {
             const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
             const voiceLang = char.chatVoiceLang || '';
             const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
             if (voiceLang) {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+                bp1Tools += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能，语音语种为：${langLabel}（${voiceLang}）。
 
@@ -775,7 +795,7 @@ ${true ? `${[
 - 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
 - **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音内容不能是文字内容的简单翻译/复述。要么只发语音不发文字，要么文字写一部分内容、语音补充另一部分（比如文字写正经的，语音吐槽；或者文字说事情，语音撒娇）。像真人一样——你不会打完一段字然后再发一条语音把同样的话说一遍吧？`;
             } else {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+                bp1Tools += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能。
 
@@ -799,7 +819,8 @@ ${true ? `${[
             }
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
-            baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
+            // ⚠️ 2026-07-17 4 断点方案：语音禁用提示归 bp2Rules（行为约束，非工具）
+            bp2Rules += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
         }
 
         const perfTotal = Math.round(performance.now() - perfT0);
@@ -813,8 +834,17 @@ ${true ? `${[
         //   - realtimeText: 含时间戳（每分钟变），会让 Anthropic cache prefix 断
         //   - innerState: 每轮 LLM 重新生成，放 system prompt 中间会让 system 末尾字符变化
         //   → 挪到 messages 末尾（独立 system 消息），前面稳定 system + history 仍能命中 cache
+        //
+        // ⚠️ 2026-07-17 暮色提议：进一步拆 3 段独立 cache（4 断点方案）
+        //   返回 { bp1Tools, bp2Rules, bp3Context, dynamicTail } 让 useChatAI 拼 system content array
+        //   - bp1Tools:   Chat App Rules 整段（含 1-5 行为+6-9 工具）+ 语音功能
+        //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
+        //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
+        //   - dynamicTail: realtime 时间戳 + innerState 意识流（挪到 messages 末尾，不进 cache）
         return {
-            systemPrompt: baseSystemPrompt,
+            bp1Tools,
+            bp2Rules,
+            bp3Context,
             dynamicTail: {
                 realtimeText: realtimeText || '',
                 innerState: evolvedNarrative || '',

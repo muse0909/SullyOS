@@ -716,13 +716,24 @@ export const useChatAI = ({
             //   - systemPrompt: 稳定段（角色卡+世界书+schedule slotHeader+朋友圈+音乐+工具说明+心声要求）
             //   - dynamicTail: 每轮必变段（realtime 时间戳 + innerState 意识流）→ 挪到 messages 末尾
             //   效果：systemPrompt + history 前缀稳定，Anthropic cache 命中率大幅提升
-            let systemPrompt = systemPromptResult.systemPrompt;
+            //
+            // ⚠️ 2026-07-17 暮色提议：进一步拆 3 段独立 cache（4 断点方案）
+            //   - bp1Tools:   Chat App Rules 整段 + 语音功能 → 归「工具说明」段
+            //   - bp2Rules:   date/call 模式提示 + 语音禁用提示 → 归「行为规范」段
+            //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色 → 归「角色上下文」段
+            //   3 段各自独立 cache（再加 history 的 bp4 共 4 断点），子段失效不影响其他段
+            let bp1Tools = systemPromptResult.bp1Tools;
+            let bp2Rules = systemPromptResult.bp2Rules;
+            let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
+            // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
+            const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
 
             // 1.5 Inject bilingual output instruction when translation is enabled
+            //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
             if (bilingualActive) {
-                systemPrompt += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
+                bp1Tools += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
 你的每句话都必须用以下XML标签格式输出双语内容：
 <翻译>
 <原文>${translationConfig.sourceLang}内容</原文>
@@ -748,8 +759,9 @@ export const useChatAI = ({
 
             // 1.6 HTML 模块模式 — 注入内置 HTML 提示词 (+ 用户自定义追加)
             //     开启后允许 AI 输出 [html]...[/html] 卡片, 客户端解析为 html_card 单独渲染。
+            //   4 断点方案：HTML 是「输出格式工具」→ 归 bp1Tools
             if ((char as any).htmlModeEnabled) {
-                systemPrompt += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
+                bp1Tools += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
             }
 
             // 2. Build Message History
@@ -805,13 +817,18 @@ export const useChatAI = ({
             if (mcdMiniOpen) {
                 const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
                 if (block) {
-                    systemPrompt += block;
+                    // 4 断点方案：麦当劳 MiniApp 是「工具上下文」→ 归 bp1Tools
+                    bp1Tools += block;
                     console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);
                 }
             }
 
             // 【改动 1】注入心声输出要求到 system prompt
             // 心声条件：优先用独立的 emotionEnabled 字段；老数据（undefined）走旧逻辑兜底
+            //
+            // 4 断点方案分段：
+            //   - 心声输出要求（规则/格式约束）→ 归 bp2Rules（行为规范）
+            //   - 最近 5 条心声（历史感知上下文）→ 归 bp3Context（角色上下文）
             if (isEmotionOn(char)) {
                 const scheduleStyle = char.scheduleStyle || 'lifestyle';
                 const mindfulRule = scheduleStyle === 'mindful'
@@ -820,10 +837,11 @@ export const useChatAI = ({
                 // 借鉴 muse-330 的 thought_chain 思维链前置 + "灵魂的延续"措辞
                 // (commit 2026-07-13)：让 LLM 先想再生成心声，避免"作为xx我应该..."那种生硬模板
                 // 你的思绪是灵魂的延续——真人不会换皮重复上一轮
-                systemPrompt += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**避免**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
+                bp2Rules += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**避免**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
 
                 // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
                 // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
+                // 4 断点方案：归 bp3Context（角色上下文，跟"最近朋友圈"等历史感知同一类）
                 const recentInnerStates = (char.emotionHistory || []).slice(0, 5)
                     .map(b => ({ innerState: b.innerState, createdAt: b.createdAt }))
                     .filter(x => typeof x.innerState === 'string' && x.innerState.trim());
@@ -835,29 +853,58 @@ export const useChatAI = ({
                     }).join('\n');
                     // 防重复 prompt 借鉴 muse-330 措辞："灵魂的延续 / 思绪不断演进"（比"必须明显不同"更自然）
                     // 配合前端硬性去重兜底（line 1382 之后）双保险
-                    systemPrompt += `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
+                    bp3Context += `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
                 }
             }
 
-            const fullMessages = [
-                // ⚠️ 2026-07-17 暮色提议：加显式 cache_control 标记拿 1h TTL
-                //   - 之前 SullyOS 不标记，依赖 provider 默认 5m TTL
-                //   - 显式标记后，Anthropic 原生 / 即享 / 青屿 都按 cache_control 处理
-                //   - 1h TTL 跨长间隔聊天也能命中（10-12 点实测 cache 还在）
-                //   - 1h TTL 账户需开通（青屿/即享 0.1x kiro 不一定能用，先用 5m 兜底）
-                //   - 如果 provider 不认 cache_control 字段，会被忽略
+            // ⚠️ 2026-07-17 暮色提议：4 断点 cache 方案（参考 Anthropic 官方推荐）
+            //   - 之前：1 个 system 消息（整个 systemPrompt）+ 1 个 cache_control = 1 断点
+            //   - 现在：system 拆 3 个独立 content block（bp1Tools / bp2Rules / bp3Context）
+            //           + history 最后一条打 bp4 = 共 4 个 cache_control 标记
+            //   - 收益：任何一段失效只重建本段，前面 3 段继续命中 cache
+            //           长对话时 history 段越增长命中率越高（前 N-1 条一直在 cache）
+            //   - 风险：Anthropic 限制每条消息最多 4 个 cache_control 标记
+            //           OpenAI 兼容 API 大部分 provider 透传 cache_control 字段
+            //           即享 ccmax / 青屿 kiro 是否透传未知（之前 1 断点都没生效，4 断点需实测）
+            //   - 降级：provider 不认 cache_control → 字段被忽略，回到默认 5m TTL
+            const cacheControlEphemeral = { type: 'ephemeral', ttl: '1h' as const };
+            const fullMessages: any[] = [
                 {
                     role: 'system',
                     content: [
-                        {
-                            type: 'text',
-                            text: systemPrompt,
-                            cache_control: { type: 'ephemeral', ttl: '1h' }
-                        }
+                        // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
+                        { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
+                        // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
+                        { type: 'text', text: bp2Rules, cache_control: cacheControlEphemeral },
+                        // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
+                        { type: 'text', text: bp3Context, cache_control: cacheControlEphemeral },
                     ]
                 },
                 ...cleanedApiMessages
             ];
+
+            // bp4 - 历史消息：在 history 最后一条打 cache_control
+            //   - 只在最后一条打，Anthropic cache prefix 机制会从这条往前匹配
+            //   - 下次新加一条 user 消息：bp4 之前的所有 history 仍命中，新加的 user 消息走输入价
+            //   - 长对话时 history 段越增长命中率越高（前 N-1 条一直在 cache 里）
+            if (fullMessages.length > 1) {
+                const lastMsg = fullMessages[fullMessages.length - 1];
+                if (lastMsg && (lastMsg.role === 'user' || lastMsg.role === 'assistant')) {
+                    if (typeof lastMsg.content === 'string') {
+                        // string content → 转成 array + cache_control
+                        lastMsg.content = [
+                            { type: 'text', text: lastMsg.content, cache_control: cacheControlEphemeral }
+                        ];
+                    } else if (Array.isArray(lastMsg.content)) {
+                        // array content（图片/多 block）→ 在末尾追加一个 cache_control 标记的 text block
+                        //   Anthropic 限制每条消息最多 4 个 cache_control 标记，这里加第 1 个，没问题
+                        lastMsg.content = [
+                            ...lastMsg.content,
+                            { type: 'text', text: '', cache_control: cacheControlEphemeral }
+                        ];
+                    }
+                }
+            }
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;

@@ -119,7 +119,10 @@ export const ChatPrompts = {
         }
 
         out += '\n（重要：你已经看到这些朋友圈动态了；如果它们跟当前聊天话题相关，可以自然地提及或回应；如果不相关，就当背景信息，不要硬扯进来。）';
-        return out;
+        // ⚠️ 2026-07-17 暮色提议：trimEnd() 去掉尾部任何空白
+        //   改前：不同代码版本末尾的 \n / \n\n 不稳定 → 同样内容 cache prefix 失配 → 整个 cache 失效
+        //   改后：返回前 trimEnd()，由 chatPrompts 拼接处统一控制格式
+        return out.trimEnd();
     },
 
     // 构建 System Prompt
@@ -345,8 +348,14 @@ export const ChatPrompts = {
 
         // 2.0.5 朋友圈 awareness（暮色 2026-07-04：让 chat 知道朋友圈发生过什么）
         //     放在实时信息之后、日程之前——跟 330 模式一致（角色设定 → 朋友圈 → 当前情景）
+        //
+        // ⚠️ 2026-07-17 4 断点优化：拼接处固定加 \n\n 分隔
+        //   改前：bp3Context += momentsContextText（直接拼接，依赖 awareness 函数末尾换行）
+        //   改后：bp3Context += `\n\n${momentsContextText}` 固定加 \n\n
+        //   原因：之前版本 awareness 函数末尾有 \n\n，某个 commit 删掉后导致 cache prefix 差 2 chars
+        //         即使朋友圈内容没变，bp3Context 也会失配 → cache 失效
         if (momentsContextText) {
-            bp3Context += momentsContextText;
+            bp3Context += `\n\n${momentsContextText}`;
         }
 
         // 2a. 日程注入

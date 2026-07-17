@@ -166,6 +166,8 @@ const ApiQuickFloat: React.FC = () => {
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localModel, setLocalModel] = useState(apiConfig.model);
+  // 暮色 2026-07-17：API 协议（OpenAI / Claude）— 跟 Settings 同步
+  const [localProtocol, setLocalProtocol] = useState<'openai' | 'claude'>(apiConfig.protocol || 'openai');
 
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
@@ -208,6 +210,8 @@ const ApiQuickFloat: React.FC = () => {
     setLocalUrl(apiConfig.baseUrl);
     setLocalKey(apiConfig.apiKey);
     setLocalModel(apiConfig.model);
+    // 暮色 2026-07-17：API 协议同步（Settings 改了这里也要跟着变）
+    setLocalProtocol(apiConfig.protocol || 'openai');
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
@@ -358,6 +362,8 @@ const ApiQuickFloat: React.FC = () => {
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
+      // 暮色 2026-07-17：API 协议（跟 Settings 同步保存）
+      protocol: localProtocol,
     });
     addToast('API 配置已保存', 'success');
     setShowPanel(false);
@@ -586,6 +592,26 @@ const ApiQuickFloat: React.FC = () => {
                       </div>
                     </div>
                   ) : null}
+
+                  {/* 暮色 2026-07-17：API 协议切换（从 Settings 高级挪出来，方便快速切） */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1 text-center">API 协议</label>
+                    <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
+                      <button
+                        type="button"
+                        onClick={() => setLocalProtocol('openai')}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'openai' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                      >OpenAI</button>
+                      <button
+                        type="button"
+                        onClick={() => setLocalProtocol('claude')}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'claude' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                      >Claude</button>
+                    </div>
+                    {localProtocol === 'claude' && (
+                      <p className="text-[9px] text-amber-500 mt-1.5 leading-relaxed text-center">⚠️ Claude 模式要求服务端支持 /v1/messages + cache_control 透传</p>
+                    )}
+                  </div>
 
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>

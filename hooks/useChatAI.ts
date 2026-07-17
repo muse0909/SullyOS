@@ -902,26 +902,34 @@ export const useChatAI = ({
             //   - 即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"
             //   - protocol === 'openai' (默认): 把 system content 退化成 string，不发 cache_control
             //                            history 最后一条也不打 cache_control
-            //   - protocol === 'claude':  保留 4 断点 cache_control 块（等即享加完 Claude 端点再用）
+            //   - protocol === 'claude':  system 字段挪到顶层（Anthropic 标准），
+            //                            保留 4 断点 cache_control 块
+            //   ⚠️ 关键：Claude 协议下 system 必须在 messages 之外（顶层字段），
+            //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeCache = apiProtocol === 'claude';
             const cacheControlEphemeral = { type: 'ephemeral', ttl: '1h' as const };
-            const fullMessages: any[] = [
-                {
-                    role: 'system',
-                    // OpenAI 协议：system content 必须是 string（newapi 不接受 array of blocks）
-                    // Claude 协议：system content 是 array of text blocks，可带 cache_control
-                    content: useClaudeCache ? [
-                        // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
-                        { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
-                        // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
-                        { type: 'text', text: bp2Rules, cache_control: cacheControlEphemeral },
-                        // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
-                        { type: 'text', text: bp3Context, cache_control: cacheControlEphemeral },
-                    ] : `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`
-                },
-                ...cleanedApiMessages
-            ];
+            // Claude 协议：system 在顶层（Anthropic 协议标准）
+            // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
+            const fullMessages: any[] = useClaudeCache
+                ? [...cleanedApiMessages]  // Claude 协议下 messages 不含 system
+                : [
+                    {
+                        role: 'system',
+                        // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
+                        content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                    },
+                    ...cleanedApiMessages
+                ];
+            // Claude 协议专用：顶层 system 字段（4 断点 cache_control）
+            const claudeSystemField: any[] | null = useClaudeCache ? [
+                // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
+                { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
+                // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
+                { type: 'text', text: bp2Rules, cache_control: cacheControlEphemeral },
+                // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
+                { type: 'text', text: bp3Context, cache_control: cacheControlEphemeral },
+            ] : null;
 
             // bp4 - 历史消息：在 history 最后一条打 cache_control（仅 Claude 协议）
             //   - 只在最后一条打，Anthropic cache prefix 机制会从这条往前匹配
@@ -1282,6 +1290,13 @@ ${visionDesc}
                 max_tokens: 8000,
                 stream: userStream,
             };
+            // 暮色 2026-07-17：Claude 协议加顶层 system 字段
+            //   - Anthropic 协议标准：system 是顶层字段，不在 messages 里
+            //   - OpenAI 协议：system 在 messages[0].role = 'system'（已在 fullMessages 里）
+            //   - 这两种格式不能同时存在，否则 newapi 重写时会报 400
+            if (useClaudeCache && claudeSystemField) {
+                baseReqBody.system = claudeSystemField;
+            }
             // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
             if (userStream) {
                 baseReqBody.stream_options = { include_usage: true };

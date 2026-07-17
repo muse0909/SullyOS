@@ -281,6 +281,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 |---|---|---|
 | 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
 | 2026-07-17 | 私密记事独立成发现页子页（阶段 1：UI 完整 + 阶段 2 待开）| [`changelogs/2026-07-17-private-notes-stage1-ui.md`](./changelogs/2026-07-17-private-notes-stage1-ui.md) |
+| 2026-07-17 | 私密记事阶段 2：AI 主动写 + 定时提醒（`[[PRIVATE_NOTE:...\|type]]` token + 21:00 默认提醒）| [`changelogs/2026-07-17-private-notes-stage2-ai-writes.md`](./changelogs/2026-07-17-private-notes-stage2-ai-writes.md) |
 | 2026-07-16 | innerState + realtime 挪到 messages 末尾，提升 prompt cache 命中率 | [`changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md`](./changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md) |
 | 2026-07-17 | 显式 cache_control 标记，拿 1h TTL | [`changelogs/2026-07-17-explicit-cache-control-1h-ttl.md`](./changelogs/2026-07-17-explicit-cache-control-1h-ttl.md) |
 | 2026-07-17 | 4 断点 prompt cache 方案（bp1 工具 / bp2 行为 / bp3 上下文 / bp4 历史） | [`changelogs/2026-07-17-prompt-cache-4-breakpoints.md`](./changelogs/2026-07-17-prompt-cache-4-breakpoints.md) |

@@ -942,6 +942,60 @@ export const useChatAI = ({
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
+            // ⚠️ 2026-07-17 站长反馈：claude 是 hash 前缀缓存
+            //   cache 命中要求从开头到 cache_control 标记的所有内容 hash 完全一致
+            //   任意字符变化都让 cache 失效
+            //   工具：主动计算 4 段 hash，让暮色一眼看出哪段在变
+            //
+            //   4 段累积 hash：
+            //   - hash_bp1 = sha256(bp1Tools)
+            //   - hash_bp2 = sha256(bp1Tools + bp2Rules)
+            //   - hash_bp3 = sha256(bp1Tools + bp2Rules + bp3Context)
+            //   - hash_bp4 = sha256(bp1Tools + bp2Rules + bp3Context + history)
+            //
+            //   暮色操作：跑 3-5 轮对话，对比 4 个 hash 哪个变了
+            //   - hash_bp1 变 → bp1Tools 段有内容在变（极少见）
+            //   - hash_bp2 变 → bp2Rules 段有内容在变（你刚关心声就属于这个）
+            //   - hash_bp3 变 → bp3Context 段有内容在变（朋友圈/日记/角色卡等）
+            //   - hash_bp4 变 → history 有变化（新消息是正常的；如果没发新消息还变就是 bug）
+            try {
+                const computeHash = async (text: string): Promise<string> => {
+                    try {
+                        const buf = new TextEncoder().encode(text);
+                        const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+                        return Array.from(new Uint8Array(hashBuf))
+                            .map(b => b.toString(16).padStart(2, '0'))
+                            .join('')
+                            .slice(0, 16);
+                    } catch {
+                        return '(crypto unavailable)';
+                    }
+                };
+                const historyConcat = cleanedApiMessages.map((m: any) => {
+                    if (typeof m.content === 'string') return m.content;
+                    return JSON.stringify(m.content);
+                }).join('\n');
+                const hash_bp1 = await computeHash(bp1Tools);
+                const hash_bp2 = await computeHash(bp1Tools + bp2Rules);
+                const hash_bp3 = await computeHash(bp1Tools + bp2Rules + bp3Context);
+                const hash_bp4 = await computeHash(bp1Tools + bp2Rules + bp3Context + historyConcat);
+                console.log(`🔐 [Cache Hash 4 段] bp1=${hash_bp1} | bp2=${hash_bp2} | bp3=${hash_bp3} | bp4=${hash_bp4}`);
+                // 存到 localStorage（覆盖之前那条，便于对比）
+                try {
+                    const prev = localStorage.getItem('sullyos:lastApiReqLog');
+                    if (prev) {
+                        const obj = JSON.parse(prev);
+                        obj.hash_bp1 = hash_bp1;
+                        obj.hash_bp2 = hash_bp2;
+                        obj.hash_bp3 = hash_bp3;
+                        obj.hash_bp4 = hash_bp4;
+                        localStorage.setItem('sullyos:lastApiReqLog', JSON.stringify(obj, null, 2));
+                    }
+                } catch { /* quota 忽略 */ }
+            } catch (e) {
+                console.warn('hash 校验失败（可能环境不支持 crypto.subtle）：', e);
+            }
+
             // Save for dev debug viewer
             setLastSystemPrompt(systemPrompt);
 

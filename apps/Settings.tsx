@@ -186,6 +186,10 @@ const Settings: React.FC = () => {
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
+  // 暮色 2026-07-17：API 协议选择
+  //   - 'openai' (默认): 走 /v1/chat/completions，不发 cache_control（即享 ccmax2 0.6x 适用）
+  //   - 'claude':         走 /v1/messages，发 4 断点 cache_control（等即享加完 Claude 端点再用）
+  const [localProtocol, setLocalProtocol] = useState<'openai' | 'claude'>(apiConfig.protocol || 'openai');
   const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'volink'>(apiConfig.ttsProvider || 'minimax');
   const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.volinkTtsBaseUrl || '');
   const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
@@ -550,12 +554,15 @@ const Settings: React.FC = () => {
     setLocalModel(c.model || '');
     setLocalStream(c.stream === true);
     setLocalTemperature(typeof c.temperature === 'number' ? c.temperature : 0.85);
+    setLocalProtocol(c.protocol === 'claude' ? 'claude' : 'openai');
     updateApiConfig({
       baseUrl: c.baseUrl || '',
       apiKey: c.apiKey || '',
       model: c.model || '',
       stream: c.stream === true,
       temperature: typeof c.temperature === 'number' ? c.temperature : 0.85,
+      // 暮色 2026-07-17：预设恢复时也带上 protocol
+      protocol: c.protocol === 'claude' ? 'claude' : 'openai',
     });
     addToast(`已加载配置: ${preset.name}`, 'info');
   };
@@ -641,6 +648,8 @@ const Settings: React.FC = () => {
       model: localModel,
       stream: localStream,
       temperature: localTemperature,
+      // 暮色 2026-07-17：API 协议（OpenAI / Claude）
+      protocol: localProtocol,
     });
     setStatusMsg('配置已保存');
     setTimeout(() => setStatusMsg(''), 2000);
@@ -1519,6 +1528,27 @@ const handleSaveTts = () => {
                                 <div className="flex items-center justify-between"><span className="text-[10px] text-slate-400">温度 (Temperature)</span><span className="text-[10px] font-mono text-slate-400">{localTemperature.toFixed(2)}</span></div>
                                 <input type="range" min="0" max="2" step="0.05" value={localTemperature} onChange={(e) => setLocalTemperature(parseFloat(e.target.value))} className="w-full accent-slate-400 mt-1" />
                                 <p className="text-[9px] text-slate-300 mt-0.5">默认 0.85；只作用于聊天和约会的主回复</p>
+                            </div>
+                            {/* 暮色 2026-07-17：API 协议选择（OpenAI / Claude） */}
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <div><span className="text-[10px] text-slate-400">API 协议 (Protocol)</span><p className="text-[9px] text-slate-300 mt-0.5">默认 OpenAI；切到 Claude 需服务端支持 /v1/messages</p></div>
+                                </div>
+                                <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-xl">
+                                    <button
+                                        type="button"
+                                        onClick={() => setLocalProtocol('openai')}
+                                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${localProtocol === 'openai' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                                    >OpenAI</button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setLocalProtocol('claude')}
+                                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${localProtocol === 'claude' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                                    >Claude</button>
+                                </div>
+                                {localProtocol === 'claude' && (
+                                    <p className="text-[9px] text-amber-500 mt-1.5 leading-relaxed">⚠️ Claude 模式要求 API 服务端支持 /v1/messages 端点和 4 断点 cache_control。即享 ccmax2 0.6x 当前为 OpenAI 协议，请等服务端加完 Claude 端点后再切换。</p>
+                                )}
                             </div>
                         </div>
                     )}

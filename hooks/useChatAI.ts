@@ -897,27 +897,38 @@ export const useChatAI = ({
             //           OpenAI 兼容 API 大部分 provider 透传 cache_control 字段
             //           即享 ccmax / 青屿 kiro 是否透传未知（之前 1 断点都没生效，4 断点需实测）
             //   - 降级：provider 不认 cache_control → 字段被忽略，回到默认 5m TTL
+            //
+            // 暮色 2026-07-17 协议分支：
+            //   - 即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"
+            //   - protocol === 'openai' (默认): 把 system content 退化成 string，不发 cache_control
+            //                            history 最后一条也不打 cache_control
+            //   - protocol === 'claude':  保留 4 断点 cache_control 块（等即享加完 Claude 端点再用）
+            const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
+            const useClaudeCache = apiProtocol === 'claude';
             const cacheControlEphemeral = { type: 'ephemeral', ttl: '1h' as const };
             const fullMessages: any[] = [
                 {
                     role: 'system',
-                    content: [
+                    // OpenAI 协议：system content 必须是 string（newapi 不接受 array of blocks）
+                    // Claude 协议：system content 是 array of text blocks，可带 cache_control
+                    content: useClaudeCache ? [
                         // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
                         { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
                         // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
                         { type: 'text', text: bp2Rules, cache_control: cacheControlEphemeral },
                         // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
                         { type: 'text', text: bp3Context, cache_control: cacheControlEphemeral },
-                    ]
+                    ] : `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`
                 },
                 ...cleanedApiMessages
             ];
 
-            // bp4 - 历史消息：在 history 最后一条打 cache_control
+            // bp4 - 历史消息：在 history 最后一条打 cache_control（仅 Claude 协议）
             //   - 只在最后一条打，Anthropic cache prefix 机制会从这条往前匹配
             //   - 下次新加一条 user 消息：bp4 之前的所有 history 仍命中，新加的 user 消息走输入价
             //   - 长对话时 history 段越增长命中率越高（前 N-1 条一直在 cache 里）
-            if (fullMessages.length > 1) {
+            //   - OpenAI 协议跳过：newapi 不认 cache_control 字段
+            if (useClaudeCache && fullMessages.length > 1) {
                 const lastMsg = fullMessages[fullMessages.length - 1];
                 if (lastMsg && (lastMsg.role === 'user' || lastMsg.role === 'assistant')) {
                     if (typeof lastMsg.content === 'string') {
@@ -1275,14 +1286,27 @@ ${visionDesc}
             if (userStream) {
                 baseReqBody.stream_options = { include_usage: true };
             }
+            // 暮色 2026-07-17 协议分支：Claude 协议时强制 stream=false
+            //   - 原因：safeApi.ts 的 SSE 解析只支持 OpenAI 协议
+            //   - Anthropic 流式响应是不同的事件格式（content_block_delta 等）
+            //   - 等以后真要 Claude 流式再补（目前 stream=false 默认，无影响）
+            if (useClaudeCache && baseReqBody.stream) {
+                console.log('⚠️ [API] Claude 协议暂不支持流式，自动降级为非流式');
+                baseReqBody.stream = false;
+            }
+            // 暮色 2026-07-17 协议分支：Claude 协议时不挂 tool
+            //   - 原因：Anthropic tool_use 协议格式跟 OpenAI tool_calls 不同
+            //   - 麦当劳 MiniApp / 生图 / 其它 tool 调用：走 OpenAI 协议走
+            //   - Claude 协议分支只支持纯文本聊天（能命中 cache 才是核心目标）
+            //   - 想用 tool 时：把 Settings 的 API 协议切回 OpenAI
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
             // 组装 tools 列表
 const toolsList: any[] = [];
-if (mcdMiniOpen) {
+if (!useClaudeCache && mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
+if (!useClaudeCache && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 if (toolsList.length > 0) {
@@ -1333,7 +1357,7 @@ if (toolsList.length > 0) {
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
                 body: JSON.stringify(baseReqBody)
-            });
+            }, 2, 0, apiProtocol);
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -1435,7 +1459,7 @@ if (toolsList.length > 0) {
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify(followBody)
-                    });
+                    }, 2, 0, apiProtocol);
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
                     // 第二轮跳过 (我们已经禁用了 tools)
                     if (!getToolCalls(data).length) break;

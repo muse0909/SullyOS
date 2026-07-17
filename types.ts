@@ -174,6 +174,13 @@ export interface APIConfig {
   stream?: boolean;
   // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
   temperature?: number;
+  // 暮色 2026-07-17：API 协议类型
+  //   - 'openai' (默认): 发到 /v1/chat/completions，按 OpenAI 协议，不发 cache_control
+  //   - 'claude':         发到 /v1/messages，按 Claude 协议，发 4 断点 cache_control（等即享加完 Claude 端点再用）
+  //   Missing → 'openai'（向后兼容老用户）
+  //   上下文：即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"，
+  //          所以 OpenAI 协议下必须把 cache_control 字段去掉。
+  protocol?: 'openai' | 'claude';
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;

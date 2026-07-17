@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -23,6 +23,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
+import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
   publishPostAsChar,
@@ -695,7 +696,8 @@ export const useChatAI = ({
                 userListeningContext && music.listeningTogetherWith.includes(char.id)
             );
             // buildSystemPrompt 和 DB 消息加载彼此独立，并发跑节省 Math.max 以外的等待时间
-            const limit = char.contextLimit || 500;
+            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；私密记事 / 朋友圈 主动行为用 100 条足够）
+            const limit = char.contextLimit || 100;
             const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
@@ -728,6 +730,16 @@ export const useChatAI = ({
             const dynamicTail = systemPromptResult.dynamicTail;
             // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
             const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
+
+            // 暮色 2026-07-17：定时提醒注入（每天到点后第一次 chat 触发）
+            //   - 检查 shouldShowReminder（今天是否到点 + 还没提醒过）
+            //   - 满足条件：往 bp2Rules 拼 reminderText，markReminderShown 防止重复
+            //   - 归 bp2Rules 因为是行为约束（每天一次，cache miss 一次可接受）
+            if (shouldShowReminder()) {
+                bp2Rules += buildReminderText(char.name, userProfile.name);
+                markReminderShown();
+                console.log(`📒 [NoteReminder] 触发今天 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 的私密记事提醒`);
+            }
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
@@ -1183,6 +1195,46 @@ if (toolsList.length > 0) {
     baseReqBody.tools = toolsList;
     baseReqBody.tool_choice = 'auto';
 }
+
+            // ⚠️ 2026-07-17 暮色提议：完整请求体日志（发给即享技术看 cache_control 是否透传）
+            //   - console.log 输出
+            //   - 存到 localStorage['sullyos:lastApiReqLog']，暮色控制台取
+            //   - DevTools 控制台输入: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))
+            {
+                const logEntry = {
+                    timestamp: new Date().toISOString(),
+                    url: `${baseUrl}/chat/completions`,
+                    model: effectiveApi.model,
+                    stream: userStream,
+                    temperature: userTemp,
+                    maxTokens: 8000,
+                    totalMessages: fullMessages.length,
+                    toolCount: toolsList.length,
+                    hasCacheControl: JSON.stringify(baseReqBody).includes('cache_control'),
+                    cacheControlCount: (JSON.stringify(baseReqBody).match(/"cache_control"/g) || []).length,
+                    requestBody: baseReqBody,
+                };
+                try {
+                    const json = JSON.stringify(logEntry, null, 2);
+                    localStorage.setItem('sullyos:lastApiReqLog', json);
+                    console.log(
+                        `%c📤 [API Request Log] ${logEntry.timestamp}\n` +
+                        `URL: ${logEntry.url}\n` +
+                        `Model: ${logEntry.model}\n` +
+                        `Stream: ${logEntry.stream}, Temp: ${logEntry.temperature}, MaxTokens: ${logEntry.maxTokens}\n` +
+                        `Total messages: ${logEntry.totalMessages}, Tools: ${logEntry.toolCount}\n` +
+                        `cache_control 标记数: ${logEntry.cacheControlCount}\n` +
+                        `完整请求体已存到 localStorage['sullyos:lastApiReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                        `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))`,
+                        'color: #059669; font-weight: bold;'
+                    );
+                    console.log('完整请求体:', baseReqBody);
+                } catch (e: any) {
+                    console.warn('存请求体日志到 localStorage 失败（quota 超限？）：', e);
+                    // 退化：只 console.log
+                    console.log('📤 [API Request Log]', logEntry);
+                }
+            }
 
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
@@ -2297,6 +2349,44 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 aiContent = aiContent.replace(/\[\[MOMENT_LIKE:\s*[^\s\]]+\s*\]\]/g, '').trim();
             } catch (e) {
                 console.warn('📱 [Moments] 解析失败:', e);
+            }
+
+            // 5.9d Handle Private Notes (私密记事) Actions
+            // 暮色 2026-07-17：让 AI 自己决定写私密记事（仿 MOMENT_POST 文本 token 模式）
+            // AI 在 chat reply 里输出 [[PRIVATE_NOTE: 内容 | type]] → 这里解析 → saveRoomNote + 推 system 消息
+            // type 必须是: thought / doodle / search / lyric / gossip 之一
+            try {
+                const noteMatches = [...aiContent.matchAll(/\[\[PRIVATE_NOTE:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
+                if (noteMatches.length > 0) {
+                    // 限制每次最多 1 条（避免 AI 一次刷 N 条）
+                    const m = noteMatches[0];
+                    const content = m[1].trim();
+                    const type = m[2].toLowerCase() as RoomNote['type'];
+                    if (content) {
+                        const newNote: RoomNote = {
+                            id: `note-${Date.now()}`,
+                            charId: char.id,
+                            timestamp: Date.now(),
+                            content,
+                            type,
+                        };
+                        await DB.saveRoomNote(newNote);
+                        console.log(`📒 [PrivateNote] ${char.name} 写了一条私密记事: ${content.slice(0, 30)}... (type=${type})`);
+                        // 推 system 消息进聊天流（让用户感知到）
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'text',
+                            content: `[系统: ${char.name} 在记事本上写道: \n"${content}"]`,
+                        });
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        addToast(`📒 ${char.name} 写了一条私密记事`, 'success', 2500);
+                    }
+                }
+                // 移除所有 PRIVATE_NOTE 标记（无论发没发出去）
+                aiContent = aiContent.replace(/\[\[PRIVATE_NOTE:\s*[\s\S]+?\]\]/g, '').trim();
+            } catch (e) {
+                console.warn('📒 [PrivateNote] 解析失败:', e);
             }
 
             // 5.10 Handle XHS (小红书) Actions

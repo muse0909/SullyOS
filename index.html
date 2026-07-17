@@ -43,6 +43,7 @@
               'fade-in': 'fadeIn 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
               'slide-up': 'slideUp 0.35s cubic-bezier(0.25, 1, 0.5, 1)',
               'slide-down': 'slideDown 0.35s cubic-bezier(0.25, 1, 0.5, 1)',
+              'slide-in-right': 'slideInRight 0.32s cubic-bezier(0.25, 1, 0.5, 1)',
               'pop-in': 'popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
               'float-up': 'floatUp 3s ease-out forwards',
               'wiggle': 'wiggle 0.5s ease-in-out infinite',
@@ -63,6 +64,10 @@
               slideDown: {
                 '0%': { transform: 'translateY(-100%)', opacity: '0' },
                 '100%': { transform: 'translateY(0)', opacity: '1' },
+              },
+              slideInRight: {
+                '0%': { transform: 'translateX(100%)', opacity: '0' },
+                '100%': { transform: 'translateX(0)', opacity: '1' },
               },
               popIn: {
                 '0%': { opacity: '0', transform: 'scale(0.5)' },

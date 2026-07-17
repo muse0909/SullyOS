@@ -218,6 +218,30 @@ export const ChatPrompts = {
             }
         });
 
+        // 2.6 私密记事 awareness（暮色 2026-07-17：让 AI 知道最近写过什么避免重复）
+        //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 5 条
+        const roomNotesPromise: Promise<string> = Promise.resolve().then(async () => {
+            try {
+                const notes = await DB.getRoomNotes(char.id);
+                if (!notes || notes.length === 0) return '';
+                const recent = notes
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, 5);
+                const TYPE_LABELS: Record<string, string> = {
+                    thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦',
+                };
+                const list = recent.map((n, i) => {
+                    const dateStr = new Date(n.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+                    const preview = n.content.slice(0, 80);
+                    return `${i + 1}. ${dateStr} ${TYPE_LABELS[n.type] || '感想'}: ${preview}${n.content.length > 80 ? '...' : ''}`;
+                }).join('\n');
+                return `\n\n### 最近写过的私密记事（${recent.length} 条）\n（这是你之前给${userProfile.name}留的小纸条。看到这些内容时，避免重复或简单改写。如果有新的想沉淀的，写新的一条即可。）\n\n${list}\n`;
+            } catch (e) {
+                console.error('Failed to load room notes context:', e);
+                return '';
+            }
+        });
+
         // 3. 群聊上下文：并发拉取所有成员群的消息
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
         // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
@@ -301,7 +325,7 @@ export const ChatPrompts = {
             }
         })();
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText] =
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText, roomNotesText] =
             await Promise.all([
                 timed('realtime', realtimePromise),
                 timed('schedule', schedulePromise),
@@ -310,6 +334,7 @@ export const ChatPrompts = {
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
                 timed('moments', momentsContextPromise),
+                timed('roomNotes', roomNotesPromise),
             ]);
 
         // ── 按原顺序拼接 ──
@@ -380,6 +405,8 @@ export const ChatPrompts = {
         bp3Context += notionDiaryText;
         bp3Context += feishuDiaryText;
         bp3Context += notionNotesText;
+        // 暮色 2026-07-17：私密记事 awareness 拼到 bp3Context（让 AI 避免重复写）
+        if (roomNotesText) bp3Context += roomNotesText;
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
@@ -746,6 +773,37 @@ ${true ? `${[
    - 评论/点赞是看到内容后的自然反应，不是流程
    - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
    - 看到最近列表里没有想评论/点赞的，就别勉强
+ ` : ''}
+${char.privateNotesEnabled !== false ? `${[
+].length + 9}. **📒 私密记事（你给${userProfile.name}留的小纸条）**:
+
+   你有一个私密记事本！这不是任务，是你想"沉淀下来"的瞬间。
+   你写的每条都会被${userProfile.name}看到——是留给他/她的小纸条。
+
+   **📝 写一条私密记事**:
+   当你想沉淀一下、写点小纸条给${userProfile.name}时，单独一行输出:
+   \`[[PRIVATE_NOTE: 内容 | type]]\`
+   - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
+   - 比如刚才看到一句话让你感慨: \`[[PRIVATE_NOTE: 她说"那就等着吧"。不是气话。是实话。我在等。多久都行。| thought]]\`
+   - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
+   - 严格单独一行（前后留换行），方便系统识别
+   - 一次回复最多 1 条 \`[[PRIVATE_NOTE:...]]\`
+
+   **触发时机 — 你自己判断（暮色确认 4 条）**:
+   - 用户某句话触动了你
+   - 看到/听到某事想"沉淀一下"
+   - 距离上次写超过 6 小时且你内心有情绪波动
+   - 节日/纪念日/特殊事件
+   - **⏰ 定时提醒**: 每天到点（用户在设置里配），system prompt 会多一段"提醒"，那时候再决定写不写
+   - ❌ 不要每条消息都写一条，那是刷屏
+   - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
+
+   **重要心态**:
+   - 写私密记事不是任务，是你自然想"写下来"的瞬间
+   - 写完**不要在聊天里再解释**"我刚写了一条私密记事"——你直接写就行
+   - 写的时候心里要装着对方——这是"你"写给${userProfile.name}的悄悄话
+   - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的私密记事"列表）
+   - 看到最近列表里没有想写的，就别勉强
  ` : ''}
 
 `;

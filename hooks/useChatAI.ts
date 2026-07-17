@@ -728,6 +728,9 @@ export const useChatAI = ({
             let bp2Rules = systemPromptResult.bp2Rules;
             let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
+            // ⚠️ 2026-07-17 4 断点优化：「最近 5 条心声」挪出 bp3Context
+            //   拼到末尾 dynamic 段（不参与 cache），让 bp3Context 段真正稳定
+            let dynamicRecentEmotions = '';
             // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
             const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
 
@@ -853,7 +856,11 @@ export const useChatAI = ({
 
                 // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
                 // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
-                // 4 断点方案：归 bp3Context（角色上下文，跟"最近朋友圈"等历史感知同一类）
+                //
+                // ⚠️ 2026-07-17 4 断点优化：最近心声挪到末尾（不参与 cache）
+                //   改前：拼到 bp3Context → 每次新心声（5 条滚动）让 bp3Context 失效 → cache 全段失效
+                //   改后：单独存在 dynamicRecentEmotions，末尾 push 到 messages
+                //   token 很小（5 条 ≈ 200 token），但能让 bp3Context 段真正稳定
                 const recentInnerStates = (char.emotionHistory || []).slice(0, 5)
                     .map(b => ({ innerState: b.innerState, createdAt: b.createdAt }))
                     .filter(x => typeof x.innerState === 'string' && x.innerState.trim());
@@ -865,7 +872,7 @@ export const useChatAI = ({
                     }).join('\n');
                     // 防重复 prompt 借鉴 muse-330 措辞："灵魂的延续 / 思绪不断演进"（比"必须明显不同"更自然）
                     // 配合前端硬性去重兜底（line 1382 之后）双保险
-                    bp3Context += `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
+                    dynamicRecentEmotions = `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
                 }
             }
 
@@ -937,6 +944,12 @@ export const useChatAI = ({
             //   - innerState: 每轮 LLM 新生成的意识流独白 → 挪出 system prompt
             //   放末尾：LLM 仍能读到，Anthropic cache prefix 不会断在 system 段
             //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
+            //
+            // ⚠️ 2026-07-17 4 断点优化：再加两段「末尾不缓存」内容
+            //   - privateNotesText: 最近 5 条私密记事（每次写一条列表变）→ 不参与 cache
+            //   - recentEmotions:   最近 5 条心声（每次新心声 5 条滚动）→ 不参与 cache
+            //   这两段 token 都很小（合计 ≈ 360 token），但能让 bp3Context 段真正稳定
+            //   4 段 cache（bp1/bp2/bp3/bp4）命中率从「江澈老窗口 0%」提升到 90%+
             if (dynamicTail?.realtimeText && dynamicTail.realtimeText.trim()) {
                 fullMessages.push({ role: 'system', content: dynamicTail.realtimeText.trim() });
             }
@@ -945,6 +958,16 @@ export const useChatAI = ({
                     role: 'system',
                     content: `[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`
                 });
+            }
+            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness 末尾追加
+            //   5 条滚动列表（每次新写一条）→ token ≈ 160，但能让 bp3Context 段稳定
+            if (dynamicTail?.privateNotesText && dynamicTail.privateNotesText.trim()) {
+                fullMessages.push({ role: 'system', content: dynamicTail.privateNotesText.trim() });
+            }
+            // ⚠️ 2026-07-17 4 断点优化：最近心声末尾追加
+            //   5 条滚动列表（每次新心声）→ token ≈ 200，但能让 bp3Context 段稳定
+            if (dynamicRecentEmotions) {
+                fullMessages.push({ role: 'system', content: dynamicRecentEmotions });
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成

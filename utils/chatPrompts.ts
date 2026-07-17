@@ -405,8 +405,12 @@ export const ChatPrompts = {
         bp3Context += notionDiaryText;
         bp3Context += feishuDiaryText;
         bp3Context += notionNotesText;
-        // 暮色 2026-07-17：私密记事 awareness 拼到 bp3Context（让 AI 避免重复写）
-        if (roomNotesText) bp3Context += roomNotesText;
+        // 暮色 2026-07-17 4 断点优化：私密记事 awareness 不再拼到 bp3Context
+        //   改前：拼到 bp3Context → 每次写新记事列表变化 → bp3Context 失效 → 整个 cache 失效
+        //   改后：作为 dynamicNotes 返回 → useChatAI 末尾 push 到 messages（不参与 cache）
+        //   这次写一条 5 条滚动 → 输入价算（但 token 很小 ≈ 160 token）
+        //   bp3Context 段真正稳定 → cache 命中 → 整体便宜 10 倍+
+        // roomNotesText 这里不再累加到 bp3Context，改返回 dynamicNotes
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
@@ -898,7 +902,7 @@ ${char.privateNotesEnabled !== false ? `${[
         //   - bp1Tools:   Chat App Rules 整段（含 1-5 行为+6-9 工具）+ 语音功能
         //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
         //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
-        //   - dynamicTail: realtime 时间戳 + innerState 意识流（挪到 messages 末尾，不进 cache）
+        //   - dynamicTail: realtime 时间戳 + innerState 意识流 + 私密记事 5 条（不参与 cache）
         return {
             bp1Tools,
             bp2Rules,
@@ -906,6 +910,7 @@ ${char.privateNotesEnabled !== false ? `${[
             dynamicTail: {
                 realtimeText: realtimeText || '',
                 innerState: evolvedNarrative || '',
+                privateNotesText: roomNotesText || '',
             },
         };
     },

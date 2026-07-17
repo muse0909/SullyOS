@@ -662,6 +662,17 @@ export const useChatAI = ({
             //     此时已有"…"气泡，不额外显示状态提示
             await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
 
+            // ⚠️ 2026-07-17 4 断点优化：把记忆宫殿挪出 bp3Context 段
+            //   改前：buildCoreContext 读 char.memoryPalaceInjection 拼到 bp3Context
+            //   改后：先存到 dynamicMemoryPalace，再清空 char.memoryPalaceInjection 让 buildCoreContext 跳过
+            //         末尾 push dynamicMemoryPalace（不参与 cache）
+            //   关键：记忆宫殿是每次 query 向量检索结果，每次都不同（差 600+ chars）
+            //   挪走后 bp3Context 段才能真正稳定，cache 才能命中
+            //   安全：useChatAI.ts 里只有 1 处提到这个字段，其他地方不读
+            //        下一轮 injectMemoryPalace 会重新写
+            const dynamicMemoryPalace = (char as any).memoryPalaceInjection || '';
+            (char as any).memoryPalaceInjection = undefined;
+
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿 + 音乐氛围)
             // 构造 user 的"此刻在听"上下文 —— 前2当前后2共 ≤5 行
             let userListeningContext: {
@@ -968,6 +979,12 @@ export const useChatAI = ({
             //   5 条滚动列表（每次新心声）→ token ≈ 200，但能让 bp3Context 段稳定
             if (dynamicRecentEmotions) {
                 fullMessages.push({ role: 'system', content: dynamicRecentEmotions });
+            }
+            // ⚠️ 2026-07-17 4 断点优化：记忆宫殿末尾追加
+            //   每次 query 向量检索结果（4600-5200 chars）→ 变长但能让 bp3Context 段稳定
+            //   这是 4 段 cache 命中的最后一个关键修复
+            if (dynamicMemoryPalace) {
+                fullMessages.push({ role: 'system', content: dynamicMemoryPalace });
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成

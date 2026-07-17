@@ -10,6 +10,7 @@ import {
     VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
+import { pruneMemoryLinks } from './memoryPalace/links';
 
 const DB_NAME = 'AetherOS_Data';
 const DB_VERSION = 62; // Bumped: v62 add messages [charId, type] 复合索引 + 彼方数据表
@@ -1847,7 +1848,7 @@ export const DB = {
           });
           clearAndAdd('memory_vectors', upgraded);
       }
-      if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
+      if (data.memoryLinks) clearAndAdd('memory_links', pruneMemoryLinks(data.memoryLinks));
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
       if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);

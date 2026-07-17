@@ -274,3 +274,42 @@ function makeKey(id1: string, id2: string, type: string): string {
     const [a, b] = id1 < id2 ? [id1, id2] : [id2, id1];
     return `${a}-${b}-${type}`;
 }
+
+/**
+ * 备份导出 / 导入时的链接裁剪
+ *
+ * 目的：把 memoryLinks 从 ~19 万条压到 ~5 万条，省：
+ *  - 备份文件体积 ~6 MB（zipped 后）
+ *  - 导入时间 20-30 秒（IndexedDB 19 万次 put 是大头）
+ *  - 导出 JSON.stringify 时间
+ *
+ * 砍的规则（保守，不影响图遍历扩散激活质量）：
+ *  1. emotional 链接 strength < 0.3 → 砍（25% 条，强度都极弱）
+ *  2. 重复对（同 source+target+type）→ 只保留 strength 最大的
+ *
+ * 砍的逻辑：图遍历时强联通性由强边维持，砍弱边对检索质量影响极小。
+ * 这些弱边在系统使用过程中会按 buildLinks 规则自动重建。
+ *
+ * @param links 原始链接列表
+ * @param minStrength 低于此值的 emotional 链接被砍，默认 0.3
+ * @returns 裁剪后的链接列表
+ */
+export function pruneMemoryLinks(
+    links: MemoryLink[],
+    minStrength: number = 0.3,
+): MemoryLink[] {
+    // 第一步：按规则过滤 + 内部去重
+    const bestByKey = new Map<string, MemoryLink>();
+    for (const link of links) {
+        // 弱 emotional 砍掉
+        if (link.type === 'emotional' && link.strength < minStrength) continue;
+
+        // 重复对去重（保留 strength 最大的）
+        const key = makeKey(link.sourceId, link.targetId, link.type);
+        const existing = bestByKey.get(key);
+        if (!existing || link.strength > existing.strength) {
+            bestByKey.set(key, link);
+        }
+    }
+    return Array.from(bestByKey.values());
+}

@@ -15,6 +15,11 @@ const Gallery: React.FC = () => {
     const [isReviewing, setIsReviewing] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
 
+    // Multi-select state
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+
     // Long-press delete state
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; variant: 'danger' | 'warning' | 'info'; onConfirm: () => void; } | null>(null);
@@ -49,13 +54,73 @@ const Gallery: React.FC = () => {
     };
 
     const handleImageClick = (img: GalleryImage) => {
+        if (isSelectionMode) {
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (next.has(img.id)) next.delete(img.id);
+                else next.add(img.id);
+                return next;
+            });
+            return;
+        }
         setSelectedImage(img);
         setView('detail');
     };
 
+    const handleEnterSelection = () => {
+        setIsSelectionMode(true);
+        setSelectedIds(new Set());
+    };
+
+    const handleExitSelection = () => {
+        setIsSelectionMode(false);
+        setSelectedIds(new Set());
+    };
+
+    const handleSelectAll = () => {
+        if (selectedIds.size === images.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(images.map(img => img.id)));
+        }
+    };
+
+    const handleBatchDelete = () => {
+        if (selectedIds.size === 0) return;
+        const count = selectedIds.size;
+        setConfirmDialog({
+            isOpen: true,
+            title: '删除照片',
+            message: `确定要删除选中的 ${count} 张照片吗？此操作无法撤销。`,
+            variant: 'danger',
+            onConfirm: async () => {
+                setIsBatchDeleting(true);
+                try {
+                    const ids = Array.from(selectedIds);
+                    for (const id of ids) {
+                        await DB.deleteGalleryImage(id);
+                    }
+                    setImages(prev => prev.filter(img => !selectedIds.has(img.id)));
+                    setAlbumCounts(prev => activeCharId ? { ...prev, [activeCharId]: (prev[activeCharId] || 0) - ids.length } : prev);
+                    addToast(`已删除 ${count} 张照片`, 'success');
+                    handleExitSelection();
+                } catch (e: any) {
+                    addToast(`删除失败: ${e.message}`, 'error');
+                } finally {
+                    setIsBatchDeleting(false);
+                    setConfirmDialog(null);
+                }
+            }
+        });
+    };
+
     const handleBack = () => {
         if (view === 'detail') { setView('grid'); setShowChatContext(false); }
-        else if (view === 'grid') { setView('albums'); setActiveCharId(null); }
+        else if (view === 'grid') {
+            if (isSelectionMode) { handleExitSelection(); return; }
+            setView('albums');
+            setActiveCharId(null);
+        }
         else closeApp();
     };
 
@@ -283,22 +348,57 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
     );
 
     const renderGrid = () => (
-        <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in">
+        <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in relative">
             {images.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
                     <span className="text-sm">还没有照片</span>
                 </div>
             ) : (
-                <div className="grid grid-cols-3 gap-1">
-                    {images.map(img => (
-                        <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
-                            <img src={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
-                            {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
-                            {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
+                <>
+                    <div className="grid grid-cols-3 gap-1">
+                        {images.map(img => {
+                            const selected = selectedIds.has(img.id);
+                            return (
+                                <div
+                                    key={img.id}
+                                    onClick={() => handleImageClick(img)}
+                                    className={`aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm transition-all ${isSelectionMode ? 'active:scale-95' : ''}`}
+                                >
+                                    <img src={img.url} className={`w-full h-full object-cover transition-all duration-200 ${isSelectionMode && !selected ? 'opacity-60' : 'opacity-100 hover:scale-105'}`} loading="lazy" />
+                                    {isSelectionMode && (
+                                        <div className={`absolute inset-0 ring-[3px] ring-emerald-400 transition-opacity ${selected ? 'opacity-100' : 'opacity-0'}`} />
+                                    )}
+                                    {isSelectionMode && (
+                                        <div className={`absolute top-1.5 left-1.5 w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-md ${selected ? 'bg-emerald-400 text-white scale-100' : 'bg-white/80 backdrop-blur-sm text-transparent scale-90'}`}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                                        </div>
+                                    )}
+                                    {!isSelectionMode && img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
+                                    {!isSelectionMode && img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {/* 底部操作栏 — 仅多选模式显示 */}
+                    {isSelectionMode && (
+                        <div className="sticky bottom-0 left-0 right-0 mt-3 -mx-1.5 px-4 py-3 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 flex items-center justify-center gap-3 z-10">
+                            <button
+                                onClick={handleSelectAll}
+                                className="px-4 py-2 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
+                            >
+                                {selectedIds.size === images.length ? '取消全选' : '全选'}
+                            </button>
+                            <button
+                                onClick={handleBatchDelete}
+                                disabled={selectedIds.size === 0 || isBatchDeleting}
+                                className={`px-5 py-2 rounded-full text-xs font-bold transition-all ${selectedIds.size === 0 || isBatchDeleting ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-rose-400 text-white shadow-md hover:bg-rose-500 active:scale-95'}`}
+                            >
+                                {isBatchDeleting ? '删除中...' : `删除 ${selectedIds.size} 张`}
+                            </button>
                         </div>
-                    ))}
-                </div>
+                    )}
+                </>
             )}
         </div>
     );
@@ -402,14 +502,35 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
 
             {/* Header */}
             {view !== 'detail' && (
-                <div className="h-16 bg-white/80 backdrop-blur-xl flex items-center px-4 border-b border-slate-100/60 shrink-0 z-10 sticky top-0">
-                    <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                    <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
-                        {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
-                    </h1>
-                    {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
+                <div className="h-16 bg-white/80 backdrop-blur-xl flex items-center px-4 border-b border-slate-100/60 shrink-0 z-10 sticky top-0 relative">
+                    {view === 'grid' && isSelectionMode ? (
+                        <>
+                            <button onClick={handleExitSelection} className="px-3 py-1.5 rounded-full text-xs font-medium text-slate-600 hover:bg-black/5 active:scale-95 transition-transform">
+                                取消
+                            </button>
+                            <h1 className="text-base font-semibold text-slate-800 absolute left-1/2 -translate-x-1/2 tracking-tight">
+                                已选 {selectedIds.size} 张
+                            </h1>
+                        </>
+                    ) : (
+                        <>
+                            <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                            </button>
+                            <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
+                                {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
+                            </h1>
+                            {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
+                            {view === 'grid' && images.length > 0 && (
+                                <button
+                                    onClick={handleEnterSelection}
+                                    className="ml-auto px-3 py-1.5 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
+                                >
+                                    选择
+                                </button>
+                            )}
+                        </>
+                    )}
                 </div>
             )}
 

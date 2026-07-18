@@ -782,7 +782,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 不要生硬地介绍功能，而是在对话自然流动中提起
    - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
  ` : ''}
-${true ? `${[
+${!isPureMode ? `${[
   notionEnabled,
   feishuEnabled,
   notionNotesEnabled,
@@ -821,7 +821,7 @@ ${true ? `${[
    - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
    - 看到最近列表里没有想评论/点赞的，就别勉强
  ` : ''}
-${char.privateNotesEnabled !== false ? `${[
+${!isPureMode && char.privateNotesEnabled !== false ? `${[
 ].length + 9}. **📒 私密记事（你给${userProfile.name}留的小纸条）**:
 
    你有一个私密记事本！这不是任务，是你想"沉淀下来"的瞬间。

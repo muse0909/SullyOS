@@ -1347,17 +1347,38 @@ if (toolsList.length > 0) {
             //   - 存到 localStorage['sullyos:lastApiReqLog']，暮色控制台取
             //   - DevTools 控制台输入: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))
             {
+                const countObjectKey = (value: any, keyName: string): number => {
+                    if (!value || typeof value !== 'object') return 0;
+                    if (Array.isArray(value)) {
+                        return value.reduce((sum, item) => sum + countObjectKey(item, keyName), 0);
+                    }
+                    return Object.entries(value).reduce((sum, [key, item]) => {
+                        return sum + (key === keyName ? 1 : 0) + countObjectKey(item, keyName);
+                    }, 0);
+                };
+                const cacheControlFieldCount = countObjectKey(baseReqBody, 'cache_control');
+                const requestJson = JSON.stringify(baseReqBody);
                 const logEntry = {
                     timestamp: new Date().toISOString(),
                     url: `${baseUrl}/chat/completions`,
                     model: effectiveApi.model,
+                    chatMode: char.chatMode || 'full',
+                    apiProtocol: useClaudeProtocol ? 'claude' : 'openai',
                     stream: userStream,
                     temperature: userTemp,
                     maxTokens: 8000,
                     totalMessages: fullMessages.length,
                     toolCount: toolsList.length,
-                    hasCacheControl: JSON.stringify(baseReqBody).includes('cache_control'),
-                    cacheControlCount: (JSON.stringify(baseReqBody).match(/"cache_control"/g) || []).length,
+                    hasCacheControl: cacheControlFieldCount > 0,
+                    cacheControlCount: cacheControlFieldCount,
+                    promptChars: {
+                        bp1Tools: bp1Tools.length,
+                        bp2Rules: bp2Rules.length,
+                        bp3Context: bp3Context.length,
+                        dynamicTail: dynamicTailParts.join('\n\n').length,
+                        history: historyTotalChars,
+                        requestJson: requestJson.length,
+                    },
                     requestBody: baseReqBody,
                 };
                 try {

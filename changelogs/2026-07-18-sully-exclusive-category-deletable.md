@@ -1,7 +1,7 @@
 # Sully 专属分类长按支持删除
 
 **日期**：2026-07-18
-**涉及 commit**：（待填）
+**涉及 commit**：`3bea505`（preview）/ `817f179`（master，cherry-pick）
 
 ## 改了什么
 

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { X, Trash, MagnifyingGlass } from '@phosphor-icons/react';
 import { CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
+import { isMessageSemanticallyRelevant } from '../../utils/messageFormat';
 
 interface ChatSettingsDrawerProps {
     isOpen: boolean;
@@ -91,7 +92,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
 
     // 暮色 2026-07-18：未向量化消息条数（提示用 — 上下文条数设置参考）
     //   记忆宫殿已向量化过的消息（id <= hwm）默认不进上下文
-    //   "未向量化条数" = DB 里 id > hwm 的消息数
+    //   "未向量化条数" = DB 里 id > hwm 且真正会进记忆宫殿的消息数
     //   查这个数 0 token 消耗（纯 localStorage + IndexedDB 客户端查询）
     const [unvectorizedCount, setUnvectorizedCount] = useState<number | null>(null);
     useEffect(() => {
@@ -103,8 +104,8 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                 // 查 char 所有消息数（limit 设大点）
                 const allMsgs = await DB.getRecentMessagesByCharId(activeCharacter.id, 99999, true);
                 if (cancelled) return;
-                // 未向量化 = id > hwm
-                const unvec = allMsgs.filter(m => m.id > hwm).length;
+                // 未向量化 = id > hwm，并排除纯图片/表情/语音占位
+                const unvec = allMsgs.filter(m => m.id > hwm && isMessageSemanticallyRelevant(m)).length;
                 setUnvectorizedCount(unvec);
             } catch (e) {
                 console.error('Failed to count unvectorized messages:', e);

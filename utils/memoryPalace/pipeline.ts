@@ -1042,15 +1042,62 @@ export interface PipelineResult {
      * 软跳过原因（非错误）：LLM 根本没跑，原因可能是缓冲区未到阈值 / 热区还没被挤出 / 已有任务在跑。
      * caller 看到这个字段就应当提示"聊天还不够，继续聊"，而不是报"LLM 提取失败"。
      */
-    skipReason?: 'lock' | 'hot_zone' | 'threshold';
+    skipReason?: 'lock' | 'hot_zone' | 'threshold' | 'cooldown';
       /** 真触发了提取但 0 条入库的具体原因，供 caller 给用户明确反馈 */
   emptyReason?: 'no_extract' | 'all_dedup' | 'vectorize_fail';
 
 }
 
 /** 构造一个"软跳过"结果，统一 caller 的分支处理 */
-function makeSkipResult(reason: 'lock' | 'hot_zone' | 'threshold'): PipelineResult {
+function makeSkipResult(reason: 'lock' | 'hot_zone' | 'threshold' | 'cooldown'): PipelineResult {
     return { stored: 0, skipped: 0, memories: [], batches: [], skipReason: reason };
+}
+
+const EXTRACT_COOLDOWN_MS = 10 * 60 * 1000;
+const LAST_EXTRACT_AT_KEY = (charId: string) => `mp_lastExtractAt_${charId}`;
+
+function getLastExtractAt(charId: string): number {
+    try {
+        const val = parseInt(localStorage.getItem(LAST_EXTRACT_AT_KEY(charId)) || '0', 10);
+        return isNaN(val) || val < 0 ? 0 : val;
+    } catch { return 0; }
+}
+
+function setLastExtractAt(charId: string): void {
+    try { localStorage.setItem(LAST_EXTRACT_AT_KEY(charId), String(Date.now())); } catch {}
+}
+
+function normalizeMemoryContentForDedup(content: string): string {
+    return (content || '')
+        .toLowerCase()
+        .replace(/[\s\u3000]+/g, '')
+        .replace(/[，。！？、；：,.!?;:"'“”‘’（）()【】\[\]《》<>]/g, '')
+        .trim();
+}
+
+function filterExactDuplicateMemories(
+    memories: import('./types').MemoryNode[],
+    existingNodes: import('./types').MemoryNode[],
+): { unique: import('./types').MemoryNode[]; skipped: number } {
+    const seen = new Set(
+        existingNodes
+            .map(n => normalizeMemoryContentForDedup(n.content))
+            .filter(s => s.length >= 8)
+    );
+    const unique: import('./types').MemoryNode[] = [];
+    let skipped = 0;
+
+    for (const memory of memories) {
+        const sig = normalizeMemoryContentForDedup(memory.content);
+        if (sig.length >= 8 && seen.has(sig)) {
+            skipped++;
+            continue;
+        }
+        if (sig.length >= 8) seen.add(sig);
+        unique.push(memory);
+    }
+
+    return { unique, skipped };
 }
 
 export async function processNewMessages(
@@ -1100,6 +1147,15 @@ export async function processNewMessages(
         if (buffer.length < minThreshold) {
             console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
             return makeSkipResult('threshold');
+        }
+
+        if (!force) {
+            const lastExtractAt = getLastExtractAt(charId);
+            const sinceLastExtract = Date.now() - lastExtractAt;
+            if (lastExtractAt > 0 && sinceLastExtract < EXTRACT_COOLDOWN_MS) {
+                console.log(`🏰 [Pipeline] 跳过：距离上次自动整理 ${Math.round(sinceLastExtract / 1000)} 秒，未到冷却时间`);
+                return makeSkipResult('cooldown');
+            }
         }
 
         // 4. 取前 85% 处理，保留尾部 15%
@@ -1257,7 +1313,7 @@ export async function processNewMessages(
 
         if (memories.length === 0) {
             console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
-               return { stored: 0, skipped: vectorResult.skipped, memories: [], batches: batchResults, emptyReason: vectorResult.skipped > 0 ? 'all_dedup' : 'vectorize_fail' };
+            return { stored: 0, skipped: 0, memories: [], batches: batchResults, emptyReason: 'no_extract' };
 
         }
 
@@ -1280,9 +1336,19 @@ export async function processNewMessages(
         //    skipDedup=true：聊天总结里"上周担心工作 / 这周担心工作"cosine 完全可能 > 0.9
         //    但是两件不同时间的事，cosine 去重会精准误杀；而 high-water-mark 已保证
         //    消息不会被重复处理，去重在这条路径上收益小、误伤大。
-        console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
-        onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
-        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig(), { skipDedup: true });
+        const existingBeforeStore = await MemoryNodeDB.getByCharId(charId);
+        const exactDedupResult = filterExactDuplicateMemories(memories, existingBeforeStore);
+        if (exactDedupResult.skipped > 0) {
+            console.log(`♻️ [Pipeline] 内容完全重复，入库前跳过 ${exactDedupResult.skipped} 条`);
+        }
+        if (exactDedupResult.unique.length === 0) {
+            console.warn(`🏰 [Pipeline] 提取结果全部与已有记忆重复，不更新高水位`);
+            return { stored: 0, skipped: exactDedupResult.skipped, memories: [], batches: batchResults, emptyReason: 'all_dedup' };
+        }
+
+        console.log(`🏰 [Pipeline] 开始向量化 ${exactDedupResult.unique.length} 条记忆...`);
+        onProgress?.(`正在向量化 ${exactDedupResult.unique.length} 条记忆...`);
+        const vectorResult = await vectorizeAndStore(exactDedupResult.unique, embeddingConfig, getRemoteVectorConfig(), { dedupThreshold: 0.97 });
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
         // 9. 只有真的存成功了才更新高水位
@@ -1292,6 +1358,7 @@ export async function processNewMessages(
         }
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
+        setLastExtractAt(charId);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${vectorResult.stored} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
         onProgress?.(`记忆整理完成！新增 ${vectorResult.stored} 条记忆`);
 
@@ -1299,13 +1366,15 @@ export async function processNewMessages(
         //     caller（useChatAI / Chat）拿到后做"同日期 merge 进 char.memories + 推 hideBeforeMessageId"
         //     这条路径让 palace 成功后自动同步到传统归档+聊天水位线
         //     零 LLM 调用——风格化已经在 palace extraction 那次 LLM 调用里完成
-        const autoArchive = buildAutoArchiveFragments(memories, newHighWaterMark);
+        const storedIdSet = new Set(vectorResult.storedIds || []);
+        const storedMemories = exactDedupResult.unique.filter(m => storedIdSet.has(m.id));
+        const autoArchive = buildAutoArchiveFragments(storedMemories, newHighWaterMark);
 
         // 构建返回结果
         const pipelineResult: PipelineResult = {
             stored: vectorResult.stored,
-            skipped: vectorResult.skipped,
-            memories: memories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
+            skipped: vectorResult.skipped + exactDedupResult.skipped,
+            memories: storedMemories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
             batches: batchResults,
             autoArchive,
         };
@@ -1313,8 +1382,8 @@ export async function processNewMessages(
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
         try {
             const existingNodes = await MemoryNodeDB.getByCharId(charId);
-            const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
-            const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
+            const justStored = existingNodes.filter(n => storedIdSet.has(n.id));
+            const others = existingNodes.filter(n => !storedIdSet.has(n.id));
             await buildLinks(justStored, others);
             console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
         } catch (e: any) {
@@ -1324,12 +1393,13 @@ export async function processNewMessages(
         // 10b. EventBox 绑定：把 LLM 标注的 relatedTo 转为 EventBox 收纳
         //      （旧逻辑：转 causal MemoryLink 已废弃，让位给更强的 EventBox 机制）
         const touchedBoxIds = new Set<string>();
-        if (allCrossTimeLinks.length > 0) {
+        const storedCrossTimeLinks = allCrossTimeLinks.filter(link => storedIdSet.has(link.newMemoryId));
+        if (storedCrossTimeLinks.length > 0) {
             try {
                 const { bindMemoriesIntoEventBox } = await import('./eventBox');
-                const touched = await bindMemoriesIntoEventBox(charId, allCrossTimeLinks, allEventBoxHints);
+                const touched = await bindMemoriesIntoEventBox(charId, storedCrossTimeLinks, allEventBoxHints);
                 for (const id of touched) touchedBoxIds.add(id);
-                console.log(`📦 [Pipeline] EventBox 绑定：${allCrossTimeLinks.length} 条关联 → 触达 ${touched.size} 个事件盒`);
+                console.log(`📦 [Pipeline] EventBox 绑定：${storedCrossTimeLinks.length} 条关联 → 触达 ${touched.size} 个事件盒`);
             } catch (e: any) {
                 console.warn(`📦 [Pipeline] EventBox 绑定失败（不影响已保存记忆）: ${e.message}`);
             }

@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-19 | 记忆宫殿重复提取保护 | [`changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md`](./changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md) |
 | 2026-07-18 | 纯聊天模式漏口修正 + cache 日志校准 | [`changelogs/2026-07-18-pure-mode-cache-log-fix.md`](./changelogs/2026-07-18-pure-mode-cache-log-fix.md) |
 | 2026-07-18 | 纯聊天模式补齐到真省 token | [`changelogs/2026-07-18-pure-chat-mode-token-cut.md`](./changelogs/2026-07-18-pure-chat-mode-token-cut.md) |
 | 2026-07-18 | Sully 专属分类长按支持删除（去 isSystem 限制） | [`changelogs/2026-07-18-sully-exclusive-category-deletable.md`](./changelogs/2026-07-18-sully-exclusive-category-deletable.md) |

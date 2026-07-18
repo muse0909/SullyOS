@@ -908,7 +908,16 @@ export const useChatAI = ({
             //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeCache = apiProtocol === 'claude';
-            const cacheControlEphemeral = { type: 'ephemeral', ttl: '1h' as const };
+            // 暮色 2026-07-18：两个协议分支走不同 cache 策略，互不影响
+            //   - OpenAI 协议走 1 断点 + 5m TTL：1 个 cache_control 标记挂在 system 消息上
+            //     即兴 ccmax2 5m 写入价 3.75/M 比 1h 的 6/M 便宜 38%
+            //   - Anthropic 协议保留 4 断点 + 1h TTL：claudeSystemField 3 段 + history bp4
+            //     1h TTL 在真官方接口上能持续命中 1 小时（即便接回 awsb/official 也能用上）
+            //   改前：所有协议都 1h（贵） + OpenAI 协议 0 断点（即兴按整体 prompt 算）
+            //   改后：OpenAI 5m + Claude 1h，各自最优
+            const cacheControlEphemeral = useClaudeCache
+                ? { type: 'ephemeral', ttl: '1h' as const }      // Claude 协议：1h TTL
+                : { type: 'ephemeral', ttl: '5m' as const };     // OpenAI 协议：5m TTL
             // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
             //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
             //         system 必须放在顶层 system 字段，不能穿插在 messages 中间
@@ -927,6 +936,10 @@ export const useChatAI = ({
             }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
             // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
+            //   暮色 2026-07-18：OpenAI 协议 1 断点 —— 1 个 cache_control 标记挂在 system 消息上
+            //     即兴 ccmax2 看到 message-level cache_control 标记 → 启用 cache 段
+            //     cache_creation 写入 = system 字段大小（~25k）vs 4 断点的整个 prompt（~52k）
+            //     配合 5m TTL 写入价 3.75/M，比 1h 的 6/M 便宜 38%
             const fullMessages: any[] = useClaudeCache
                 ? [...cleanedApiMessages]  // Claude 协议下 messages 不含 system
                 : [
@@ -934,6 +947,8 @@ export const useChatAI = ({
                         role: 'system',
                         // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
                         content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                        // OpenAI 协议 1 断点：1 个 cache_control 标记挂在 system 消息上
+                        cache_control: cacheControlEphemeral,
                     },
                     ...cleanedApiMessages
                 ];

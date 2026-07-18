@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-18 | Sully 专属分类长按支持删除（去 isSystem 限制） | [`changelogs/2026-07-18-sully-exclusive-category-deletable.md`](./changelogs/2026-07-18-sully-exclusive-category-deletable.md) |
 | 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
 | 2026-07-16 | innerState + realtime 挪到 messages 末尾，提升 prompt cache 命中率 | [`changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md`](./changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md) |
 | 2026-07-15 | Bell toast 撑大变方形 + 输入框撑大降圆角 + 输入区 padding 缩小 | [`changelogs/2026-07-15-bell-toast-and-input-area-shape.md`](./changelogs/2026-07-15-bell-toast-and-input-area-shape.md) |

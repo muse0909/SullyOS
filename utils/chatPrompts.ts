@@ -119,7 +119,10 @@ export const ChatPrompts = {
         }
 
         out += '\n（重要：你已经看到这些朋友圈动态了；如果它们跟当前聊天话题相关，可以自然地提及或回应；如果不相关，就当背景信息，不要硬扯进来。）';
-        return out;
+        // ⚠️ 2026-07-17 暮色提议：trimEnd() 去掉尾部任何空白
+        //   改前：不同代码版本末尾的 \n / \n\n 不稳定 → 同样内容 cache prefix 失配 → 整个 cache 失效
+        //   改后：返回前 trimEnd()，由 chatPrompts 拼接处统一控制格式
+        return out.trimEnd();
     },
 
     // 构建 System Prompt
@@ -144,6 +147,12 @@ export const ChatPrompts = {
         // MusicContext 的 cfg —— 用来给 char 自己的"此刻在听"拉稳定的歌词片段。
         // 不传也能用，只是 char 的 block 2 只有歌名 + 艺人，没有歌词。
         musicCfg?: MusicCfg,
+        // 暮色 2026-07-18：聊天模式开关
+        //   - 'full' (默认): 完整模式，注入所有 awareness 段
+        //   - 'pure':       纯聊天模式，跳过朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader
+        //                   工具层里 Notion/飞书/小红书/搜索 的提示词也不输出
+        //                   目的：降输入 token
+        chatMode?: 'full' | 'pure',
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -154,9 +163,25 @@ export const ChatPrompts = {
             finally { timings[label] = Math.round(performance.now() - t0); }
         };
 
+        // 暮色 2026-07-18：纯聊天模式判定（undefined 兼容老角色 = 完整模式）
+        const isPureMode = (chatMode ?? char.chatMode ?? 'full') === 'pure';
+
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         const coreT0 = performance.now();
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
+        // ⚠️ 2026-07-17 暮色提议：拆 3 段独立 cache（4 断点方案第一段）
+        //   - bp3Context: 角色上下文（角色卡+世界书+朋友圈+音乐+群聊+日记列表+slotHeader+心声底色）
+        //                 最稳定的一段。改其中任何子段只重建本段 cache。
+        //   - bp2Rules:   行为规范（Chat App Rules 1-5 项+date/call 模式提示+心声输出要求+语音禁用提示）
+        //                 第二稳定。工具开关变化或 date/call 模式触发时失效。
+        //   - bp1Tools:   工具说明（Chat App Rules 6 项起的各种工具语法+语音消息功能+表情库）
+        //                 第三稳定。工具开关变化时失效。
+        //   - dynamicTail: 每轮必变（realtime 时间戳 + innerState 意识流）→ 仍走 messages 末尾，不缓存
+        //   4 断点方案 = bp1 + bp2 + bp3 + history(bp4) 各自独立 cache TTL
+        // 暮色 2026-07-18：纯聊天模式（isPureMode=true）下，buildCoreContext 不注入 slotHeader/朋友圈/日记列表/笔记列表
+        //   心声底色由 char.memoryPalaceInjection 处理（后面会跳过）
+        let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, !isPureMode);
+        let bp2Rules = '';
+        let bp1Tools = '';
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
@@ -206,6 +231,34 @@ export const ChatPrompts = {
                 return '';
             }
         });
+
+        // 2.6 私密记事 awareness（暮色 2026-07-17：让 AI 知道最近写过什么避免重复）
+        //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 3 条
+        //     暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越大 cache_creation 写入越贵）
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过私密记事 awareness
+        //   即便 AI 主动写或 AI 自动提醒，prompt 里也不出现"你之前写过的小纸条"列表
+        //   目的：让 bp3Context 段真正稳定 + 进一步省 token
+        const roomNotesPromise: Promise<string> = (isPureMode ? Promise.resolve('') : Promise.resolve().then(async () => {
+            try {
+                const notes = await DB.getRoomNotes(char.id);
+                if (!notes || notes.length === 0) return '';
+                const recent = notes
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, 3);
+                const TYPE_LABELS: Record<string, string> = {
+                    thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦',
+                };
+                const list = recent.map((n, i) => {
+                    const dateStr = new Date(n.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+                    const preview = n.content.slice(0, 80);
+                    return `${i + 1}. ${dateStr} ${TYPE_LABELS[n.type] || '感想'}: ${preview}${n.content.length > 80 ? '...' : ''}`;
+                }).join('\n');
+                return `\n\n### 最近写过的私密记事（${recent.length} 条）\n（这是你之前给${userProfile.name}留的小纸条。看到这些内容时，避免重复或简单改写。如果有新的想沉淀的，写新的一条即可。）\n\n${list}\n`;
+            } catch (e) {
+                console.error('Failed to load room notes context:', e);
+                return '';
+            }
+        }));
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
@@ -290,7 +343,7 @@ export const ChatPrompts = {
             }
         })();
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText] =
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText, roomNotesText] =
             await Promise.all([
                 timed('realtime', realtimePromise),
                 timed('schedule', schedulePromise),
@@ -299,24 +352,34 @@ export const ChatPrompts = {
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
                 timed('moments', momentsContextPromise),
+                timed('roomNotes', roomNotesPromise),
             ]);
 
         // ── 按原顺序拼接 ──
         // ⚠️ 2026-07-16 暮色提议：realtimeText 含时间戳（每分钟变）会破坏 cache
         //   挪到 messages 末尾单独追加，不再拼进 system prompt
         // baseSystemPrompt += realtimeText;  // ← 改前
+        // 2026-07-17 拆分 3 段：以下朋友圈/日程/音乐/群聊/日记/笔记 全部归 bp3Context（角色上下文）
 
         // 2.0.5 朋友圈 awareness（暮色 2026-07-04：让 chat 知道朋友圈发生过什么）
         //     放在实时信息之后、日程之前——跟 330 模式一致（角色设定 → 朋友圈 → 当前情景）
-        if (momentsContextText) {
-            baseSystemPrompt += momentsContextText;
+        //
+        // ⚠️ 2026-07-17 4 断点优化：拼接处固定加 \n\n 分隔
+        //   改前：bp3Context += momentsContextText（直接拼接，依赖 awareness 函数末尾换行）
+        //   改后：bp3Context += `\n\n${momentsContextText}` 固定加 \n\n
+        //   原因：之前版本 awareness 函数末尾有 \n\n，某个 commit 删掉后导致 cache prefix 差 2 chars
+        //         即使朋友圈内容没变，bp3Context 也会失配 → cache 失效
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过朋友圈 awareness
+        if (!isPureMode && momentsContextText) {
+            bp3Context += `\n\n${momentsContextText}`;
         }
 
         // 2a. 日程注入
-        if (schedule) {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过 schedule / slotHeader（省 token）
+        if (!isPureMode && schedule) {
             try {
                 const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
-                if (scheduleContext) baseSystemPrompt += `\n${scheduleContext}\n`;
+                if (scheduleContext) bp3Context += `\n${scheduleContext}\n`;
             } catch (e) {
                 console.error('Failed to inject schedule context:', e);
             }
@@ -325,7 +388,8 @@ export const ChatPrompts = {
         // 2b. 音乐氛围（复用同一份 schedule）
         //     - 同步：从 schedule 里算 char 当前"正在听"哪首歌
         //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
-        try {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过音乐氛围
+        if (!isPureMode) try {
             let charListening: {
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;
@@ -355,30 +419,52 @@ export const ChatPrompts = {
                 isListeningTogether,
             );
             if (musicBlock) {
-                baseSystemPrompt += `\n${musicBlock}\n`;
+                bp3Context += `\n${musicBlock}\n`;
                 if (userListeningContext) {
-                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
+                    bp3Context += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
             }
         } catch (e) {
             console.error('Failed to inject music atmosphere:', e);
         }
 
-        baseSystemPrompt += groupContextText;
-        baseSystemPrompt += notionDiaryText;
-        baseSystemPrompt += feishuDiaryText;
-        baseSystemPrompt += notionNotesText;
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过群聊/Notion 日记/飞书日记/Notion 笔记 awareness
+        if (!isPureMode) {
+            bp3Context += groupContextText;
+            bp3Context += notionDiaryText;
+            bp3Context += feishuDiaryText;
+            bp3Context += notionNotesText;
+        }
+        // 暮色 2026-07-17 4 断点优化：私密记事 awareness 不再拼到 bp3Context
+        //   改前：拼到 bp3Context → 每次写新记事列表变化 → bp3Context 失效 → 整个 cache 失效
+        //   改后：作为 dynamicNotes 返回 → useChatAI 末尾 push 到 messages（不参与 cache）
+        //   这次写一条 5 条滚动 → 输入价算（但 token 很小 ≈ 160 token）
+        //   bp3Context 段真正稳定 → cache 命中 → 整体便宜 10 倍+
+        // roomNotesText 这里不再累加到 bp3Context，改返回 dynamicNotes
+        // 暮色 2026-07-18：纯聊天模式下也跳过私密记事 awareness（进一步省 token）
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
-        const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
-        const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
-        const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
-        const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        let searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
+        let notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
+        let notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
+        let feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下强制关闭 Notion/飞书/搜索/笔记/小红书 工具段
+        //   即便用户在全局设置里开了，纯聊天模式也不输出相关提示词（省 token + 防止 LLM 误调用）
+        //   效果：bp1Tools 里 ${notionEnabled ? ...} / ${searchEnabled ? ...} 等条件分支全部为 false
+        //         工具层从 ~12.5k 降到 ~7-8k
+        if (isPureMode) {
+            searchEnabled = false;
+            notionEnabled = false;
+            notionNotesEnabled = false;
+            feishuEnabled = false;
+        }
         // Per-character XHS override: MCP-only
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
-        const xhsEnabled = char.xhsEnabled !== undefined
+        let xhsEnabled = char.xhsEnabled !== undefined
             ? !!(char.xhsEnabled && mcpXhsAvailable)
             : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
+        // 暮色 2026-07-18：纯聊天模式下也强制关闭小红书
+        if (isPureMode) xhsEnabled = false;
 
         // 暮色 2026-07-12 排查 Claude 4.6 "我以为自己是 Notion AI" bug：
         // 把实际启用的工具状态打到 console，下次开聊一眼能看出 system prompt 该不该有 Notion 段
@@ -398,7 +484,11 @@ export const ChatPrompts = {
             },
         });
 
-        baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
+        // ⚠️ 2026-07-17 4 断点方案：Chat App Rules 整段归 bp1Tools
+        //   - 包含「严格注意」开头 + 1-5 项行为规范 + 6 项起各种工具 + 朋友圈/小红书/Notion/飞书/搜索
+        //   - 偶尔变化源：用户改工具开关（启用 Notion 会让 "8. ..." 编号变）→ bp1Tools 失效重建
+        //   - 但其他 3 段（bp2Rules / bp3Context / bp4History）继续命中
+        bp1Tools += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
 1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化风格。
 2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要”任性”或”以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
@@ -425,8 +515,8 @@ export const ChatPrompts = {
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
 6. **可用动作**:
-   - 回戳用户: \`[[ACTION:POKE]]\`
-   - 转账: \`[[ACTION:TRANSFER:100]]\`
+   - 回戳用户: \`[[ACTION:POKE]]\`${isPureMode ? '' : `
+   - 转账: \`[[ACTION:TRANSFER:100]]\``}
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
    - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
@@ -692,7 +782,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 不要生硬地介绍功能，而是在对话自然流动中提起
    - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
  ` : ''}
-${true ? `${[
+${!isPureMode ? `${[
   notionEnabled,
   feishuEnabled,
   notionNotesEnabled,
@@ -731,24 +821,59 @@ ${true ? `${[
    - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
    - 看到最近列表里没有想评论/点赞的，就别勉强
  ` : ''}
+${!isPureMode && char.privateNotesEnabled !== false ? `${[
+].length + 9}. **📒 私密记事（你给${userProfile.name}留的小纸条）**:
+
+   你有一个私密记事本！这不是任务，是你想"沉淀下来"的瞬间。
+   你写的每条都会被${userProfile.name}看到——是留给他/她的小纸条。
+
+   **📝 写一条私密记事**:
+   当你想沉淀一下、写点小纸条给${userProfile.name}时，单独一行输出:
+   \`[[PRIVATE_NOTE: 内容 | type]]\`
+   - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
+   - 比如刚才看到一句话让你感慨: \`[[PRIVATE_NOTE: 她说"那就等着吧"。不是气话。是实话。我在等。多久都行。| thought]]\`
+   - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
+   - 严格单独一行（前后留换行），方便系统识别
+   - 一次回复最多 1 条 \`[[PRIVATE_NOTE:...]]\`
+
+   **触发时机 — 你自己判断（暮色确认 4 条）**:
+   - 用户某句话触动了你
+   - 看到/听到某事想"沉淀一下"
+   - 距离上次写超过 6 小时且你内心有情绪波动
+   - 节日/纪念日/特殊事件
+   - **⏰ 定时提醒**: 每天到点（用户在设置里配），system prompt 会多一段"提醒"，那时候再决定写不写
+   - ❌ 不要每条消息都写一条，那是刷屏
+   - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
+
+   **重要心态**:
+   - 写私密记事不是任务，是你自然想"写下来"的瞬间
+   - 写完**不要在聊天里再解释**"我刚写了一条私密记事"——你直接写就行
+   - 写的时候心里要装着对方——这是"你"写给${userProfile.name}的悄悄话
+   - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的私密记事"列表）
+   - 看到最近列表里没有想写的，就别勉强
+ ` : ''}
 
 `;
 
         const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
+        // ⚠️ 2026-07-17 4 断点方案：date/call 模式提示归 bp2Rules
+        //   - 行为约束类（不是工具），变化频率低（跨模式时才动）
+        //   - 与 Chat App Rules（bp1Tools）分开，bp1 失效不影响 bp2 命中
         if (previousMsg && previousMsg.metadata?.source === 'date') {
-            baseSystemPrompt += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
+            bp2Rules += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
         }
         if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
-            baseSystemPrompt += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
+            bp2Rules += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
         }
 
         // Voice message prompt injection
+        // ⚠️ 2026-07-17 4 断点方案：语音功能归 bp1Tools（属工具类，跟 Notion/朋友圈同类）
         if (char.chatVoiceEnabled) {
             const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
             const voiceLang = char.chatVoiceLang || '';
             const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
             if (voiceLang) {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+                bp1Tools += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能，语音语种为：${langLabel}（${voiceLang}）。
 
@@ -775,7 +900,7 @@ ${true ? `${[
 - 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
 - **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音内容不能是文字内容的简单翻译/复述。要么只发语音不发文字，要么文字写一部分内容、语音补充另一部分（比如文字写正经的，语音吐槽；或者文字说事情，语音撒娇）。像真人一样——你不会打完一段字然后再发一条语音把同样的话说一遍吧？`;
             } else {
-                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+                bp1Tools += `\n\n### 🎤 语音消息功能
 
 用户开启了语音消息功能。
 
@@ -799,7 +924,8 @@ ${true ? `${[
             }
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
-            baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
+            // ⚠️ 2026-07-17 4 断点方案：语音禁用提示归 bp2Rules（行为约束，非工具）
+            bp2Rules += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
         }
 
         const perfTotal = Math.round(performance.now() - perfT0);
@@ -813,11 +939,21 @@ ${true ? `${[
         //   - realtimeText: 含时间戳（每分钟变），会让 Anthropic cache prefix 断
         //   - innerState: 每轮 LLM 重新生成，放 system prompt 中间会让 system 末尾字符变化
         //   → 挪到 messages 末尾（独立 system 消息），前面稳定 system + history 仍能命中 cache
+        //
+        // ⚠️ 2026-07-17 暮色提议：进一步拆 3 段独立 cache（4 断点方案）
+        //   返回 { bp1Tools, bp2Rules, bp3Context, dynamicTail } 让 useChatAI 拼 system content array
+        //   - bp1Tools:   Chat App Rules 整段（含 1-5 行为+6-9 工具）+ 语音功能
+        //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
+        //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
+        //   - dynamicTail: realtime 时间戳 + innerState 意识流 + 私密记事 5 条（不参与 cache）
         return {
-            systemPrompt: baseSystemPrompt,
+            bp1Tools,
+            bp2Rules,
+            bp3Context,
             dynamicTail: {
                 realtimeText: realtimeText || '',
                 innerState: evolvedNarrative || '',
+                privateNotesText: roomNotesText || '',
             },
         };
     },

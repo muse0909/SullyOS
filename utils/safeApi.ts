@@ -156,6 +156,15 @@ function parseSseToCompletion(raw: string): any | null {
  * `timeoutMs`：每次尝试的硬超时。如果调用方没在 options.signal 里自带 AbortController，
  * 这里会给每次 attempt 起一个内部 AbortController，超时就 abort，避免提供方 stall
  * 住整个页面（用户误以为卡死，只能重新打开网页）。0 / 未传 = 不超时。
+ *
+ * `protocol`：
+ *   - 'openai' (默认): 发到 {url}/chat/completions，OpenAI 标准协议
+ *   - 'claude':         发到 {url}/v1/messages，Anthropic 协议
+ *                     headers 自动加 x-api-key + anthropic-version
+ *                     响应体内部转成 OpenAI 格式合成对象返回，调用方 19 处
+ *                     data.choices[0].message.content 一行不用改
+ *                     ⚠️ Claude 协议下不实现工具调用 / 流式（callers 须自己
+ *                        不挂 tools、强制 stream=false）
  */
 
 // CORS 代理：讯飞等不支持浏览器跨域的 API，走 Vercel 服务端转发
@@ -185,30 +194,60 @@ export async function safeFetchJson(
     options: RequestInit,
     maxRetries: number = 2,
     timeoutMs: number = 0,
+    protocol: 'openai' | 'claude' = 'openai',
 ): Promise<any> {
+    // 暮色 2026-07-17：协议分支
+    //   - OpenAI (默认): {url}/chat/completions，原样转发
+    //   - Claude:         {url}/v1/messages，自动加 x-api-key + anthropic-version
+    //                   响应体转成 OpenAI 格式合成对象返回
+    let actualUrl = url;
+    let actualOptions = options;
+    if (protocol === 'claude') {
+        // 路径切到 /v1/messages（如果 caller 传的 url 已经以 /v1/messages 结尾就不动）
+        if (!url.endsWith('/v1/messages')) {
+            const base = url.replace(/\/v1\/chat\/completions\/?$/, '').replace(/\/+$/, '');
+            actualUrl = `${base}/v1/messages`;
+        }
+        // headers：加 x-api-key + anthropic-version
+        // Anthropic 协议也接受 Authorization: Bearer，但 x-api-key 是标准头
+        const h: Record<string, string> = {};
+        if (options.headers) {
+            const oh = options.headers as Record<string, string>;
+            for (const [k, v] of Object.entries(oh)) {
+                h[k] = v;
+            }
+        }
+        if (!h['x-api-key'] && !h['X-Api-Key']) {
+            const authVal = h['Authorization'] || h['authorization'] || '';
+            const m = authVal.match(/^Bearer\s+(.+)$/i);
+            h['x-api-key'] = m ? m[1] : '';
+        }
+        h['anthropic-version'] = h['anthropic-version'] || '2023-06-01';
+        actualOptions = { ...options, headers: h };
+    }
     const retryableStatuses = new Set([429, 500, 502, 503, 504]);
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         // 每次 attempt 建一个独立的 AbortController（仅用于 timeout）
         // 调用方自己的 options.signal 仍然有效，两者任一触发就 abort
-        let attemptOptions = options;
+        let attemptOptions = actualOptions;
         let timeoutHandle: any = null;
         if (timeoutMs > 0) {
             const ac = new AbortController();
             timeoutHandle = setTimeout(() => ac.abort(new Error(`timeout ${timeoutMs}ms`)), timeoutMs);
-            if (options.signal) {
+            if (actualOptions.signal) {
                 // 串联外部 signal：外部 abort 也触发内部
-                if (options.signal.aborted) {
+                if (actualOptions.signal.aborted) {
                     clearTimeout(timeoutHandle);
                     throw new Error('aborted');
                 }
-                options.signal.addEventListener('abort', () => ac.abort(), { once: true });
+                actualOptions.signal.addEventListener('abort', () => ac.abort(), { once: true });
             }
-            attemptOptions = { ...options, signal: ac.signal };
+            attemptOptions = { ...actualOptions, signal: ac.signal };
         }
         try {
-            const response = await fetch(url, attemptOptions);
+            const response = await fetch(actualUrl, attemptOptions);
             if (timeoutHandle) clearTimeout(timeoutHandle);
 
             if (!response.ok) {
@@ -222,11 +261,19 @@ export async function safeFetchJson(
                 // Non-retryable or last attempt: parse body for error details
                 const data = await safeResponseJson(response);
                 // If we somehow got valid JSON with error info, wrap it
+                // 暮色 2026-07-17：Anthropic 错误体是 { error: { type, message } }，
+                //   .message 在两种协议下都存在，所以这里不用协议分支
                 const errMsg = data?.error?.message || data?.error || `HTTP ${response.status}`;
                 throw new Error(`API Error ${response.status}: ${errMsg}`);
             }
 
-            return await safeResponseJson(response);
+            const rawData = await safeResponseJson(response);
+            // 暮色 2026-07-17：Anthropic 协议响应 → 转 OpenAI 格式合成对象
+            //   这样调用方 19 处 data.choices[0].message.content 一行不用改
+            if (protocol === 'claude') {
+                return anthropicResponseToOpenAI(rawData);
+            }
+            return rawData;
                        } catch (e: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
@@ -278,6 +325,67 @@ export async function safeFetchJson(
 
 
     throw lastError || new Error('API请求失败');
+}
+
+/**
+ * 暮色 2026-07-17：把 Anthropic 协议响应体转成 OpenAI 格式合成对象。
+ *
+ * Anthropic 协议响应：
+ *   {
+ *     "id": "msg_...",
+ *     "type": "message",
+ *     "role": "assistant",
+ *     "content": [{"type": "text", "text": "..."}],
+ *     "stop_reason": "end_turn",
+ *     "usage": { "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens" }
+ *   }
+ *
+ * OpenAI 协议响应：
+ *   {
+ *     "choices": [{ "message": { "role": "assistant", "content": "..." }, "finish_reason": "stop" }],
+ *     "usage": { ... }
+ *   }
+ *
+ * 合成 OpenAI 格式后，上层 19 处 data.choices[0].message.content 一行不用改。
+ *
+ * 注意：
+ *   - 多个 text block 用空串连接（实际不会同时出现多个 text block，工具调用是单独的 content block）
+ *   - tool_use block 暂不处理（Claude 协议分支目前不挂 tool，参见 useChatAI 的 toolsList）
+ *   - stop_reason 'end_turn' → 'stop'，'max_tokens' → 'length'，'tool_use' → 'tool_calls'（兼容）
+ *   - usage 字段透传（包括 cache_creation_input_tokens / cache_read_input_tokens，调用方看 ccmax 控制台时还能看到）
+ */
+function anthropicResponseToOpenAI(anth: any): any {
+    if (!anth || typeof anth !== 'object') return anth;
+    // 如果已经是 OpenAI 格式（有人帮我们转过了），原样返回
+    if (Array.isArray(anth.choices)) return anth;
+
+    const contentBlocks = Array.isArray(anth.content) ? anth.content : [];
+    // 提取所有 text block（通常只有一个，但保险起见拼起来）
+    const text = contentBlocks
+        .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+        .map((b: any) => b.text)
+        .join('');
+
+    // stop_reason 兼容映射
+    let finishReason: string = anth.stop_reason || 'stop';
+    if (finishReason === 'end_turn') finishReason = 'stop';
+    else if (finishReason === 'max_tokens') finishReason = 'length';
+    else if (finishReason === 'tool_use') finishReason = 'tool_calls';
+
+    return {
+        id: anth.id || 'claude-assembled',
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: anth.model || 'claude',
+        choices: [{
+            index: 0,
+            message: { role: 'assistant', content: text },
+            finish_reason: finishReason,
+        }],
+        usage: anth.usage || undefined,
+        // 原始 Anthropic 响应也保留一份，调试 / 工具调用时可能需要
+        _anthropic_raw: anth,
+    };
 }
 
 /**

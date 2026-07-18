@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -23,6 +23,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
+import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
   publishPostAsChar,
@@ -661,6 +662,17 @@ export const useChatAI = ({
             //     此时已有"…"气泡，不额外显示状态提示
             await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
 
+            // ⚠️ 2026-07-17 4 断点优化：把记忆宫殿挪出 bp3Context 段
+            //   改前：buildCoreContext 读 char.memoryPalaceInjection 拼到 bp3Context
+            //   改后：先存到 dynamicMemoryPalace，再清空 char.memoryPalaceInjection 让 buildCoreContext 跳过
+            //         末尾 push dynamicMemoryPalace（不参与 cache）
+            //   关键：记忆宫殿是每次 query 向量检索结果，每次都不同（差 600+ chars）
+            //   挪走后 bp3Context 段才能真正稳定，cache 才能命中
+            //   安全：useChatAI.ts 里只有 1 处提到这个字段，其他地方不读
+            //        下一轮 injectMemoryPalace 会重新写
+            const dynamicMemoryPalace = (char as any).memoryPalaceInjection || '';
+            (char as any).memoryPalaceInjection = undefined;
+
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿 + 音乐氛围)
             // 构造 user 的"此刻在听"上下文 —— 前2当前后2共 ≤5 行
             let userListeningContext: {
@@ -695,11 +707,14 @@ export const useChatAI = ({
                 userListeningContext && music.listeningTogetherWith.includes(char.id)
             );
             // buildSystemPrompt 和 DB 消息加载彼此独立，并发跑节省 Math.max 以外的等待时间
-            const limit = char.contextLimit || 500;
+            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；私密记事 / 朋友圈 主动行为用 100 条足够）
+            const limit = char.contextLimit || 100;
             const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
                 isListeningTogether, music.cfg,
+                // 暮色 2026-07-18：传 chatMode 给 buildSystemPrompt（undefined 时 chatPrompts 内部 fallback 到 char.chatMode）
+                char.chatMode,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
@@ -716,13 +731,37 @@ export const useChatAI = ({
             //   - systemPrompt: 稳定段（角色卡+世界书+schedule slotHeader+朋友圈+音乐+工具说明+心声要求）
             //   - dynamicTail: 每轮必变段（realtime 时间戳 + innerState 意识流）→ 挪到 messages 末尾
             //   效果：systemPrompt + history 前缀稳定，Anthropic cache 命中率大幅提升
-            let systemPrompt = systemPromptResult.systemPrompt;
+            //
+            // ⚠️ 2026-07-17 暮色提议：进一步拆 3 段独立 cache（4 断点方案）
+            //   - bp1Tools:   Chat App Rules 整段 + 语音功能 → 归「工具说明」段
+            //   - bp2Rules:   date/call 模式提示 + 语音禁用提示 → 归「行为规范」段
+            //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色 → 归「角色上下文」段
+            //   3 段各自独立 cache（再加 history 的 bp4 共 4 断点），子段失效不影响其他段
+            let bp1Tools = systemPromptResult.bp1Tools;
+            let bp2Rules = systemPromptResult.bp2Rules;
+            let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
+            // ⚠️ 2026-07-17 4 断点优化：「最近 5 条心声」挪出 bp3Context
+            //   拼到末尾 dynamic 段（不参与 cache），让 bp3Context 段真正稳定
+            let dynamicRecentEmotions = '';
+            // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
+            const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
+
+            // 暮色 2026-07-17：定时提醒注入（每天到点后第一次 chat 触发）
+            //   - 检查 shouldShowReminder（今天是否到点 + 还没提醒过）
+            //   - 满足条件：往 bp2Rules 拼 reminderText，markReminderShown 防止重复
+            //   - 归 bp2Rules 因为是行为约束（每天一次，cache miss 一次可接受）
+            if (shouldShowReminder()) {
+                bp2Rules += buildReminderText(char.name, userProfile.name);
+                markReminderShown();
+                console.log(`📒 [NoteReminder] 触发今天 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 的私密记事提醒`);
+            }
 
             // 1.5 Inject bilingual output instruction when translation is enabled
+            //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
             if (bilingualActive) {
-                systemPrompt += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
+                bp1Tools += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
 你的每句话都必须用以下XML标签格式输出双语内容：
 <翻译>
 <原文>${translationConfig.sourceLang}内容</原文>
@@ -748,8 +787,9 @@ export const useChatAI = ({
 
             // 1.6 HTML 模块模式 — 注入内置 HTML 提示词 (+ 用户自定义追加)
             //     开启后允许 AI 输出 [html]...[/html] 卡片, 客户端解析为 html_card 单独渲染。
-            if ((char as any).htmlModeEnabled) {
-                systemPrompt += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
+            //   4 断点方案：HTML 是「输出格式工具」→ 归 bp1Tools
+            if ((char as any).htmlModeEnabled && char.chatMode !== 'pure') {
+                bp1Tools += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
             }
 
             // 2. Build Message History
@@ -766,8 +806,8 @@ export const useChatAI = ({
             const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
-        
-            const cleanedApiMessages = apiMessages.map((msg: any) => {
+
+            let cleanedApiMessages = apiMessages.map((msg: any) => {
             // 如果 content 是数组（包含图片），提取纯文字部分，丢弃图片数据
             if (Array.isArray(msg.content)) {
                 const textParts = msg.content
@@ -805,13 +845,18 @@ export const useChatAI = ({
             if (mcdMiniOpen) {
                 const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
                 if (block) {
-                    systemPrompt += block;
+                    // 4 断点方案：麦当劳 MiniApp 是「工具上下文」→ 归 bp1Tools
+                    bp1Tools += block;
                     console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);
                 }
             }
 
             // 【改动 1】注入心声输出要求到 system prompt
             // 心声条件：优先用独立的 emotionEnabled 字段；老数据（undefined）走旧逻辑兜底
+            //
+            // 4 断点方案分段：
+            //   - 心声输出要求（规则/格式约束）→ 归 bp2Rules（行为规范）
+            //   - 最近 5 条心声（历史感知上下文）→ 归 bp3Context（角色上下文）
             if (isEmotionOn(char)) {
                 const scheduleStyle = char.scheduleStyle || 'lifestyle';
                 const mindfulRule = scheduleStyle === 'mindful'
@@ -820,11 +865,17 @@ export const useChatAI = ({
                 // 借鉴 muse-330 的 thought_chain 思维链前置 + "灵魂的延续"措辞
                 // (commit 2026-07-13)：让 LLM 先想再生成心声，避免"作为xx我应该..."那种生硬模板
                 // 你的思绪是灵魂的延续——真人不会换皮重复上一轮
-                systemPrompt += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**避免**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
+                bp2Rules += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**避免**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
 
                 // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
-                // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
-                const recentInnerStates = (char.emotionHistory || []).slice(0, 5)
+                // 不传整段 history，只传最近 3 条 innerState 文本 + 触发时间（粗粒度足够）
+                //
+                // ⚠️ 2026-07-17 4 断点优化：最近心声挪到末尾（不参与 cache）
+                //   改前：拼到 bp3Context → 每次新心声（5 条滚动）让 bp3Context 失效 → cache 全段失效
+                //   改后：单独存在 dynamicRecentEmotions，末尾 push 到 messages
+                //   token 很小（3 条 ≈ 120 token），但能让 bp3Context 段真正稳定
+                //   暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越小 cache_creation 写入越便宜）
+                const recentInnerStates = (char.emotionHistory || []).slice(0, 3)
                     .map(b => ({ innerState: b.innerState, createdAt: b.createdAt }))
                     .filter(x => typeof x.innerState === 'string' && x.innerState.trim());
                 if (recentInnerStates.length > 0) {
@@ -835,11 +886,71 @@ export const useChatAI = ({
                     }).join('\n');
                     // 防重复 prompt 借鉴 muse-330 措辞："灵魂的延续 / 思绪不断演进"（比"必须明显不同"更自然）
                     // 配合前端硬性去重兜底（line 1382 之后）双保险
-                    systemPrompt += `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
+                    dynamicRecentEmotions = `\n\n[最近心声 — 你的思绪是灵魂的延续，**避免**重复或简单改写上一轮。你的思绪应该像真人一样不断演进，触及新的角度、新的感受，而不是换个说法重复同样的事。]\n${recentBlock}`;
                 }
             }
 
-            const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
+            // ⚠️ 2026-07-17 暮色提议：4 断点 cache 方案（参考 Anthropic 官方推荐）
+            //   - 之前：1 个 system 消息（整个 systemPrompt）+ 1 个 cache_control = 1 断点
+            //   - 现在：system 拆 3 个独立 content block（bp1Tools / bp2Rules / bp3Context）
+            //           + history 最后一条打 bp4 = 共 4 个 cache_control 标记
+            //   - 收益：任何一段失效只重建本段，前面 3 段继续命中 cache
+            //           长对话时 history 段越增长命中率越高（前 N-1 条一直在 cache）
+            //   - 风险：Anthropic 限制每条消息最多 4 个 cache_control 标记
+            //           OpenAI 兼容 API 大部分 provider 透传 cache_control 字段
+            //           即享 ccmax / 青屿 kiro 是否透传未知（之前 1 断点都没生效，4 断点需实测）
+            //   - 降级：provider 不认 cache_control → 字段被忽略，回到默认 5m TTL
+            //
+            // 暮色 2026-07-17 协议分支：
+            //   - 即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"
+            //   - protocol === 'openai' (默认): system 放 messages[0]
+            //   - protocol === 'claude':  system 挪到顶层（Anthropic 标准）
+            //   ⚠️ 关键：Claude 协议下 system 必须在 messages 之外（顶层字段），
+            //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
+            const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
+            const useClaudeProtocol = apiProtocol === 'claude';
+            // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
+            //   - OpenAI 协议：不发 message-level cache_control
+            //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
+            //   目标：账单只剩 input / output，没有 cache_creation / cache_read。
+            // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
+            //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
+            //         system 必须放在顶层 system 字段，不能穿插在 messages 中间
+            //         末尾 system 消息可以，但 content 必须是空 array（directive-only form）
+            //   我们的 history 里混了 system 消息（日记/小红书/记事本/连接中断等，
+            //     来自 useChatAI 多处 DB.saveMessage({...role:'system'...})），
+            //     这些会原样进 apiMessages，违反 Anthropic 协议。
+            //   修法：Claude 协议下把 history 里的 system 转成 user（前面加 [系统消息] 前缀），
+            //         信息保留、协议合规；OpenAI 协议不受影响。
+            if (useClaudeProtocol) {
+                cleanedApiMessages = cleanedApiMessages.map((m: any) => {
+                    if (m.role !== 'system') return m;
+                    const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                    return { role: 'user', content: `[系统消息] ${text}` };
+                });
+            }
+            // Claude 协议：system 在顶层（Anthropic 协议标准）
+            // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
+            const fullMessages: any[] = useClaudeProtocol
+                ? [...cleanedApiMessages]  // Claude 协议下 messages 不含 system
+                : [
+                    {
+                        role: 'system',
+                        // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
+                        content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                    },
+                    ...cleanedApiMessages
+                ];
+            // Claude 协议专用：顶层 system 字段
+            //   这里只保留协议要求的 text blocks，不再附带任何 cache_control。
+            const claudeSystemField: any[] | null = useClaudeProtocol ? [
+                // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
+                { type: 'text', text: bp1Tools },
+                // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
+                { type: 'text', text: bp2Rules },
+                // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
+                { type: 'text', text: bp3Context },
+            ] : null;
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;
@@ -847,27 +958,119 @@ export const useChatAI = ({
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
+            // ⚠️ 这段 hash 日志最初是给 cache 断点排查用的。
+            //   现在 cache 已彻底关掉，但保留 hash 本身对比 prompt 漂移仍有用。
+            //
+            //   4 段累积 hash：
+            //   - hash_bp1 = sha256(bp1Tools)
+            //   - hash_bp2 = sha256(bp1Tools + bp2Rules)
+            //   - hash_bp3 = sha256(bp1Tools + bp2Rules + bp3Context)
+            //   - hash_bp4 = sha256(bp1Tools + bp2Rules + bp3Context + history)
+            //
+            //   暮色操作：跑 3-5 轮对话，对比 4 个 hash 哪个变了
+            //   - hash_bp1 变 → bp1Tools 段有内容在变（极少见）
+            //   - hash_bp2 变 → bp2Rules 段有内容在变（你刚关心声就属于这个）
+            //   - hash_bp3 变 → bp3Context 段有内容在变（朋友圈/日记/角色卡等）
+            //   - hash_bp4 变 → history 有变化（新消息是正常的；如果没发新消息还变就是 bug）
+            try {
+                const computeHash = async (text: string): Promise<string> => {
+                    try {
+                        const buf = new TextEncoder().encode(text);
+                        const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+                        return Array.from(new Uint8Array(hashBuf))
+                            .map(b => b.toString(16).padStart(2, '0'))
+                            .join('')
+                            .slice(0, 16);
+                    } catch {
+                        return '(crypto unavailable)';
+                    }
+                };
+                const historyConcat = cleanedApiMessages.map((m: any) => {
+                    if (typeof m.content === 'string') return m.content;
+                    return JSON.stringify(m.content);
+                }).join('\n');
+                const hash_bp1 = await computeHash(bp1Tools);
+                const hash_bp2 = await computeHash(bp1Tools + bp2Rules);
+                const hash_bp3 = await computeHash(bp1Tools + bp2Rules + bp3Context);
+                const hash_bp4 = await computeHash(bp1Tools + bp2Rules + bp3Context + historyConcat);
+                console.log(`🔐 [Cache Hash 4 段] bp1=${hash_bp1} | bp2=${hash_bp2} | bp3=${hash_bp3} | bp4=${hash_bp4}`);
+                // 存到 localStorage（覆盖之前那条，便于对比）
+                try {
+                    const prev = localStorage.getItem('sullyos:lastApiReqLog');
+                    if (prev) {
+                        const obj = JSON.parse(prev);
+                        obj.hash_bp1 = hash_bp1;
+                        obj.hash_bp2 = hash_bp2;
+                        obj.hash_bp3 = hash_bp3;
+                        obj.hash_bp4 = hash_bp4;
+                        localStorage.setItem('sullyos:lastApiReqLog', JSON.stringify(obj, null, 2));
+                    }
+                } catch { /* quota 忽略 */ }
+            } catch (e) {
+                console.warn('hash 校验失败（可能环境不支持 crypto.subtle）：', e);
+            }
+
             // Save for dev debug viewer
             setLastSystemPrompt(systemPrompt);
 
-            // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
-            if (bilingualActive) {
-                fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
-            }
-
-            // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪到 messages 末尾
-            //   - realtimeText: 含时间戳（"2026-07-16 22:00"），每分钟变 → 挪出 system prompt
-            //   - innerState: 每轮 LLM 新生成的意识流独白 → 挪出 system prompt
-            //   放末尾：LLM 仍能读到，Anthropic cache prefix 不会断在 system 段
+            // ⚠️ 2026-07-17 暮色反馈：把"动态尾巴"挪到合适的位置
+            //   原实现：push 到 messages 末尾当 system 消息
+            //   问题：Anthropic 协议下 messages 数组里不允许有 role='system'（除非 directive-only form content:[]）
+            //   修法：
+            //     - Claude 协议：合并到顶层 system 字段的最后一个 text block（不带 cache_control，纯动态）
+            //                  不再 push 到 messages，bp1-bp3 cache 命中完全不受影响
+            //     - OpenAI 协议：保留原样 push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
+            //
+            //   6 段：bilingual reminder / realtimeText / innerState / privateNotesText / recentEmotions / memoryPalace
+            //   都不挂 cache_control（每轮必变），进 bpDynamic 段。
+            //
+            // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪出 systemPrompt
+            //   - realtimeText: 含时间戳（"2026-07-16 22:00"），每分钟变
+            //   - innerState: 每轮 LLM 新生成的意识流独白
+            //   挪出 systemPrompt：让 bp3Context 段真正稳定
             //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
+            //
+            // ⚠️ 2026-07-17 4 断点优化：再加 3 段
+            //   - privateNotesText: 最近 5 条私密记事
+            //   - recentEmotions:   最近 5 条心声
+            //   - memoryPalace:     向量检索结果
+            const dynamicTailParts: string[] = [];
+            if (bilingualActive) {
+                dynamicTailParts.push(`[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`);
+            }
             if (dynamicTail?.realtimeText && dynamicTail.realtimeText.trim()) {
-                fullMessages.push({ role: 'system', content: dynamicTail.realtimeText.trim() });
+                dynamicTailParts.push(dynamicTail.realtimeText.trim());
             }
             if (dynamicTail?.innerState && dynamicTail.innerState.trim()) {
-                fullMessages.push({
-                    role: 'system',
-                    content: `[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`
-                });
+                dynamicTailParts.push(`[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`);
+            }
+            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness
+            if (dynamicTail?.privateNotesText && dynamicTail.privateNotesText.trim()) {
+                dynamicTailParts.push(dynamicTail.privateNotesText.trim());
+            }
+            // ⚠️ 2026-07-17 4 断点优化：最近心声
+            if (dynamicRecentEmotions) {
+                dynamicTailParts.push(dynamicRecentEmotions);
+            }
+            // ⚠️ 2026-07-17 4 断点优化：记忆宫殿
+            if (dynamicMemoryPalace) {
+                dynamicTailParts.push(dynamicMemoryPalace);
+            }
+
+            if (useClaudeProtocol) {
+                // Claude 协议：合并到顶层 system 字段
+                //   Anthropic 协议要求顶层 system 是 array of text blocks，多个 block 都会被模型看到
+                if (claudeSystemField && dynamicTailParts.length > 0) {
+                    claudeSystemField.push({
+                        type: 'text',
+                        text: dynamicTailParts.join('\n\n'),
+                    });
+                }
+            } else {
+                // OpenAI 协议：push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
+                for (const part of dynamicTailParts) {
+                    fullMessages.push({ role: 'system', content: part });
+                }
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成
@@ -1100,18 +1303,38 @@ ${visionDesc}
                 max_tokens: 8000,
                 stream: userStream,
             };
+            // 暮色 2026-07-17：Claude 协议加顶层 system 字段
+            //   - Anthropic 协议标准：system 是顶层字段，不在 messages 里
+            //   - OpenAI 协议：system 在 messages[0].role = 'system'（已在 fullMessages 里）
+            //   - 这两种格式不能同时存在，否则 newapi 重写时会报 400
+            if (useClaudeProtocol && claudeSystemField) {
+                baseReqBody.system = claudeSystemField;
+            }
             // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
             if (userStream) {
                 baseReqBody.stream_options = { include_usage: true };
             }
+            // 暮色 2026-07-17 协议分支：Claude 协议时强制 stream=false
+            //   - 原因：safeApi.ts 的 SSE 解析只支持 OpenAI 协议
+            //   - Anthropic 流式响应是不同的事件格式（content_block_delta 等）
+            //   - 等以后真要 Claude 流式再补（目前 stream=false 默认，无影响）
+            if (useClaudeProtocol && baseReqBody.stream) {
+                console.log('⚠️ [API] Claude 协议暂不支持流式，自动降级为非流式');
+                baseReqBody.stream = false;
+            }
+            // 暮色 2026-07-17 协议分支：Claude 协议时不挂 tool
+            //   - 原因：Anthropic tool_use 协议格式跟 OpenAI tool_calls 不同
+            //   - 麦当劳 MiniApp / 生图 / 其它 tool 调用：走 OpenAI 协议走
+            //   - Claude 协议分支只支持纯文本聊天（能命中 cache 才是核心目标）
+            //   - 想用 tool 时：把 Settings 的 API 协议切回 OpenAI
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
             // 组装 tools 列表
 const toolsList: any[] = [];
-if (mcdMiniOpen) {
+if (!useClaudeProtocol && mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
+if (!useClaudeProtocol && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 if (toolsList.length > 0) {
@@ -1119,10 +1342,71 @@ if (toolsList.length > 0) {
     baseReqBody.tool_choice = 'auto';
 }
 
+            // ⚠️ 2026-07-17 暮色提议：完整请求体日志（发给即享技术看 cache_control 是否透传）
+            //   - console.log 输出
+            //   - 存到 localStorage['sullyos:lastApiReqLog']，暮色控制台取
+            //   - DevTools 控制台输入: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))
+            {
+                const countObjectKey = (value: any, keyName: string): number => {
+                    if (!value || typeof value !== 'object') return 0;
+                    if (Array.isArray(value)) {
+                        return value.reduce((sum, item) => sum + countObjectKey(item, keyName), 0);
+                    }
+                    return Object.entries(value).reduce((sum, [key, item]) => {
+                        return sum + (key === keyName ? 1 : 0) + countObjectKey(item, keyName);
+                    }, 0);
+                };
+                const cacheControlFieldCount = countObjectKey(baseReqBody, 'cache_control');
+                const requestJson = JSON.stringify(baseReqBody);
+                const logEntry = {
+                    timestamp: new Date().toISOString(),
+                    url: `${baseUrl}/chat/completions`,
+                    model: effectiveApi.model,
+                    chatMode: char.chatMode || 'full',
+                    apiProtocol: useClaudeProtocol ? 'claude' : 'openai',
+                    stream: userStream,
+                    temperature: userTemp,
+                    maxTokens: 8000,
+                    totalMessages: fullMessages.length,
+                    toolCount: toolsList.length,
+                    hasCacheControl: cacheControlFieldCount > 0,
+                    cacheControlCount: cacheControlFieldCount,
+                    promptChars: {
+                        bp1Tools: bp1Tools.length,
+                        bp2Rules: bp2Rules.length,
+                        bp3Context: bp3Context.length,
+                        dynamicTail: dynamicTailParts.join('\n\n').length,
+                        history: historyTotalChars,
+                        requestJson: requestJson.length,
+                    },
+                    requestBody: baseReqBody,
+                };
+                try {
+                    const json = JSON.stringify(logEntry, null, 2);
+                    localStorage.setItem('sullyos:lastApiReqLog', json);
+                    console.log(
+                        `%c📤 [API Request Log] ${logEntry.timestamp}\n` +
+                        `URL: ${logEntry.url}\n` +
+                        `Model: ${logEntry.model}\n` +
+                        `Stream: ${logEntry.stream}, Temp: ${logEntry.temperature}, MaxTokens: ${logEntry.maxTokens}\n` +
+                        `Total messages: ${logEntry.totalMessages}, Tools: ${logEntry.toolCount}\n` +
+                        `cache_control 标记数: ${logEntry.cacheControlCount}\n` +
+                        `完整请求体已存到 localStorage['sullyos:lastApiReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                        `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))`,
+                        'color: #059669; font-weight: bold;'
+                    );
+                    console.log('完整请求体:', baseReqBody);
+                } catch (e: any) {
+                    console.warn('存请求体日志到 localStorage 失败（quota 超限？）：', e);
+                    // 退化：只 console.log
+                    console.log('📤 [API Request Log]', logEntry);
+                }
+            }
+
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
                 body: JSON.stringify(baseReqBody)
-            });
+            }, 2, 0, apiProtocol);
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -1224,7 +1508,7 @@ if (toolsList.length > 0) {
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify(followBody)
-                    });
+                    }, 2, 0, apiProtocol);
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
                     // 第二轮跳过 (我们已经禁用了 tools)
                     if (!getToolCalls(data).length) break;
@@ -2234,6 +2518,44 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 console.warn('📱 [Moments] 解析失败:', e);
             }
 
+            // 5.9d Handle Private Notes (私密记事) Actions
+            // 暮色 2026-07-17：让 AI 自己决定写私密记事（仿 MOMENT_POST 文本 token 模式）
+            // AI 在 chat reply 里输出 [[PRIVATE_NOTE: 内容 | type]] → 这里解析 → saveRoomNote + 推 system 消息
+            // type 必须是: thought / doodle / search / lyric / gossip 之一
+            try {
+                const noteMatches = [...aiContent.matchAll(/\[\[PRIVATE_NOTE:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
+                if (noteMatches.length > 0) {
+                    // 限制每次最多 1 条（避免 AI 一次刷 N 条）
+                    const m = noteMatches[0];
+                    const content = m[1].trim();
+                    const type = m[2].toLowerCase() as RoomNote['type'];
+                    if (content) {
+                        const newNote: RoomNote = {
+                            id: `note-${Date.now()}`,
+                            charId: char.id,
+                            timestamp: Date.now(),
+                            content,
+                            type,
+                        };
+                        await DB.saveRoomNote(newNote);
+                        console.log(`📒 [PrivateNote] ${char.name} 写了一条私密记事: ${content.slice(0, 30)}... (type=${type})`);
+                        // 推 system 消息进聊天流（让用户感知到）
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'text',
+                            content: `[系统: ${char.name} 在记事本上写道: \n"${content}"]`,
+                        });
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        addToast(`📒 ${char.name} 写了一条私密记事`, 'success', 2500);
+                    }
+                }
+                // 移除所有 PRIVATE_NOTE 标记（无论发没发出去）
+                aiContent = aiContent.replace(/\[\[PRIVATE_NOTE:\s*[\s\S]+?\]\]/g, '').trim();
+            } catch (e) {
+                console.warn('📒 [PrivateNote] 解析失败:', e);
+            }
+
             // 5.10 Handle XHS (小红书) Actions
             // Resolve per-character XHS config
             const xhsConf = resolveXhsConfig(char, realtimeConfig);
@@ -3103,7 +3425,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //     原始 HTML 放在 metadata.htmlSource，供 MessageItem 沙盒渲染。
             //     这样既不污染上下文 token，也保留了可视化卡片。
             //     注意：在 quote/sanitize 之前抽，避免 sanitize 把 HTML 内容当垃圾去掉。
-            if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
+            if ((char as any).htmlModeEnabled && char.chatMode !== 'pure' && /\[html\]/i.test(aiContent)) {
                 const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
                 for (const blk of blocks) {
                     try {

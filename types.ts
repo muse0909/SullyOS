@@ -174,6 +174,13 @@ export interface APIConfig {
   stream?: boolean;
   // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
   temperature?: number;
+  // 暮色 2026-07-17：API 协议类型
+  //   - 'openai' (默认): 发到 /v1/chat/completions，按 OpenAI 协议，不发 cache_control
+  //   - 'claude':         发到 /v1/messages，按 Claude 协议，发 4 断点 cache_control（等即享加完 Claude 端点再用）
+  //   Missing → 'openai'（向后兼容老用户）
+  //   上下文：即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"，
+  //          所以 OpenAI 协议下必须把 cache_control 字段去掉。
+  protocol?: 'openai' | 'claude';
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;
@@ -333,7 +340,18 @@ export interface RoomNote {
     timestamp: number;
     content: string;
     type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
-    relatedMessageId?: number; 
+    relatedMessageId?: number;
+    // ── 暮色 2026-07-17：私密记事独立成发现页子页，加 replies 字段
+    //   用户对 AI 写的便签的回复（最多几十条，存进 RoomNote 一起拉，不用单独建表）
+    replies?: NoteReply[];
+}
+
+export interface NoteReply {
+    id: string;
+    parentNoteId: string;
+    author: 'user' | 'character';   // 用户回复 / AI 后续追加
+    content: string;                 // 纯文本
+    timestamp: number;
 }
 
 export interface ScheduleSlot {
@@ -1052,6 +1070,16 @@ export interface CharacterProfile {
    */
   htmlModeEnabled?: boolean;
   htmlModeCustomPrompt?: string;
+
+  /**
+   * 聊天模式（per-character）。
+   * - 'full' (默认): 完整模式，注入所有 awareness 段（朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader）
+   * - 'pure':       纯聊天模式，只保留对话必要内容（角色卡+世界书+基础 IM 规范+表情包+戳+引用+主动发消息+生图识图）
+   *                  关闭朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader/小红书/Notion/飞书/搜索/转账
+   *                  目的：降输入 token（暮色 2026-07-18 — 即享 ccmax2 cache_creation 比 input 贵 88%，纯走 input 更省）
+   * - undefined:    兼容老用户——等同 'full'
+   */
+  chatMode?: 'full' | 'pure';
 }
 
 export interface GroupProfile {

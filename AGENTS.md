@@ -279,9 +279,18 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-19 | 记忆宫殿重复提取保护 | [`changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md`](./changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md) |
+| 2026-07-18 | 纯聊天模式漏口修正 + cache 日志校准 | [`changelogs/2026-07-18-pure-mode-cache-log-fix.md`](./changelogs/2026-07-18-pure-mode-cache-log-fix.md) |
+| 2026-07-18 | 纯聊天模式补齐到真省 token | [`changelogs/2026-07-18-pure-chat-mode-token-cut.md`](./changelogs/2026-07-18-pure-chat-mode-token-cut.md) |
 | 2026-07-18 | Sully 专属分类长按支持删除（去 isSystem 限制） | [`changelogs/2026-07-18-sully-exclusive-category-deletable.md`](./changelogs/2026-07-18-sully-exclusive-category-deletable.md) |
 | 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
+| 2026-07-17 | API 协议分支 + OpenAI 协议去掉 cache_control 字段（即享站长诊断："走 openai 接口不能加 claude 字段"）| [`changelogs/2026-07-17-api-protocol-branching-and-openai-cache-control-strip.md`](./changelogs/2026-07-17-api-protocol-branching-and-openai-cache-control-strip.md) |
+| 2026-07-17 | 私密记事独立成发现页子页（阶段 1：UI 完整 + 阶段 2 待开）| [`changelogs/2026-07-17-private-notes-stage1-ui.md`](./changelogs/2026-07-17-private-notes-stage1-ui.md) |
+| 2026-07-17 | 私密记事阶段 2：AI 主动写 + 定时提醒（`[[PRIVATE_NOTE:...\|type]]` token + 21:00 默认提醒）| [`changelogs/2026-07-17-private-notes-stage2-ai-writes.md`](./changelogs/2026-07-17-private-notes-stage2-ai-writes.md) |
 | 2026-07-16 | innerState + realtime 挪到 messages 末尾，提升 prompt cache 命中率 | [`changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md`](./changelogs/2026-07-16-prompt-cache-dynamic-tail-moved.md) |
+| 2026-07-17 | 显式 cache_control 标记，拿 1h TTL | [`changelogs/2026-07-17-explicit-cache-control-1h-ttl.md`](./changelogs/2026-07-17-explicit-cache-control-1h-ttl.md) |
+| 2026-07-17 | 4 断点 prompt cache 方案（bp1 工具 / bp2 行为 / bp3 上下文 / bp4 历史） | [`changelogs/2026-07-17-prompt-cache-4-breakpoints.md`](./changelogs/2026-07-17-prompt-cache-4-breakpoints.md) |
+| 2026-07-17 | Claude 协议 400 修复 — history 里 system 转 user + 末尾 6 条 system 合并到顶层 system 字段 | [`changelogs/2026-07-17-claude-protocol-system-message-400.md`](./changelogs/2026-07-17-claude-protocol-system-message-400.md) |
 | 2026-07-15 | Bell toast 撑大变方形 + 输入框撑大降圆角 + 输入区 padding 缩小 | [`changelogs/2026-07-15-bell-toast-and-input-area-shape.md`](./changelogs/2026-07-15-bell-toast-and-input-area-shape.md) |
 | 2026-07-15 | 聊天图片预览支持单击/双击图片退出 | [`changelogs/2026-07-15-image-preview-click-to-exit.md`](./changelogs/2026-07-15-image-preview-click-to-exit.md) |
 | 2026-07-15 | 朋友圈配图简化为单 toggle + 生图 API 两处都删 ComfyUI/NAI | [`changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md`](./changelogs/2026-07-15-moments-image-toggle-and-provider-simplify.md) |

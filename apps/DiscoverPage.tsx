@@ -2,13 +2,14 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState } from 'react';
-import { CaretRight, BookOpen, BookmarkSimple, Smiley } from '@phosphor-icons/react';
+import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
 import MomentsSettingsPage from './MomentsSettingsPage';
+import PrivateNotesPage from './PrivateNotesPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings';
+type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings' | 'private-notes';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast } = useOS();
@@ -22,6 +23,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // 子页：收藏（语音收藏，按角色分组）
   if (subPage === 'favorites') {
     return <FavoritesPage onBack={() => setSubPage('list')} />;
+  }
+
+  // 子页：私密记事（暮色 2026-07-17：从 RoomApp 侧边栏抽出来做独立页）
+  if (subPage === 'private-notes') {
+    return <PrivateNotesPage onBack={() => setSubPage('list')} />;
   }
 
   // 子页：朋友圈设置（暮色 2026-07-03 新增）
@@ -98,6 +104,17 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <BookmarkSimple size={16} weight="regular" className="text-sky-500" />
             </div>
             <span className="flex-1 text-sm font-medium text-slate-800">收藏</span>
+            <CaretRight size={16} className="text-slate-300" />
+          </button>
+          <div className="border-t border-slate-100" />
+          <button
+            onClick={() => setSubPage('private-notes')}
+            className="w-full flex items-center gap-3 px-4 py-4 active:bg-slate-50 transition-colors text-left"
+          >
+            <div className="w-7 h-7 rounded-full bg-rose-50 flex items-center justify-center">
+              <Notebook size={16} weight="regular" className="text-rose-500" />
+            </div>
+            <span className="flex-1 text-sm font-medium text-slate-800">私密记事</span>
             <CaretRight size={16} className="text-slate-300" />
           </button>
           <div className="border-t border-slate-100" />

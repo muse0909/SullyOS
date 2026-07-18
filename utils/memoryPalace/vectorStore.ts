@@ -30,9 +30,9 @@ export async function vectorizeAndStore(
     nodes: MemoryNode[],
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
-    options: { skipDedup?: boolean } = {},
-): Promise<{ stored: number; skipped: number }> {
-    if (nodes.length === 0) return { stored: 0, skipped: 0 };
+    options: { skipDedup?: boolean; dedupThreshold?: number } = {},
+): Promise<{ stored: number; skipped: number; storedIds: string[]; skippedIds: string[] }> {
+    if (nodes.length === 0) return { stored: 0, skipped: 0, storedIds: [], skippedIds: [] };
 
     // 1. 批量向量化
     const texts = nodes.map(n => n.content);
@@ -44,6 +44,9 @@ export async function vectorizeAndStore(
 
     let stored = 0;
     let skipped = 0;
+    const storedIds: string[] = [];
+    const skippedIds: string[] = [];
+    const dedupThreshold = options.dedupThreshold ?? DEDUP_THRESHOLD;
 
     for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
@@ -53,12 +56,13 @@ export async function vectorizeAndStore(
         // / Uint8Array），同时保护 cosineSimilarity 不被 Uint8Array 误读字节当数。
         const queryF32 = ensureFloat32(vector);
         const isDuplicate = !options.skipDedup && existingVectors.some(
-            ev => cosineSimilarity(queryF32, ensureFloat32(ev.vector)) > DEDUP_THRESHOLD
+            ev => cosineSimilarity(queryF32, ensureFloat32(ev.vector)) > dedupThreshold
         );
 
         if (isDuplicate) {
             console.log(`♻️ [VectorStore] Skipping duplicate memory: "${node.content.slice(0, 30)}..."`);
             skipped++;
+            skippedIds.push(node.id);
             continue;
         }
 
@@ -84,10 +88,11 @@ export async function vectorizeAndStore(
         existingVectors.push(memoryVector);
 
         stored++;
+        storedIds.push(node.id);
     }
 
     console.log(`✅ [VectorStore] Stored ${stored}, skipped ${skipped} duplicates`);
-    return { stored, skipped };
+    return { stored, skipped, storedIds, skippedIds };
 }
 
 /**

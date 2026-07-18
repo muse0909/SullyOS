@@ -233,8 +233,16 @@ export async function expandAndFormat(
     }
 
     const trimmed = output.trim();
-    console.log(`🏰 [MemoryPalace] 本次召回 ${finalItems.length} 条 (${boxHits.size} 个 box + ${standaloneItems.length} 条独立)，${trimmed.length} 字`);
-    return trimmed;
+    // 暮色 2026-07-18：限制 memoryPalace 总字符数 ≤ 8000（约 3000 tokens）
+    //   改前：recursion 结果可能 5000-10000 chars，让 system 字段变大 → cache_creation 写入量变贵
+    //   改后：截到 8000 chars 后追加"（内容已截断，避免 prompt 过长）"提示
+    //   副作用：超长召回会丢一些尾部条目，但优先级低的本来就不重要
+    const MAX_MEMORY_PALACE_CHARS = 8000;
+    const finalOutput = trimmed.length > MAX_MEMORY_PALACE_CHARS
+        ? trimmed.slice(0, MAX_MEMORY_PALACE_CHARS) + '\n\n（内容已截断，避免 prompt 过长）'
+        : trimmed;
+    console.log(`🏰 [MemoryPalace] 本次召回 ${finalItems.length} 条 (${boxHits.size} 个 box + ${standaloneItems.length} 条独立)，${finalOutput.length}/${trimmed.length} 字`);
+    return finalOutput;
 }
 
 // ─── 子渲染：单条独立记忆 ──────────────────────────────

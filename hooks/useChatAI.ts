@@ -903,21 +903,16 @@ export const useChatAI = ({
             //
             // 暮色 2026-07-17 协议分支：
             //   - 即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"
-            //   - protocol === 'openai' (默认): 把 system content 退化成 string，不发 cache_control
-            //                            history 最后一条也不打 cache_control
-            //   - protocol === 'claude':  system 字段挪到顶层（Anthropic 标准），
-            //                            保留 4 断点 cache_control 块
+            //   - protocol === 'openai' (默认): system 放 messages[0]
+            //   - protocol === 'claude':  system 挪到顶层（Anthropic 标准）
             //   ⚠️ 关键：Claude 协议下 system 必须在 messages 之外（顶层字段），
             //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
-            const useClaudeCache = apiProtocol === 'claude';
-            // 暮色 2026-07-18：两个协议分支走不同 cache 策略，互不影响
-            //   - OpenAI 协议走 1 断点 + 5m TTL：1 个 cache_control 标记挂在 system 消息上
-            //   - Anthropic 协议保留 4 断点 + 5m TTL：claudeSystemField 3 段 + history bp4
-            //   暮色 2026-07-18 后续：删掉 1h 写入 —— 5m 单价比 1h 便宜 38%（即兴 ccmax2 5m 3.75/M vs 1h 6/M）
-            //   cache 段寿命 5 分钟够用 —— system 字段变化频率在分钟级，1h 没意义
-            //   OpenAI 协议 + Claude 协议都用 5m（互不影响靠 useClaudeCache 守门）
-            const cacheControlEphemeral = { type: 'ephemeral', ttl: '5m' as const };
+            const useClaudeProtocol = apiProtocol === 'claude';
+            // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
+            //   - OpenAI 协议：不发 message-level cache_control
+            //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
+            //   目标：账单只剩 input / output，没有 cache_creation / cache_read。
             // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
             //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
             //         system 必须放在顶层 system 字段，不能穿插在 messages 中间
@@ -927,7 +922,7 @@ export const useChatAI = ({
             //     这些会原样进 apiMessages，违反 Anthropic 协议。
             //   修法：Claude 协议下把 history 里的 system 转成 user（前面加 [系统消息] 前缀），
             //         信息保留、协议合规；OpenAI 协议不受影响。
-            if (useClaudeCache) {
+            if (useClaudeProtocol) {
                 cleanedApiMessages = cleanedApiMessages.map((m: any) => {
                     if (m.role !== 'system') return m;
                     const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
@@ -936,63 +931,26 @@ export const useChatAI = ({
             }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
             // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
-            //   暮色 2026-07-18：OpenAI 协议 1 断点 —— 1 个 cache_control 标记挂在 system 消息上
-            //     即兴 ccmax2 看到 message-level cache_control 标记 → 启用 cache 段
-            //     cache_creation 写入 = system 字段大小（~25k）vs 4 断点的整个 prompt（~52k）
-            //     配合 5m TTL 写入价 3.75/M，比 1h 的 6/M 便宜 38%
-            const fullMessages: any[] = useClaudeCache
+            const fullMessages: any[] = useClaudeProtocol
                 ? [...cleanedApiMessages]  // Claude 协议下 messages 不含 system
                 : [
                     {
                         role: 'system',
                         // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
                         content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
-                        // 暮色 2026-07-18：完全删掉 OpenAI 协议的 cache_control 标记
-                        //   改前：cache_control: cacheControlEphemeral
-                        //   改后：不挂标记 → provider 看不到 cache 段 → 100% 走 input 通道
-                        //   原因：图里 9 次请求里 4 次 cache_creation + 0 次 cache_read，纯亏——
-                        //         即享 ccmax2 5m 写入价 3.75/M 比 input 贵 25%，cache 段从来没读到过
-                        //   Claude 协议：保留 4 断点 cache_control（不动）
                     },
                     ...cleanedApiMessages
                 ];
-            // Claude 协议专用：顶层 system 字段（4 断点 cache_control）
-            //   bp1/bp2/bp3 段都挂 cache_control（1h TTL）
-            //   bpDynamic 段不带 cache_control（每轮必变的动态尾巴：时间戳/innerState/私密记事/最近心声/记忆宫殿）
-            //   这段之前被 push 到 messages 末尾（Anthropic 不允许带内容的末尾 system 消息），
-            //   合并到顶层 system 字段后既协议合规又不影响 bp1-bp3 cache 命中。
-            const claudeSystemField: any[] | null = useClaudeCache ? [
+            // Claude 协议专用：顶层 system 字段
+            //   这里只保留协议要求的 text blocks，不再附带任何 cache_control。
+            const claudeSystemField: any[] | null = useClaudeProtocol ? [
                 // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
-                { type: 'text', text: bp1Tools, cache_control: cacheControlEphemeral },
+                { type: 'text', text: bp1Tools },
                 // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
-                { type: 'text', text: bp2Rules, cache_control: cacheControlEphemeral },
+                { type: 'text', text: bp2Rules },
                 // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
-                { type: 'text', text: bp3Context, cache_control: cacheControlEphemeral },
+                { type: 'text', text: bp3Context },
             ] : null;
-
-            // bp4 - 历史消息：在 history 最后一条打 cache_control（仅 Claude 协议）
-            //   - 只在最后一条打，Anthropic cache prefix 机制会从这条往前匹配
-            //   - 下次新加一条 user 消息：bp4 之前的所有 history 仍命中，新加的 user 消息走输入价
-            //   - 长对话时 history 段越增长命中率越高（前 N-1 条一直在 cache 里）
-            //   - OpenAI 协议跳过：newapi 不认 cache_control 字段
-            if (useClaudeCache && fullMessages.length > 1) {
-                const lastMsg = fullMessages[fullMessages.length - 1];
-                if (lastMsg && (lastMsg.role === 'user' || lastMsg.role === 'assistant')) {
-                    if (typeof lastMsg.content === 'string') {
-                        // string content → 转成 array + cache_control
-                        lastMsg.content = [
-                            { type: 'text', text: lastMsg.content, cache_control: cacheControlEphemeral }
-                        ];
-                    } else if (Array.isArray(lastMsg.content)) {
-                        // array content（图片/多 block）→ 在末尾追加一个 cache_control 标记的 text block
-                        //   Anthropic 限制每条消息最多 4 个 cache_control 标记，这里加第 1 个，没问题
-                        lastMsg.content = [
-                            ...lastMsg.content,
-                            { type: 'text', text: '', cache_control: cacheControlEphemeral }
-                        ];
-                    }
-                }
-            }
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;
@@ -1000,10 +958,8 @@ export const useChatAI = ({
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
-            // ⚠️ 2026-07-17 站长反馈：claude 是 hash 前缀缓存
-            //   cache 命中要求从开头到 cache_control 标记的所有内容 hash 完全一致
-            //   任意字符变化都让 cache 失效
-            //   工具：主动计算 4 段 hash，让暮色一眼看出哪段在变
+            // ⚠️ 这段 hash 日志最初是给 cache 断点排查用的。
+            //   现在 cache 已彻底关掉，但保留 hash 本身对比 prompt 漂移仍有用。
             //
             //   4 段累积 hash：
             //   - hash_bp1 = sha256(bp1Tools)
@@ -1101,8 +1057,8 @@ export const useChatAI = ({
                 dynamicTailParts.push(dynamicMemoryPalace);
             }
 
-            if (useClaudeCache) {
-                // Claude 协议：合并到顶层 system 字段（bpDynamic 段，不带 cache_control）
+            if (useClaudeProtocol) {
+                // Claude 协议：合并到顶层 system 字段
                 //   Anthropic 协议要求顶层 system 是 array of text blocks，多个 block 都会被模型看到
                 if (claudeSystemField && dynamicTailParts.length > 0) {
                     claudeSystemField.push({
@@ -1351,7 +1307,7 @@ ${visionDesc}
             //   - Anthropic 协议标准：system 是顶层字段，不在 messages 里
             //   - OpenAI 协议：system 在 messages[0].role = 'system'（已在 fullMessages 里）
             //   - 这两种格式不能同时存在，否则 newapi 重写时会报 400
-            if (useClaudeCache && claudeSystemField) {
+            if (useClaudeProtocol && claudeSystemField) {
                 baseReqBody.system = claudeSystemField;
             }
             // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
@@ -1362,7 +1318,7 @@ ${visionDesc}
             //   - 原因：safeApi.ts 的 SSE 解析只支持 OpenAI 协议
             //   - Anthropic 流式响应是不同的事件格式（content_block_delta 等）
             //   - 等以后真要 Claude 流式再补（目前 stream=false 默认，无影响）
-            if (useClaudeCache && baseReqBody.stream) {
+            if (useClaudeProtocol && baseReqBody.stream) {
                 console.log('⚠️ [API] Claude 协议暂不支持流式，自动降级为非流式');
                 baseReqBody.stream = false;
             }
@@ -1375,10 +1331,10 @@ ${visionDesc}
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
             // 组装 tools 列表
 const toolsList: any[] = [];
-if (!useClaudeCache && mcdMiniOpen) {
+if (!useClaudeProtocol && mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (!useClaudeCache && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
+if (!useClaudeProtocol && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 if (toolsList.length > 0) {

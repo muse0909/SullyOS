@@ -866,13 +866,14 @@ export const useChatAI = ({
                 bp2Rules += `\n\n[心声输出要求 — 这是你灵魂的延续，不是机械的"作为xx我应该..."模板]\n你的心声应该像真人一样自然：先让思绪在脑子里走一遍，再落笔。每次回复结束后，请附加一个 emotion 块（JSON 格式）：\n<emotion>{"thought_chain":"...","label":"...","innerState":"...","intensity":1,"emoji":"..."}</emotion>\n\n字段要求：\n- thought_chain（思维链，10-80字，**必填**）：第一人称，写出你「${char.name}」此刻真实的内心思考过程——对方这句话的潜台词是什么？你此刻的情绪反应是什么？脑海中最先冒出的那个念头是什么？**这是防 OOC 的关键，必须先想再写心声**。\n- label：2-10字，短标签，像头像栏上的小心情贴纸\n- innerState（10-100字，**必填**）：你心声的最终版本，第一人称，直接写"我……"。这是你灵魂的延续，**避免**重复或简单改写上一轮。${mindfulRule}\n- intensity：1到3，1=轻微，2=中等，3=强烈\n- emoji：一个表情符号\n- 所有字符串中的换行用 \\\\n 表示\n- 正文和 <emotion> 块之间不要有多余说明`;
 
                 // 注入最近 5 条心声作为"已说过"参考，让 LLM 主动避免重复（2026-07-01）
-                // 不传整段 history，只传最近 5 条 innerState 文本 + 触发时间（粗粒度足够）
+                // 不传整段 history，只传最近 3 条 innerState 文本 + 触发时间（粗粒度足够）
                 //
                 // ⚠️ 2026-07-17 4 断点优化：最近心声挪到末尾（不参与 cache）
                 //   改前：拼到 bp3Context → 每次新心声（5 条滚动）让 bp3Context 失效 → cache 全段失效
                 //   改后：单独存在 dynamicRecentEmotions，末尾 push 到 messages
-                //   token 很小（5 条 ≈ 200 token），但能让 bp3Context 段真正稳定
-                const recentInnerStates = (char.emotionHistory || []).slice(0, 5)
+                //   token 很小（3 条 ≈ 120 token），但能让 bp3Context 段真正稳定
+                //   暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越小 cache_creation 写入越便宜）
+                const recentInnerStates = (char.emotionHistory || []).slice(0, 3)
                     .map(b => ({ innerState: b.innerState, createdAt: b.createdAt }))
                     .filter(x => typeof x.innerState === 'string' && x.innerState.trim());
                 if (recentInnerStates.length > 0) {
@@ -910,14 +911,11 @@ export const useChatAI = ({
             const useClaudeCache = apiProtocol === 'claude';
             // 暮色 2026-07-18：两个协议分支走不同 cache 策略，互不影响
             //   - OpenAI 协议走 1 断点 + 5m TTL：1 个 cache_control 标记挂在 system 消息上
-            //     即兴 ccmax2 5m 写入价 3.75/M 比 1h 的 6/M 便宜 38%
-            //   - Anthropic 协议保留 4 断点 + 1h TTL：claudeSystemField 3 段 + history bp4
-            //     1h TTL 在真官方接口上能持续命中 1 小时（即便接回 awsb/official 也能用上）
-            //   改前：所有协议都 1h（贵） + OpenAI 协议 0 断点（即兴按整体 prompt 算）
-            //   改后：OpenAI 5m + Claude 1h，各自最优
-            const cacheControlEphemeral = useClaudeCache
-                ? { type: 'ephemeral', ttl: '1h' as const }      // Claude 协议：1h TTL
-                : { type: 'ephemeral', ttl: '5m' as const };     // OpenAI 协议：5m TTL
+            //   - Anthropic 协议保留 4 断点 + 5m TTL：claudeSystemField 3 段 + history bp4
+            //   暮色 2026-07-18 后续：删掉 1h 写入 —— 5m 单价比 1h 便宜 38%（即兴 ccmax2 5m 3.75/M vs 1h 6/M）
+            //   cache 段寿命 5 分钟够用 —— system 字段变化频率在分钟级，1h 没意义
+            //   OpenAI 协议 + Claude 协议都用 5m（互不影响靠 useClaudeCache 守门）
+            const cacheControlEphemeral = { type: 'ephemeral', ttl: '5m' as const };
             // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
             //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
             //         system 必须放在顶层 system 字段，不能穿插在 messages 中间

@@ -222,14 +222,15 @@ export const ChatPrompts = {
         });
 
         // 2.6 私密记事 awareness（暮色 2026-07-17：让 AI 知道最近写过什么避免重复）
-        //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 5 条
+        //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 3 条
+        //     暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越大 cache_creation 写入越贵）
         const roomNotesPromise: Promise<string> = Promise.resolve().then(async () => {
             try {
                 const notes = await DB.getRoomNotes(char.id);
                 if (!notes || notes.length === 0) return '';
                 const recent = notes
                     .sort((a, b) => b.timestamp - a.timestamp)
-                    .slice(0, 5);
+                    .slice(0, 3);
                 const TYPE_LABELS: Record<string, string> = {
                     thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦',
                 };

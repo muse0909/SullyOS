@@ -713,6 +713,8 @@ export const useChatAI = ({
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
                 isListeningTogether, music.cfg,
+                // 暮色 2026-07-18：传 chatMode 给 buildSystemPrompt（undefined 时 chatPrompts 内部 fallback 到 char.chatMode）
+                char.chatMode,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
@@ -945,8 +947,12 @@ export const useChatAI = ({
                         role: 'system',
                         // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
                         content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
-                        // OpenAI 协议 1 断点：1 个 cache_control 标记挂在 system 消息上
-                        cache_control: cacheControlEphemeral,
+                        // 暮色 2026-07-18：完全删掉 OpenAI 协议的 cache_control 标记
+                        //   改前：cache_control: cacheControlEphemeral
+                        //   改后：不挂标记 → provider 看不到 cache 段 → 100% 走 input 通道
+                        //   原因：图里 9 次请求里 4 次 cache_creation + 0 次 cache_read，纯亏——
+                        //         即享 ccmax2 5m 写入价 3.75/M 比 input 贵 25%，cache 段从来没读到过
+                        //   Claude 协议：保留 4 断点 cache_control（不动）
                     },
                     ...cleanedApiMessages
                 ];

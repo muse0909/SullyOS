@@ -1070,6 +1070,16 @@ export interface CharacterProfile {
    */
   htmlModeEnabled?: boolean;
   htmlModeCustomPrompt?: string;
+
+  /**
+   * 聊天模式（per-character）。
+   * - 'full' (默认): 完整模式，注入所有 awareness 段（朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader）
+   * - 'pure':       纯聊天模式，只保留对话必要内容（角色卡+世界书+基础 IM 规范+表情包+戳+引用+主动发消息+生图识图）
+   *                  关闭朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader/小红书/Notion/飞书/搜索/转账
+   *                  目的：降输入 token（暮色 2026-07-18 — 即享 ccmax2 cache_creation 比 input 贵 88%，纯走 input 更省）
+   * - undefined:    兼容老用户——等同 'full'
+   */
+  chatMode?: 'full' | 'pure';
 }
 
 export interface GroupProfile {

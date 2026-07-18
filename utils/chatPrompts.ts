@@ -147,6 +147,12 @@ export const ChatPrompts = {
         // MusicContext 的 cfg —— 用来给 char 自己的"此刻在听"拉稳定的歌词片段。
         // 不传也能用，只是 char 的 block 2 只有歌名 + 艺人，没有歌词。
         musicCfg?: MusicCfg,
+        // 暮色 2026-07-18：聊天模式开关
+        //   - 'full' (默认): 完整模式，注入所有 awareness 段
+        //   - 'pure':       纯聊天模式，跳过朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader
+        //                   工具层里 Notion/飞书/小红书/搜索 的提示词也不输出
+        //                   目的：降输入 token
+        chatMode?: 'full' | 'pure',
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -156,6 +162,9 @@ export const ChatPrompts = {
             try { return await p; }
             finally { timings[label] = Math.round(performance.now() - t0); }
         };
+
+        // 暮色 2026-07-18：纯聊天模式判定（undefined 兼容老角色 = 完整模式）
+        const isPureMode = (chatMode ?? char.chatMode ?? 'full') === 'pure';
 
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         const coreT0 = performance.now();
@@ -168,7 +177,9 @@ export const ChatPrompts = {
         //                 第三稳定。工具开关变化时失效。
         //   - dynamicTail: 每轮必变（realtime 时间戳 + innerState 意识流）→ 仍走 messages 末尾，不缓存
         //   4 断点方案 = bp1 + bp2 + bp3 + history(bp4) 各自独立 cache TTL
-        let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, true);
+        // 暮色 2026-07-18：纯聊天模式（isPureMode=true）下，buildCoreContext 不注入 slotHeader/朋友圈/日记列表/笔记列表
+        //   心声底色由 char.memoryPalaceInjection 处理（后面会跳过）
+        let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, !isPureMode);
         let bp2Rules = '';
         let bp1Tools = '';
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
@@ -224,7 +235,10 @@ export const ChatPrompts = {
         // 2.6 私密记事 awareness（暮色 2026-07-17：让 AI 知道最近写过什么避免重复）
         //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 3 条
         //     暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越大 cache_creation 写入越贵）
-        const roomNotesPromise: Promise<string> = Promise.resolve().then(async () => {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过私密记事 awareness
+        //   即便 AI 主动写或 AI 自动提醒，prompt 里也不出现"你之前写过的小纸条"列表
+        //   目的：让 bp3Context 段真正稳定 + 进一步省 token
+        const roomNotesPromise: Promise<string> = (isPureMode ? Promise.resolve('') : Promise.resolve().then(async () => {
             try {
                 const notes = await DB.getRoomNotes(char.id);
                 if (!notes || notes.length === 0) return '';
@@ -244,7 +258,7 @@ export const ChatPrompts = {
                 console.error('Failed to load room notes context:', e);
                 return '';
             }
-        });
+        }));
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
@@ -355,12 +369,14 @@ export const ChatPrompts = {
         //   改后：bp3Context += `\n\n${momentsContextText}` 固定加 \n\n
         //   原因：之前版本 awareness 函数末尾有 \n\n，某个 commit 删掉后导致 cache prefix 差 2 chars
         //         即使朋友圈内容没变，bp3Context 也会失配 → cache 失效
-        if (momentsContextText) {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过朋友圈 awareness
+        if (!isPureMode && momentsContextText) {
             bp3Context += `\n\n${momentsContextText}`;
         }
 
         // 2a. 日程注入
-        if (schedule) {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过 schedule / slotHeader（省 token）
+        if (!isPureMode && schedule) {
             try {
                 const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
                 if (scheduleContext) bp3Context += `\n${scheduleContext}\n`;
@@ -372,7 +388,8 @@ export const ChatPrompts = {
         // 2b. 音乐氛围（复用同一份 schedule）
         //     - 同步：从 schedule 里算 char 当前"正在听"哪首歌
         //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
-        try {
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过音乐氛围
+        if (!isPureMode) try {
             let charListening: {
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;
@@ -411,27 +428,43 @@ export const ChatPrompts = {
             console.error('Failed to inject music atmosphere:', e);
         }
 
-        bp3Context += groupContextText;
-        bp3Context += notionDiaryText;
-        bp3Context += feishuDiaryText;
-        bp3Context += notionNotesText;
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过群聊/Notion 日记/飞书日记/Notion 笔记 awareness
+        if (!isPureMode) {
+            bp3Context += groupContextText;
+            bp3Context += notionDiaryText;
+            bp3Context += feishuDiaryText;
+            bp3Context += notionNotesText;
+        }
         // 暮色 2026-07-17 4 断点优化：私密记事 awareness 不再拼到 bp3Context
         //   改前：拼到 bp3Context → 每次写新记事列表变化 → bp3Context 失效 → 整个 cache 失效
         //   改后：作为 dynamicNotes 返回 → useChatAI 末尾 push 到 messages（不参与 cache）
         //   这次写一条 5 条滚动 → 输入价算（但 token 很小 ≈ 160 token）
         //   bp3Context 段真正稳定 → cache 命中 → 整体便宜 10 倍+
         // roomNotesText 这里不再累加到 bp3Context，改返回 dynamicNotes
+        // 暮色 2026-07-18：纯聊天模式下也跳过私密记事 awareness（进一步省 token）
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
-        const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
-        const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
-        const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
-        const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        let searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
+        let notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
+        let notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
+        let feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
+        // 暮色 2026-07-18：纯聊天模式（isPureMode）下强制关闭 Notion/飞书/搜索/笔记/小红书 工具段
+        //   即便用户在全局设置里开了，纯聊天模式也不输出相关提示词（省 token + 防止 LLM 误调用）
+        //   效果：bp1Tools 里 ${notionEnabled ? ...} / ${searchEnabled ? ...} 等条件分支全部为 false
+        //         工具层从 ~12.5k 降到 ~7-8k
+        if (isPureMode) {
+            searchEnabled = false;
+            notionEnabled = false;
+            notionNotesEnabled = false;
+            feishuEnabled = false;
+        }
         // Per-character XHS override: MCP-only
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
-        const xhsEnabled = char.xhsEnabled !== undefined
+        let xhsEnabled = char.xhsEnabled !== undefined
             ? !!(char.xhsEnabled && mcpXhsAvailable)
             : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
+        // 暮色 2026-07-18：纯聊天模式下也强制关闭小红书
+        if (isPureMode) xhsEnabled = false;
 
         // 暮色 2026-07-12 排查 Claude 4.6 "我以为自己是 Notion AI" bug：
         // 把实际启用的工具状态打到 console，下次开聊一眼能看出 system prompt 该不该有 Notion 段

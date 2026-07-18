@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-18 | 纯聊天模式补齐到真省 token | [`changelogs/2026-07-18-pure-chat-mode-token-cut.md`](./changelogs/2026-07-18-pure-chat-mode-token-cut.md) |
 | 2026-07-18 | Sully 专属分类长按支持删除（去 isSystem 限制） | [`changelogs/2026-07-18-sully-exclusive-category-deletable.md`](./changelogs/2026-07-18-sully-exclusive-category-deletable.md) |
 | 2026-07-15 | 输入框 padding 真凶修正 + API 浮窗默认折叠 + 副 API 接入浮窗 | [`changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md`](./changelogs/2026-07-15-input-padding-fix-and-float-default-collapsed-and-memory-light-api.md) |
 | 2026-07-17 | API 协议分支 + OpenAI 协议去掉 cache_control 字段（即享站长诊断："走 openai 接口不能加 claude 字段"）| [`changelogs/2026-07-17-api-protocol-branching-and-openai-cache-control-strip.md`](./changelogs/2026-07-17-api-protocol-branching-and-openai-cache-control-strip.md) |

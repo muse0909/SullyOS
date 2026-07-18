@@ -788,7 +788,7 @@ export const useChatAI = ({
             // 1.6 HTML 模块模式 — 注入内置 HTML 提示词 (+ 用户自定义追加)
             //     开启后允许 AI 输出 [html]...[/html] 卡片, 客户端解析为 html_card 单独渲染。
             //   4 断点方案：HTML 是「输出格式工具」→ 归 bp1Tools
-            if ((char as any).htmlModeEnabled) {
+            if ((char as any).htmlModeEnabled && char.chatMode !== 'pure') {
                 bp1Tools += `\n\n${buildHtmlPrompt((char as any).htmlModeCustomPrompt)}`;
             }
 
@@ -3448,7 +3448,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //     原始 HTML 放在 metadata.htmlSource，供 MessageItem 沙盒渲染。
             //     这样既不污染上下文 token，也保留了可视化卡片。
             //     注意：在 quote/sanitize 之前抽，避免 sanitize 把 HTML 内容当垃圾去掉。
-            if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
+            if ((char as any).htmlModeEnabled && char.chatMode !== 'pure' && /\[html\]/i.test(aiContent)) {
                 const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
                 for (const blk of blocks) {
                     try {

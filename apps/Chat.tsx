@@ -2466,6 +2466,9 @@ if (keepN > 0) {
                 onToggleEmotion={handleToggleEmotion}
                 contextLimit={char.contextLimit || 500}
                 onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
+                // 暮色 2026-07-18：纯聊天模式开关
+                chatMode={char.chatMode || 'full'}
+                onSetChatMode={(mode) => updateCharacter(char.id, { chatMode: mode } as any)}
                 hideSysLogs={!!char.hideSystemLogs}
                 onSetHideSysLogs={(v) => updateCharacter(char.id, { hideSystemLogs: v } as any)}
                 translationEnabled={translationEnabled}

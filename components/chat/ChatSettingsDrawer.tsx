@@ -1,8 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Image as ImageIcon, Trash, MagnifyingGlass } from '@phosphor-icons/react';
-import { CharacterProfile, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import { X, Trash, MagnifyingGlass } from '@phosphor-icons/react';
+import { CharacterProfile } from '../../types';
+import { DB } from '../../utils/db';
 
 interface ChatSettingsDrawerProps {
     isOpen: boolean;
@@ -29,6 +30,10 @@ interface ChatSettingsDrawerProps {
     // 上下文条数
     contextLimit: number;
     onSetContextLimit: (n: number) => void;
+
+    // 暮色 2026-07-18：聊天模式开关（'full' = 完整 / 'pure' = 纯聊天）
+    chatMode: 'full' | 'pure';
+    onSetChatMode: (mode: 'full' | 'pure') => void;
 
     // 隐藏系统日志
     hideSysLogs: boolean;
@@ -72,6 +77,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
     contextLimit, onSetContextLimit,
+    chatMode, onSetChatMode,
     hideSysLogs, onSetHideSysLogs,
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
@@ -82,6 +88,34 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     onClearHistory,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
+
+    // 暮色 2026-07-18：未向量化消息条数（提示用 — 上下文条数设置参考）
+    //   记忆宫殿已向量化过的消息（id <= hwm）默认不进上下文
+    //   "未向量化条数" = DB 里 id > hwm 的消息数
+    //   查这个数 0 token 消耗（纯 localStorage + IndexedDB 客户端查询）
+    const [unvectorizedCount, setUnvectorizedCount] = useState<number | null>(null);
+    useEffect(() => {
+        if (!isOpen || !activeCharacter?.id) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${activeCharacter.id}`) || '0', 10) || 0;
+                // 查 char 所有消息数（limit 设大点）
+                const allMsgs = await DB.getRecentMessagesByCharId(activeCharacter.id, 99999, true);
+                if (cancelled) return;
+                // 未向量化 = id > hwm
+                const unvec = allMsgs.filter(m => m.id > hwm).length;
+                setUnvectorizedCount(unvec);
+            } catch (e) {
+                console.error('Failed to count unvectorized messages:', e);
+                if (!cancelled) setUnvectorizedCount(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isOpen, activeCharacter?.id]);
+
+    const effectiveContextMax = Math.max(20, Math.min(5000, unvectorizedCount ?? 5000));
+    const displayContextLimit = Math.min(contextLimit, effectiveContextMax);
 
     // Esc 关闭
     useEffect(() => {
@@ -146,22 +180,46 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         )}
                     </section>
 
-                    {/* === 搜索聊天记录（紧跟背景） === */}
-                    <section>
-                        <div className="flex items-center justify-between">
-                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">搜索聊天记录</label>
-                            <button
-                                onClick={onOpenSearch}
-                                title="搜索聊天记录"
-                                aria-label="搜索聊天记录"
-                                className="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 active:scale-90 transition-transform"
-                            >
-                                <MagnifyingGlass className="w-4.5 h-4.5" weight="bold" />
-                            </button>
+                    {/* === 聊天模式（暮色 2026-07-18 新增，背景下面第一位） === */}
+                    <section className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">聊天模式</label>
                         </div>
+                        <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-xl">
+                            <button
+                                type="button"
+                                onClick={() => onSetChatMode('full')}
+                                className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${chatMode !== 'pure' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                            >完整</button>
+                            <button
+                                type="button"
+                                onClick={() => onSetChatMode('pure')}
+                                className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${chatMode === 'pure' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                            >纯聊天</button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            {chatMode === 'pure' ? (
+                                <>✅ 纯聊天模式已开启：已关闭朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader/小红书/Notion/飞书/搜索/转账/HTML。目标就是只留聊天必要内容。</>
+                            ) : (
+                                <>纯聊天模式会关闭朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader/小红书/Notion/飞书/搜索/转账/HTML，只保留对话必要内容。</>
+                            )}
+                        </p>
                     </section>
 
-                    {/* === 语音消息（紧跟背景） === */}
+                    {/* === 心声（独立于日程）— 模式切换下面，暮色 2026-07-18 要求 === */}
+                    <section className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between cursor-pointer" onClick={onToggleEmotion}>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">心声</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${emotionEnabled ? 'bg-violet-400' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${emotionEnabled ? 'translate-x-4' : ''}`} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            开启后，角色会在聊天中自动生成一段第一人称的内心独白。
+                        </p>
+                    </section>
+
+                    {/* === 语音消息 === */}
                     <section className="pt-2 border-t border-slate-100">
                         <div className="flex items-center justify-between cursor-pointer" onClick={onToggleChatVoice}>
                             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">语音消息</label>
@@ -188,37 +246,46 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         )}
                     </section>
 
-                    {/* === 心声（独立于日程） === */}
+                    {/* === 搜索聊天记录（挪到上下文条数上面，暮色 2026-07-18 要求） === */}
                     <section className="pt-2 border-t border-slate-100">
-                        <div className="flex items-center justify-between cursor-pointer" onClick={onToggleEmotion}>
-                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">心声</label>
-                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${emotionEnabled ? 'bg-violet-400' : 'bg-slate-200'}`}>
-                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${emotionEnabled ? 'translate-x-4' : ''}`} />
-                            </div>
+                        <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">搜索聊天记录</label>
+                            <button
+                                onClick={onOpenSearch}
+                                title="搜索聊天记录"
+                                aria-label="搜索聊天记录"
+                                className="w-9 h-9 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 active:scale-90 transition-transform"
+                            >
+                                <MagnifyingGlass className="w-4.5 h-4.5" weight="bold" />
+                            </button>
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
-                            开启后，角色会在聊天中自动生成一段第一人称的内心独白。
-                        </p>
                     </section>
 
                     {/* === 上下文条数 === */}
                     <section className="pt-2 border-t border-slate-100">
                         <div className="flex items-center justify-between mb-2">
-                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">上下文条数 ({contextLimit})</label>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">上下文条数 ({displayContextLimit})</label>
                         </div>
                         <input
                             type="range"
                             min="20"
-                            max="5000"
+                            max={effectiveContextMax}
                             step="10"
-                            value={contextLimit}
-                            onChange={e => onSetContextLimit(parseInt(e.target.value))}
+                            value={displayContextLimit}
+                            onChange={e => onSetContextLimit(Math.min(parseInt(e.target.value), effectiveContextMax))}
                             className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-primary"
                         />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1">
                             <span>20 (省流)</span>
-                            <span>5000 (超长记忆)</span>
+                            <span>{effectiveContextMax} (当前上限)</span>
                         </div>
+                        {/* 暮色 2026-07-18：未向量化条数提示 + 解释记忆宫殿过滤 */}
+                        {unvectorizedCount !== null && (
+                            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                                💡 当前还有 <b className="text-slate-600">{unvectorizedCount}</b> 条未进入记忆宫殿向量化，实际生效的上下文条数 ≤ {unvectorizedCount}。
+                                <br />已向量化的消息不再重复发给 AI，节省 token。
+                            </p>
+                        )}
                     </section>
 
                     {/* === 隐藏系统日志 === */}

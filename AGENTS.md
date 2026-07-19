@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-19 | Kimi 识图外链失败改 base64 兜底 | [`changelogs/2026-07-19-kimi-vision-base64-fallback.md`](./changelogs/2026-07-19-kimi-vision-base64-fallback.md) |
 | 2026-07-19 | Kimi 识图文字块兼容 + 聊天截图顺序提取 | [`changelogs/2026-07-19-kimi-vision-text-block-and-chat-screenshot-order.md`](./changelogs/2026-07-19-kimi-vision-text-block-and-chat-screenshot-order.md) |
 | 2026-07-19 | 记忆宫殿重复提取保护 | [`changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md`](./changelogs/2026-07-19-memory-palace-duplicate-extract-guard.md) |
 | 2026-07-18 | 纯聊天模式漏口修正 + cache 日志校准 | [`changelogs/2026-07-18-pure-mode-cache-log-fix.md`](./changelogs/2026-07-18-pure-mode-cache-log-fix.md) |

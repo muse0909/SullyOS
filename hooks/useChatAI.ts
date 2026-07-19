@@ -1133,6 +1133,56 @@ const getImageUrlFromRawMsg = (msg: any): string | null => {
     return null;
 };
 
+const blobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('图片转 base64 失败'));
+    reader.readAsDataURL(blob);
+});
+
+const imageUrlToDataUrl = async (url: string): Promise<string | null> => {
+    if (url.startsWith('data:image')) return url;
+    if (!/^https?:\/\//i.test(url)) return null;
+
+    const response = await fetch('/api/proxy-image?url=' + encodeURIComponent(url));
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`图片转 base64 失败: HTTP ${response.status} ${text.slice(0, 120)}`);
+    }
+
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) {
+        throw new Error(`图片转 base64 失败: 返回类型不是图片 (${blob.type || 'unknown'})`);
+    }
+    return blobToDataUrl(blob);
+};
+
+const summarizeVisionMessagesForLog = (messages: any[]) => messages.map((msg: any) => {
+    if (!Array.isArray(msg?.content)) return msg;
+    return {
+        ...msg,
+        content: msg.content.map((part: any) => {
+            const url = part?.image_url?.url;
+            if (part?.type !== 'image_url' || typeof url !== 'string') return part;
+            return {
+                ...part,
+                image_url: {
+                    ...part.image_url,
+                    url: url.startsWith('data:image')
+                        ? `${url.slice(0, 32)}...(${url.length} chars)`
+                        : url,
+                },
+            };
+        }),
+    };
+});
+
+const saveVisionReqLog = (log: any) => {
+    try {
+        localStorage.setItem('sullyos:lastVisionReqLog', JSON.stringify(log, null, 2));
+    } catch { /* quota 忽略 */ }
+};
+
 // 1. 优先看最新用户 API 消息里是否直接带图
 let latestImageUrl: string | null = getImageUrlFromApiMsg(lastUserApiMsg);
 
@@ -1189,8 +1239,7 @@ console.log('🖼️ 识图检测', {
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
 if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
-    try {
-        const visionMessages = [
+    const buildVisionMessages = (imageUrl: string) => [
             {
                 role: 'system',
                 content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
@@ -1214,25 +1263,74 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
                 role: 'user',
                 content: [
                     { type: 'text', text: '请按系统要求识别这张图片。若这是聊天截图，请严格按画面从上到下的时间顺序提取文字，不要按左右两边分组。' },
-                    { type: 'image_url', image_url: { url: latestImageUrl! } }
+                    { type: 'image_url', image_url: { url: imageUrl } }
                 ]
             }
         ];
 
-   const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
-        const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${effectiveApi.visionApiKey}`
-            },
-            body: JSON.stringify({
-                model: effectiveApi.visionModel || 'gemini-1.5-flash',
-                messages: visionMessages,
-                temperature: 0.3,
-                stream: false
-            })
-        });
+    const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
+    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
+        const visionMessages = buildVisionMessages(imageUrl);
+        const requestBody = {
+            model: effectiveApi.visionModel || 'gemini-1.5-flash',
+            messages: visionMessages,
+            temperature: 0.3,
+            stream: false
+        };
+        const logBase = {
+            timestamp: new Date().toISOString(),
+            url: `${visionUrl}/chat/completions`,
+            model: requestBody.model,
+            mode,
+            image: imageUrl.startsWith('data:image')
+                ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
+                : { kind: 'url', url: imageUrl },
+            body: {
+                ...requestBody,
+                messages: summarizeVisionMessagesForLog(visionMessages)
+            }
+        };
+
+        try {
+            saveVisionReqLog({ ...logBase, status: 'requesting' });
+            const data = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${effectiveApi.visionApiKey}`
+                },
+                body: JSON.stringify(requestBody)
+            }, 0);
+            saveVisionReqLog({ ...logBase, status: 'ok' });
+            return data;
+        } catch (err: any) {
+            saveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
+            throw err;
+        }
+    };
+
+    try {
+        let visionData: any;
+        try {
+            visionData = await callVision(latestImageUrl!, 'url');
+        } catch (urlErr: any) {
+            console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
+            const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
+            if (!dataUrl) throw urlErr;
+            try {
+                visionData = await callVision(dataUrl, 'base64');
+            } catch (base64Err: any) {
+                saveVisionReqLog({
+                    timestamp: new Date().toISOString(),
+                    status: 'error',
+                    url: `${visionUrl}/chat/completions`,
+                    model: effectiveApi.visionModel || 'gemini-1.5-flash',
+                    urlModeError: urlErr?.message || String(urlErr),
+                    base64ModeError: base64Err?.message || String(base64Err),
+                });
+                throw base64Err;
+            }
+        }
 
         const visionDesc = visionData?.choices?.[0]?.message?.content;
 

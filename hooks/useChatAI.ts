@@ -1199,6 +1199,9 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
 2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
 3. 【细节扫描】：观察背景、边缘或微小元素，如光影、纹理、微小物件。
 4. 【文字提取】：如果图片中有任何文字，请完整准确提取。
+   - 如果图片是聊天截图、评论区、弹幕、列表消息或左右气泡对话，必须按画面从上到下的时间顺序整理，不要先把左边全部读完再读右边。
+   - 对聊天截图请尽量写成「第1条 左侧/右侧: 内容」「第2条 左侧/右侧: 内容」这种顺序列表；看不清的字标注“看不清”，不要猜。
+   - 如果左右气泡属于不同人，只用“左侧/右侧”或图片里能看见的名字区分，不要自行给说话人起名。
 5. 【氛围与色彩】：描述图片的色调、光线条件以及视觉感受。
 
 要求：
@@ -1209,7 +1212,10 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             },
             {
                 role: 'user',
-                content: [{ type: 'image_url', image_url: { url: latestImageUrl! } }]
+                content: [
+                    { type: 'text', text: '请按系统要求识别这张图片。若这是聊天截图，请严格按画面从上到下的时间顺序提取文字，不要按左右两边分组。' },
+                    { type: 'image_url', image_url: { url: latestImageUrl! } }
+                ]
             }
         ];
 

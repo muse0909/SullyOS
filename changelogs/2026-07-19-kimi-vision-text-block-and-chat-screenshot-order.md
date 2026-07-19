@@ -1,7 +1,7 @@
 # Kimi 识图文字块兼容 + 聊天截图顺序提取
 
 **日期**：2026-07-19  
-**涉及 commit**：`bdbcbb7`
+**涉及 commit**：`c9a1655`
 
 ## 改了什么
 - 识图请求的 user content 从“只有 image_url”改成“text + image_url”，兼容 Kimi / 部分严格 OpenAI 兼容识图接口。

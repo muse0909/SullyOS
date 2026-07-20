@@ -70,6 +70,23 @@ const SULLY_PRESET_EMOJIS = [
     { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
 ];
 
+/**
+ * 生成 UUID v4（云端同步用作消息稳定 ID）。
+ * 优先用 crypto.randomUUID（Chrome 92+ / Safari 15.4+ 全支持），老环境走 fallback。
+ * Message.clientId 在 saveMessage 时自动生成，已有则保留。
+ */
+export function generateClientId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    // Fallback: RFC 4122 v4-ish（Math.random 强度足够，因为只是去重 key）
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
 export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -450,15 +467,30 @@ export const DB = {
 
   saveMessage: async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    const id = await new Promise<number>((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
         const timestamp = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now();
         const { timestamp: _ignored, ...payload } = msg;
-        const request = store.add({ ...payload, timestamp });
+        // 云端同步：自动生成 clientId（已有则保留），用作多端去重 key
+        const clientId = (payload as any).clientId || generateClientId();
+        const request = store.add({ ...payload, timestamp, clientId });
         request.onsuccess = () => resolve(request.result as number);
         request.onerror = () => reject(request.error);
     });
+    // 云端同步：保存到本地后立刻把消息推入云端同步队列
+    // 暮色多端互通的关键 hook；不动它会让"另一台设备"看不到这条消息
+    try {
+        const { getEngine } = await import('../hooks/useCloudSync');
+        getEngine().enqueueUploadMessage({
+            ...msg,
+            id,
+            timestamp: msg.timestamp ?? Date.now(),
+        });
+    } catch {
+        // 同步静默失败（不影响主流程）
+    }
+    return id;
   },
 
   updateMessageMeta: async (id: number, patch: Record<string, any>): Promise<void> => {
@@ -1800,8 +1832,14 @@ export const DB = {
       }
       
       if (data.customThemes) mergeStore(STORE_THEMES, data.customThemes);
-      if (data.savedEmojis) mergeStore(STORE_EMOJIS, data.savedEmojis);
-      if (data.emojiCategories) mergeStore(STORE_EMOJI_CATEGORIES, data.emojiCategories); 
+      // 暮色 2026-07-21：text_only 模式不导入 emoji store — 修 2 个 bug：
+      //   1) mergeStore 只 put 不 delete → phone A 删了的 emoji 在 phone B 备份里 → phone A 导入后"复活"
+      //   2) text_only 导出时 stripBase64 把 data:image 转 '' → 导入时 put('') 覆盖 phone B 本机的 base64 → 图标损坏（但 emoji.name 还在，所以还能正常发）
+      // 代价：跨设备 emoji 不同步（phone A 独有的 emoji 不会同步到 phone B）— 暮色接受这个 trade-off（手动加）
+      if (data.backupMode !== 'text_only') {
+          if (data.savedEmojis) mergeStore(STORE_EMOJIS, data.savedEmojis);
+          if (data.emojiCategories) mergeStore(STORE_EMOJI_CATEGORIES, data.emojiCategories);
+      }
       if (data.assets !== undefined) clearAndAdd(STORE_ASSETS, data.assets || []);
       if (data.savedJournalStickers) mergeStore(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
 
@@ -1869,7 +1907,11 @@ export const DB = {
       if (data.pixelHomeLayouts && db.objectStoreNames.contains('pixel_home_layouts')) clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts);
 
       if (data.userProfile) {
-          if (availableStores.includes(STORE_USER)) {
+          // 暮色 2026-07-21：text_only 模式不覆盖 user profile — 修头像覆盖 bug
+          //   根因：phone A 头像 = R2 URL（美化过的）→ text_only 导出 → phone B 恢复 → clear+put 覆盖本机 → R2 域名 phone B 访问不到 → 头像显示空方块
+          //   user profile 是个人数据，不该跨设备同步
+          //   full 模式保留（整机恢复场景需要覆盖）
+          if (data.backupMode !== 'text_only' && availableStores.includes(STORE_USER)) {
               const store = tx.objectStore(STORE_USER);
               store.clear();
               store.put({ ...data.userProfile, id: 'me' });

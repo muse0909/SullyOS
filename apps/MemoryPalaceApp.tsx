@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
+import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
@@ -398,6 +399,62 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
+
+    // ─── 云端同步：拉到云端新记忆后存到本地 IndexedDB ────────────
+    // 另一台设备创建/更新/删除的记忆会通过云端同步到这里，自动入库
+    // MemoryNodeDB.save 内部已经会触发云端同步，但因为云端有 (pair_code, memory_id) UNIQUE 约束
+    // 不会真的重复上传（ON CONFLICT DO UPDATE 等价于 update）
+    useCloudMemories((cloudMems) => {
+        if (!activeCharacterId) return;
+        // 只处理当前角色（多设备可能不同角色）
+        const relevant = cloudMems.filter(m => m.charId === activeCharacterId);
+        if (relevant.length === 0) return;
+        (async () => {
+            for (const cm of relevant) {
+                try {
+                    if (cm.deleted) {
+                        // 软删除标记
+                        const local = await MemoryNodeDB.getById(cm.id);
+                        if (local) {
+                            // 软删除是云端概念，本地不直接删（避免误删本地独有修改）
+                            // 这里采取"保守策略"：如果本地存在 + 是软删除，**不**自动删
+                            // 留给用户在 UI 里手动删（避免云端延迟造成的误删）
+                        }
+                    } else {
+                        const local = await MemoryNodeDB.getById(cm.id);
+                        if (!local) {
+                            // 本地没有 → 直接 save（会触发云端同步，ON CONFLICT 兜底）
+                            await MemoryNodeDB.save(cm as MemoryNode);
+                        } else {
+                            // 本地有 → 用云端 metadata 更新本地（保留本地 lastAccessedAt/accessCount）
+                            // 但 content/room/importance/tags 等 metadata 用云端的
+                            const merged: MemoryNode = {
+                                ...local,
+                                content: cm.content,
+                                room: cm.room as MemoryRoom,
+                                tags: cm.tags,
+                                importance: cm.importance,
+                                mood: cm.mood,
+                                valence: cm.valence ?? undefined,
+                                arousal: cm.arousal ?? undefined,
+                                sourceId: cm.sourceId,
+                                origin: cm.origin as any,
+                                archived: cm.archived,
+                                isBoxSummary: cm.isBoxSummary,
+                                eventBoxId: cm.eventBoxId,
+                                pinnedUntil: cm.pinnedUntil,
+                                groupId: cm.groupId ?? undefined,
+                                groupName: cm.groupName ?? undefined,
+                            };
+                            await MemoryNodeDB.save(merged);
+                        }
+                    }
+                } catch (e) {
+                    // 单条失败不影响其他
+                }
+            }
+        })();
+    });
 
     const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes' | 'timeline' | 'dedup'>('picker');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);

@@ -33,6 +33,9 @@ import {
 } from '../utils/momentsAI';
 import { getSettings as getMomentsSettings } from '../utils/momentsStorage';
 
+// 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
+// useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
+
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
 const normalizeApiUrl = (url?: string): string => {
     const raw = (url || '').trim().replace(/\/+$/, '');
@@ -1133,6 +1136,56 @@ const getImageUrlFromRawMsg = (msg: any): string | null => {
     return null;
 };
 
+const blobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('图片转 base64 失败'));
+    reader.readAsDataURL(blob);
+});
+
+const imageUrlToDataUrl = async (url: string): Promise<string | null> => {
+    if (url.startsWith('data:image')) return url;
+    if (!/^https?:\/\//i.test(url)) return null;
+
+    const response = await fetch('/api/proxy-image?url=' + encodeURIComponent(url));
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`图片转 base64 失败: HTTP ${response.status} ${text.slice(0, 120)}`);
+    }
+
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) {
+        throw new Error(`图片转 base64 失败: 返回类型不是图片 (${blob.type || 'unknown'})`);
+    }
+    return blobToDataUrl(blob);
+};
+
+const summarizeVisionMessagesForLog = (messages: any[]) => messages.map((msg: any) => {
+    if (!Array.isArray(msg?.content)) return msg;
+    return {
+        ...msg,
+        content: msg.content.map((part: any) => {
+            const url = part?.image_url?.url;
+            if (part?.type !== 'image_url' || typeof url !== 'string') return part;
+            return {
+                ...part,
+                image_url: {
+                    ...part.image_url,
+                    url: url.startsWith('data:image')
+                        ? `${url.slice(0, 32)}...(${url.length} chars)`
+                        : url,
+                },
+            };
+        }),
+    };
+});
+
+const saveVisionReqLog = (log: any) => {
+    try {
+        localStorage.setItem('sullyos:lastVisionReqLog', JSON.stringify(log, null, 2));
+    } catch { /* quota 忽略 */ }
+};
+
 // 1. 优先看最新用户 API 消息里是否直接带图
 let latestImageUrl: string | null = getImageUrlFromApiMsg(lastUserApiMsg);
 
@@ -1189,8 +1242,7 @@ console.log('🖼️ 识图检测', {
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
 if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
-    try {
-        const visionMessages = [
+    const buildVisionMessages = (imageUrl: string) => [
             {
                 role: 'system',
                 content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
@@ -1199,6 +1251,9 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
 2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
 3. 【细节扫描】：观察背景、边缘或微小元素，如光影、纹理、微小物件。
 4. 【文字提取】：如果图片中有任何文字，请完整准确提取。
+   - 如果图片是聊天截图、评论区、弹幕、列表消息或左右气泡对话，必须按画面从上到下的时间顺序整理，不要先把左边全部读完再读右边。
+   - 对聊天截图请尽量写成「第1条 左侧/右侧: 内容」「第2条 左侧/右侧: 内容」这种顺序列表；看不清的字标注“看不清”，不要猜。
+   - 如果左右气泡属于不同人，只用“左侧/右侧”或图片里能看见的名字区分，不要自行给说话人起名。
 5. 【氛围与色彩】：描述图片的色调、光线条件以及视觉感受。
 
 要求：
@@ -1209,24 +1264,76 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             },
             {
                 role: 'user',
-                content: [{ type: 'image_url', image_url: { url: latestImageUrl! } }]
+                content: [
+                    { type: 'text', text: '请按系统要求识别这张图片。若这是聊天截图，请严格按画面从上到下的时间顺序提取文字，不要按左右两边分组。' },
+                    { type: 'image_url', image_url: { url: imageUrl } }
+                ]
             }
         ];
 
-   const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
-        const visionData = await safeFetchJson(`${visionUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${effectiveApi.visionApiKey}`
-            },
-            body: JSON.stringify({
-                model: effectiveApi.visionModel || 'gemini-1.5-flash',
-                messages: visionMessages,
-                temperature: 0.3,
-                stream: false
-            })
-        });
+    const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
+    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
+        const visionMessages = buildVisionMessages(imageUrl);
+        const requestBody = {
+            model: effectiveApi.visionModel || 'gemini-1.5-flash',
+            messages: visionMessages,
+            temperature: 0.3,
+            stream: false
+        };
+        const logBase = {
+            timestamp: new Date().toISOString(),
+            url: `${visionUrl}/chat/completions`,
+            model: requestBody.model,
+            mode,
+            image: imageUrl.startsWith('data:image')
+                ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
+                : { kind: 'url', url: imageUrl },
+            body: {
+                ...requestBody,
+                messages: summarizeVisionMessagesForLog(visionMessages)
+            }
+        };
+
+        try {
+            saveVisionReqLog({ ...logBase, status: 'requesting' });
+            const data = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${effectiveApi.visionApiKey}`
+                },
+                body: JSON.stringify(requestBody)
+            }, 0);
+            saveVisionReqLog({ ...logBase, status: 'ok' });
+            return data;
+        } catch (err: any) {
+            saveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
+            throw err;
+        }
+    };
+
+    try {
+        let visionData: any;
+        try {
+            visionData = await callVision(latestImageUrl!, 'url');
+        } catch (urlErr: any) {
+            console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
+            const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
+            if (!dataUrl) throw urlErr;
+            try {
+                visionData = await callVision(dataUrl, 'base64');
+            } catch (base64Err: any) {
+                saveVisionReqLog({
+                    timestamp: new Date().toISOString(),
+                    status: 'error',
+                    url: `${visionUrl}/chat/completions`,
+                    model: effectiveApi.visionModel || 'gemini-1.5-flash',
+                    urlModeError: urlErr?.message || String(urlErr),
+                    base64ModeError: base64Err?.message || String(base64Err),
+                });
+                throw base64Err;
+            }
+        }
 
         const visionDesc = visionData?.choices?.[0]?.message?.content;
 

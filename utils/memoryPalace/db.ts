@@ -126,13 +126,33 @@ export const MemoryNodeDB = {
         // touchAccess 之类只改 metadata 的写入会被自动跳过。
         bm25Index.onNodeSaved(node);
         syncNodeMetadataToRemote(node);
+        // 云端同步：暮色多端互通，记忆节点保存后触发云端同步队列
+        // 用动态 import 避免循环引用
+        try {
+            const { getEngine } = await import('../../hooks/useCloudSync');
+            getEngine().enqueueUploadMemory(node, false);
+        } catch {
+            // 同步静默失败
+        }
     },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
 
     delete: async (id: string) => {
+        // ⚠️ 重要：删除前先取完整 node 传给云端同步（云端软删除要 metadata 才知道是哪条）
+        let nodeForSync: MemoryNode | null = null;
+        try {
+            nodeForSync = await getByKey<MemoryNode>(STORE_MEMORY_NODES, id) || null;
+        } catch { /* 静默 */ }
         await deleteByKey(STORE_MEMORY_NODES, id);
         bm25Index.onNodeDeleted(id);
+        // 云端同步：软删除（deleted=true）
+        if (nodeForSync) {
+            try {
+                const { getEngine } = await import('../../hooks/useCloudSync');
+                getEngine().enqueueUploadMemory(nodeForSync, true);
+            } catch { /* 静默 */ }
+        }
     },
 
     getByCharId: (charId: string) =>

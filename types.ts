@@ -1571,18 +1571,20 @@ export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer
 
 export interface Message {
     id: number;
-    charId: string; 
-    groupId?: string; 
+    charId: string;
+    groupId?: string;
     role: 'user' | 'assistant' | 'system';
     type: MessageType;
     content: string;
     timestamp: number;
-    metadata?: any; 
+    metadata?: any;
     replyTo?: {
         id: number;
         content: string;
         name: string;
     };
+    /** 云端同步用的稳定 ID（UUID v4），本地 saveMessage 时自动生成；多端互通用来去重 */
+    clientId?: string;
 }
 
 export interface EmojiCategory {

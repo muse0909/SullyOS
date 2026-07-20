@@ -21,6 +21,7 @@ import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
+import { useCloudMessages } from '../hooks/useCloudSync';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { addFavorite, genFavoriteId, updateFavorite, uploadVoiceFavorite } from '../utils/favoritesStorage';
@@ -226,6 +227,44 @@ const Chat: React.FC = () => {
         mcdMiniAppRef,
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
+    });
+
+    // ─── 云端同步：收到云端拉取到的新消息 → 注入 setMessages ────────────
+    // 多端互通的"另一台设备"：它们发的消息会通过云端拉到这里，按 clientId 去重
+    // 不会重复显示。本地发出去的消息走 useChatAI 的 saveMessage 路径（已被 useCloudSync
+    // 自动 hook）上传，不会经过这里的逻辑。
+    useCloudMessages((cloudMsgs) => {
+        if (!char?.id) return;
+        // 只处理当前角色（useCloudMessages 是单例回调，多角色切来切去可能收到别的角色的）
+        const relevant = cloudMsgs.filter((m) => m.charId === char.id);
+        if (relevant.length === 0) return;
+
+        setMessages((prev) => {
+            // 收集现有 clientId（去重）
+            const existing = new Set(
+                prev.filter((m) => m.clientId).map((m) => m.clientId as string)
+            );
+            const additions: typeof prev = [];
+            for (const cm of relevant) {
+                if (existing.has(cm.clientId)) continue;
+                // 用负数 id 避免跟本地 IndexedDB auto-increment 冲突
+                // 不存 IndexedDB（避免循环上传；ON CONFLICT 也会去重）
+                additions.push({
+                    id: -Date.now() - additions.length,
+                    clientId: cm.clientId,
+                    charId: cm.charId,
+                    role: cm.role,
+                    type: (cm.type as any) || 'text',
+                    content: cm.content,
+                    timestamp: cm.timestamp,
+                    metadata: cm.metadata,
+                    replyTo: cm.replyTo,
+                } as any);
+                existing.add(cm.clientId);
+            }
+            if (additions.length === 0) return prev;
+            return [...prev, ...additions].sort((a, b) => a.timestamp - b.timestamp);
+        });
     });
 
     // --- Voice TTS for chat messages ---

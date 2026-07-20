@@ -1,4 +1,5 @@
 import ApiLogPanel from "../components/settings/ApiLogPanel";
+import SyncSettings from "../components/settings/SyncSettings";
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
@@ -1465,6 +1466,24 @@ const handleSaveTts = () => {
               </div>
             )}
             <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">数据存储在你自己的账号下，我们不保存任何凭据到服务器。</p>
+          </section>
+        </SettingsSection>
+
+        {/* 2.5 - 云端同步（多端互通，电脑手机共享聊天记录 + 记忆宫殿） */}
+        <SettingsSection id="cloudSync" icon="🔄" title="云端同步" subtitle="电脑·手机·多端互通" isOpen={openSectionId === 'cloudSync'} onToggle={toggleSection}>
+          <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-2 bg-violet-100 rounded-xl text-violet-600">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端同步</h2>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed mb-3 px-1">
+              自动同步<strong>聊天记录</strong>和<strong>记忆宫殿</strong>到云端，电脑手机共享同一份数据。
+            </p>
+            <SyncSettings />
           </section>
         </SettingsSection>
 

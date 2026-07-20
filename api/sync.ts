@@ -28,10 +28,15 @@
  *   - 鉴权强度：仅靠配对码隔离，不抗暴力。适用于个人多端互通。
  */
 
-import { neon, neonConfig, type NeonQueryFunction } from '@neondatabase/serverless';
 import { randomUUID } from 'crypto';
 
-// ─── 环境变量 + Neon client ─────────────────────────
+// ─── 环境变量 + Neon client（懒加载，避开 import 阶段 hang）──────
+//
+// 暮色 2026-07-20：Vercel Function Logs 显示 ping 也卡 300 秒超时。
+// 根因：@neondatabase/serverless 的 import 阶段在 Vercel 冷启动时挂住。
+// 修法：把 neon import 挪到 getSql() 里用 await import()，只有真正用 DB 的路径才加载。
+
+type NeonQueryFunction<any, any> = (strings: TemplateStringsArray, ...values: any[]) => Promise<any[]>;
 
 function getDatabaseUrl(): string | null {
     const url = typeof process.env.DATABASE_URL === 'string' ? process.env.DATABASE_URL.trim() : '';
@@ -42,15 +47,19 @@ class DbNotConfiguredError extends Error {
     constructor() { super('DATABASE_URL 未配置'); this.name = 'DbNotConfiguredError'; }
 }
 
-neonConfig.fetchConnectionCache = true;
-let cachedSql: NeonQueryFunction<false, false> | null = null;
+let cachedSql: NeonQueryFunction<any, any> | null = null;
 let cachedUrl: string | null = null;
 
-function getSql(): NeonQueryFunction<false, false> {
+async function getSql(): Promise<NeonQueryFunction<any, any>> {
     const url = getDatabaseUrl();
     if (!url) throw new DbNotConfiguredError();
     if (!cachedSql || cachedUrl !== url) {
-        cachedSql = neon(url);
+        // 懒加载：避免 Vercel 冷启动时 @neondatabase/serverless import 阶段挂住
+        const mod = await import('@neondatabase/serverless');
+        try {
+            mod.neonConfig.fetchConnectionCache = true;
+        } catch { /* 设置失败不影响主流程 */ }
+        cachedSql = mod.neon(url) as unknown as NeonQueryFunction<any, any>;
         cachedUrl = url;
     }
     return cachedSql;
@@ -204,7 +213,7 @@ async function handleInit(req: any) {
     const deviceName = typeof body.deviceName === 'string' ? body.deviceName.slice(0, 64) : null;
     const userAgent = typeof body.userAgent === 'string' ? body.userAgent.slice(0, 256) : null;
 
-    const sql = getSql();
+    const sql = await getSql();
     const now = nowMs();
 
     // 生成不撞码的配对码
@@ -243,7 +252,7 @@ async function handlePair(req: any) {
     const deviceName = typeof body.deviceName === 'string' ? body.deviceName.slice(0, 64) : null;
     const userAgent = typeof body.userAgent === 'string' ? body.userAgent.slice(0, 256) : null;
 
-    const sql = getSql();
+    const sql = await getSql();
     const now = nowMs();
     const existing = await sql`SELECT device_id FROM devices WHERE pair_code = ${pairCode} LIMIT 1`;
 
@@ -276,7 +285,7 @@ async function handleStatus(req: any) {
     if (authResult.error) return authResult.error;
     const { pairCode, deviceId } = authResult.auth;
 
-    const sql = getSql();
+    const sql = await getSql();
     const rows = await sql`
         SELECT device_id, device_name, last_seen_at, created_at, user_agent
         FROM devices WHERE pair_code = ${pairCode}
@@ -365,7 +374,7 @@ async function handleUploadMessages(req: any) {
         });
     }
 
-    const sql = getSql();
+    const sql = await getSql();
     const countRows = await sql`SELECT COUNT(*)::int AS cnt FROM chat_messages WHERE pair_code = ${pairCode}`;
     const currentCount = countRows[0]?.cnt ?? 0;
     if (currentCount + rows.length > MAX_MESSAGES_PER_PAIR) {
@@ -401,7 +410,7 @@ async function handlePullMessages(req: any) {
     if (!Number.isFinite(since) || since < 0) return jsonError(400, 'INVALID_SINCE', 'since 必须是非负数');
     if (charId.length > 128) return jsonError(400, 'INVALID_CHAR_ID', 'charId 太长');
 
-    const sql = getSql();
+    const sql = await getSql();
     const fetchLimit = limit + 1;
     const rows = charId
         ? await sql`
@@ -521,7 +530,7 @@ async function handleUploadMemories(req: any) {
         });
     }
 
-    const sql = getSql();
+    const sql = await getSql();
     if (!rows.some(r => r.deleted)) {
         const countRows = await sql`SELECT COUNT(*)::int AS cnt FROM memory_palace_items WHERE pair_code = ${pairCode} AND deleted = false`;
         const currentCount = countRows[0]?.cnt ?? 0;
@@ -600,7 +609,7 @@ async function handlePullMemories(req: any) {
     if (!Number.isFinite(since) || since < 0) return jsonError(400, 'INVALID_SINCE', 'since 必须是非负数');
     if (charId.length > 128) return jsonError(400, 'INVALID_CHAR_ID', 'charId 太长');
 
-    const sql = getSql();
+    const sql = await getSql();
     const fetchLimit = limit + 1;
     const buildWhere = (withChar: boolean) => {
         const parts: any[] = [sql`pair_code = ${pairCode}`, sql`cloud_updated_at > ${since}`];

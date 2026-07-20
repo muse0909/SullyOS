@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, Brain, CaretRight, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, Brain, CaretRight, CloudArrowUp, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 import type { ApiPreset } from '../../types';
 
@@ -9,7 +9,7 @@ const BALL_SIZE = 40;
 const PRESET_LONG_PRESS_MS = 550;
 
 type QuickModelTarget = 'main' | 'image' | 'vision';
-type QuickPresetKind = 'main' | 'image' | 'vision' | 'lightLLM';
+type QuickPresetKind = 'main' | 'image' | 'vision' | 'lightLLM' | 'cloudBackup';
 
 // 暮色 2026-07-15：删 checkpointLabel helper（ComfyUI 专用）— 生图只走 OpenAI 兼容
 
@@ -141,6 +141,9 @@ const ApiQuickFloat: React.FC = () => {
     // 暮色 2026-07-15：记忆宫殿副 API（lightLLM）接到悬浮窗 — 换时方便
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
+    // 暮色 2026-07-21：云端备份快捷入口 — 一键备份，不用进 Settings
+    cloudBackupConfig,
+    cloudBackupToWebDAV,
   } = useOS();
 
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -205,6 +208,8 @@ const ApiQuickFloat: React.FC = () => {
   const [imageStatusMsg, setImageStatusMsg] = useState('');
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
   const [presetPendingDelete, setPresetPendingDelete] = useState<ApiPreset | null>(null);
+  // 暮色 2026-07-21：云端备份快捷入口 — 备份中是长操作，按钮 disabled 防止重复点
+  const [cloudBackingUp, setCloudBackingUp] = useState(false);
 
   useEffect(() => {
     setLocalUrl(apiConfig.baseUrl);
@@ -423,6 +428,39 @@ const ApiQuickFloat: React.FC = () => {
       model: localLightModel.trim(),
     }, 'memoryPalaceLight');
     addToast(`已保存副 API 预设: ${name}`, 'success');
+  };
+
+  // 暮色 2026-07-21：云端备份一键触发（快捷入口）— 默认走 text_only（纯文字，几秒搞定）
+  //   - 进度反馈走 OSContext.cloudBackupToWebDAV 内部的 setSysOperation，不在悬浮窗里重复显示
+  //   - 成功/失败 toast 也在 context 内部 addToast，这里只管触发
+  //   - 没配置时按钮 disabled，避免用户点了失败也摸不着头脑
+  const isCloudBackupConfigured = !!(
+    (cloudBackupConfig.webdavUrl && cloudBackupConfig.username && cloudBackupConfig.password) ||
+    (cloudBackupConfig.githubToken && cloudBackupConfig.githubOwner)
+  );
+
+  const formatCloudBackupSubtitle = (timestamp?: number): string => {
+    if (!timestamp) return isCloudBackupConfigured ? '从未备份' : '未配置';
+    const now = Date.now();
+    const diff = now - timestamp;
+    if (diff < 60_000) return '刚刚备份';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前备份`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前备份`;
+    return `${Math.floor(diff / 86_400_000)} 天前备份`;
+  };
+
+  const cloudBackupSubtitle = formatCloudBackupSubtitle(cloudBackupConfig.lastBackupTime);
+
+  const handleCloudBackup = async () => {
+    if (cloudBackingUp) return;
+    setCloudBackingUp(true);
+    try {
+      await cloudBackupToWebDAV('text_only');
+    } catch {
+      // toast 已在 OSContext.cloudBackupToWebDAV 内部 addToast 处理
+    } finally {
+      setCloudBackingUp(false);
+    }
   };
 
   const toggleSection = (section: QuickPresetKind) => {
@@ -1042,6 +1080,45 @@ const ApiQuickFloat: React.FC = () => {
                   </div>
 
                   {visionStatusMsg ? <div className="text-xs text-center text-slate-500">{visionStatusMsg}</div> : null}
+                </section>
+              </QuickSection>
+
+              {/* 暮色 2026-07-21：云端备份快捷入口（第 5 个 section）— 折叠看状态，展开一键备份 */}
+              <QuickSection
+                icon={<CloudArrowUp size={18} weight="bold" />}
+                title="云端备份"
+                subtitle={cloudBackupSubtitle}
+                isOpen={openSection === 'cloudBackup'}
+                onToggle={() => toggleSection('cloudBackup')}
+              >
+                <section className="bg-teal-50/80 rounded-3xl p-4 shadow-sm border border-teal-100/80 space-y-4">
+                  {/* 配置状态提示 */}
+                  {isCloudBackupConfigured ? (
+                    <div className="rounded-2xl bg-emerald-50/80 border border-emerald-200/60 px-3 py-2.5">
+                      <p className="text-[11px] text-emerald-900 leading-relaxed">
+                        ✓ {cloudBackupConfig.provider === 'github' ? 'GitHub' : 'WebDAV'} 已连接
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5">
+                      <p className="text-[11px] text-amber-900 leading-relaxed">
+                        还没配置。请到「设置 → 备份与恢复」配置 WebDAV 或 GitHub 后即可使用。
+                      </p>
+                    </div>
+                  )}
+
+                  {/* 一键备份按钮（默认纯文字，几秒搞定；想备份图片请到设置里选完整模式） */}
+                  <button
+                    onClick={handleCloudBackup}
+                    disabled={cloudBackingUp || !isCloudBackupConfigured}
+                    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-teal-500/20 bg-teal-500 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {cloudBackingUp ? '备份中…' : '立即备份（纯文字）'}
+                  </button>
+
+                  <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                    备份内容：聊天记录 + 角色/世界书/设置。图片不在内（如需请到设置里选完整模式）。
+                  </p>
                 </section>
               </QuickSection>
             </div>

@@ -177,7 +177,7 @@ async function fetchSync<T = any>(
 /** 探测后端是否配置好（DATABASE_URL 存在）。前端用这个判断要不要走"未配置"分支 */
 export async function checkBackendAvailable(): Promise<boolean> {
     // init 端点在没配 DB 时会返 503；这是最便宜的探测方式
-    const result = await fetchSync<any>('/init', { method: 'POST', body: {}, auth: null });
+    const result = await fetchSync<any>('?_action=init', { method: 'POST', body: {}, auth: null });
     if (result.ok) return true;
     if (result.error.code === 'DB_NOT_CONFIGURED') return false;
     // 其他错误（网络/超时）也按"不可用"处理
@@ -191,7 +191,7 @@ export async function initPair(deviceName: string, userAgent: string): Promise<S
     createdAt: number;
 }>> {
     const deviceId = ensureDeviceId();
-    return fetchSync<any>('/init', {
+    return fetchSync<any>('?_action=init', {
         method: 'POST',
         body: { deviceName, userAgent },
         auth: { pairCode: '', deviceId },  // init 不需要带 pair-code，但需要带 device-id
@@ -212,7 +212,7 @@ export async function joinPair(pairCode: string, deviceName: string, userAgent: 
     isNewPair: boolean;
 }>> {
     const deviceId = ensureDeviceId();
-    return fetchSync<any>('/pair', {
+    return fetchSync<any>('?_action=pair', {
         method: 'POST',
         body: { deviceName, userAgent },
         auth: { pairCode: pairCode.toLowerCase().trim(), deviceId },
@@ -232,7 +232,7 @@ export async function getSyncStatus(pairCode: string, deviceId: string): Promise
     }>;
     stats: { deviceCount: number; messageCount: number; memoryCount: number };
 }>> {
-    return fetchSync<any>('/pair', { method: 'GET', auth: { pairCode, deviceId } });
+    return fetchSync<any>('?_action=status', { method: 'GET', auth: { pairCode, deviceId } });
 }
 
 // ─── 消息 ────────────────────────────────────────────
@@ -265,7 +265,7 @@ export async function uploadMessages(
         replyTo?: any;
     }>
 ): Promise<SyncResult<{ uploaded: number; deduped: number; totalRequested: number }>> {
-    return fetchSync<any>('/messages', {
+    return fetchSync<any>('?_action=upload_messages', {
         method: 'POST',
         body: { messages },
         auth: { pairCode, deviceId },
@@ -284,7 +284,7 @@ export async function pullMessages(
         limit: String(limit),
     });
     if (charId) params.set('charId', charId);
-    return fetchSync<any>(`/messages?${params.toString()}`, {
+    return fetchSync<any>(`?_action=pull_messages&${params.toString()}`, {
         method: 'GET',
         auth: { pairCode, deviceId },
     });
@@ -323,7 +323,7 @@ export async function uploadMemories(
     deviceId: string,
     memories: any[]
 ): Promise<SyncResult<{ uploaded: number; deduped: number; deleted: number; totalRequested: number }>> {
-    return fetchSync<any>('/memories', {
+    return fetchSync<any>('?_action=upload_memories', {
         method: 'POST',
         body: { memories },
         auth: { pairCode, deviceId },
@@ -344,7 +344,7 @@ export async function pullMemories(
     });
     if (charId) params.set('charId', charId);
     if (includeDeleted) params.set('includeDeleted', 'true');
-    return fetchSync<any>(`/memories?${params.toString()}`, {
+    return fetchSync<any>(`?_action=pull_memories&${params.toString()}`, {
         method: 'GET',
         auth: { pairCode, deviceId },
     });

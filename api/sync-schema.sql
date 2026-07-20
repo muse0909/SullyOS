@@ -26,12 +26,12 @@
 -- ─── 1. 设备表 ─────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS devices (
-    device_id    TEXT PRIMARY KEY,            -- UUID v4
-    pair_code    TEXT NOT NULL,               -- 6 位配对码
-    device_name  TEXT,                        -- 用户起的名字（可选）
-    last_seen_at BIGINT NOT NULL,             -- ms timestamp（心跳）
-    created_at   BIGINT NOT NULL,             -- ms timestamp
-    user_agent   TEXT                         -- 浏览器 UA（调试用）
+    device_id    TEXT PRIMARY KEY,
+    pair_code    TEXT NOT NULL,
+    device_name  TEXT,
+    last_seen_at BIGINT NOT NULL,
+    created_at   BIGINT NOT NULL,
+    user_agent   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_devices_pair_code ON devices(pair_code);
@@ -44,17 +44,16 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     id                BIGSERIAL PRIMARY KEY,
     pair_code         TEXT NOT NULL,
     char_id           TEXT NOT NULL,
-    client_id         TEXT NOT NULL,            -- 客户端 UUID，用于去重
-    role              TEXT NOT NULL,            -- 'user' | 'assistant' | 'system'
+    client_id         TEXT NOT NULL,
+    role              TEXT NOT NULL,
     type              TEXT NOT NULL DEFAULT 'text',
     content           TEXT NOT NULL,
-    message_timestamp BIGINT NOT NULL,          -- 消息原始时间（ms）
-    metadata          TEXT,                     -- JSON 字符串
-    reply_to          TEXT,                     -- JSON 字符串
-    uploaded_at       BIGINT NOT NULL,          -- 上传时间（ms）
-    uploaded_by       TEXT NOT NULL,            -- 设备 ID
+    message_timestamp BIGINT NOT NULL,
+    metadata          TEXT,
+    reply_to          TEXT,
+    uploaded_at       BIGINT NOT NULL,
+    uploaded_by       TEXT NOT NULL,
 
-    -- 同一对码下同一 clientId 只存一条
     CONSTRAINT uq_chat_pair_client UNIQUE (pair_code, client_id)
 );
 
@@ -73,29 +72,29 @@ CREATE INDEX IF NOT EXISTS idx_chat_pair_ts
 CREATE TABLE IF NOT EXISTS memory_palace_items (
     id                 BIGSERIAL PRIMARY KEY,
     pair_code          TEXT NOT NULL,
-    memory_id          TEXT NOT NULL,            -- 客户端 MemoryNode.id
+    memory_id          TEXT NOT NULL,
     char_id            TEXT NOT NULL,
     content            TEXT NOT NULL,
-    room               TEXT NOT NULL,            -- living_room/bedroom/...
+    room               TEXT NOT NULL,
     tags               TEXT[] DEFAULT '{}',
     importance         INT  DEFAULT 5,
     mood               TEXT DEFAULT '',
-    valence            REAL,                     -- -1 ~ 1，Russell 情感模型
-    arousal            REAL,                     -- -1 ~ 1
-    source_id          TEXT,                     -- 消化衍生记忆的源 ID
-    origin             TEXT,                     -- extraction / digestion / system
-    archived           BOOLEAN DEFAULT FALSE,    -- 被压入 box summary
-    is_box_summary     BOOLEAN DEFAULT FALSE,    -- 此行是 box summary
-    event_box_id       TEXT,                     -- 所属 EventBox.id
+    valence            REAL,
+    arousal            REAL,
+    source_id          TEXT,
+    origin             TEXT,
+    archived           BOOLEAN DEFAULT FALSE,
+    is_box_summary     BOOLEAN DEFAULT FALSE,
+    event_box_id       TEXT,
     created_at         BIGINT NOT NULL,
     last_accessed_at   BIGINT DEFAULT 0,
     access_count       INT  DEFAULT 0,
-    pinned_until       BIGINT,                   -- 便利贴置顶截止（ms）
-    group_id           TEXT,                     -- 群聊记忆来源
-    group_name         TEXT,                     -- 群名快照
-    deleted            BOOLEAN DEFAULT FALSE,    -- 软删除标记
-    cloud_updated_at   BIGINT NOT NULL,          -- 云端上次写入时间（拉取用）
-    uploaded_by        TEXT NOT NULL,            -- 设备 ID
+    pinned_until       BIGINT,
+    group_id           TEXT,
+    group_name         TEXT,
+    deleted            BOOLEAN DEFAULT FALSE,
+    cloud_updated_at   BIGINT NOT NULL,
+    uploaded_by        TEXT NOT NULL,
 
     CONSTRAINT uq_mp_pair_memory UNIQUE (pair_code, memory_id)
 );
@@ -111,9 +110,6 @@ CREATE INDEX IF NOT EXISTS idx_mp_pair_char_updated
 
 
 -- ─── 4. 统计视图（调试用） ──────────────────────────
---
--- 不被 API 使用，但可在 Neon SQL Editor 跑 SELECT * FROM sync_stats;
--- 看每个配对码的设备 / 消息 / 记忆数。
 
 CREATE OR REPLACE VIEW sync_stats AS
 SELECT

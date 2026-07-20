@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, Brain, CaretRight, CloudArrowUp, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, Brain, CaretRight, CloudArrowDown, CloudArrowUp, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
-import type { ApiPreset } from '../../types';
+import { AppID } from '../../types';
+import type { ApiPreset, CloudBackupFile } from '../../types';
 
 const POS_KEY = 'sullyos_api_quickfloat_pos_v1';
 const BALL_SIZE = 40;
@@ -141,9 +142,14 @@ const ApiQuickFloat: React.FC = () => {
     // 暮色 2026-07-15：记忆宫殿副 API（lightLLM）接到悬浮窗 — 换时方便
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
-    // 暮色 2026-07-21：云端备份快捷入口 — 一键备份，不用进 Settings
+    // 暮色 2026-07-21：云端备份快捷入口（仿 Settings 云端备份页的精简版）
+    //   - 3 按钮（轻量同步 / 完整 / 从云端恢复）+ 状态条 + "去设置" 跳转
+    //   - 恢复弹窗在悬浮窗里直接弹，点文件直接调 cloudRestoreFromWebDAV（跟 Settings 一致，不二次确认）
     cloudBackupConfig,
     cloudBackupToWebDAV,
+    cloudRestoreFromWebDAV,
+    listCloudBackups,
+    openApp,
   } = useOS();
 
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -209,7 +215,11 @@ const ApiQuickFloat: React.FC = () => {
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
   const [presetPendingDelete, setPresetPendingDelete] = useState<ApiPreset | null>(null);
   // 暮色 2026-07-21：云端备份快捷入口 — 备份中是长操作，按钮 disabled 防止重复点
-  const [cloudBackingUp, setCloudBackingUp] = useState(false);
+  const [cloudBackingMode, setCloudBackingMode] = useState<'text_only' | 'full' | null>(null);
+  // 暮色 2026-07-21：从云端恢复弹窗 state（仿 Settings）— 列文件 + 点选直接恢复
+  const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
+  const [cloudBackupFiles, setCloudBackupFiles] = useState<CloudBackupFile[]>([]);
+  const [cloudRestoring, setCloudRestoring] = useState(false);
 
   useEffect(() => {
     setLocalUrl(apiConfig.baseUrl);
@@ -430,10 +440,10 @@ const ApiQuickFloat: React.FC = () => {
     addToast(`已保存副 API 预设: ${name}`, 'success');
   };
 
-  // 暮色 2026-07-21：云端备份一键触发（快捷入口）— 默认走 text_only（纯文字，几秒搞定）
-  //   - 进度反馈走 OSContext.cloudBackupToWebDAV 内部的 setSysOperation，不在悬浮窗里重复显示
-  //   - 成功/失败 toast 也在 context 内部 addToast，这里只管触发
-  //   - 没配置时按钮 disabled，避免用户点了失败也摸不着头脑
+  // 暮色 2026-07-21：云端备份快捷入口（仿 Settings 那个云端备份页的精简版）
+  //   - 悬浮窗里直接展开 3 按钮（轻量同步 / 完整 / 从云端恢复）+ 状态条
+  //   - 配置入口（"去设置" 按钮）跳到 Settings，不在悬浮窗里做配置 modal（太挤）
+  //   - 恢复弹窗在悬浮窗里直接弹（点文件直接调 cloudRestoreFromWebDAV，不二次确认 — 跟 Settings 一致）
   const isCloudBackupConfigured = !!(
     (cloudBackupConfig.webdavUrl && cloudBackupConfig.username && cloudBackupConfig.password) ||
     (cloudBackupConfig.githubToken && cloudBackupConfig.githubOwner)
@@ -451,16 +461,45 @@ const ApiQuickFloat: React.FC = () => {
 
   const cloudBackupSubtitle = formatCloudBackupSubtitle(cloudBackupConfig.lastBackupTime);
 
-  const handleCloudBackup = async () => {
-    if (cloudBackingUp) return;
-    setCloudBackingUp(true);
+  const handleCloudBackupWithMode = async (mode: 'text_only' | 'full') => {
+    if (cloudBackingMode) return;
+    setCloudBackingMode(mode);
     try {
-      await cloudBackupToWebDAV('text_only');
+      await cloudBackupToWebDAV(mode);
     } catch {
       // toast 已在 OSContext.cloudBackupToWebDAV 内部 addToast 处理
     } finally {
-      setCloudBackingUp(false);
+      setCloudBackingMode(null);
     }
+  };
+
+  const handleOpenCloudRestore = async () => {
+    setShowCloudRestoreModal(true);
+    setCloudBackupFiles([]);
+    try {
+      const files = await listCloudBackups();
+      setCloudBackupFiles(files);
+    } catch {
+      addToast('获取云端备份列表失败', 'error');
+    }
+  };
+
+  const handleCloudRestoreFile = async (file: CloudBackupFile) => {
+    if (cloudRestoring) return;
+    setCloudRestoring(true);
+    setShowCloudRestoreModal(false);
+    try {
+      await cloudRestoreFromWebDAV(file);
+    } catch {
+      // toast 已在 OSContext.cloudRestoreFromWebDAV 内部 addToast 处理
+    } finally {
+      setCloudRestoring(false);
+    }
+  };
+
+  const handleOpenCloudSettings = () => {
+    setShowPanel(false); // 关闭悬浮窗
+    openApp(AppID.Settings);
   };
 
   const toggleSection = (section: QuickPresetKind) => {
@@ -1083,7 +1122,7 @@ const ApiQuickFloat: React.FC = () => {
                 </section>
               </QuickSection>
 
-              {/* 暮色 2026-07-21：云端备份快捷入口（第 5 个 section）— 折叠看状态，展开一键备份 */}
+              {/* 暮色 2026-07-21：云端备份快捷入口（第 5 个 section，仿 Settings 云端备份页精简版） */}
               <QuickSection
                 icon={<CloudArrowUp size={18} weight="bold" />}
                 title="云端备份"
@@ -1091,34 +1130,80 @@ const ApiQuickFloat: React.FC = () => {
                 isOpen={openSection === 'cloudBackup'}
                 onToggle={() => toggleSection('cloudBackup')}
               >
-                <section className="bg-teal-50/80 rounded-3xl p-4 shadow-sm border border-teal-100/80 space-y-4">
-                  {/* 配置状态提示 */}
+                <section className="bg-teal-50/80 rounded-3xl p-4 shadow-sm border border-teal-100/80 space-y-3">
+                  {/* 状态条（已连接 + 去设置入口） */}
                   {isCloudBackupConfigured ? (
-                    <div className="rounded-2xl bg-emerald-50/80 border border-emerald-200/60 px-3 py-2.5">
-                      <p className="text-[11px] text-emerald-900 leading-relaxed">
-                        ✓ {cloudBackupConfig.provider === 'github' ? 'GitHub' : 'WebDAV'} 已连接
-                      </p>
+                    <div className="flex items-center justify-between rounded-2xl bg-emerald-50/80 border border-emerald-200/60 px-3 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                        <span className="text-[11px] text-emerald-900 font-medium truncate">
+                          {cloudBackupConfig.provider === 'github'
+                            ? `GitHub${cloudBackupConfig.githubOwner ? ` @${cloudBackupConfig.githubOwner}` : ''}`
+                            : 'WebDAV'} 已连接
+                        </span>
+                      </div>
+                      <button onClick={handleOpenCloudSettings} className="text-[10px] text-emerald-700 font-bold hover:text-emerald-900 transition-colors shrink-0 ml-2">
+                        去设置 →
+                      </button>
                     </div>
                   ) : (
-                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5">
+                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5 space-y-2">
                       <p className="text-[11px] text-amber-900 leading-relaxed">
-                        还没配置。请到「设置 → 备份与恢复」配置 WebDAV 或 GitHub 后即可使用。
+                        还没配置云端备份。
                       </p>
+                      <button onClick={handleOpenCloudSettings} className="w-full py-2 rounded-xl bg-amber-100 text-amber-800 text-[11px] font-bold active:scale-95 transition-all">
+                        去设置配置 →
+                      </button>
                     </div>
                   )}
 
-                  {/* 一键备份按钮（默认纯文字，几秒搞定；想备份图片请到设置里选完整模式） */}
-                  <button
-                    onClick={handleCloudBackup}
-                    disabled={cloudBackingUp || !isCloudBackupConfigured}
-                    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-teal-500/20 bg-teal-500 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {cloudBackingUp ? '备份中…' : '立即备份（纯文字）'}
-                  </button>
+                  {/* 上次备份时间 */}
+                  {cloudBackupConfig.lastBackupTime && (
+                    <p className="text-[10px] text-slate-400 text-center">
+                      上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
+                      {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
+                    </p>
+                  )}
 
-                  <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                    备份内容：聊天记录 + 角色/世界书/设置。图片不在内（如需请到设置里选完整模式）。
+                  {/* 2 个并排按钮（轻量同步 + 完整） */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleCloudBackupWithMode('text_only')}
+                      disabled={!!cloudBackingMode || !isCloudBackupConfigured}
+                      className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CloudArrowUp size={16} weight="bold" className="text-sky-500" />
+                      <span>备份到云端</span>
+                      <span className="text-[9px] text-slate-400 font-normal">
+                        {cloudBackingMode === 'text_only' ? '备份中…' : '轻量同步'}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => handleCloudBackupWithMode('full')}
+                      disabled={!!cloudBackingMode || !isCloudBackupConfigured}
+                      className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <CloudArrowUp size={16} weight="bold" className="text-violet-500" />
+                      <span>备份到云端</span>
+                      <span className="text-[9px] text-slate-400 font-normal">
+                        {cloudBackingMode === 'full' ? '备份中…' : '完整'}
+                      </span>
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed text-center px-1">
+                    • 轻量同步：1-3MB · 完整：含图片/美化
                   </p>
+
+                  {/* 1 个大按钮：从云端恢复 */}
+                  <button
+                    onClick={handleOpenCloudRestore}
+                    disabled={!isCloudBackupConfigured || cloudRestoring}
+                    className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <CloudArrowDown size={16} weight="bold" className="text-emerald-500" />
+                    <span>{cloudRestoring ? '恢复中…' : '从云端恢复'}</span>
+                  </button>
                 </section>
               </QuickSection>
             </div>
@@ -1134,6 +1219,48 @@ const ApiQuickFloat: React.FC = () => {
             </div>
           </div>
 
+        </div>
+      ) : null}
+
+      {/* 暮色 2026-07-21：从云端恢复弹窗（仿 Settings）— 列文件 + 点选直接调 cloudRestoreFromWebDAV */}
+      {showCloudRestoreModal ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" onClick={() => setShowCloudRestoreModal(false)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-3 shrink-0">
+              <div className="text-base font-bold text-slate-700">从云端恢复</div>
+              <button onClick={() => setShowCloudRestoreModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full">
+                <X size={16} className="text-slate-500" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {cloudBackupFiles.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-[11px] text-slate-400">正在加载云端备份列表…</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {cloudBackupFiles.map((file, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleCloudRestoreFile(file)}
+                      className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]"
+                    >
+                      <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[10px] text-slate-400">
+                          {file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {file.size > 0 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ''}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       ) : null}
 

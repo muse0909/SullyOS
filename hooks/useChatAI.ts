@@ -33,6 +33,9 @@ import {
 } from '../utils/momentsAI';
 import { getSettings as getMomentsSettings } from '../utils/momentsStorage';
 
+// 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
+// useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
+
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
 const normalizeApiUrl = (url?: string): string => {
     const raw = (url || '').trim().replace(/\/+$/, '');

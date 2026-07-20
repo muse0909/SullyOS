@@ -70,6 +70,23 @@ const SULLY_PRESET_EMOJIS = [
     { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
 ];
 
+/**
+ * 生成 UUID v4（云端同步用作消息稳定 ID）。
+ * 优先用 crypto.randomUUID（Chrome 92+ / Safari 15.4+ 全支持），老环境走 fallback。
+ * Message.clientId 在 saveMessage 时自动生成，已有则保留。
+ */
+export function generateClientId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    // Fallback: RFC 4122 v4-ish（Math.random 强度足够，因为只是去重 key）
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
 export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -450,15 +467,30 @@ export const DB = {
 
   saveMessage: async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    const id = await new Promise<number>((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
         const timestamp = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now();
         const { timestamp: _ignored, ...payload } = msg;
-        const request = store.add({ ...payload, timestamp });
+        // 云端同步：自动生成 clientId（已有则保留），用作多端去重 key
+        const clientId = (payload as any).clientId || generateClientId();
+        const request = store.add({ ...payload, timestamp, clientId });
         request.onsuccess = () => resolve(request.result as number);
         request.onerror = () => reject(request.error);
     });
+    // 云端同步：保存到本地后立刻把消息推入云端同步队列
+    // 暮色多端互通的关键 hook；不动它会让"另一台设备"看不到这条消息
+    try {
+        const { getEngine } = await import('../hooks/useCloudSync');
+        getEngine().enqueueUploadMessage({
+            ...msg,
+            id,
+            timestamp: msg.timestamp ?? Date.now(),
+        });
+    } catch {
+        // 同步静默失败（不影响主流程）
+    }
+    return id;
   },
 
   updateMessageMeta: async (id: number, patch: Record<string, any>): Promise<void> => {

@@ -171,10 +171,15 @@ const VALID_ROOMS = new Set([
 // ─── 路由分发 ─────────────────────────────────────
 
 export default async (req: any) => {
+    console.log('[sync-debug] handler entered, method:', req.method, 'query:', req.query, 'time:', Date.now());
     if (req.method === 'OPTIONS') return optionsResponse();
-    if (!getDatabaseUrl()) {
+    console.log('[sync-debug] after OPTIONS check, time:', Date.now());
+    const dbUrl = getDatabaseUrl();
+    console.log('[sync-debug] DATABASE_URL exists:', !!dbUrl, dbUrl ? `len=${dbUrl.length}` : '(empty)', 'time:', Date.now());
+    if (!dbUrl) {
         return jsonError(503, 'DB_NOT_CONFIGURED', '云端同步未配置：请在 Vercel dashboard 装 Neon 集成');
     }
+    console.log('[sync-debug] have DATABASE_URL, time:', Date.now());
 
     // action 既可从 query 拿（GET）也可从 body 拿（POST）
     const action = (typeof req.query?._action === 'string' ? req.query._action : '').toLowerCase();

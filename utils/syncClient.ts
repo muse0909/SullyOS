@@ -176,8 +176,9 @@ async function fetchSync<T = any>(
 
 /** 探测后端是否配置好（DATABASE_URL 存在）。前端用这个判断要不要走"未配置"分支 */
 export async function checkBackendAvailable(): Promise<boolean> {
-    // init 端点在没配 DB 时会返 503；这是最便宜的探测方式
-    const result = await fetchSync<any>('?_action=init', { method: 'POST', body: {}, auth: null });
+    // 用 ping 探测：不需要任何 auth / body / device id
+    // init 不行——它要求 X-Device-Id 头，没传就返 400 INVALID_DEVICE_ID
+    const result = await fetchSync<any>('?_action=ping', { method: 'GET', auth: null });
     if (result.ok) return true;
     if (result.error.code === 'DB_NOT_CONFIGURED') return false;
     // 其他错误（网络/超时）也按"不可用"处理

@@ -172,6 +172,7 @@ export default async (req: any) => {
 
     try {
         switch (action) {
+            case 'ping':             return jsonOk({ pong: true, serverTime: nowMs() });
             case 'init':             return await handleInit(req);
             case 'pair':             return await handlePair(req);
             case 'status':           return await handleStatus(req);
@@ -180,7 +181,7 @@ export default async (req: any) => {
             case 'upload_memories':  return await handleUploadMemories(req);
             case 'pull_memories':    return await handlePullMemories(req);
             default:
-                return jsonError(400, 'INVALID_ACTION', `未知 _action: ${action}。可选: init | pair | status | upload_messages | pull_messages | upload_memories | pull_memories`);
+                return jsonError(400, 'INVALID_ACTION', `未知 _action: ${action}。可选: ping | init | pair | status | upload_messages | pull_messages | upload_memories | pull_memories`);
         }
     } catch (e: any) {
         if (e instanceof DbNotConfiguredError) {

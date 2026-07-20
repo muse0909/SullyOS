@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-20 | 云端同步（多端互通）—— 电脑手机共享聊天记录 + 记忆宫殿 | [`changelogs/2026-07-20-cloud-sync-multi-device.md`](./changelogs/2026-07-20-cloud-sync-multi-device.md) |
+| 2026-07-21 | 悬浮窗云端备份 3 个 UI 反馈修复（加载弹窗 / 按钮变暗 / 恢复重影） | [`changelogs/2026-07-21-cloud-backup-ui-fixes.md`](./changelogs/2026-07-21-cloud-backup-ui-fixes.md) |
 | 2026-07-21 | 云端备份快捷入口放到悬浮窗（仿 Settings 精简版：3 按钮 + 状态 + 恢复弹窗） | [`changelogs/2026-07-21-cloud-backup-shortcut-in-float.md`](./changelogs/2026-07-21-cloud-backup-shortcut-in-float.md) |
 | 2026-07-19 | Kimi 识图外链失败改 base64 兜底 | [`changelogs/2026-07-19-kimi-vision-base64-fallback.md`](./changelogs/2026-07-19-kimi-vision-base64-fallback.md) |
 | 2026-07-19 | Kimi 识图文字块兼容 + 聊天截图顺序提取 | [`changelogs/2026-07-19-kimi-vision-text-block-and-chat-screenshot-order.md`](./changelogs/2026-07-19-kimi-vision-text-block-and-chat-screenshot-order.md) |

@@ -13,6 +13,7 @@ interface ProactiveSettingsModalProps {
 }
 
 const INTERVAL_OPTIONS = [
+    { label: '1 分钟（测试）', value: 1 },
     { label: '30 分钟', value: 30 },
     { label: '1 小时', value: 60 },
     { label: '2 小时', value: 120 },

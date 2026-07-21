@@ -281,6 +281,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 |---|---|---|
 | 2026-07-20 | 云端同步（多端互通）—— 电脑手机共享聊天记录 + 记忆宫殿 | [`changelogs/2026-07-20-cloud-sync-multi-device.md`](./changelogs/2026-07-20-cloud-sync-multi-device.md) |
 | 2026-07-21 | 轻量同步 2 个覆盖 bug 修复（text_only 模式跳过 user profile / emoji） | [`changelogs/2026-07-21-text-only-skip-user-emoji.md`](./changelogs/2026-07-21-text-only-skip-user-emoji.md) |
+| 2026-07-21 | 记忆宫殿 memoryLinks 暴增 bug 修复（295555 → 几千，省 40 MB）+ dedup API | [`changelogs/2026-07-21-memory-links-dedup-bug.md`](./changelogs/2026-07-21-memory-links-dedup-bug.md) |
 | 2026-07-21 | 轻量备份 A2 优化：archived memoryNode 不导 vector（省 50-60% vectors） | [`changelogs/2026-07-21-backup-skip-archived-vectors.md`](./changelogs/2026-07-21-backup-skip-archived-vectors.md) |
 | 2026-07-21 | 轻量备份：memoryVectors base64 压缩（16M→8M）+ text_only 模式增量恢复 | [`changelogs/2026-07-21-backup-base64-and-incremental.md`](./changelogs/2026-07-21-backup-base64-and-incremental.md) |
 | 2026-07-21 | 悬浮窗云端备份 3 个 UI 反馈修复（加载弹窗 / 按钮变暗 / 恢复重影） | [`changelogs/2026-07-21-cloud-backup-ui-fixes.md`](./changelogs/2026-07-21-cloud-backup-ui-fixes.md) |

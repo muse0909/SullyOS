@@ -27,7 +27,7 @@ import {
 
 export interface ProactiveSchedule {
   charId: string;
-  intervalMs: number; // must be multiple of 30 * 60 * 1000
+  intervalMs: number; // 暮色 2026-07-21：放开 1 分钟档（测试用）；生产建议 ≥ 30 分钟避免限流
 }
 
 type ProactiveScheduleMap = Record<string, ProactiveSchedule>;
@@ -307,7 +307,11 @@ export const ProactiveChat = {
    * Start or update one character's proactive schedule.
    */
   start(charId: string, intervalMinutes: number) {
-    const clamped = Math.max(30, Math.round(intervalMinutes / 30) * 30);
+    // 暮色 2026-07-21：放开 1 分钟档（测试用）。< 30 直接 round；>= 30 仍按 30 步长对齐
+    // 生产环境建议 ≥ 30 分钟，避免频繁触发被中转站限流
+    const clamped = intervalMinutes < 30
+      ? Math.max(1, Math.round(intervalMinutes))
+      : Math.max(30, Math.round(intervalMinutes / 30) * 30);
     const intervalMs = clamped * 60 * 1000;
     const schedules = loadSchedules();
     schedules[charId] = { charId, intervalMs };

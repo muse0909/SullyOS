@@ -1388,16 +1388,18 @@ if (!isVisible || !isChattingWithThisChar) {
                   max_tokens: 500,
               };
 
-              const response = await fetch(`${api.baseUrl}/chat/completions`, {
+              // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
+              // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
+              // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
+              const apiProtocol = (api as any).protocol ?? 'openai';
+              const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
                   method: 'POST',
                   headers: {
                       'Content-Type': 'application/json',
                       'Authorization': `Bearer ${api.apiKey}`,
                   },
                   body: JSON.stringify(reqBody),
-              });
-
-              const data = await response.json();
+              }, 2, 0, apiProtocol);
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';

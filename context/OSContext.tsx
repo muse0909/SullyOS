@@ -2043,7 +2043,19 @@ if (!isVisible || !isChattingWithThisChar) {
   const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
-          
+
+          // 暮色 2026-07-21：增量导出状态（lastRestoreAt）
+          //   - 0 = 从未恢复过 → 全量导出
+          //   - >0 = 上次恢复时间 → 只导 lastRestoreAt 之后的数据
+          //   - 只在 text_only 模式生效（full / media_only 永远全量 — 整机恢复场景）
+          let lastRestoreAt = 0;
+          try {
+              const v = localStorage.getItem('sullyos:lastRestoreAt');
+              if (v) lastRestoreAt = parseInt(v, 10) || 0;
+          } catch {}
+          const isIncremental = lastRestoreAt > 0 && mode === 'text_only';
+          let incrementalMemoryNodeIds: Set<string> | null = null;
+
           const JSZip = await loadJSZip();
           const zip = new JSZip();
           const assetsFolder = zip.folder("assets");
@@ -2054,6 +2066,22 @@ if (!isVisible || !isChattingWithThisChar) {
           // is the base64 string itself, value is the assets/* path. For a
           // heavy user with 50 chats sharing a 200KB avatar this trims ~10MB.
           const assetDedupMap = new Map<string, string>();
+
+          // 暮色 2026-07-21：vector base64 压缩 helper
+          //   磁盘里 vector 是 Uint8Array（Float32 原始字节，4 字节/维）
+          //   老导出：Uint8Array → number[]（14 字节/维）—— 1000+ 向量让备份 16M
+          //   新导出：Uint8Array → base64 字符串（5.4 字节/维）—— 省 62%
+          //   1000 向量：14M → 5.4M；1500 向量：21M → 8M
+          //   1024 维 Float32 = 4096 字节 Uint8Array → 5461 字节 base64
+          const uint8ToBase64 = (u8: Uint8Array): string => {
+              let binary = '';
+              const CHUNK = 0x8000; // 32K 字节 / 次（避免 String.fromCharCode 单次 65535 字符限制）
+              for (let i = 0; i < u8.length; i += CHUNK) {
+                  const sub = u8.subarray(i, Math.min(i + CHUNK, u8.length));
+                  binary += String.fromCharCode.apply(null, Array.from(sub));
+              }
+              return btoa(binary);
+          };
 
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
@@ -2349,6 +2377,24 @@ if (!isVisible || !isChattingWithThisChar) {
               let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
 
+              // 暮色 2026-07-21：增量导出过滤（text_only 模式 + lastRestoreAt > 0 时）
+              //   - messages: timestamp > lastRestoreAt
+              //   - memory_nodes: createdAt > lastRestoreAt
+              //   - memory_vectors: 关联的 memoryId 在增量 memoryNodes 子集里
+              //   - 其他 store（characters / themes / worldbooks / user profile / assets / emojis 等）全量导（小数据）
+              //   - full / media_only 模式不受影响（永远全量）
+              if (isIncremental) {
+                  if (storeName === 'messages' && Array.isArray(rawData)) {
+                      rawData = rawData.filter((m: any) => m.timestamp > lastRestoreAt);
+                  } else if (storeName === 'memory_nodes' && Array.isArray(rawData)) {
+                      const filtered = rawData.filter((n: any) => n.createdAt > lastRestoreAt);
+                      incrementalMemoryNodeIds = new Set(filtered.map((n: any) => n.id));
+                      rawData = filtered;
+                  } else if (storeName === 'memory_vectors' && Array.isArray(rawData) && incrementalMemoryNodeIds) {
+                      rawData = rawData.filter((v: any) => incrementalMemoryNodeIds!.has(v.memoryId));
+                  }
+              }
+
               // --- MODE SPECIFIC FILTERING ---
 
               if (storeName === 'assets' && Array.isArray(rawData)) {
@@ -2361,23 +2407,25 @@ if (!isVisible || !isChattingWithThisChar) {
               // Fast path: stores with no image data skip expensive recursive traversal
               if (noImageStores.has(storeName)) {
                   if (storeName === 'memory_vectors' && Array.isArray(rawData)) {
-                      // 向量在 IndexedDB 里是 Uint8Array（Float32 原始字节）或老
-                      // number[]，JSON.stringify 没法序列化 Uint8Array（结果是 {}）
-                      // 所以这里统一解码成 plain number[]，让备份能 JSON 圆规一周。
-                      // 重做时 MemoryVectorDB.saveMany 会把 number[] 重新压回
-                      // Uint8Array，磁盘还是省的。
+                      // 暮色 2026-07-21：vector 用 base64 压缩替代 number[]
+                      //   原：Uint8Array → number[]（14 字节/维）— 1000+ 向量让备份 16M
+                      //   新：Uint8Array → base64 字符串（5.4 字节/维）— 省 62%（16M → 8M）
+                      //   导入端 utils/db.ts 会识别 base64 字符串还原成 Uint8Array，磁盘仍紧凑
                       processedData = rawData.map((v: any) => {
                           if (!v || !v.vector) return v;
-                          let arr: number[];
+                          let u8: Uint8Array;
                           if (v.vector instanceof Uint8Array) {
-                              const f32 = new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength >>> 2);
-                              arr = Array.from(f32);
+                              u8 = v.vector;
                           } else if (v.vector instanceof Float32Array) {
-                              arr = Array.from(v.vector);
+                              u8 = new Uint8Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength);
+                          } else if (Array.isArray(v.vector)) {
+                              // 老 number[] 格式：转 Float32Array → Uint8Array
+                              const f32 = new Float32Array(v.vector);
+                              u8 = new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength);
                           } else {
-                              arr = v.vector;
+                              return v;
                           }
-                          return { ...v, vector: arr };
+                          return { ...v, vector: uint8ToBase64(u8) };
                       });
                   } else {
                       processedData = rawData;

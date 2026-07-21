@@ -462,7 +462,10 @@ let _engine: CloudSyncEngine | null = null;
 export function getEngine(): CloudSyncEngine {
     if (!_engine) {
         _engine = new CloudSyncEngine();
-        _engine.start();
+        // 暮色 2026-07-21：默认不启动。start() 会自动打 ping + 启动轮询，
+        //   而 getEngine() 会在保存消息/记忆/打开设置页时被调，自动 ping 会一直误触。
+        //   现在改成"手动模式"——只有用户点设置页"立即同步"按钮 (forceSyncNow) 才打后端。
+        //   enqueueUploadMessage/Memory 累积在 queue 里，等手动同步时统一 flush。
     }
     return _engine;
 }

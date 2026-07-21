@@ -2056,6 +2056,14 @@ if (!isVisible || !isChattingWithThisChar) {
           const isIncremental = lastRestoreAt > 0 && mode === 'text_only';
           let incrementalMemoryNodeIds: Set<string> | null = null;
 
+          // 暮色 2026-07-21：archived 节点 ID 收集 — A2 优化
+          //   archived memoryNode（被压入 EventBox summary 的原节点）不参与召回
+          //   → 召回走 EventBox summary → archived 节点的 vector 不需要
+          //   → 导出 memory_vectors 时 filter 掉这些 IDs，省 50-60% 体积
+          //   所有 mode 都生效（full / media_only / text_only）
+          //   代价：罕见的"复活 archived 节点"操作会失去 vector（但 archived 反正不召回，影响极小）
+          const archivedMemoryNodeIds: Set<string> = new Set();
+
           const JSZip = await loadJSZip();
           const zip = new JSZip();
           const assetsFolder = zip.folder("assets");
@@ -2395,6 +2403,14 @@ if (!isVisible || !isChattingWithThisChar) {
                   }
               }
 
+              // 暮色 2026-07-21：收集 archived memoryNode ids（A2 优化）
+              //   不分 mode 总是收集 — archived 节点反正不召回，vector 留着浪费空间
+              if (storeName === 'memory_nodes' && Array.isArray(rawData)) {
+                  for (const n of rawData) {
+                      if (n && n.archived) archivedMemoryNodeIds.add(n.id);
+                  }
+              }
+
               // --- MODE SPECIFIC FILTERING ---
 
               if (storeName === 'assets' && Array.isArray(rawData)) {
@@ -2402,6 +2418,15 @@ if (!isVisible || !isChattingWithThisChar) {
                       if (!asset || typeof asset.id !== 'string') return true;
                       return !isRedundantManagedAssetId(asset.id);
                   });
+              }
+
+              // 暮色 2026-07-21：A2 优化 — filter 掉 archived memoryNode 对应的 vector
+              //   archived 节点不参与召回（pipeline.ts 里 if archived → 路由到 summary → continue）
+              //   → vector 没用，导出是浪费体积
+              //   省 50-60% vectors（假设 1000 nodes 里 600 archived）→ 8M → 3-4M
+              //   副作用极小：罕见的"复活 archived 节点"操作会失去 vector（但反正不召回）
+              if (storeName === 'memory_vectors' && Array.isArray(rawData) && archivedMemoryNodeIds.size > 0) {
+                  rawData = rawData.filter((v: any) => !archivedMemoryNodeIds.has(v.memoryId));
               }
 
               // Fast path: stores with no image data skip expensive recursive traversal

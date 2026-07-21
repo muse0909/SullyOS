@@ -281,6 +281,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 |---|---|---|
 | 2026-07-20 | 云端同步（多端互通）—— 电脑手机共享聊天记录 + 记忆宫殿 | [`changelogs/2026-07-20-cloud-sync-multi-device.md`](./changelogs/2026-07-20-cloud-sync-multi-device.md) |
 | 2026-07-21 | 主动消息 runProactive 改用 safeFetchJson — 修中转站 502 假象 CORS bug | [`changelogs/2026-07-21-proactive-uses-safefetch.md`](./changelogs/2026-07-21-proactive-uses-safefetch.md) |
+| 2026-07-21 | 主动消息加 1 分钟测试档（之前最小 30 分钟） | [`changelogs/2026-07-21-proactive-1min-test-option.md`](./changelogs/2026-07-21-proactive-1min-test-option.md) |
 | 2026-07-21 | 轻量同步 2 个覆盖 bug 修复（text_only 模式跳过 user profile / emoji） | [`changelogs/2026-07-21-text-only-skip-user-emoji.md`](./changelogs/2026-07-21-text-only-skip-user-emoji.md) |
 | 2026-07-21 | 记忆宫殿 memoryLinks 暴增 bug 修复（295555 → 几千，省 40 MB）+ dedup API | [`changelogs/2026-07-21-memory-links-dedup-bug.md`](./changelogs/2026-07-21-memory-links-dedup-bug.md) |
 | 2026-07-21 | 轻量备份 A2 优化：archived memoryNode 不导 vector（省 50-60% vectors） | [`changelogs/2026-07-21-backup-skip-archived-vectors.md`](./changelogs/2026-07-21-backup-skip-archived-vectors.md) |

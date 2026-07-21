@@ -472,16 +472,105 @@ export const MemoryLinkDB = {
         return result;
     },
 
-    /** 批量保存 */
+    /** 批量保存 — 暮色 2026-07-21：去重（按 sourceId + targetId + type） */
+    /**   - 根因：原代码只 put 不查重 → pipeline 多次跑累积 295555 条冗余 link
+     *   - 现在 batch 内 + 跟历史 link 都去重
+     *   - 注意：跨 batch 去重要求 getAll()，数据大时慢（首次 295555 → 几百，首次慢，后续 fast）
+     *   - 如果想更快可以按 charId 索引查（getAllByCharId 还没实现，留 V2）
+     */
     saveMany: async (links: MemoryLink[]): Promise<void> => {
+        if (links.length === 0) return;
         const db = await openDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_MEMORY_LINKS, 'readwrite');
             const store = tx.objectStore(STORE_MEMORY_LINKS);
+
+            // 第一步：batch 内去重
+            const seen = new Set<string>();
+            const deduped: MemoryLink[] = [];
             for (const link of links) {
-                store.put(link);
+                // 跟 makeKey 一致：A-B 和 B-A 视为同一对（id 小的在前）
+                const [a, b] = link.sourceId < link.targetId
+                    ? [link.sourceId, link.targetId]
+                    : [link.targetId, link.sourceId];
+                const key = `${a}__${b}__${link.type}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                deduped.push(link);
             }
+
+            // 第二步：查历史 link 去重（异步在事务前做，避免事务里等）
+            const allReq = tx.objectStore(STORE_MEMORY_LINKS).getAll();
+            allReq.onsuccess = () => {
+                const existingKeys = new Set<string>();
+                for (const l of allReq.result || []) {
+                    const [a, b] = l.sourceId < l.targetId
+                        ? [l.sourceId, l.targetId]
+                        : [l.targetId, l.sourceId];
+                    existingKeys.add(`${a}__${b}__${l.type}`);
+                }
+                let putCount = 0;
+                for (const link of deduped) {
+                    const [a, b] = link.sourceId < link.targetId
+                        ? [link.sourceId, link.targetId]
+                        : [link.targetId, link.sourceId];
+                    const key = `${a}__${b}__${link.type}`;
+                    if (existingKeys.has(key)) continue;
+                    store.put(link);
+                    putCount++;
+                }
+                if (putCount > 0) {
+                    console.log(`🔗 [MemoryLinkDB.saveMany] ${links.length} → ${putCount} (去重 ${links.length - putCount})`);
+                }
+            };
+
             tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    },
+
+    /** 暮色 2026-07-21：一次性 dedup 现有所有 link（清理历史暴增数据） */
+    deduplicateAll: async (): Promise<{ before: number; after: number }> => {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_MEMORY_LINKS, 'readwrite');
+            const store = tx.objectStore(STORE_MEMORY_LINKS);
+            const getReq = store.getAll();
+            getReq.onsuccess = () => {
+                const all = (getReq.result || []) as MemoryLink[];
+                const before = all.length;
+                const seen = new Set<string>();
+                const deduped: MemoryLink[] = [];
+                for (const l of all) {
+                    const [a, b] = l.sourceId < l.targetId
+                        ? [l.sourceId, l.targetId]
+                        : [l.targetId, l.sourceId];
+                    const key = `${a}__${b}__${l.type}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    // strength 取所有重复里的最大值（保留最强关联）
+                    const existing = deduped.find(d => {
+                        const [da, db_] = d.sourceId < d.targetId
+                            ? [d.sourceId, d.targetId]
+                            : [d.targetId, d.sourceId];
+                        return da === a && db_ === b && d.type === l.type;
+                    });
+                    if (existing) {
+                        existing.strength = Math.max(existing.strength, l.strength);
+                    } else {
+                        deduped.push(l);
+                    }
+                }
+                const after = deduped.length;
+                // 清空 + 重新 put
+                store.clear();
+                for (const l of deduped) {
+                    store.put(l);
+                }
+                console.log(`🔗 [MemoryLinkDB.deduplicateAll] ${before} → ${after} (删除 ${before - after} 条冗余)`);
+                resolve({ before, after });
+            };
+            getReq.onerror = () => reject(getReq.error);
             tx.onerror = () => reject(tx.error);
         });
     },

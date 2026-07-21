@@ -539,29 +539,27 @@ export const MemoryLinkDB = {
             getReq.onsuccess = () => {
                 const all = (getReq.result || []) as MemoryLink[];
                 const before = all.length;
-                const seen = new Set<string>();
-                const deduped: MemoryLink[] = [];
+
+                // 暮色 2026-07-21：算法 O(N²) → O(N)
+                //   旧：deduped.find(...) 是 O(N) × 外层 for O(N) = O(N²) — 295555² ≈ 870 亿次
+                //   新：Map.get(...) 是 O(1) — 295555 次 — 几秒内跑完
+                const dedupMap = new Map<string, MemoryLink>();
                 for (const l of all) {
                     const [a, b] = l.sourceId < l.targetId
                         ? [l.sourceId, l.targetId]
                         : [l.targetId, l.sourceId];
                     const key = `${a}__${b}__${l.type}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    // strength 取所有重复里的最大值（保留最强关联）
-                    const existing = deduped.find(d => {
-                        const [da, db_] = d.sourceId < d.targetId
-                            ? [d.sourceId, d.targetId]
-                            : [d.targetId, d.sourceId];
-                        return da === a && db_ === b && d.type === l.type;
-                    });
+                    const existing = dedupMap.get(key);
                     if (existing) {
+                        // strength 取所有重复里的最大值（保留最强关联）
                         existing.strength = Math.max(existing.strength, l.strength);
                     } else {
-                        deduped.push(l);
+                        dedupMap.set(key, l);
                     }
                 }
+                const deduped = Array.from(dedupMap.values());
                 const after = deduped.length;
+
                 // 清空 + 重新 put
                 store.clear();
                 for (const l of deduped) {

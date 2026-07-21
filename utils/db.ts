@@ -1877,12 +1877,36 @@ export const DB = {
       // Memory Palace (记忆宫殿)
       if (data.memoryNodes) clearAndAdd('memory_nodes', data.memoryNodes);
       if (data.memoryVectors) {
-          // 备份里的 vector 是 number[]（JSON 兼容形态）。直接还原写回 Uint8Array
-          // 把磁盘占用立刻降下来 — 不然要等下次读这个角色的向量时 lazy 迁移才生效。
+          // 暮色 2026-07-21：vector 字段识别 3 种格式
+          //   - 新格式：base64 字符串（暮色 7-21 改成，磁盘 16M → 8M 压缩）
+          //   - 老格式：number[]（老备份，JSON 友好但体积大 3.5x）
+          //   - 已经是 Uint8Array：跳过（理论上不会从 JSON 来，但兜底）
+          //   全部还原成 Uint8Array 写入磁盘（紧凑）
+          const base64ToUint8 = (b64: string): Uint8Array => {
+              const binary = atob(b64);
+              const u8 = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) {
+                  u8[i] = binary.charCodeAt(i);
+              }
+              return u8;
+          };
           const upgraded = data.memoryVectors.map((v: any) => {
-              if (!v || !v.vector || !Array.isArray(v.vector)) return v;
-              const f32 = new Float32Array(v.vector);
-              return { ...v, vector: new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength) };
+              if (!v || !v.vector) return v;
+              let u8: Uint8Array;
+              if (typeof v.vector === 'string') {
+                  // 新 base64 格式
+                  u8 = base64ToUint8(v.vector);
+              } else if (v.vector instanceof Uint8Array) {
+                  // 已经是紧凑形态
+                  u8 = v.vector;
+              } else if (Array.isArray(v.vector)) {
+                  // 老 number[] 格式
+                  const f32 = new Float32Array(v.vector);
+                  u8 = new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength);
+              } else {
+                  return v;
+              }
+              return { ...v, vector: u8 };
           });
           clearAndAdd('memory_vectors', upgraded);
       }
@@ -1932,7 +1956,17 @@ export const DB = {
       }
 
       return new Promise((resolve, reject) => {
-          tx.oncomplete = () => resolve();
+          tx.oncomplete = () => {
+              // 暮色 2026-07-21：text_only 模式恢复成功时记录 lastRestoreAt — 下次导出增量用
+              //   - 只在 text_only 模式写：full / media_only 是整机恢复，会重置"老数据点"语义
+              //   - 写在 tx.oncomplete：事务成功才写，失败不写（避免把 lastRestoreAt 写到一半）
+              if (data.backupMode === 'text_only') {
+                  try {
+                      localStorage.setItem('sullyos:lastRestoreAt', String(Date.now()));
+                  } catch { /* quota 忽略 */ }
+              }
+              resolve();
+          };
           tx.onerror = () => reject(tx.error);
       });
   }

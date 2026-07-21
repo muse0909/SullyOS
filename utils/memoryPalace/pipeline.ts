@@ -1384,8 +1384,22 @@ export async function processNewMessages(
             const existingNodes = await MemoryNodeDB.getByCharId(charId);
             const justStored = existingNodes.filter(n => storedIdSet.has(n.id));
             const others = existingNodes.filter(n => !storedIdSet.has(n.id));
-            await buildLinks(justStored, others);
-            console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
+
+            // 暮色 2026-07-21：跨 batch 去重 — 避免 O(N²) 累积 285232 条 link
+            //   之前每次 pipeline 跑都全连接 N × M link，跨 batch 不去重
+            //   修法：先查 existingNodes 涉及的现有 link key 集合，传给 buildLinks
+            const existingLinkKeys = new Set<string>();
+            for (const existing of others) {
+                const existingLinks = await MemoryLinkDB.getByNodeId(existing.id);
+                for (const l of existingLinks) {
+                    const [a, b] = l.sourceId < l.targetId
+                        ? [l.sourceId, l.targetId]
+                        : [l.targetId, l.sourceId];
+                    existingLinkKeys.add(`${a}__${b}__${l.type}`);
+                }
+            }
+            await buildLinks(justStored, others, undefined, existingLinkKeys);
+            console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点, 跳过 ${existingLinkKeys.size} 个已存在 link）`);
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 关联建立失败（不影响已保存记忆）: ${e.message}`);
         }

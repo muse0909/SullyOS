@@ -530,6 +530,12 @@ export const MemoryLinkDB = {
     },
 
     /** 暮色 2026-07-21：一次性 dedup 现有所有 link（清理历史暴增数据） */
+    /**   - 算法：用 (sourceId, targetId) 二元组去重（不分组 type）
+     *   - 原因：buildLinks 之前 bug 是 O(N²) 累积，每对 (sourceId, targetId) 可能有
+     *     多个 type 的 link（temporal + emotional + LLM causal + ...）— 全 unique
+     *   - 真去重要二元组：每对保留 strength 最高的 link
+     *   - 同时砍弱 emotional（strength < 0.3）— 跟 pruneMemoryLinks 同款
+     */
     deduplicateAll: async (): Promise<{ before: number; after: number }> => {
         const db = await openDB();
         return new Promise((resolve, reject) => {
@@ -543,17 +549,20 @@ export const MemoryLinkDB = {
                 // 暮色 2026-07-21：算法 O(N²) → O(N)
                 //   旧：deduped.find(...) 是 O(N) × 外层 for O(N) = O(N²) — 295555² ≈ 870 亿次
                 //   新：Map.get(...) 是 O(1) — 295555 次 — 几秒内跑完
+                //   同时改三元组（sourceId+targetId+type）为二元组（sourceId+targetId）—
+                //   每对节点只保留 strength 最高的那条 link
                 const dedupMap = new Map<string, MemoryLink>();
                 for (const l of all) {
+                    // 弱 emotional 砍掉
+                    if (l.type === 'emotional' && l.strength < 0.3) continue;
+
+                    // 二元组 key：A-B 视为同一对（跟 makeKey 同款）
                     const [a, b] = l.sourceId < l.targetId
                         ? [l.sourceId, l.targetId]
                         : [l.targetId, l.sourceId];
-                    const key = `${a}__${b}__${l.type}`;
+                    const key = `${a}__${b}`;
                     const existing = dedupMap.get(key);
-                    if (existing) {
-                        // strength 取所有重复里的最大值（保留最强关联）
-                        existing.strength = Math.max(existing.strength, l.strength);
-                    } else {
+                    if (!existing || l.strength > existing.strength) {
                         dedupMap.set(key, l);
                     }
                 }

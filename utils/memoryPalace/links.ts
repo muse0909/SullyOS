@@ -137,9 +137,14 @@ export async function buildLinks(
     newNodes: MemoryNode[],
     existingNodes: MemoryNode[],
     llmConfig?: LightLLMConfig | null,
+    // 暮色 2026-07-21：跨 batch 去重 — pipeline 多次跑累积
+    //   之前 bug：每次 pipeline 跑全连接 N × M link，跨 batch 不去重
+    //   285232 条 link 真实数据 O(N²) 累积（139 条/node）
+    //   修法：传 skipKeys（existingNodes 涉及的现有 link）进来，初始化 linkSet
+    skipKeys?: Set<string>,
 ): Promise<MemoryLink[]> {
     const links: MemoryLink[] = [];
-    const linkSet = new Set<string>();
+    const linkSet = new Set<string>(skipKeys || []);
 
     for (const newNode of newNodes) {
         // ─── 自动规则关联 ─────────────────────────

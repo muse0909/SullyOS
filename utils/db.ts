@@ -11,6 +11,10 @@ import {
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { pruneMemoryLinks } from './memoryPalace/links';
+// 暮色 2026-07-21：暴露 MemoryLinkDB 到 DB 上，方便 console 一键 dedup
+//   - 背景：memoryLinks 295555 条是 bug 累积（saveMany 不去重）
+//   - 修法：DB.memoryLinkDB.deduplicateAll() 一次性清理
+import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
 const DB_VERSION = 62; // Bumped: v62 add messages [charId, type] 复合索引 + 彼方数据表
@@ -324,6 +328,9 @@ export const openDB = (): Promise<IDBDatabase> => {
 };
 
 export const DB = {
+  // 暮色 2026-07-21：暴露 MemoryLinkDB — console 一键 dedup 暴增的 295555 条 link
+  //   用法：await DB.memoryLinkDB.deduplicateAll()
+  memoryLinkDB: MemoryLinkDB,
   deleteDB: async (): Promise<void> => {
       return new Promise((resolve, reject) => {
           const req = indexedDB.deleteDatabase(DB_NAME);

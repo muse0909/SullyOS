@@ -24,7 +24,7 @@ import { useChatAI } from '../hooks/useChatAI';
 import { useCloudMessages } from '../hooks/useCloudSync';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { addFavorite, genFavoriteId, updateFavorite, uploadVoiceFavorite } from '../utils/favoritesStorage';
+// 2026-07-22：移除 addFavorite/genFavoriteId/updateFavorite/uploadVoiceFavorite —— 取消「语音自动加入收藏」后没人用
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -433,36 +433,8 @@ const Chat: React.FC = () => {
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
             // Persist so the voice bar survives leaving and re-entering the chat.
             persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
-            // Auto-archive to favorites (语音自动加入收藏，暮色要求)
-            // 升级 2026-07-13：收藏时同时上传到 Netlify Blobs，跨设备/换浏览器/清缓存都不丢
-            // 流程：addFavorite 元数据 → async uploadVoiceFavorite → 拿到 URL → updateFavorite({url})
-            // 上传失败不影响收藏（url 字段空，播放时回退 IndexedDB）
-            const favId = genFavoriteId();
-            try {
-                addFavorite({
-                    id: favId,
-                    type: 'voice',
-                    text: originalText,
-                    charId: char.id,
-                    charName: char.name,
-                    sourceMessageId: msg.id,
-                    createdAt: Date.now(),
-                });
-                // 后台上传（fire-and-forget，不阻塞 UI）
-                uploadVoiceFavorite(msg.id, blob).then((cloudUrl) => {
-                    if (cloudUrl) {
-                        try {
-                            updateFavorite(favId, { url: cloudUrl });
-                        } catch (e) {
-                            console.warn('[favorites] update favorite url failed', e);
-                        }
-                    }
-                }).catch((e) => {
-                    console.warn('[favorites] cloud upload rejected', e);
-                });
-            } catch (e) {
-                console.warn('[favorites] auto-archive failed', e);
-            }
+            // 2026-07-22：取消"语音自动加入收藏"——暮色要求只保留手动收藏（聊天页消息操作 → 🌟）
+            // 之前的 addFavorite + uploadVoiceFavorite + updateFavorite 流程整段移除
             // Auto-play
             if (!chatAudioRef.current) chatAudioRef.current = new Audio();
             chatAudioRef.current.src = blobUrl;

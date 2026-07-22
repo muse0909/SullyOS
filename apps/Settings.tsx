@@ -15,7 +15,6 @@ import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled a
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { PRIVATE_NOTES_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
 import type { ApiPreset, APIConfig, Message, CharacterProfile } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
@@ -207,11 +206,6 @@ const Settings: React.FC = () => {
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
-  // 2026-07-22：私密记事 prompt 自定义（覆盖默认 prompt 段）
-  const [privateNotesPrompt, setPrivateNotesPrompt] = useState(() => {
-      try { return localStorage.getItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY) || ''; } catch { return ''; }
-  });
-  const [privateNotesPromptStatus, setPrivateNotesPromptStatus] = useState('');
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [openSectionId, setOpenSectionId] = useState<string | null>(null);
@@ -763,33 +757,6 @@ const handleSaveTts = () => {
     } finally {
         setIsLoadingModels(false);
     }
-  };
-
-  // 2026-07-22：保存/恢复默认 私密记事 prompt
-  const handleSavePrivateNotesPrompt = () => {
-      try {
-          const v = privateNotesPrompt.trim();
-          if (v) {
-              localStorage.setItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY, v);
-              setPrivateNotesPromptStatus('已保存');
-          } else {
-              localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
-              setPrivateNotesPromptStatus('已清空（恢复默认）');
-          }
-          addToast('私密记事提示词已保存', 'success');
-          setTimeout(() => setPrivateNotesPromptStatus(''), 2000);
-      } catch (e: any) {
-          setPrivateNotesPromptStatus(`保存失败: ${e?.message || '未知错误'}`);
-      }
-  };
-  const handleResetPrivateNotesPrompt = () => {
-      setPrivateNotesPrompt('');
-      try {
-          localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
-          setPrivateNotesPromptStatus('已恢复默认（清空输入框后保存生效）');
-          addToast('已恢复默认（点保存生效）', 'info');
-          setTimeout(() => setPrivateNotesPromptStatus(''), 3000);
-      } catch {}
   };
 
   const fetchModels = async () => fetchModelsFor('main', localUrl, localKey, setStatusMsg);
@@ -1968,35 +1935,6 @@ const handleSaveTts = () => {
                     )}
                 </div>
                 <button onClick={handleSaveOtherApis} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-amber-500/20 bg-amber-500 active:scale-95 transition-all mt-2">{otherStatusMsg || '保存其他 API'}</button>
-            </div>
-        </section>
-        </SettingsSection>
-
-        {/* 8.5 - 私密记事提示词（2026-07-22：暮色要可自定义，覆盖 chatPrompts 里的默认段） */}
-        <SettingsSection id="privateNotesPrompt" icon="📒" title="私密记事提示词" subtitle="自定义 AI 写小纸条的指导"
-          isOpen={openSectionId === 'privateNotesPrompt'} onToggle={toggleSection}
-          statusText={privateNotesPrompt ? '已自定义' : '使用默认'} statusColor={privateNotesPrompt ? 'text-emerald-500' : 'text-slate-400'}>
-        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
-            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                这里填的内容会替换 <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">utils/chatPrompts.ts</code> 里的默认私密记事 prompt 段。
-                留空 = 用默认（江澈改写的小纸条版本）。<br/>
-                <span className="text-amber-600 font-medium">建议保留「判断标准」</span>块——它是核心：换心理医生写也成立的就要删掉，逼自己写"只有她恋人写得出来"的东西。
-            </p>
-            <textarea
-                value={privateNotesPrompt}
-                onChange={(e) => setPrivateNotesPrompt(e.target.value)}
-                placeholder="留空 = 用默认 prompt。建议先用默认，多聊几次后觉得哪里不对再改。"
-                className="w-full h-40 bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-[11px] leading-relaxed font-mono focus:bg-white transition-all resize-y"
-            />
-            <div className="flex gap-2 mt-3">
-                <button onClick={handleSavePrivateNotesPrompt}
-                    className="flex-1 py-2.5 rounded-2xl font-bold text-white shadow-lg shadow-pink-500/20 bg-gradient-to-br from-pink-400 to-rose-500 active:scale-95 transition-all text-xs">
-                    {privateNotesPromptStatus || '保存'}
-                </button>
-                <button onClick={handleResetPrivateNotesPrompt}
-                    className="px-4 py-2.5 rounded-2xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-all">
-                    恢复默认
-                </button>
             </div>
         </section>
         </SettingsSection>

@@ -97,10 +97,10 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
             </div>
 
             {/* 底部回复输入 */}
-            {/* 2026-07-22：原 paddingBottom: max(0.75rem, env(safe-area-inset-bottom)) = 12px，被父级 Tab Bar 56px 遮挡
-                改 pb-20 (80px) + iOS safe-area 兜底，确保输入框在任何设备上都不被底部 Tab Bar 盖住 */}
-            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2 pb-20"
-                style={{ paddingBottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
+            {/* 2026-07-22：父 WeChat 已经留出 Tab Bar 高度，NotebookDetail 内部只需 iOS safe-area 兜底
+                之前 pb-20 (80px) 太大，输入框和 Tab Bar 之间留了空隙，暮色要"紧贴父标签栏" */}
+            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <input
                     type="text"
                     value={replyText}

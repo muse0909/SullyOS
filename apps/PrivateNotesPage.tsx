@@ -17,6 +17,7 @@ import NotebookBackground, {
     setStoredNotebookBuiltin,
     BuiltinBg,
 } from '../components/notes/NotebookBackground';
+import { PRIVATE_NOTES_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
 
 const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { characters, activeCharacterId } = useOS();
@@ -222,13 +223,49 @@ interface SettingsDrawerProps {
     onDateFromChange: (v: string) => void;
     dateTo: string;
     onDateToChange: (v: string) => void;
+    onCustomPromptChange?: () => void;  // 2026-07-22：保存自定义 prompt 后通知父组件刷新
 }
 
 const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
     onClose, bgUrl, bgBuiltin, onBgChange,
     keyword, onKeywordChange,
     dateFrom, onDateFromChange, dateTo, onDateToChange,
+    onCustomPromptChange,
 }) => {
+    // 2026-07-22：自定义 prompt 状态（写进 localStorage，chatPrompts.ts 实时读）
+    const [customPrompt, setCustomPrompt] = useState<string>('');
+    const [statusMsg, setStatusMsg] = useState<string>('');
+    useEffect(() => {
+        try {
+            const v = localStorage.getItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
+            if (v) setCustomPrompt(v);
+        } catch { /* ignore */ }
+    }, []);
+
+    const handleSave = () => {
+        try {
+            const v = customPrompt.trim();
+            if (v) {
+                localStorage.setItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY, v);
+                setStatusMsg('已保存');
+            } else {
+                localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
+                setStatusMsg('已清空');
+            }
+            onCustomPromptChange?.();
+            setTimeout(() => setStatusMsg(''), 1500);
+        } catch (e: any) {
+            setStatusMsg('保存失败：' + (e?.message || '未知错误'));
+        }
+    };
+    const handleReset = () => {
+        setCustomPrompt('');
+        try { localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY); } catch {}
+        onCustomPromptChange?.();
+        setStatusMsg('已恢复默认（点保存生效）');
+        setTimeout(() => setStatusMsg(''), 2000);
+    };
+
     return (
         <div
             className="absolute inset-0 z-50 flex"
@@ -271,6 +308,34 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             builtin={bgBuiltin}
                             onChange={onBgChange}
                         />
+                    </section>
+
+                    {/* 2026-07-22：自定义提示词（在背景下面，跟其他设置放一起） */}
+                    <section>
+                        <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">AI 写小纸条的指导</div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                            留空用默认。想让 AI 按你希望的方式写，就在这里改。不改的话，默认会把这条提示词发给 AI：「这是一张你随手撕下来塞在 {userProfile.name} 口袋里的纸条，站在"你"的角度写，不是分析报告」。
+                        </p>
+                        <textarea
+                            value={customPrompt}
+                            onChange={(e) => setCustomPrompt(e.target.value)}
+                            placeholder="留空 = 用默认"
+                            className="w-full h-32 bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-[11px] leading-relaxed focus:bg-white focus:border-slate-300 transition-all resize-y"
+                        />
+                        <div className="flex gap-2 mt-2">
+                            <button
+                                onClick={handleSave}
+                                className="flex-1 py-2 rounded-xl font-bold text-white shadow-md bg-gradient-to-br from-emerald-400 to-teal-500 active:scale-95 transition-all text-xs"
+                            >
+                                {statusMsg || '保存'}
+                            </button>
+                            <button
+                                onClick={handleReset}
+                                className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-all"
+                            >
+                                恢复默认
+                            </button>
+                        </div>
                     </section>
                 </div>
             </div>

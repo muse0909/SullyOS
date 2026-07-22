@@ -156,14 +156,15 @@ const FullXiaoZhiTiaoCard: React.FC<{
 }> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     return (
         <div
-            className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] ${note.styleImageUrl ? 'text-center' : ''}`}
+            className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] text-center bg-no-repeat ${note.styleImageUrl ? 'bg-slate-50' : ''}`}
             style={
                 note.styleImageUrl
-                    // 2026-07-22：图当背景，文字居中（暮色画的图中间留大块空白）
+                    // 2026-07-22：contain 完整显示不裁切（暮色图边角装饰不能被 cover 裁掉）
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
-                        backgroundSize: 'cover',
+                        backgroundSize: 'contain',
                         backgroundPosition: 'center',
+                        backgroundRepeat: 'no-repeat',
                     }
                     // 无图时纯白兜底（等暮色给图后换默认）
                     : { backgroundColor: '#ffffff' }
@@ -171,11 +172,13 @@ const FullXiaoZhiTiaoCard: React.FC<{
         >
             {charName && (
                 <div className="flex items-center justify-end mb-3 text-[11px] font-bold">
-                    <span className={note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-500'}>— {charName}</span>
+                    {/* 白底图用深色字 + 浅色 drop-shadow */}
+                    <span className={note.styleImageUrl ? 'text-slate-700 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-500'}>— {charName}</span>
                 </div>
             )}
 
-            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-800'}`}>
+            {/* 白底图用深色字 + 浅色 drop-shadow（清晰可读） */}
+            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-slate-800 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-800'}`}>
                 {note.content}
             </div>
 
@@ -184,13 +187,13 @@ const FullXiaoZhiTiaoCard: React.FC<{
                 {!hideReplyButton && onReplyClick && (
                     <button
                         onClick={onReplyClick}
-                        className={`w-7 h-7 rounded-full backdrop-blur shadow-sm border flex items-center justify-center active:scale-95 transition-transform text-[11px] ${note.styleImageUrl ? 'bg-white/30 border-white/40' : 'bg-white/85 border-white/60'}`}
+                        className={`w-7 h-7 rounded-full backdrop-blur shadow-sm border flex items-center justify-center active:scale-95 transition-transform text-[11px] ${note.styleImageUrl ? 'bg-white/70 border-slate-200' : 'bg-white/85 border-white/60'}`}
                         title="回复"
                     >
                         💬
                     </button>
                 )}
-                <span className={`text-[10px] font-mono ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-400'}`}>
+                <span className={`text-[10px] font-mono ${note.styleImageUrl ? 'text-slate-600 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-400'}`}>
                     {new Date(note.timestamp).toLocaleString('zh-CN')}
                 </span>
             </div>

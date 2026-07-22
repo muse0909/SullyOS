@@ -35,14 +35,15 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
         >
             {/* 便签纸 */}
             <div
-                className="relative w-full h-48 rounded-2xl shadow-md p-3.5 pt-7 border border-white/40"
+                className="relative w-full h-48 rounded-2xl shadow-md p-3.5 pt-7 border border-white/40 bg-no-repeat"
                 style={
                     note.styleImageUrl
-                        // 2026-07-22：图当背景，文字居中（暮色画的图中间留大块空白）
+                        // 2026-07-22：图当背景，contain 完整显示不裁切（暮色图边角装饰不能被 cover 裁掉）
                         ? {
                             backgroundImage: `url(${note.styleImageUrl})`,
-                            backgroundSize: 'cover',
+                            backgroundSize: 'contain',
                             backgroundPosition: 'center',
+                            backgroundRepeat: 'no-repeat',
                         }
                         // 2026-07-22：无图时纯白便签（暮色说删 5 type 视觉，这里留简洁兜底）
                         : { backgroundColor: '#ffffff' }
@@ -50,14 +51,14 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
             >
                 {/* 顶部时间 */}
                 <div className="flex items-center justify-end mb-2 text-[10px] font-bold">
-                    <span style={note.styleImageUrl ? { color: 'rgba(255,255,255,0.85)' } : { color: '#94a3b8' }}>
+                    <span style={note.styleImageUrl ? { color: '#475569' } : { color: '#94a3b8' }}>
                         {new Date(note.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
                     </span>
                 </div>
 
-                {/* 内容预览 */}
+                {/* 内容预览 — 白底图用深色字 + 浅色 drop-shadow（清晰可读） */}
                 <div
-                    className={`text-[11px] leading-relaxed line-clamp-4 overflow-hidden ${note.styleImageUrl ? 'text-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-700'}`}
+                    className={`text-[11px] leading-relaxed line-clamp-4 overflow-hidden text-center ${note.styleImageUrl ? 'text-slate-800 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-700'}`}
                 >
                     {note.content}
                 </div>
@@ -65,7 +66,7 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                 {/* 底部作者 + 回复数 */}
                 <div
                     className="absolute bottom-2 left-3.5 right-3.5 flex items-center justify-between text-[9px] font-medium"
-                    style={note.styleImageUrl ? { color: 'rgba(255,255,255,0.85)' } : { color: '#94a3b8' }}
+                    style={note.styleImageUrl ? { color: '#475569' } : { color: '#94a3b8' }}
                 >
                     {charName ? <span>— {charName}</span> : <span />}
                     {(note.replies?.length || 0) > 0 && <span>💬 {note.replies!.length}</span>}

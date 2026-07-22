@@ -357,6 +357,28 @@ export interface NoteReply {
     timestamp: number;
 }
 
+// ─── 2026-07-22：小纸条（独立于 RoomNote / 私密记事）
+//   暮色要求"小纸条完全脱离小小窝 app" — 单独数据模型 + 单独 token + 单独 prompt
+//   注：跟 RoomNote 结构相似但独立存表 / 独立 AI 写入路径，互不可见
+export interface XiaoZhiTiao {
+    id: string;
+    charId: string;
+    timestamp: number;
+    content: string;
+    type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
+    // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
+    styleImageUrl?: string;
+    replies?: XiaoZhiTiaoReply[];
+}
+
+export interface XiaoZhiTiaoReply {
+    id: string;
+    parentNoteId: string;
+    author: 'user' | 'character';
+    content: string;
+    timestamp: number;
+}
+
 export interface ScheduleSlot {
     startTime: string;    // "08:00"
     activity: string;     // "晨跑"

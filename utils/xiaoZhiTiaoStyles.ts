@@ -10,7 +10,9 @@
 // 写入时机：useChatAI 解析 [[XIAO_ZHI_TIAO:...|type]] 时调 pickRandomXiaoZhiTiaoImage
 //   - 读 localStorage → activeGroup 下的 urls → 随机选一张
 //   - 存到 XiaoZhiTiao.styleImageUrl
-// 渲染时机：XiaoZhiTiaoCard / FullXiaoZhiTiaoCard 看 note.styleImageUrl 决定走背景图还是 type 颜色
+// 渲染时机：XiaoZhiTiaoCard / FullXiaoZhiTiaoCard 看 note.styleImageUrl 决定走背景图还是纯白兜底
+
+import { DEFAULT_XIAO_ZHI_TIAO_IMAGES, DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME } from './xiaoZhiTiaoDefaults';
 
 export const XIAO_ZHI_TIAO_STYLES_STORAGE_KEY = 'sullyos_xiaoZhiTiaoStyles';
 
@@ -21,18 +23,35 @@ export interface XiaoZhiTiaoStyles {
 
 const EMPTY_STYLES: XiaoZhiTiaoStyles = { groups: {}, activeGroup: null };
 
-/** 安全读：解析失败 / quota / 缺字段都 fallback 空对象 */
+/** 安全读：解析失败 / quota / 缺字段都 fallback 空对象
+ *  2026-07-22：暮色默认组（手绘便签）首次访问 / 老 user 没激活组时自动预置 */
 export function getStoredXiaoZhiTiaoStyles(): XiaoZhiTiaoStyles {
     try {
         const raw = localStorage.getItem(XIAO_ZHI_TIAO_STYLES_STORAGE_KEY);
-        if (!raw) return { ...EMPTY_STYLES };
-        const parsed = JSON.parse(raw);
-        return {
-            groups: (parsed?.groups && typeof parsed.groups === 'object') ? parsed.groups : {},
-            activeGroup: typeof parsed?.activeGroup === 'string' ? parsed.activeGroup : null,
-        };
+        let stored: XiaoZhiTiaoStyles;
+        if (!raw) {
+            stored = { ...EMPTY_STYLES };
+        } else {
+            const parsed = JSON.parse(raw);
+            stored = {
+                groups: (parsed?.groups && typeof parsed.groups === 'object') ? parsed.groups : {},
+                activeGroup: typeof parsed?.activeGroup === 'string' ? parsed.activeGroup : null,
+            };
+        }
+        // 自动补默认组（暮色手绘便签）
+        if (!stored.groups[DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME]) {
+            stored.groups[DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME] = [...DEFAULT_XIAO_ZHI_TIAO_IMAGES];
+        }
+        if (!stored.activeGroup) {
+            stored.activeGroup = DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME;
+        }
+        return stored;
     } catch {
-        return { ...EMPTY_STYLES };
+        // quota / parse fail：fallback 默认组
+        return {
+            groups: { [DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME]: [...DEFAULT_XIAO_ZHI_TIAO_IMAGES] },
+            activeGroup: DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME,
+        };
     }
 }
 

@@ -157,16 +157,17 @@ const FullXiaoZhiTiaoCard: React.FC<{
 }> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     return (
         <div
-            className="relative w-full rounded-2xl shadow-xl min-h-[320px] overflow-hidden bg-no-repeat"
+            // 暮色原图直接显示，不加圆角/边框/阴影（暮色不要被"框起来"）
+            className="relative w-full min-h-[320px] overflow-hidden bg-no-repeat"
             style={
                 note.styleImageUrl
-                    // contain 完整显示不裁切（暮色图边角装饰不能被 cover 裁掉）
+                    // contain 完整显示不裁切
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
                         backgroundSize: 'contain',
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
-                        backgroundColor: '#f8fafc',  // 浅灰底（contain 模式图外区域颜色，避免透明看着脏）
+                        backgroundColor: '#f8fafc',  // contain 模式图外浅灰
                     }
                     // 无图时纯白兜底
                     : { backgroundColor: '#ffffff' }

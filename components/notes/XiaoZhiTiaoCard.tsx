@@ -33,9 +33,9 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.transform = `rotate(0deg) scale(1.03)`; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = `rotate(${rotateDeg}deg)`; }}
         >
-            {/* 便签纸 */}
+            {/* 便签纸：暮色原图直接显示，不加圆角/边框/阴影（暮色不要被"框起来"） */}
             <div
-                className="relative w-full h-48 rounded-2xl shadow-md overflow-hidden border border-white/40 bg-no-repeat"
+                className="relative w-full h-48 overflow-hidden bg-no-repeat"
                 style={
                     note.styleImageUrl
                         // contain 完整显示不裁切

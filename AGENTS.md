@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-23 | 小纸条 — 详情/列表卡清理：列表卡去日期/作者/回复数 3→5 行 + 详情页回复胶囊底部居中去作者名 | [`changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md`](./changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md) |
 | 2026-07-22 | 收藏页清理：关掉「语音数据已丢失」toast 堆叠 + 取消语音自动加入收藏 | [`changelogs/2026-07-22-favorites-voice-cleanup.md`](./changelogs/2026-07-22-favorites-voice-cleanup.md) |
 | 2026-07-22 | 小纸条 — 完全脱离小小窝 app（双系统方案 A：数据/hook/组件/token/prompt/store 全独立） | [`changelogs/2026-07-22-xiaozhitiao-decouple.md`](./changelogs/2026-07-22-xiaozhitiao-decouple.md) |
 | 2026-07-22 | 私密记事 — 第六轮：还原"私密记事" UI 文字（小纸条仅留发现页）| [`changelogs/2026-07-22-privatenotes-round6.md`](./changelogs/2026-07-22-privatenotes-round6.md) |

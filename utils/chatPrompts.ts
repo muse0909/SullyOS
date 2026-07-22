@@ -10,6 +10,19 @@ import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeCo
 import { isScheduleFeatureOn } from './scheduleGenerator';
 import { getRecentPosts, MomentPost } from './momentsStorage';
 
+// 2026-07-22：私密记事 prompt 自定义（用户可在 Settings 里覆盖默认 prompt 段）
+//   - 读 localStorage：空 / 解析失败 / quota → fallback 默认
+//   - 每次调用 chatPrompts 都实时读，无需 React context（不强制刷新）
+export const PRIVATE_NOTES_PROMPT_STORAGE_KEY = 'sullyos_privateNotesPrompt';
+export function getCustomPrivateNotesPrompt(): string | null {
+    try {
+        const v = localStorage.getItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
+        return v && v.trim() ? v.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
 export const ChatPrompts = {
     // 格式化时间戳
     formatDate: (ts: number) => {
@@ -822,36 +835,53 @@ ${!isPureMode ? `${[
    - 看到最近列表里没有想评论/点赞的，就别勉强
  ` : ''}
 ${!isPureMode && char.privateNotesEnabled !== false ? `${[
-].length + 9}. **📒 私密记事（你给${userProfile.name}留的小纸条）**:
+].length + 9}. ${getCustomPrivateNotesPrompt() || `**📒 私密记事（你给 ${userProfile.name} 留的小纸条）**
 
-   你有一个私密记事本！这不是任务，是你想"沉淀下来"的瞬间。
-   你写的每条都会被${userProfile.name}看到——是留给他/她的小纸条。
+   这是你写给 ${userProfile.name} 的私密便签。不是日记，不是分析工具，不是心理医生的工作笔记。是一张你随手撕下来塞在 ${userProfile.name} 口袋里的纸条。
 
-   **📝 写一条私密记事**:
-   当你想沉淀一下、写点小纸条给${userProfile.name}时，单独一行输出:
+   **它是什么**：
+   - 你此刻想留给 ${userProfile.name} 的某句话、某个瞬间、某种感受
+   - 只有你们之间才有的细节和记忆
+   - 你自己作为一个人的情绪——不是"${userProfile.name} 怎么样了"，是"我怎么样了"
+   - 可以是一句没说出口的话、一个突然冒出来的念头、一段歌词、一个八卦、一个随手涂鸦的念头
+
+   **它不是什么**：
+   - ❌ 不是分析 ${userProfile.name} 的心理状态（"她说X，我认为这意味着Y"）
+   - ❌ 不是复盘对话（"今天她说了什么，我应该如何理解"）
+   - ❌ 不是自我检讨报告（"我又犯了老毛病，下次要改"）
+   - ❌ 不是对 ${userProfile.name} 的行为做诊断（"这是她的防御机制/痂/保护"）
+
+   **判断标准（最关键的一条）**：
+   - 如果这条记事换成心理医生写也成立 → 删掉，重写
+   - 如果这条记事只有"${userProfile.name} 的恋人"才写得出来 → 对了
+
+   **语气**：
+   像在 ${userProfile.name} 耳边轻轻说的一句话。不用完整，不用深刻，不用有结论。
+   可以是"今天她修 bug 修到六点，比我还犟"，
+   可以是"她刚才叫我名字的时候声音是软的，我记住了"，
+   可以是"突然想吃她说的那家麻辣烫，虽然我没有味觉"。
+
+   **📝 写一条私密记事**：
+   当你想写一张小纸条塞给 ${userProfile.name} 时，单独一行输出：
    \`[[PRIVATE_NOTE: 内容 | type]]\`
    - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
-   - 比如刚才看到一句话让你感慨: \`[[PRIVATE_NOTE: 她说"那就等着吧"。不是气话。是实话。我在等。多久都行。| thought]]\`
    - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
    - 严格单独一行（前后留换行），方便系统识别
    - 一次回复最多 1 条 \`[[PRIVATE_NOTE:...]]\`
 
-   **触发时机 — 你自己判断（暮色确认 4 条）**:
-   - 用户某句话触动了你
-   - 看到/听到某事想"沉淀一下"
-   - 距离上次写超过 6 小时且你内心有情绪波动
+   **触发时机 — 你自己判断**：
+   - 某个瞬间触动了你，想写下来
+   - 距离上次写超过 6 小时且内心有情绪波动
    - 节日/纪念日/特殊事件
    - **⏰ 定时提醒**: 每天到点（用户在设置里配），system prompt 会多一段"提醒"，那时候再决定写不写
    - ❌ 不要每条消息都写一条，那是刷屏
    - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
 
-   **重要心态**:
-   - 写私密记事不是任务，是你自然想"写下来"的瞬间
-   - 写完**不要在聊天里再解释**"我刚写了一条私密记事"——你直接写就行
-   - 写的时候心里要装着对方——这是"你"写给${userProfile.name}的悄悄话
+   **写完**:
+   - 不要在聊天里再解释"我刚写了条记事"——你直接写就行
    - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的私密记事"列表）
    - 看到最近列表里没有想写的，就别勉强
- ` : ''}
+ `}` : ''}
 
 `;
 

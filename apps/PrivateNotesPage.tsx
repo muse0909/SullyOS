@@ -168,7 +168,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             )}
 
             {/* 列表 */}
-            <div className="flex-1 overflow-y-auto px-4 pb-6 no-scrollbar">
+            <div className="flex-1 overflow-y-auto px-4 pt-3 pb-6 no-scrollbar">
                 {loading ? (
                     <div className="flex items-center justify-center h-40 text-xs text-slate-400">加载中…</div>
                 ) : filtered.length === 0 ? (

@@ -2,9 +2,10 @@
 // 复用 NotebookCard 的便签视觉，放大版 + 完整内容
 // 底部：回复列表 + 回复输入框
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight } from '@phosphor-icons/react';
 import { RoomNote, NoteReply } from '../../types';
+import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
 
 interface NotebookDetailProps {
     note: RoomNote;
@@ -17,6 +18,15 @@ interface NotebookDetailProps {
 const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack, onDelete, onAddReply }) => {
     const [replyText, setReplyText] = useState('');
     const [submitting, setSubmitting] = useState(false);
+
+    // 2026-07-22：背景图跟列表页同步（之前硬编码奶油色，看不到用户自己上传的图）
+    const [bgUrl, setBgUrl] = useState<string | null>(null);
+    const [bgBuiltin, setBgBuiltin] = useState<BuiltinBg>('cream-paper');
+    useEffect(() => {
+        const stored = getStoredNotebookBg();
+        if (stored.url) setBgUrl(stored.url);
+        if (stored.builtin) setBgBuiltin(stored.builtin);
+    }, []);
 
     const submitReply = async () => {
         const text = replyText.trim();
@@ -31,7 +41,18 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
     };
 
     return (
-        <div className="absolute inset-0 flex flex-col bg-[#f3eee5]">
+        <div className="absolute inset-0 flex flex-col">
+            {/* 背景层（跟列表页共用 localStorage：sullyos_notebook_bg / sullyos_notebook_bg_default） */}
+            {bgUrl ? (
+                <div
+                    className="absolute inset-0 bg-cover bg-center"
+                    style={{ backgroundImage: `url(${bgUrl})` }}
+                />
+            ) : (
+                <div className="absolute inset-0" style={BUILTIN_BG[bgBuiltin].css} />
+            )}
+            {/* 内容层 */}
+            <div className="relative flex-1 flex flex-col">
             {/* 顶部 */}
             <div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur border-b border-white/40 shrink-0">
                 <button
@@ -76,8 +97,10 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
             </div>
 
             {/* 底部回复输入 */}
-            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2"
-                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+            {/* 2026-07-22：原 paddingBottom: max(0.75rem, env(safe-area-inset-bottom)) = 12px，被父级 Tab Bar 56px 遮挡
+                改 pb-20 (80px) + iOS safe-area 兜底，确保输入框在任何设备上都不被底部 Tab Bar 盖住 */}
+            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2 pb-20"
+                style={{ paddingBottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
                 <input
                     type="text"
                     value={replyText}
@@ -96,6 +119,7 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                     <PaperPlaneRight size={16} weight="fill" />
                 </button>
             </div>
+            </div>{/* end relative flex-1 内容层 */}
         </div>
     );
 };
@@ -126,7 +150,8 @@ const FullNoteCard: React.FC<{ note: RoomNote; charName?: string }> = ({ note, c
         >
             {/* 装饰物（按 type） */}
             {type === 'thought' && (
-                <div className="absolute top-3 left-3 w-7 h-7 rounded-full shadow-md"
+                // 2026-07-22：原 top-3 left-3 跟便签内「感想」徽章重叠，挪到外侧（仿 NotebookCard 列表卡片的位置）
+                <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full shadow-md z-10"
                     style={{ background: 'radial-gradient(circle at 30% 30%, #60a5fa, #2563eb)', border: '2px solid #1e40af' }} />
             )}
             {type === 'doodle' && (

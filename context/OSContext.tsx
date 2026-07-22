@@ -1487,6 +1487,8 @@ if (!isVisible || !isChattingWithThisChar) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
               // 暮色 2026-07-22：失败时把 reqBody + 错误存到 localStorage，下次复现能直接看到具体请求体
               //   控制台取：copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))
+              const errMessage = (err as Error)?.message || String(err);
+              const totalBodyChars = JSON.stringify(reqBody).length;
               try {
                   const errLog = {
                       ts: new Date().toISOString(),
@@ -1496,12 +1498,12 @@ if (!isVisible || !isChattingWithThisChar) {
                       model: api.model,
                       msgCount: reqBody.messages?.length || 0,
                       systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
-                      totalBodyChars: JSON.stringify(reqBody).length,
+                      totalBodyChars,
                       firstMsgRole: reqBody.messages?.[0]?.role,
                       lastMsgRole: reqBody.messages?.[reqBody.messages.length - 1]?.role,
-                      errMessage: (err as Error)?.message,
+                      errMessage,
                       errStack: (err as Error)?.stack?.slice(0, 600),
-                      reqBody,  // 完整 body，包括 system 顶层字段（Claude 协议）
+                      reqBody,  // 完整 body
                   };
                   localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
                   console.warn(
@@ -1510,6 +1512,19 @@ if (!isVisible || !isChattingWithThisChar) {
                       'color:#dc2626;font-weight:bold',
                   );
               } catch { /* quota 忽略 */ }
+
+              // 暮色 2026-07-22：也推一条系统消息进聊天流（暮色不会 F12）
+              //   内容：model + 错误体 + 关键诊断字段，让暮色截图聊天就能看到 400 详情
+              //   排查完成后改回只 console（不要污染聊天流）
+              try {
+                  const diagText = `[主动消息失败: model=${api.model} | body=${totalBodyChars}字符 | msgs=${reqBody.messages?.length || 0}条 | firstMsgRole=${reqBody.messages?.[0]?.role} | 错误: ${errMessage.slice(0, 300)}]`;
+                  await DB.saveMessage({
+                      charId,
+                      role: 'system',
+                      type: 'text',
+                      content: diagText,
+                  });
+              } catch { /* 推不动也别影响外层 */ }
           } finally {
               proactiveRunningRef.current = false;
               setProactiveComposingChars(prev => {

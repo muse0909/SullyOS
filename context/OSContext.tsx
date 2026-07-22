@@ -1408,10 +1408,24 @@ if (!isVisible || !isChattingWithThisChar) {
               // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
               const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
 
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(
+              const systemPromptResult = await ChatPrompts.buildSystemPrompt(
                   char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
                   currentRealtimeConfig, cachedInnerState,
               );
+              // 暮色 2026-07-22：buildSystemPrompt 现在返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}
+              //   之前直接赋给 content 是个对象，京东云 OpenAI 兼容拒收（400）
+              //   修法：拼回 string（仿 useChatAI line 940）
+              //   dynamicTail.realtimeText 给主动消息用（"现在几点了"），innerState 情绪延续，privateNotes 主动消息不需要
+              //   6 段末尾 push 主动消息不需要（max_tokens: 500 承受不起）
+              const sp = systemPromptResult as any;
+              const systemPromptParts = [
+                  sp.bp1Tools,
+                  sp.bp2Rules,
+                  sp.bp3Context,
+                  sp.dynamicTail?.realtimeText,
+                  sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
+              ].filter((p: string) => p && p.trim());
+              const systemPrompt = systemPromptParts.join('\n\n');
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
@@ -1540,7 +1554,7 @@ if (!isVisible || !isChattingWithThisChar) {
                       protocol: apiProtocol,
                       model: api.model,
                       msgCount: reqBody?.messages?.length || 0,
-                      systemChars: 0,  // systemPrompt 在 try 块里 catch 访问不到，省略
+                      systemChars: systemPrompt.length,  // 现在 systemPrompt 是 string 了，能拿到长度
                       totalBodyChars,
                       firstMsgRole: reqBody?.messages?.[0]?.role,
                       lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,

@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-20 | 云端同步（多端互通）—— 电脑手机共享聊天记录 + 记忆宫殿 | [`changelogs/2026-07-20-cloud-sync-multi-device.md`](./changelogs/2026-07-20-cloud-sync-multi-device.md) |
+| 2026-07-21 | memoryLinks 支持按节点 topN 修剪 — 清理历史累积的稠密关联图 | [`changelogs/2026-07-21-memory-links-topn-prune.md`](./changelogs/2026-07-21-memory-links-topn-prune.md) |
 | 2026-07-21 | 主动消息 runProactive 改用 safeFetchJson — 修中转站 502 假象 CORS bug | [`changelogs/2026-07-21-proactive-uses-safefetch.md`](./changelogs/2026-07-21-proactive-uses-safefetch.md) |
 | 2026-07-21 | 主动消息加 1 分钟测试档（之前最小 30 分钟） | [`changelogs/2026-07-21-proactive-1min-test-option.md`](./changelogs/2026-07-21-proactive-1min-test-option.md) |
 | 2026-07-21 | 云端同步默认不启动 — 停止自动打 ping（手动模式） | [`changelogs/2026-07-21-cloud-sync-stop-autoping.md`](./changelogs/2026-07-21-cloud-sync-stop-autoping.md) |

@@ -1381,40 +1381,17 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
-              // 暮色 2026-07-22：Claude 协议兼容（仿 useChatAI 7/17 那个 fix）
-              //   根因：safeApi claude 分支只改 URL + headers，body 还是 OpenAI 格式
-              //         messages[0] 是 role:'system' → Anthropic 报 400
-              //   修法：claude 协议下
-              //     - system 走顶层 system 字段（text block）
-              //     - history 里的 system 角色（连接中断等）转 user + [系统消息] 前缀
-              const apiProtocol = (api as any).protocol ?? 'openai';
-              const useClaudeProtocol = apiProtocol === 'claude';
-              let reqBody: any;
-              if (useClaudeProtocol) {
-                  const cleanedMessages = fullMessages.map((m: any) => {
-                      if (m.role !== 'system') return m;
-                      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                      return { role: 'user', content: `[系统消息] ${text}` };
-                  }).filter((m: any) => m.role !== 'system'); // 顶层那条 system 已经在 systemPrompt 里，不进 messages
-                  reqBody = {
-                      model: api.model,
-                      messages: cleanedMessages,
-                      system: [{ type: 'text', text: systemPrompt }],
-                      temperature: 0.8,
-                      max_tokens: 500,
-                  };
-              } else {
-                  reqBody = {
-                      model: api.model,
-                      messages: fullMessages,
-                      temperature: 0.8,
-                      max_tokens: 500,
-                  };
-              }
+              const reqBody = {
+                  model: api.model,
+                  messages: fullMessages,
+                  temperature: 0.8,
+                  max_tokens: 500,
+              };
 
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
               // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
               // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
+              const apiProtocol = (api as any).protocol ?? 'openai';
               const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
                   method: 'POST',
                   headers: {

@@ -147,74 +147,35 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
     );
 };
 
-// 详情页用的大版便签
+// 详情页用的大版便签（2026-07-22：5 type 视觉全部废弃，简化为图背景 + 纯白兜底）
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
     charName?: string;
     onReplyClick?: () => void;
     hideReplyButton?: boolean;
 }> = ({ note, charName, onReplyClick, hideReplyButton }) => {
-    const type = note.type || 'thought';
-    const isSearch = type === 'search';
-
     return (
         <div
             className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] ${note.styleImageUrl ? 'text-center' : ''}`}
             style={
                 note.styleImageUrl
+                    // 2026-07-22：图当背景，文字居中（暮色画的图中间留大块空白）
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
                         backgroundSize: 'cover',
                         backgroundPosition: 'center',
                     }
-                    : {
-                        backgroundColor: isSearch ? '#d4a574' : (
-                            type === 'doodle' ? '#ffffff' :
-                            type === 'lyric' ? '#fce7f3' :
-                            type === 'gossip' ? '#fef3c7' :
-                            type === 'thought' ? '#dbeafe' : '#ffffff'
-                        ),
-                        ...(type === 'doodle' && {
-                            backgroundImage: 'linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)',
-                            backgroundSize: '20px 20px',
-                        }),
-                        ...(type === 'gossip' && {
-                            backgroundImage: 'repeating-linear-gradient(0deg, transparent 0px, transparent 30px, #fde68a 30px, #fde68a 31px)',
-                        }),
-                    }
+                    // 无图时纯白兜底（等暮色给图后换默认）
+                    : { backgroundColor: '#ffffff' }
             }
         >
-            {type === 'thought' && (
-                <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full shadow-md z-10"
-                    style={{ background: 'radial-gradient(circle at 30% 30%, #60a5fa, #2563eb)', border: '2px solid #1e40af' }} />
-            )}
-            {type === 'doodle' && (
-                <div className="absolute top-0 right-0 w-0 h-0"
-                    style={{ borderTop: '28px solid #fbcfe8', borderLeft: '28px solid transparent' }} />
-            )}
-            {type === 'search' && (
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full"
-                    style={{ background: 'radial-gradient(circle at 30% 30%, #4b5563, #111827)' }} />
-            )}
-            {type === 'lyric' && (
-                <div className="absolute top-1.5 left-1/2 -translate-x-1/2 w-4 h-8"
-                    style={{ border: '2px solid #64748b', borderRadius: '6px' }} />
-            )}
-            {type === 'gossip' && (
-                <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-16 h-4"
-                    style={{ backgroundColor: 'rgba(255,255,255,0.7)', border: '1px solid rgba(0,0,0,0.05)' }} />
+            {charName && (
+                <div className="flex items-center justify-end mb-3 text-[11px] font-bold">
+                    <span className={note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-500'}>— {charName}</span>
+                </div>
             )}
 
-            <div className="flex items-center justify-between mb-3 text-[11px] font-bold">
-                <span className={`px-2 py-0.5 rounded ${isSearch ? 'bg-black/15 text-stone-100' : note.styleImageUrl ? 'bg-white/80 text-slate-700' : 'bg-white/70 text-slate-700'}`}>
-                    {({ thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦' } as Record<string, string>)[type]}
-                </span>
-                {charName && (
-                    <span className={isSearch ? 'text-stone-100' : note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-500'}>— {charName}</span>
-                )}
-            </div>
-
-            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
+            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-800'}`}>
                 {note.content}
             </div>
 

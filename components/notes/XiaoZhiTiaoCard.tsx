@@ -33,43 +33,40 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.transform = `rotate(0deg) scale(1.03)`; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = `rotate(${rotateDeg}deg)`; }}
         >
-            {/* 便签纸：暮色原图直接显示，不加圆角/边框/阴影（暮色不要被"框起来"） */}
+            {/* 便签纸：暮色原图直接显示（不加任何底/框/阴影） */}
             <div
-                className="relative w-full h-48 overflow-hidden bg-no-repeat"
+                className="relative w-full h-48 bg-no-repeat"
                 style={
                     note.styleImageUrl
-                        // contain 完整显示不裁切
+                        // 透明底 PNG 直接显示，不加 backgroundColor
                         ? {
                             backgroundImage: `url(${note.styleImageUrl})`,
                             backgroundSize: 'contain',
                             backgroundPosition: 'center',
                             backgroundRepeat: 'no-repeat',
-                            backgroundColor: '#f8fafc',  // contain 模式图外浅灰
                         }
-                        // 无图时纯白
+                        // 无图兜底
                         : { backgroundColor: '#ffffff' }
                 }
             >
-                {/* 文字层：绝对居中（以图中心为原点），半透明白底让字清晰，不压边框 */}
-                <div className="absolute inset-0 flex items-center justify-center p-4 pb-6">
-                    <div className={`max-w-[65%] text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm rounded-lg px-2 py-1' : ''}`}>
-                        <div className={`text-[10px] leading-snug line-clamp-3 overflow-hidden ${note.styleImageUrl ? 'text-slate-800' : 'text-slate-700'}`}>
+                {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
+                <div className="absolute inset-0 flex items-center justify-center p-5 pb-6">
+                    <div className="max-w-[60%] text-center">
+                        <div className="text-[10px] leading-snug line-clamp-3 overflow-hidden text-slate-800">
                             {note.content}
                         </div>
                     </div>
                 </div>
 
-                {/* 顶部时间（右上角，浮在图上） */}
-                <div className="absolute top-1.5 right-2 z-10">
-                    <span className="text-[9px] font-mono text-slate-500 bg-white/70 backdrop-blur-sm px-1 py-0.5 rounded">
-                        {new Date(note.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
-                    </span>
+                {/* 顶部时间（浮在图上，纯文字无框） */}
+                <div className="absolute top-1.5 right-2 z-10 text-[9px] font-mono text-slate-500">
+                    {new Date(note.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
                 </div>
 
-                {/* 底部作者 + 回复数 */}
-                <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between text-[8px] font-medium z-10">
-                    {charName ? <span className="text-slate-500 bg-white/70 backdrop-blur-sm px-1 py-0.5 rounded">— {charName}</span> : <span />}
-                    {(note.replies?.length || 0) > 0 && <span className="text-slate-500 bg-white/70 backdrop-blur-sm px-1 py-0.5 rounded">💬 {note.replies!.length}</span>}
+                {/* 底部作者 + 回复数（纯文字无框） */}
+                <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between text-[8px] font-medium z-10 text-slate-500">
+                    {charName ? <span>— {charName}</span> : <span />}
+                    {(note.replies?.length || 0) > 0 && <span>💬 {note.replies!.length}</span>}
                 </div>
             </div>
 

@@ -157,25 +157,24 @@ const FullXiaoZhiTiaoCard: React.FC<{
 }> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     return (
         <div
-            // 暮色原图直接显示，不加圆角/边框/阴影（暮色不要被"框起来"）
-            className="relative w-full min-h-[320px] overflow-hidden bg-no-repeat"
+            // 暮色原图直接显示（不加底/框/阴影）
+            className="relative w-full min-h-[320px] bg-no-repeat"
             style={
                 note.styleImageUrl
-                    // contain 完整显示不裁切
+                    // 透明底 PNG 直接显示
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
                         backgroundSize: 'contain',
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
-                        backgroundColor: '#f8fafc',  // contain 模式图外浅灰
                     }
-                    // 无图时纯白兜底
+                    // 无图兜底
                     : { backgroundColor: '#ffffff' }
             }
         >
-            {/* 文字层：绝对居中（以图中心为原点），给字加半透明白底（清晰可读 + 不压边框） */}
+            {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
             <div className="absolute inset-0 flex items-center justify-center p-6 pb-14">
-                <div className={`max-w-[60%] rounded-2xl px-4 py-3 text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm shadow-md' : ''}`}>
+                <div className="max-w-[60%] text-center">
                     {charName && (
                         <div className="text-[10px] font-bold text-slate-500 mb-1">— {charName}</div>
                     )}
@@ -185,18 +184,18 @@ const FullXiaoZhiTiaoCard: React.FC<{
                 </div>
             </div>
 
-            {/* 右下角时间戳 + 回复按钮 */}
+            {/* 右下角时间戳 + 回复按钮（纯文字 + 半透明按钮，不加框背景） */}
             <div className="absolute bottom-2 right-3 flex items-center gap-2 z-10">
                 {!hideReplyButton && onReplyClick && (
                     <button
                         onClick={onReplyClick}
-                        className="w-7 h-7 rounded-full bg-white/85 backdrop-blur shadow-sm border border-white/60 flex items-center justify-center active:scale-95 transition-transform text-[11px]"
+                        className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-transform text-[11px] bg-white/40"
                         title="回复"
                     >
                         💬
                     </button>
                 )}
-                <span className="text-[10px] font-mono text-slate-500 bg-white/70 backdrop-blur-sm px-1.5 py-0.5 rounded">
+                <span className="text-[10px] font-mono text-slate-600">
                     {new Date(note.timestamp).toLocaleString('zh-CN')}
                 </span>
             </div>

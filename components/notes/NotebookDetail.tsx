@@ -1,8 +1,11 @@
 // NotebookDetail — 私密记事详情页（暮色 2026-07-17：点开便签后全屏看 + 回复）
 // 复用 NotebookCard 的便签视觉，放大版 + 完整内容
-// 底部：回复列表 + 回复输入框
+// 暮色 2026-07-22：输入区交互改造
+//   - 默认不显示输入框，便签下方居中显示"💬 回复"按钮
+//   - 点回复 → 输入框 + 发送按钮弹出，input 紧贴输入法（监听 visualViewport）
+//   - 取消 / 发送完 → 收起
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight } from '@phosphor-icons/react';
 import { RoomNote, NoteReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
@@ -18,6 +21,10 @@ interface NotebookDetailProps {
 const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack, onDelete, onAddReply }) => {
     const [replyText, setReplyText] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // 2026-07-22：输入区交互状态
+    const [isReplying, setIsReplying] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     // 2026-07-22：背景图跟列表页同步（之前硬编码奶油色，看不到用户自己上传的图）
     const [bgUrl, setBgUrl] = useState<string | null>(null);
@@ -28,6 +35,29 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
         if (stored.builtin) setBgBuiltin(stored.builtin);
     }, []);
 
+    // 2026-07-22：监听输入法弹起 — visualViewport.height 缩小时 = 键盘弹出
+    //   关键点：visualViewport 在 iOS Safari + Android Chrome 都支持（Hammer 时代就是个老 API）
+    useEffect(() => {
+        if (!isReplying) return;
+        const vv = window.visualViewport;
+        if (!vv) return;
+        const onResize = () => {
+            const kbh = Math.max(0, window.innerHeight - vv.height);
+            setKeyboardHeight(kbh);
+        };
+        vv.addEventListener('resize', onResize);
+        onResize();
+        return () => vv.removeEventListener('resize', onResize);
+    }, [isReplying]);
+
+    // 点了"回复"按钮 → 聚焦 input（触发键盘弹起）
+    useEffect(() => {
+        if (isReplying) {
+            const t = setTimeout(() => inputRef.current?.focus(), 80);
+            return () => clearTimeout(t);
+        }
+    }, [isReplying]);
+
     const submitReply = async () => {
         const text = replyText.trim();
         if (!text || submitting) return;
@@ -35,9 +65,15 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
         try {
             await onAddReply(text);
             setReplyText('');
+            setIsReplying(false);  // 2026-07-22：发完自动收起
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const cancelReply = () => {
+        setReplyText('');
+        setIsReplying(false);
     };
 
     return (
@@ -94,31 +130,52 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                         ))}
                     </div>
                 )}
+
+                {/* 2026-07-22：默认"回复"按钮（贴在便签下方，居中胶囊） */}
+                {!isReplying && (
+                    <div className="flex justify-center mt-6 mb-2">
+                        <button
+                            onClick={() => setIsReplying(true)}
+                            className="px-5 py-2 rounded-full bg-white/85 backdrop-blur text-slate-600 text-xs font-bold shadow-sm border border-white/60 active:scale-95 transition-transform flex items-center gap-1.5"
+                        >
+                            💬 回复
+                        </button>
+                    </div>
+                )}
             </div>
 
-            {/* 底部回复输入 */}
-            {/* 2026-07-22：父 WeChat 已经留出 Tab Bar 高度，NotebookDetail 内部只需 iOS safe-area 兜底
-                之前 pb-20 (80px) 太大，输入框和 Tab Bar 之间留了空隙，暮色要"紧贴父标签栏" */}
-            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2"
-                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <input
-                    type="text"
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } }}
-                    placeholder="说点什么…"
-                    className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-xs text-slate-700 outline-none focus:bg-slate-50 focus:ring-2 focus:ring-emerald-200 transition-all"
-                    disabled={submitting}
-                />
-                <button
-                    onClick={submitReply}
-                    disabled={!replyText.trim() || submitting}
-                    className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all"
-                    aria-label="发送回复"
+            {/* 2026-07-22：弹起的输入框（absolute 贴底，pb 跟键盘高度走） */}
+            {isReplying && (
+                <div
+                    className="absolute left-0 right-0 px-3 py-3 bg-white/95 backdrop-blur border-t border-white/40 flex items-center gap-2 z-30"
+                    style={{ bottom: keyboardHeight }}
                 >
-                    <PaperPlaneRight size={16} weight="fill" />
-                </button>
-            </div>
+                    <button
+                        onClick={cancelReply}
+                        className="px-3 py-2 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-100 active:scale-95 transition-all"
+                    >
+                        取消
+                    </button>
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } }}
+                        placeholder="说点什么…"
+                        className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-xs text-slate-700 outline-none focus:bg-slate-50 focus:ring-2 focus:ring-emerald-200 transition-all"
+                        disabled={submitting}
+                    />
+                    <button
+                        onClick={submitReply}
+                        disabled={!replyText.trim() || submitting}
+                        className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all"
+                        aria-label="发送回复"
+                    >
+                        <PaperPlaneRight size={16} weight="fill" />
+                    </button>
+                </div>
+            )}
             </div>{/* end relative flex-1 内容层 */}
         </div>
     );

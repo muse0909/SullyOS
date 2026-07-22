@@ -314,7 +314,7 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                     <section>
                         <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">AI 写小纸条的指导</div>
                         <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                            留空用默认。想让 AI 按你希望的方式写，就在这里改。不改的话，默认会把这条提示词发给 AI：「这是一张你随手撕下来塞在 {userProfile.name} 口袋里的纸条，站在"你"的角度写，不是分析报告」。
+                            留空用默认。想让 AI 按你希望的方式写，就在这里改。不改的话，默认会把这条提示词发给 AI：「这是一张你随手撕下来塞在对方口袋里的纸条，站在"你"的角度写，不是分析报告」。
                         </p>
                         <textarea
                             value={customPrompt}

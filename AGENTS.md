@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-22 | 在线状态样式新增「不显示」选项 | [`changelogs/2026-07-22-status-style-none.md`](./changelogs/2026-07-22-status-style-none.md) |
 | 2026-07-22 | memoryLinks 每月自动修剪（30 天间隔）+ topN 50 → 70 | [`changelogs/2026-07-22-auto-prune-monthly.md`](./changelogs/2026-07-22-auto-prune-monthly.md) |
 | 2026-07-22 | 生图工具 description 收紧（默认不调，仅三种情感场景放行） | [`changelogs/2026-07-22-imagegen-tool-description-tighten.md`](./changelogs/2026-07-22-imagegen-tool-description-tighten.md) |
 | 2026-07-22 | 多选复制退出 / 调试终端复制 JSON 反馈 / 清空日志关弹窗 | [`changelogs/2026-07-22-multiselect-and-debug-terminal-ux.md`](./changelogs/2026-07-22-multiselect-and-debug-terminal-ux.md) |

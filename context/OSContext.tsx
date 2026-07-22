@@ -1568,17 +1568,6 @@ if (!isVisible || !isChattingWithThisChar) {
                       `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
                       'color:#dc2626;font-weight:bold',
                   );
-
-                  // 暮色 2026-07-22：也推一条系统消息进聊天流（暮色不会 F12）
-                  //   内容：model + 错误体 + 关键诊断字段，让暮色截图聊天就能看到 400 详情
-                  //   排查完成后改回只 console（不要污染聊天流）
-                  const diagText = `[主动消息失败: model=${api.model} | body=${totalBodyChars}字符 | msgs=${reqBody?.messages?.length || 0}条 | firstMsgRole=${reqBody?.messages?.[0]?.role} | 错误: ${errMessage.slice(0, 300)}]`;
-                  await DB.saveMessage({
-                      charId,
-                      role: 'system',
-                      type: 'text',
-                      content: diagText,
-                  });
               } catch (diagErr) {
                   console.error('[Proactive/Global] 诊断 log 写入也炸了:', diagErr);
               }

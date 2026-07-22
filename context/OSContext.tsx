@@ -1381,17 +1381,40 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
-              const reqBody = {
-                  model: api.model,
-                  messages: fullMessages,
-                  temperature: 0.8,
-                  max_tokens: 500,
-              };
+              // 暮色 2026-07-22：Claude 协议兼容（仿 useChatAI 7/17 那个 fix）
+              //   根因：safeApi claude 分支只改 URL + headers，body 还是 OpenAI 格式
+              //         messages[0] 是 role:'system' → Anthropic 报 400
+              //   修法：claude 协议下
+              //     - system 走顶层 system 字段（text block）
+              //     - history 里的 system 角色（连接中断等）转 user + [系统消息] 前缀
+              const apiProtocol = (api as any).protocol ?? 'openai';
+              const useClaudeProtocol = apiProtocol === 'claude';
+              let reqBody: any;
+              if (useClaudeProtocol) {
+                  const cleanedMessages = fullMessages.map((m: any) => {
+                      if (m.role !== 'system') return m;
+                      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                      return { role: 'user', content: `[系统消息] ${text}` };
+                  }).filter((m: any) => m.role !== 'system'); // 顶层那条 system 已经在 systemPrompt 里，不进 messages
+                  reqBody = {
+                      model: api.model,
+                      messages: cleanedMessages,
+                      system: [{ type: 'text', text: systemPrompt }],
+                      temperature: 0.8,
+                      max_tokens: 500,
+                  };
+              } else {
+                  reqBody = {
+                      model: api.model,
+                      messages: fullMessages,
+                      temperature: 0.8,
+                      max_tokens: 500,
+                  };
+              }
 
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
               // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
               // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
-              const apiProtocol = (api as any).protocol ?? 'openai';
               const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
                   method: 'POST',
                   headers: {
@@ -1400,6 +1423,21 @@ if (!isVisible || !isChattingWithThisChar) {
                   },
                   body: JSON.stringify(reqBody),
               }, 2, 0, apiProtocol);
+
+              // 暮色 2026-07-22：成功路径也把请求体存一份，便于和失败时对比
+              try {
+                  const logEntry = {
+                      ts: new Date().toISOString(),
+                      char: char.name,
+                      charId,
+                      protocol: apiProtocol,
+                      model: api.model,
+                      msgCount: reqBody.messages?.length || 0,
+                      systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
+                      totalBodyChars: JSON.stringify(reqBody).length,
+                  };
+                  localStorage.setItem('sullyos:proactiveLastReq', JSON.stringify(logEntry, null, 2));
+              } catch { /* quota 忽略 */ }
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
@@ -1470,6 +1508,31 @@ if (!isVisible || !isChattingWithThisChar) {
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
+              // 暮色 2026-07-22：失败时把 reqBody + 错误存到 localStorage，下次复现能直接看到具体请求体
+              //   控制台取：copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))
+              try {
+                  const errLog = {
+                      ts: new Date().toISOString(),
+                      char: char.name,
+                      charId,
+                      protocol: apiProtocol,
+                      model: api.model,
+                      msgCount: reqBody.messages?.length || 0,
+                      systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
+                      totalBodyChars: JSON.stringify(reqBody).length,
+                      firstMsgRole: reqBody.messages?.[0]?.role,
+                      lastMsgRole: reqBody.messages?.[reqBody.messages.length - 1]?.role,
+                      errMessage: (err as Error)?.message,
+                      errStack: (err as Error)?.stack?.slice(0, 600),
+                      reqBody,  // 完整 body，包括 system 顶层字段（Claude 协议）
+                  };
+                  localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
+                  console.warn(
+                      `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
+                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
+                      'color:#dc2626;font-weight:bold',
+                  );
+              } catch { /* quota 忽略 */ }
           } finally {
               proactiveRunningRef.current = false;
               setProactiveComposingChars(prev => {

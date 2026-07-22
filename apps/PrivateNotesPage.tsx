@@ -90,7 +90,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 charName={charName(selectedNote.charId)}
                 onBack={() => { setView('list'); setSelectedNoteId(null); }}
                 onDelete={async () => {
-                    if (!confirm('确定删除这条小纸条？回复也会一起删除。')) return;
+                    if (!confirm('确定删除这条私密记事？回复也会一起删除。')) return;
                     await deleteNote(selectedNote.id);
                     setView('list');
                     setSelectedNoteId(null);
@@ -120,7 +120,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 >
                     <CaretLeft size={18} weight="bold" />
                 </button>
-                <h1 className="text-base font-semibold text-slate-800 tracking-wide">小纸条</h1>
+                <h1 className="text-base font-semibold text-slate-800 tracking-wide">私密记事</h1>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={refresh}
@@ -510,7 +510,7 @@ const EmptyState: React.FC<{ hasFilter: boolean; onOpenSettings?: () => void }> 
             </svg>
         </div>
         <div className="text-sm font-bold text-slate-600">
-            {hasFilter ? '没有匹配的便签' : '小纸条还是空的'}
+            {hasFilter ? '没有匹配的便签' : '私密记事还是空的'}
         </div>
         <div className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
             {hasFilter ? (

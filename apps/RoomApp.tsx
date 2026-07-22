@@ -1187,7 +1187,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 <div className="flex p-2 bg-slate-50 border-b border-slate-100">
                     <button onClick={() => setActivePanel('todo')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'todo' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>今日计划</button>
                     <button onClick={() => setActivePanel('schedule')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'schedule' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>日程</button>
-                    <button onClick={() => setActivePanel('notebook')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notebook' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>小纸条</button>
+                    <button onClick={() => setActivePanel('notebook')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notebook' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>私密记事</button>
                 </div>
                 
                 {/* Fixed: Add no-scrollbar class to hide scrollbar */}

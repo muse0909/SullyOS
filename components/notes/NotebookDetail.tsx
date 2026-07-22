@@ -99,7 +99,7 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                     <CaretLeft size={18} weight="bold" />
                 </button>
                 <h1 className="text-base font-semibold text-slate-800 tracking-wide">
-                    {charName ? `${charName} · 小纸条` : '小纸条'}
+                    {charName ? `${charName} · 私密记事` : '私密记事'}
                 </h1>
                 <button
                     onClick={onDelete}

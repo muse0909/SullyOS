@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -24,7 +24,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
-import { pickRandomStyleImage } from '../utils/notebookStyles';
+import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
   publishPostAsChar,
@@ -2668,6 +2668,45 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 aiContent = aiContent.replace(/\[\[PRIVATE_NOTE:\s*[\s\S]+?\]\]/g, '').trim();
             } catch (e) {
                 console.warn('📒 [PrivateNote] 解析失败:', e);
+            }
+
+            // 5.9e Handle XiaoZhiTiao (小纸条) Actions
+            // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
+            // AI 在 chat reply 里输出 [[XIAO_ZHI_TIAO: 内容 | type]] → 这里解析 → saveXiaoZhiTiao + 推 system 消息
+            // type 必须是: thought / doodle / search / lyric / gossip 之一
+            try {
+                const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
+                if (xztMatches.length > 0) {
+                    const m = xztMatches[0];
+                    const content = m[1].trim();
+                    const type = m[2].toLowerCase() as XiaoZhiTiao['type'];
+                    if (content) {
+                        const newNote: XiaoZhiTiao = {
+                            id: `xzt-${Date.now()}`,
+                            charId: char.id,
+                            timestamp: Date.now(),
+                            content,
+                            type,
+                            // 2026-07-22：自定义样式（写入时从激活组随机选图存到 note）
+                            styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                        };
+                        await DB.saveXiaoZhiTiao(newNote);
+                        console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}... (type=${type})`);
+                        // 推 system 消息进聊天流
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'text',
+                            content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
+                        });
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                    }
+                }
+                // 移除所有 XIAO_ZHI_TIAO 标记
+                aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:\s*[\s\S]+?\]\]/g, '').trim();
+            } catch (e) {
+                console.warn('📝 [XiaoZhiTiao] 解析失败:', e);
             }
 
             // 5.10 Handle XHS (小红书) Actions

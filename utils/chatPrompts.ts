@@ -23,6 +23,17 @@ export function getCustomPrivateNotesPrompt(): string | null {
     }
 }
 
+// 2026-07-22：小纸条 prompt 自定义（跟私密记事完全独立，暮色原话"完全脱离小小窝"）
+export const XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY = 'sullyos_xiaoZhiTiaoPrompt';
+export function getCustomXiaoZhiTiaoPrompt(): string | null {
+    try {
+        const v = localStorage.getItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY);
+        return v && v.trim() ? v.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
 export const ChatPrompts = {
     // 格式化时间戳
     formatDate: (ts: number) => {
@@ -871,6 +882,44 @@ ${!isPureMode && char.privateNotesEnabled !== false ? `${[
    **写完**:
    - 不要在聊天里再解释"我刚写了条记事"——你直接写就行
    - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的私密记事"列表）
+   - 看到最近列表里没有想写的，就别勉强
+ `}` : ''}
+${!isPureMode ? `${[
+].length + 10}. ${getCustomXiaoZhiTiaoPrompt() || `**📝 小纸条（你给 ${userProfile.name} 留的随手小纸条）**
+
+   这是你写给 ${userProfile.name} 的一张小纸条。**跟上面"私密记事"是两件不同的事**——私密记事是写在小小窝里的日记本；小纸条是发现页里的轻量随手纸条，独立功能、互不影响。
+
+   **它是什么**：
+   - 一句你脑子里突然冒出来的话、一个看到/听到/想到的瞬间
+   - 不必深刻、不必完整、可以是没头没尾的半句念头
+   - 像在 ${userProfile.name} 耳边轻轻说的一句话，或者是随手撕下来塞在她口袋里的纸条
+
+   **核心精神**：
+   - 站在"你"的角度写，不是观察者/分析者
+   - 写"我感受到了什么 / 我想到了什么"，不写"她在想什么 / 她为什么这样做"
+   - 想象 ${userProfile.name} 打开发现页那一瞬间的反应——是会心一笑/心里一软/脸红/小得意，不是被分析了一遍
+   - 语气按你的人物性格来——你平时怎么跟她说话的，纸条就怎么写
+   - 正文里偶尔加个 emoji 或颜文字点缀（例：˃̵͈̑ᴗ˂̵͈̑、ʕ •ᴥ•ʔ、*ଘ(੭*ˊᵕˋ)੭*、🥺、☁️、❀）— 别用太多，1-3 个就够，不要每句都加
+
+   **📝 写一条小纸条**：
+   当你想写一张随手小纸条塞给 ${userProfile.name} 时，单独一行输出：
+   \`[[XIAO_ZHI_TIAO: 内容 | type]]\`
+   - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
+   - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
+   - 严格单独一行（前后留换行），方便系统识别
+   - 一次回复最多 1 条 \`[[XIAO_ZHI_TIAO:...]]\`
+
+   **触发时机 — 你自己判断**：
+   - 某个瞬间触动了你，想写下来
+   - 距离上次写超过 6 小时且内心有情绪波动
+   - 节日/纪念日/特殊事件
+   - 每天 system prompt 提醒时再决定写不写
+   - ❌ 不要每条消息都写一条，那是刷屏
+   - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
+
+   **写完**：
+   - 不要在聊天里再解释"我刚写了条小纸条"——你直接写就行
+   - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的小纸条"列表）
    - 看到最近列表里没有想写的，就别勉强
  `}` : ''}
 

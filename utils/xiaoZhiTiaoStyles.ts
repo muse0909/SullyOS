@@ -1,30 +1,30 @@
-// notebookStyles — 小纸条自定义样式管理
-// 暮色 2026-07-22：多分组 + 写入时随机选图（方案 B）
+// xiaoZhiTiaoStyles — 小纸条自定义样式管理（2026-07-22：跟 notebookStyles 完全独立）
+// 暮色原话："小纸条完全脱离小小窝 app" — 独立命名 + 独立 storage key + 独立 component 引用
 //
-// 数据结构（localStorage `sullyos_notebookStyles`）：
+// 数据结构（localStorage `sullyos_xiaoZhiTiaoStyles`）：
 //   {
-//     groups: { [groupName: string]: string[] },  // 分组名 → base64 / URL 列表
-//     activeGroup: string | null,                  // 当前激活的分组（null = 用 type 默认样式）
+//     groups: { [groupName: string]: string[] },
+//     activeGroup: string | null,
 //   }
 //
-// 写入时机：useChatAI 解析 [[PRIVATE_NOTE:...|type]] 时调 pickRandomStyleImage
+// 写入时机：useChatAI 解析 [[XIAO_ZHI_TIAO:...|type]] 时调 pickRandomXiaoZhiTiaoImage
 //   - 读 localStorage → activeGroup 下的 urls → 随机选一张
-//   - 存到 RoomNote.styleImageUrl
-// 渲染时机：NotebookCard / FullNoteCard 看 note.styleImageUrl 决定走背景图还是 type 颜色
+//   - 存到 XiaoZhiTiao.styleImageUrl
+// 渲染时机：XiaoZhiTiaoCard / FullXiaoZhiTiaoCard 看 note.styleImageUrl 决定走背景图还是 type 颜色
 
-export const NOTEBOOK_STYLES_STORAGE_KEY = 'sullyos_notebookStyles';
+export const XIAO_ZHI_TIAO_STYLES_STORAGE_KEY = 'sullyos_xiaoZhiTiaoStyles';
 
-export interface NotebookStyles {
+export interface XiaoZhiTiaoStyles {
     groups: Record<string, string[]>;
     activeGroup: string | null;
 }
 
-const EMPTY_STYLES: NotebookStyles = { groups: {}, activeGroup: null };
+const EMPTY_STYLES: XiaoZhiTiaoStyles = { groups: {}, activeGroup: null };
 
 /** 安全读：解析失败 / quota / 缺字段都 fallback 空对象 */
-export function getStoredNotebookStyles(): NotebookStyles {
+export function getStoredXiaoZhiTiaoStyles(): XiaoZhiTiaoStyles {
     try {
-        const raw = localStorage.getItem(NOTEBOOK_STYLES_STORAGE_KEY);
+        const raw = localStorage.getItem(XIAO_ZHI_TIAO_STYLES_STORAGE_KEY);
         if (!raw) return { ...EMPTY_STYLES };
         const parsed = JSON.parse(raw);
         return {
@@ -37,26 +37,25 @@ export function getStoredNotebookStyles(): NotebookStyles {
 }
 
 /** 写回（整体覆盖） */
-export function setStoredNotebookStyles(styles: NotebookStyles): void {
+export function setStoredXiaoZhiTiaoStyles(styles: XiaoZhiTiaoStyles): void {
     try {
-        localStorage.setItem(NOTEBOOK_STYLES_STORAGE_KEY, JSON.stringify(styles));
+        localStorage.setItem(XIAO_ZHI_TIAO_STYLES_STORAGE_KEY, JSON.stringify(styles));
     } catch (e) {
-        // quota 满时静默失败（不阻断 AI 写便签）
-        console.warn('[notebookStyles] 存储失败:', e);
+        console.warn('[xiaoZhiTiaoStyles] 存储失败:', e);
     }
 }
 
-/** 从激活组随机选一张图（无激活组 / 组空 → undefined 走 type 默认） */
-export function pickRandomStyleImage(): string | undefined {
-    const styles = getStoredNotebookStyles();
+/** 从激活组随机选一张图 */
+export function pickRandomXiaoZhiTiaoImage(): string | undefined {
+    const styles = getStoredXiaoZhiTiaoStyles();
     if (!styles.activeGroup) return undefined;
     const urls = styles.groups[styles.activeGroup];
     if (!Array.isArray(urls) || urls.length === 0) return undefined;
     return urls[Math.floor(Math.random() * urls.length)];
 }
 
-/** 压缩图片到 1080px 宽 + JPEG 80%（保持 PNG alpha；用于自定义便签样式） */
-export const compressImageForNote = (file: File): Promise<string> => {
+/** 压缩图片到 1080px 宽（PNG 保留 alpha） */
+export const compressImageForXiaoZhiTiao = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -72,7 +71,6 @@ export const compressImageForNote = (file: File): Promise<string> => {
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return reject(new Error('canvas 不可用'));
                 ctx.drawImage(img, 0, 0, w, h);
-                // 用户要求 PNG 优先 — 用 image/png 保持透明；如果原图是 jpg 才用 jpeg
                 const isPng = file.type === 'image/png';
                 resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', isPng ? undefined : 0.8));
             };
@@ -83,3 +81,4 @@ export const compressImageForNote = (file: File): Promise<string> => {
         reader.readAsDataURL(file);
     });
 };
+

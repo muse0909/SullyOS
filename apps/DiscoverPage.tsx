@@ -7,9 +7,9 @@ import { useOS } from '../context/OSContext';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
 import MomentsSettingsPage from './MomentsSettingsPage';
-import PrivateNotesPage from './PrivateNotesPage';
+import XiaoZhiTiaoPage from './XiaoZhiTiaoPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings' | 'private-notes';
+type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings' | 'xiao-zhi-tiao';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast } = useOS();
@@ -25,9 +25,9 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     return <FavoritesPage onBack={() => setSubPage('list')} />;
   }
 
-  // 子页：私密记事（暮色 2026-07-17：从 RoomApp 侧边栏抽出来做独立页）
-  if (subPage === 'private-notes') {
-    return <PrivateNotesPage onBack={() => setSubPage('list')} />;
+  // 子页：小纸条（2026-07-22：跟 PrivateNotesPage 完全独立，互不影响）
+  if (subPage === 'xiao-zhi-tiao') {
+    return <XiaoZhiTiaoPage onBack={() => setSubPage('list')} />;
   }
 
   // 子页：朋友圈设置（暮色 2026-07-03 新增）
@@ -108,7 +108,7 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </button>
           <div className="border-t border-slate-100" />
           <button
-            onClick={() => setSubPage('private-notes')}
+            onClick={() => setSubPage('xiao-zhi-tiao')}
             className="w-full flex items-center gap-3 px-4 py-4 active:bg-slate-50 transition-colors text-left"
           >
             <div className="w-7 h-7 rounded-full bg-rose-50 flex items-center justify-center">

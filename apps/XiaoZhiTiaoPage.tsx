@@ -1,14 +1,14 @@
-// PrivateNotesPage — 私密记事独立页面（暮色 2026-07-17：从 RoomApp 侧边栏抽出来）
-// 入口：发现页 → 私密记事
-// 暮色 2026-07-17 改：搜索全部移到右侧设置抽屉里，顶部只留角色筛选 + 齿轮
+// XiaoZhiTiaoPage — 小纸条独立页面（2026-07-22：跟 PrivateNotesPage 完全独立）
+// 暮色原话："小纸条完全脱离小小窝 app" — 独立数据 / 独立 hook / 独立组件 / 独立 prompt
+// 入口：发现页 → 小纸条
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CaretLeft, GearSix, ArrowsClockwise, X, Funnel } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
-import { useRoomNotes } from '../hooks/useRoomNotes';
-import { RoomNote } from '../types';
-import NotebookCard from '../components/notes/NotebookCard';
-import NotebookDetail from '../components/notes/NotebookDetail';
+import { useXiaoZhiTiao } from '../hooks/useXiaoZhiTiao';
+import { XiaoZhiTiao } from '../types';
+import XiaoZhiTiaoCard from '../components/notes/XiaoZhiTiaoCard';
+import XiaoZhiTiaoDetail from '../components/notes/XiaoZhiTiaoDetail';
 import NoteSearchBar from '../components/notes/NoteSearchBar';
 import NotebookBackground, {
     BgStylePicker,
@@ -17,15 +17,15 @@ import NotebookBackground, {
     setStoredNotebookBuiltin,
     BuiltinBg,
 } from '../components/notes/NotebookBackground';
-import { PRIVATE_NOTES_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
+import { XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
 import {
-    getStoredNotebookStyles,
-    setStoredNotebookStyles,
-    compressImageForNote,
-    type NotebookStyles,
-} from '../utils/notebookStyles';
+    getStoredXiaoZhiTiaoStyles,
+    setStoredXiaoZhiTiaoStyles,
+    compressImageForXiaoZhiTiao,
+    type XiaoZhiTiaoStyles,
+} from '../utils/xiaoZhiTiaoStyles';
 
-const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { characters, activeCharacterId } = useOS();
 
     // ── 状态 ──
@@ -53,12 +53,12 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setStoredNotebookBuiltin(next.builtin);
     };
 
-    // 数据
+    // 数据（独立 hook）
     const targetCharId = filterCharId === 'all' ? (activeCharacterId || characters[0]?.id || null) : filterCharId;
-    const { notes, loading, refresh, deleteNote, addReply } = useRoomNotes(targetCharId);
+    const { notes, loading, refresh, deleteNote, addReply } = useXiaoZhiTiao(targetCharId);
 
     // 搜索 + 日期筛选
-    const filtered = useMemo<RoomNote[]>(() => {
+    const filtered = useMemo<XiaoZhiTiao[]>(() => {
         let list = notes;
         if (keyword.trim()) {
             const kw = keyword.trim().toLowerCase();
@@ -85,12 +85,12 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     // ── 详情视图 ──
     if (view === 'detail' && selectedNote) {
         return (
-            <NotebookDetail
+            <XiaoZhiTiaoDetail
                 note={selectedNote}
                 charName={charName(selectedNote.charId)}
                 onBack={() => { setView('list'); setSelectedNoteId(null); }}
                 onDelete={async () => {
-                    if (!confirm('确定删除这条私密记事？回复也会一起删除。')) return;
+                    if (!confirm('确定删除这条小纸条？回复也会一起删除。')) return;
                     await deleteNote(selectedNote.id);
                     setView('list');
                     setSelectedNoteId(null);
@@ -120,7 +120,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 >
                     <CaretLeft size={18} weight="bold" />
                 </button>
-                <h1 className="text-base font-semibold text-slate-800 tracking-wide">私密记事</h1>
+                <h1 className="text-base font-semibold text-slate-800 tracking-wide">小纸条</h1>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={refresh}
@@ -136,7 +136,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                             hasFilter ? 'bg-emerald-100 text-emerald-700' : 'text-slate-500 hover:bg-white/60'
                         }`}
                         aria-label="设置"
-                        title="搜索 / 背景"
+                        title="搜索 / 背景 / 样式 / AI 指导"
                     >
                         <GearSix size={16} />
                         {hasFilter && (
@@ -183,7 +183,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 ) : (
                     <div className="grid grid-cols-2 gap-4">
                         {filtered.map(note => (
-                            <NotebookCard
+                            <XiaoZhiTiaoCard
                                 key={note.id}
                                 note={note}
                                 charName={charName(note.charId)}
@@ -217,7 +217,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     );
 };
 
-// 右侧 70% 宽设置抽屉
+// 右侧 70% 宽设置抽屉（独立命名：小纸条相关）
 interface SettingsDrawerProps {
     onClose: () => void;
     bgUrl: string | null;
@@ -229,7 +229,7 @@ interface SettingsDrawerProps {
     onDateFromChange: (v: string) => void;
     dateTo: string;
     onDateToChange: (v: string) => void;
-    onCustomPromptChange?: () => void;  // 2026-07-22：保存自定义 prompt 后通知父组件刷新
+    onCustomPromptChange?: () => void;
 }
 
 const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
@@ -238,33 +238,32 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
     dateFrom, onDateFromChange, dateTo, onDateToChange,
     onCustomPromptChange,
 }) => {
-    // 2026-07-22：自定义 prompt 状态（写进 localStorage，chatPrompts.ts 实时读）
+    // 2026-07-22：自定义 prompt 状态（独立 key：小纸条）
     const [customPrompt, setCustomPrompt] = useState<string>('');
     const [statusMsg, setStatusMsg] = useState<string>('');
     useEffect(() => {
         try {
-            const v = localStorage.getItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
+            const v = localStorage.getItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY);
             if (v) setCustomPrompt(v);
         } catch { /* ignore */ }
     }, []);
 
-    // 2026-07-22：自定义小纸条样式（多分组 + 随机选图）
-    const [styles, setStyles] = useState<NotebookStyles>({ groups: {}, activeGroup: null });
+    // 2026-07-22：自定义小纸条样式（独立命名 + 独立 key）
+    const [styles, setStyles] = useState<XiaoZhiTiaoStyles>({ groups: {}, activeGroup: null });
     const [newGroupName, setNewGroupName] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
-    useEffect(() => { setStyles(getStoredNotebookStyles()); }, []);
-    const persistStyles = (next: NotebookStyles) => {
+    useEffect(() => { setStyles(getStoredXiaoZhiTiaoStyles()); }, []);
+    const persistStyles = (next: XiaoZhiTiaoStyles) => {
         setStyles(next);
-        setStoredNotebookStyles(next);
+        setStoredXiaoZhiTiaoStyles(next);
     };
     const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         if (!file.type.startsWith('image/')) return;
         try {
-            const compressed = await compressImageForNote(file);
+            const compressed = await compressImageForXiaoZhiTiao(file);
             if (!styles.activeGroup) {
-                // 没有激活组 → 自动创建「默认样式」并激活
                 persistStyles({ groups: { '默认样式': [compressed] }, activeGroup: '默认样式' });
             } else {
                 const urls = styles.groups[styles.activeGroup] || [];
@@ -274,7 +273,7 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 });
             }
         } catch (err) {
-            console.error('[notebookStyles] 压缩失败:', err);
+            console.error('[xiaoZhiTiaoStyles] 压缩失败:', err);
         } finally {
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
@@ -312,10 +311,10 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
         try {
             const v = customPrompt.trim();
             if (v) {
-                localStorage.setItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY, v);
+                localStorage.setItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY, v);
                 setStatusMsg('已保存');
             } else {
-                localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
+                localStorage.removeItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY);
                 setStatusMsg('已清空');
             }
             onCustomPromptChange?.();
@@ -326,7 +325,7 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
     };
     const handleReset = () => {
         setCustomPrompt('');
-        try { localStorage.removeItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY); } catch {}
+        try { localStorage.removeItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY); } catch {}
         onCustomPromptChange?.();
         setStatusMsg('已恢复默认（点保存生效）');
         setTimeout(() => setStatusMsg(''), 2000);
@@ -384,7 +383,6 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             <span className="text-amber-600 font-medium">推荐 PNG 格式，四周留白多一点</span>，字就不会盖到图。
                         </p>
 
-                        {/* 激活分组下拉框 + 删除当前组 */}
                         <div className="flex gap-2 mb-2">
                             <select
                                 value={styles.activeGroup || ''}
@@ -409,7 +407,6 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             )}
                         </div>
 
-                        {/* 新建分组 */}
                         <div className="flex gap-2 mb-3">
                             <input
                                 value={newGroupName}
@@ -426,7 +423,6 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             </button>
                         </div>
 
-                        {/* 当前组图片缩略图网格 */}
                         {styles.activeGroup && (styles.groups[styles.activeGroup] || []).length > 0 && (
                             <div className="grid grid-cols-3 gap-2 mb-3">
                                 {(styles.groups[styles.activeGroup] || []).map((url) => (
@@ -444,7 +440,6 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             </div>
                         )}
 
-                        {/* 上传按钮 */}
                         <button
                             onClick={() => fileInputRef.current?.click()}
                             disabled={!styles.activeGroup}
@@ -460,7 +455,6 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             className="hidden"
                         />
 
-                        {/* 状态提示 */}
                         <div className="text-[10px] text-slate-400 mt-2 text-center">
                             {styles.activeGroup
                                 ? `当前激活：${styles.activeGroup}（${(styles.groups[styles.activeGroup] || []).length} 张）`
@@ -468,11 +462,11 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                         </div>
                     </section>
 
-                    {/* 2026-07-22：自定义提示词（在背景下面，跟其他设置放一起） */}
+                    {/* 2026-07-22：自定义提示词 */}
                     <section>
                         <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">AI 写小纸条的指导</div>
                         <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                            留空用默认。想让 AI 按你希望的方式写，就在这里改。不改的话，默认会把这条提示词发给 AI：「这是一张你随手撕下来塞在对方口袋里的纸条，站在"你"的角度写，不是分析报告」。
+                            留空用默认。想让 AI 按你希望的方式写，就在这里改。
                         </p>
                         <textarea
                             value={customPrompt}
@@ -510,7 +504,7 @@ const EmptyState: React.FC<{ hasFilter: boolean; onOpenSettings?: () => void }> 
             </svg>
         </div>
         <div className="text-sm font-bold text-slate-600">
-            {hasFilter ? '没有匹配的便签' : '私密记事还是空的'}
+            {hasFilter ? '没有匹配的便签' : '小纸条还是空的'}
         </div>
         <div className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
             {hasFilter ? (
@@ -522,4 +516,4 @@ const EmptyState: React.FC<{ hasFilter: boolean; onOpenSettings?: () => void }> 
     </div>
 );
 
-export default PrivateNotesPage;
+export default XiaoZhiTiaoPage;

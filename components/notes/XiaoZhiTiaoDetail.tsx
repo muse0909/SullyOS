@@ -1,10 +1,13 @@
 // XiaoZhiTiaoDetail — 小纸条详情页（2026-07-22：跟 NotebookDetail 完全独立）
 // 暮色原话："小纸条完全脱离小小窝 app" — 独立组件，独立标题"小纸条"
-// 复用 XiaoZhiTiaoCard 视觉风格（全屏放大版 + 完整内容 + 右下角时间戳和回复按钮）
-// 暮色 2026-07-22：输入区交互（默认"回复"按钮 + 点开弹输入框 + 键盘联动）
+// 暮色 2026-07-23：详情页重构
+//   - 顶部只留日期+时间（"7/23 23:57" 格式），去掉作者名
+//   - 卡片撑满屏幕（min-h 加大）
+//   - 字不压边框（保持 60% max-w，字号 12px）
+//   - 底部居中"回复"胶囊（图标+文字"回复"）
 
 import React, { useEffect, useRef, useState } from 'react';
-import { CaretLeft, Trash, PaperPlaneRight } from '@phosphor-icons/react';
+import { CaretLeft, Trash, PaperPlaneRight, ChatCircleText } from '@phosphor-icons/react';
 import { XiaoZhiTiao, XiaoZhiTiaoReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
 
@@ -15,6 +18,13 @@ interface XiaoZhiTiaoDetailProps {
     onDelete: () => void;
     onAddReply: (content: string) => Promise<void>;
 }
+
+// 2026-07-23：手动 format 时间（修 toLocaleString 偶发 33:57 这种错位的 bug）
+// 暮色要的格式 "7/23 23:57"：月/日 24小时制
+const formatStamp = (ts: number): string => {
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
 const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, onBack, onDelete, onAddReply }) => {
     const [replyText, setReplyText] = useState('');
@@ -93,10 +103,9 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
             </div>
 
             {/* 主便签 */}
-            <div className="flex-1 overflow-y-auto px-5 pt-6 pb-4 no-scrollbar">
+            <div className="flex-1 overflow-y-auto px-3 pt-3 pb-4 no-scrollbar">
                 <FullXiaoZhiTiaoCard
                     note={note}
-                    charName={charName}
                     onReplyClick={() => setIsReplying(true)}
                     hideReplyButton={isReplying}
                 />
@@ -147,18 +156,22 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
     );
 };
 
-// 详情页用的大版便签（2026-07-22：5 type 视觉全部废弃，简化为图背景 + 纯白兜底）
-// 2026-07-23：文字以图中心为原点绝对居中（不依赖图中央留白），半透明白底让字清晰
+// 详情页用的大版便签
+// 2026-07-23：暮色最新要求
+//   - 顶部日期+时间（"7/23 23:57" 格式），无作者名
+//   - 底部居中"回复"胶囊（图标+回复文字）
+//   - 字 12px + max-w-[60%] 不压边框
+//   - min-h 加大撑满屏幕
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
     charName?: string;
     onReplyClick?: () => void;
     hideReplyButton?: boolean;
-}> = ({ note, charName, onReplyClick, hideReplyButton }) => {
+}> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
     return (
         <div
             // 暮色原图直接显示（不加底/框/阴影）
-            className="relative w-full min-h-[320px] bg-no-repeat"
+            className="relative w-full min-h-[70vh] bg-no-repeat"
             style={
                 note.styleImageUrl
                     // 透明底 PNG 直接显示
@@ -172,33 +185,33 @@ const FullXiaoZhiTiaoCard: React.FC<{
                     : { backgroundColor: '#ffffff' }
             }
         >
+            {/* 顶部日期+时间（纯文字，无作者名） */}
+            <div className="absolute top-3 left-0 right-0 z-10 text-center text-[11px] font-mono text-slate-600">
+                {formatStamp(note.timestamp)}
+            </div>
+
             {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
-            <div className="absolute inset-0 flex items-center justify-center p-6 pb-14">
+            <div className="absolute inset-0 flex items-center justify-center p-6">
                 <div className="max-w-[60%] text-center">
-                    {charName && (
-                        <div className="text-[10px] font-bold text-slate-500 mb-1">— {charName}</div>
-                    )}
-                    <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6">
+                    <div className="text-[12px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6">
                         {note.content}
                     </div>
                 </div>
             </div>
 
-            {/* 右下角时间戳 + 回复按钮（纯文字 + 半透明按钮，不加框背景） */}
-            <div className="absolute bottom-2 right-3 flex items-center gap-2 z-10">
-                {!hideReplyButton && onReplyClick && (
+            {/* 底部居中"回复"胶囊（暮色要：图标+回复文字，胶囊包住） */}
+            {!hideReplyButton && onReplyClick && (
+                <div className="absolute bottom-3 left-0 right-0 z-10 flex justify-center">
                     <button
                         onClick={onReplyClick}
-                        className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-transform text-[11px] bg-white/40"
+                        className="rounded-full bg-slate-900/80 text-white px-4 py-1.5 flex items-center gap-1.5 text-[11px] font-medium active:scale-95 transition-transform shadow-md"
                         title="回复"
                     >
-                        💬
+                        <ChatCircleText size={14} weight="fill" />
+                        <span>回复</span>
                     </button>
-                )}
-                <span className="text-[10px] font-mono text-slate-600">
-                    {new Date(note.timestamp).toLocaleString('zh-CN')}
-                </span>
-            </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -1,8 +1,7 @@
 // XiaoZhiTiaoCard — 小纸条便签卡片（2026-07-22：跟 NotebookCard 完全独立）
-// 暮色 2026-07-22：5 type 视觉全部废弃，改为图背景 + 文字居中
-//   - 有 styleImageUrl：图当背景，文字居中 + 白字 + drop-shadow
-//   - 无 styleImageUrl：纯白便签 + 圆角阴影（等暮色给图后换默认）
-//   - 保留轻微旋转 + hover 归正放大
+// 暮色 2026-07-23：列表卡只显示 5 行字，日期/作者/回复数全删（暮色要纯净）
+// 暮色原图直接显示（不加任何底/框/阴影）
+// 保留轻微旋转 + hover 归正放大
 
 import React from 'react';
 import { XiaoZhiTiao } from '../../types';
@@ -15,7 +14,7 @@ interface XiaoZhiTiaoCardProps {
     style?: React.CSSProperties;
 }
 
-const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDelete, charName, style }) => {
+const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDelete, charName: _charName, style }) => {
     // 轻微随机旋转（用 note.id hash 一下，保证稳定不抖动）
     const seedHash = note.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
     const rotateDeg = ((seedHash % 5) - 2) * 0.6; // -1.2° ~ +1.2°
@@ -50,23 +49,13 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                 }
             >
                 {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
-                <div className="absolute inset-0 flex items-center justify-center p-5 pb-6">
+                {/* 2026-07-23：line-clamp 3→5，暮色"上下空白还很大，增加到5行" */}
+                <div className="absolute inset-0 flex items-center justify-center p-5">
                     <div className="max-w-[60%] text-center">
-                        <div className="text-[10px] leading-snug line-clamp-3 overflow-hidden text-slate-800">
+                        <div className="text-[10px] leading-snug line-clamp-5 overflow-hidden text-slate-800">
                             {note.content}
                         </div>
                     </div>
-                </div>
-
-                {/* 顶部时间（浮在图上，纯文字无框） */}
-                <div className="absolute top-1.5 right-2 z-10 text-[9px] font-mono text-slate-500">
-                    {new Date(note.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
-                </div>
-
-                {/* 底部作者 + 回复数（纯文字无框） */}
-                <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between text-[8px] font-medium z-10 text-slate-500">
-                    {charName ? <span>— {charName}</span> : <span />}
-                    {(note.replies?.length || 0) > 0 && <span>💬 {note.replies!.length}</span>}
                 </div>
             </div>
 

@@ -51,8 +51,8 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                 }
             >
                 {/* 文字层：绝对居中（以图中心为原点），半透明白底让字清晰，不压边框 */}
-                <div className="absolute inset-0 flex items-center justify-center p-5 pb-7">
-                    <div className={`max-w-[78%] text-center ${note.styleImageUrl ? 'bg-white/80 backdrop-blur-sm rounded-lg px-2 py-1' : ''}`}>
+                <div className="absolute inset-0 flex items-center justify-center p-4 pb-6">
+                    <div className={`max-w-[65%] text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm rounded-lg px-2 py-1' : ''}`}>
                         <div className={`text-[10px] leading-snug line-clamp-3 overflow-hidden ${note.styleImageUrl ? 'text-slate-800' : 'text-slate-700'}`}>
                             {note.content}
                         </div>

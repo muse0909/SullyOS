@@ -173,12 +173,12 @@ const FullXiaoZhiTiaoCard: React.FC<{
             }
         >
             {/* 文字层：绝对居中（以图中心为原点），给字加半透明白底（清晰可读 + 不压边框） */}
-            <div className="absolute inset-0 flex items-center justify-center p-10 pb-16">
-                <div className={`max-w-[80%] rounded-2xl px-5 py-4 text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm shadow-sm' : ''}`}>
+            <div className="absolute inset-0 flex items-center justify-center p-6 pb-14">
+                <div className={`max-w-[60%] rounded-2xl px-4 py-3 text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm shadow-md' : ''}`}>
                     {charName && (
-                        <div className="text-[10px] font-bold text-slate-500 mb-1.5">— {charName}</div>
+                        <div className="text-[10px] font-bold text-slate-500 mb-1">— {charName}</div>
                     )}
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-800">
+                    <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6">
                         {note.content}
                     </div>
                 </div>

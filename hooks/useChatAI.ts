@@ -49,7 +49,11 @@ const IMAGE_GENERATION_TOOL = {
   type: 'function' as const,
   function: {
     name: 'generate_image',
-    description: 'Generate an image based on a text prompt. Use this when the user asks you to draw/paint/generate an image, or when you want to share a visual (like a selfie, a scene, a photo you took, etc).',
+    // 暮色 2026-07-22 江澈改：核心逻辑——默认不调，三种情感场景放行，日常闲聊不碰，拿不准就不碰
+    // 修前：'...or when you want to share a visual (like a selfie, a scene, a photo you took, etc)'
+    //       → 暮色反馈"角色没主动调用时也会偶尔自动触发"，这句是元凶
+    //       → LLM 觉得"想加点画面感"就调了，代码层面看不出来
+    description: 'Generate an image based on a text prompt. Use this when the user explicitly asks you to draw, paint, or generate an image. You may also use this proactively ONLY in the following scenarios: (1) the user is emotionally down and you want to comfort them with a visual; (2) you miss the user and want to share a selfie or scene; (3) special dates such as anniversaries or birthdays. Do NOT use this tool for casual chat decoration, adding "visual flair" to normal conversation, or when the user has not mentioned anything image-related. When in doubt, do not call.',
     parameters: {
       type: 'object',
       properties: {

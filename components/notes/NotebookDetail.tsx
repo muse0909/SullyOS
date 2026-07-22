@@ -99,7 +99,7 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                     <CaretLeft size={18} weight="bold" />
                 </button>
                 <h1 className="text-base font-semibold text-slate-800 tracking-wide">
-                    {charName ? `${charName} · 私密记事` : '私密记事'}
+                    {charName ? `${charName} · 小纸条` : '小纸条'}
                 </h1>
                 <button
                     onClick={onDelete}
@@ -184,22 +184,31 @@ const FullNoteCard: React.FC<{
 
     return (
         <div
-            className="relative w-full rounded-2xl shadow-xl p-6 pb-12 min-h-[280px]"
-            style={{
-                backgroundColor: isSearch ? '#d4a574' : (
-                    type === 'doodle' ? '#ffffff' :
-                    type === 'lyric' ? '#fce7f3' :
-                    type === 'gossip' ? '#fef3c7' :
-                    type === 'thought' ? '#dbeafe' : '#ffffff'
-                ),
-                ...(type === 'doodle' && {
-                    backgroundImage: 'linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)',
-                    backgroundSize: '20px 20px',
-                }),
-                ...(type === 'gossip' && {
-                    backgroundImage: 'repeating-linear-gradient(0deg, transparent 0px, transparent 30px, #fde68a 30px, #fde68a 31px)',
-                }),
-            }}
+            className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] ${note.styleImageUrl ? 'text-center' : ''}`}
+            style={
+                note.styleImageUrl
+                    // 2026-07-22：暮色自定义样式（背景图 + 文字居中 + 大 padding 让出四周装饰）
+                    ? {
+                        backgroundImage: `url(${note.styleImageUrl})`,
+                        backgroundSize: 'cover',
+                        backgroundPosition: 'center',
+                    }
+                    : {
+                        backgroundColor: isSearch ? '#d4a574' : (
+                            type === 'doodle' ? '#ffffff' :
+                            type === 'lyric' ? '#fce7f3' :
+                            type === 'gossip' ? '#fef3c7' :
+                            type === 'thought' ? '#dbeafe' : '#ffffff'
+                        ),
+                        ...(type === 'doodle' && {
+                            backgroundImage: 'linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)',
+                            backgroundSize: '20px 20px',
+                        }),
+                        ...(type === 'gossip' && {
+                            backgroundImage: 'repeating-linear-gradient(0deg, transparent 0px, transparent 30px, #fde68a 30px, #fde68a 31px)',
+                        }),
+                    }
+            }
         >
             {/* 装饰物（按 type） */}
             {type === 'thought' && (
@@ -225,15 +234,15 @@ const FullNoteCard: React.FC<{
             )}
 
             <div className="flex items-center justify-between mb-3 text-[11px] font-bold">
-                <span className={`px-2 py-0.5 rounded ${isSearch ? 'bg-black/15 text-stone-100' : 'bg-white/70 text-slate-700'}`}>
+                <span className={`px-2 py-0.5 rounded ${isSearch ? 'bg-black/15 text-stone-100' : note.styleImageUrl ? 'bg-white/80 text-slate-700' : 'bg-white/70 text-slate-700'}`}>
                     {({ thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦' } as Record<string, string>)[type]}
                 </span>
                 {charName && (
-                    <span className={isSearch ? 'text-stone-100' : 'text-slate-500'}>— {charName}</span>
+                    <span className={isSearch ? 'text-stone-100' : note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-500'}>— {charName}</span>
                 )}
             </div>
 
-            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
+            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
                 {note.content}
             </div>
 
@@ -242,13 +251,13 @@ const FullNoteCard: React.FC<{
                 {!hideReplyButton && onReplyClick && (
                     <button
                         onClick={onReplyClick}
-                        className="w-7 h-7 rounded-full bg-white/85 backdrop-blur shadow-sm border border-white/60 flex items-center justify-center active:scale-95 transition-transform text-[11px]"
+                        className={`w-7 h-7 rounded-full backdrop-blur shadow-sm border flex items-center justify-center active:scale-95 transition-transform text-[11px] ${note.styleImageUrl ? 'bg-white/30 border-white/40' : 'bg-white/85 border-white/60'}`}
                         title="回复"
                     >
                         💬
                     </button>
                 )}
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className={`text-[10px] font-mono ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-400'}`}>
                     {new Date(note.timestamp).toLocaleString('zh-CN')}
                 </span>
             </div>

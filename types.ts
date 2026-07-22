@@ -344,6 +344,9 @@ export interface RoomNote {
     // ── 暮色 2026-07-17：私密记事独立成发现页子页，加 replies 字段
     //   用户对 AI 写的便签的回复（最多几十条，存进 RoomNote 一起拉，不用单独建表）
     replies?: NoteReply[];
+    // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
+    //   暮色说"四周有图那种" — 文字居中 + 内容 padding 加大避免盖到四周装饰
+    styleImageUrl?: string;
 }
 
 export interface NoteReply {

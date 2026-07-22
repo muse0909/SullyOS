@@ -18,6 +18,12 @@ import NotebookBackground, {
     BuiltinBg,
 } from '../components/notes/NotebookBackground';
 import { PRIVATE_NOTES_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
+import {
+    getStoredNotebookStyles,
+    setStoredNotebookStyles,
+    compressImageForNote,
+    type NotebookStyles,
+} from '../utils/notebookStyles';
 
 const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     const { characters, activeCharacterId } = useOS();
@@ -84,7 +90,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 charName={charName(selectedNote.charId)}
                 onBack={() => { setView('list'); setSelectedNoteId(null); }}
                 onDelete={async () => {
-                    if (!confirm('确定删除这条私密记事？回复也会一起删除。')) return;
+                    if (!confirm('确定删除这条小纸条？回复也会一起删除。')) return;
                     await deleteNote(selectedNote.id);
                     setView('list');
                     setSelectedNoteId(null);
@@ -114,7 +120,7 @@ const PrivateNotesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 >
                     <CaretLeft size={18} weight="bold" />
                 </button>
-                <h1 className="text-base font-semibold text-slate-800 tracking-wide">私密记事</h1>
+                <h1 className="text-base font-semibold text-slate-800 tracking-wide">小纸条</h1>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={refresh}
@@ -242,6 +248,66 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
         } catch { /* ignore */ }
     }, []);
 
+    // 2026-07-22：自定义小纸条样式（多分组 + 随机选图）
+    const [styles, setStyles] = useState<NotebookStyles>({ groups: {}, activeGroup: null });
+    const [newGroupName, setNewGroupName] = useState<string>('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    useEffect(() => { setStyles(getStoredNotebookStyles()); }, []);
+    const persistStyles = (next: NotebookStyles) => {
+        setStyles(next);
+        setStoredNotebookStyles(next);
+    };
+    const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) return;
+        try {
+            const compressed = await compressImageForNote(file);
+            if (!styles.activeGroup) {
+                // 没有激活组 → 自动创建「默认样式」并激活
+                persistStyles({ groups: { '默认样式': [compressed] }, activeGroup: '默认样式' });
+            } else {
+                const urls = styles.groups[styles.activeGroup] || [];
+                persistStyles({
+                    ...styles,
+                    groups: { ...styles.groups, [styles.activeGroup]: [...urls, compressed] },
+                });
+            }
+        } catch (err) {
+            console.error('[notebookStyles] 压缩失败:', err);
+        } finally {
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+    const handleNewGroup = () => {
+        const name = newGroupName.trim();
+        if (!name) return;
+        if (styles.groups[name]) {
+            alert('已存在同名分组');
+            return;
+        }
+        persistStyles({ ...styles, groups: { ...styles.groups, [name]: [] }, activeGroup: name });
+        setNewGroupName('');
+    };
+    const handleDeleteGroup = (name: string) => {
+        if (!confirm(`确定删除分组「${name}」？里面的图也会一起删。`)) return;
+        const nextGroups = { ...styles.groups };
+        delete nextGroups[name];
+        const remaining = Object.keys(nextGroups);
+        persistStyles({
+            groups: nextGroups,
+            activeGroup: styles.activeGroup === name ? (remaining[0] || null) : styles.activeGroup,
+        });
+    };
+    const handleDeleteImage = (url: string) => {
+        if (!styles.activeGroup) return;
+        const urls = styles.groups[styles.activeGroup] || [];
+        persistStyles({
+            ...styles,
+            groups: { ...styles.groups, [styles.activeGroup]: urls.filter(u => u !== url) },
+        });
+    };
+
     const handleSave = () => {
         try {
             const v = customPrompt.trim();
@@ -310,6 +376,98 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                         />
                     </section>
 
+                    {/* 2026-07-22：自定义小纸条样式（多分组 + 随机选图） */}
+                    <section>
+                        <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">小纸条样式</div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                            上传你自己画的小纸条图，AI 写时从激活分组里随机选一张当背景，文字会居中显示。
+                            <span className="text-amber-600 font-medium">推荐 PNG 格式，四周留白多一点</span>，字就不会盖到图。
+                        </p>
+
+                        {/* 激活分组下拉框 + 删除当前组 */}
+                        <div className="flex gap-2 mb-2">
+                            <select
+                                value={styles.activeGroup || ''}
+                                onChange={(e) => {
+                                    const v = e.target.value;
+                                    persistStyles({ ...styles, activeGroup: v || null });
+                                }}
+                                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200/60 rounded-xl text-xs"
+                            >
+                                <option value="">未激活（用 type 默认）</option>
+                                {Object.keys(styles.groups).map(name => (
+                                    <option key={name} value={name}>{name}</option>
+                                ))}
+                            </select>
+                            {styles.activeGroup && (
+                                <button
+                                    onClick={() => handleDeleteGroup(styles.activeGroup!)}
+                                    className="px-3 py-2 text-rose-500 text-xs font-bold bg-rose-50 rounded-xl active:scale-95 transition-all"
+                                >
+                                    删组
+                                </button>
+                            )}
+                        </div>
+
+                        {/* 新建分组 */}
+                        <div className="flex gap-2 mb-3">
+                            <input
+                                value={newGroupName}
+                                onChange={(e) => setNewGroupName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleNewGroup(); } }}
+                                placeholder="新建分组名（如：和风便签）"
+                                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200/60 rounded-xl text-xs"
+                            />
+                            <button
+                                onClick={handleNewGroup}
+                                className="px-3 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl active:scale-95 transition-all"
+                            >
+                                新建
+                            </button>
+                        </div>
+
+                        {/* 当前组图片缩略图网格 */}
+                        {styles.activeGroup && (styles.groups[styles.activeGroup] || []).length > 0 && (
+                            <div className="grid grid-cols-3 gap-2 mb-3">
+                                {(styles.groups[styles.activeGroup] || []).map((url) => (
+                                    <div key={url} className="relative aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                                        <img src={url} alt="" className="w-full h-full object-cover" />
+                                        <button
+                                            onClick={() => handleDeleteImage(url)}
+                                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 text-rose-500 text-[11px] flex items-center justify-center shadow-sm active:scale-95"
+                                            title="删除这张图"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* 上传按钮 */}
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={!styles.activeGroup}
+                            className="w-full py-2.5 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white text-xs font-bold shadow-md active:scale-95 transition-all disabled:opacity-40"
+                        >
+                            📷 上传图片到当前组
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFile}
+                            className="hidden"
+                        />
+
+                        {/* 状态提示 */}
+                        <div className="text-[10px] text-slate-400 mt-2 text-center">
+                            {styles.activeGroup
+                                ? `当前激活：${styles.activeGroup}（${(styles.groups[styles.activeGroup] || []).length} 张）`
+                                : '未激活分组 — 用 type 默认颜色'}
+                        </div>
+                    </section>
+
                     {/* 2026-07-22：自定义提示词（在背景下面，跟其他设置放一起） */}
                     <section>
                         <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">AI 写小纸条的指导</div>
@@ -352,7 +510,7 @@ const EmptyState: React.FC<{ hasFilter: boolean; onOpenSettings?: () => void }> 
             </svg>
         </div>
         <div className="text-sm font-bold text-slate-600">
-            {hasFilter ? '没有匹配的便签' : '私密记事还是空的'}
+            {hasFilter ? '没有匹配的便签' : '小纸条还是空的'}
         </div>
         <div className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
             {hasFilter ? (

@@ -24,6 +24,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
+import { pickRandomStyleImage } from '../utils/notebookStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
   publishPostAsChar,
@@ -2647,6 +2648,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             timestamp: Date.now(),
                             content,
                             type,
+                            // 2026-07-22：暮色自定义小纸条样式（写入时从激活组随机选图，存到 note）
+                            styleImageUrl: pickRandomStyleImage(),
                         };
                         await DB.saveRoomNote(newNote);
                         console.log(`📒 [PrivateNote] ${char.name} 写了一条私密记事: ${content.slice(0, 30)}... (type=${type})`);

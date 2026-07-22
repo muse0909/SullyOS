@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-22 | 收藏页清理：关掉「语音数据已丢失」toast 堆叠 + 取消语音自动加入收藏 | [`changelogs/2026-07-22-favorites-voice-cleanup.md`](./changelogs/2026-07-22-favorites-voice-cleanup.md) |
+| 2026-07-22 | 私密记事 — 第五轮：改名"小纸条" + 自定义样式方案 B + 文字居中避盖图 | [`changelogs/2026-07-22-privatenotes-round5.md`](./changelogs/2026-07-22-privatenotes-round5.md) |
 | 2026-07-22 | 私密记事 — 第四轮：时间戳+回复贴右下角 + prompt 加 emoji/颜文字 | [`changelogs/2026-07-22-privatenotes-round4.md`](./changelogs/2026-07-22-privatenotes-round4.md) |
 | 2026-07-22 | 私密记事 — 第三轮：修 userProfile 报错 + 输入框交互改造 | [`changelogs/2026-07-22-privatenotes-round3.md`](./changelogs/2026-07-22-privatenotes-round3.md) |
 | 2026-07-22 | 私密记事 — 第二轮（位置 + prompt 通用化 + 输入框间距）| [`changelogs/2026-07-22-privatenotes-prompt-round2.md`](./changelogs/2026-07-22-privatenotes-prompt-round2.md) |

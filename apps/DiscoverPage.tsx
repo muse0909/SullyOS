@@ -114,7 +114,7 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div className="w-7 h-7 rounded-full bg-rose-50 flex items-center justify-center">
               <Notebook size={16} weight="regular" className="text-rose-500" />
             </div>
-            <span className="flex-1 text-sm font-medium text-slate-800">私密记事</span>
+            <span className="flex-1 text-sm font-medium text-slate-800">小纸条</span>
             <CaretRight size={16} className="text-slate-300" />
           </button>
           <div className="border-t border-slate-100" />

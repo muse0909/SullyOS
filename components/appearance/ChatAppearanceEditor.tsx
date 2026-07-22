@@ -201,6 +201,7 @@ const choices = {
         { value: 'subtle', label: '弱提示' },
         { value: 'pill', label: '状态胶囊' },
         { value: 'dot', label: '圆点在线' },
+        { value: 'none', label: '不显示' },
     ],
     send: [
         { value: 'circle', label: '圆按钮' },

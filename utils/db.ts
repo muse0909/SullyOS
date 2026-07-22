@@ -10,10 +10,12 @@ import {
     VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
-import { pruneMemoryLinks } from './memoryPalace/links';
-// 暮色 2026-07-21：暴露 MemoryLinkDB 到 DB 上，方便 console 一键 dedup
+import { pruneMemoryLinksByTopN } from './memoryPalace/links';
+// 暮色 2026-07-21：暴露 MemoryLinkDB 到 DB 上，方便 console 一键 dedup / 修剪
 //   - 背景：memoryLinks 295555 条是 bug 累积（saveMany 不去重）
-//   - 修法：DB.memoryLinkDB.deduplicateAll() 一次性清理
+//   - 修法 1：DB.memoryLinkDB.deduplicateAll() 一次性 dedup（约 278k）
+//   - 修法 2：DB.memoryLinkDB.pruneAllByTopN(50) 按节点 topN 修剪（约 5-6 万）
+//   - 推荐：先跑 pruneAllByTopN（已包含 dedup 阶段）
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
@@ -328,8 +330,9 @@ export const openDB = (): Promise<IDBDatabase> => {
 };
 
 export const DB = {
-  // 暮色 2026-07-21：暴露 MemoryLinkDB — console 一键 dedup 暴增的 295555 条 link
-  //   用法：await DB.memoryLinkDB.deduplicateAll()
+  // 暮色 2026-07-21：暴露 MemoryLinkDB — console 一键 dedup / 修剪暴增的 278206 条 link
+  //   用法 1：await DB.memoryLinkDB.deduplicateAll()            — 仅 dedup（~278k）
+  //   用法 2：await DB.memoryLinkDB.pruneAllByTopN(50)         — dedup + 每节点 topN（推荐，约 5-6 万）
   memoryLinkDB: MemoryLinkDB,
   deleteDB: async (): Promise<void> => {
       return new Promise((resolve, reject) => {
@@ -1917,7 +1920,7 @@ export const DB = {
           });
           clearAndAdd('memory_vectors', upgraded);
       }
-      if (data.memoryLinks) clearAndAdd('memory_links', pruneMemoryLinks(data.memoryLinks));
+      if (data.memoryLinks) clearAndAdd('memory_links', pruneMemoryLinksByTopN(data.memoryLinks, 70));
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
       if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);

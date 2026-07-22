@@ -11,6 +11,7 @@ import type {
     EventBox,
 } from './types';
 import { bm25Index } from './bm25Index';
+import { pruneMemoryLinksByTopN } from './links';
 
 // ─── Store 名称常量 ────────────────────────────────────
 
@@ -576,6 +577,44 @@ export const MemoryLinkDB = {
                 }
                 console.log(`🔗 [MemoryLinkDB.deduplicateAll] ${before} → ${after} (删除 ${before - after} 条冗余)`);
                 resolve({ before, after });
+            };
+            getReq.onerror = () => reject(getReq.error);
+            tx.onerror = () => reject(tx.error);
+        });
+    },
+
+    /**
+     * 暮色 2026-07-21：按"每个节点 topN 关系"修剪现有所有 memory_links
+     *   - 用途：清理历史 bug 累积的稠密关联图（~278k 条 → ~几万）
+     *   - 算法：调用 pruneMemoryLinksByTopN（弱边 + 去重 + 每节点 topN）
+     *   - 算法复杂度 O(N)，无 O(N²) 卡死
+     *   - 不动 memory_nodes / memory_vectors / messages / assets
+     *   - 跟 deduplicateAll 的关系：本方法会同时做 dedup，**两者互斥**—
+     *     如果数据已 dedup 过只跑 pruneAllByTopN 即可（推荐先跑这个）
+     *
+     * @param topN 每个节点最多保留的关系数，默认 70
+     * @returns { before, after, removed, topN }
+     */
+    pruneAllByTopN: async (topN: number = 70): Promise<{ before: number; after: number; removed: number; topN: number }> => {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_MEMORY_LINKS, 'readwrite');
+            const store = tx.objectStore(STORE_MEMORY_LINKS);
+            const getReq = store.getAll();
+            getReq.onsuccess = () => {
+                const all = (getReq.result || []) as MemoryLink[];
+                const before = all.length;
+                const pruned = pruneMemoryLinksByTopN(all, topN);
+                const after = pruned.length;
+                const removed = before - after;
+
+                // 清空 + 重新 put（同一 readwrite tx）
+                store.clear();
+                for (const l of pruned) {
+                    store.put(l);
+                }
+                console.log(`🔗 [MemoryLinkDB.pruneAllByTopN] before=${before} → after=${after} (删除 ${removed} 条, topN=${topN})`);
+                resolve({ before, after, removed, topN });
             };
             getReq.onerror = () => reject(getReq.error);
             tx.onerror = () => reject(tx.error);

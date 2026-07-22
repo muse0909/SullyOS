@@ -8,7 +8,12 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
-import { pruneMemoryLinks } from '../utils/memoryPalace/links';
+import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
+// 暮色 2026-07-22：每月自动跑一次记忆关系网修剪（30 天间隔，避免节点关联数缓慢增长）
+//   - 用户感知：仅在真的删了东西时弹一个 success toast
+//   - 失败 / 跳过（< 30 天）静默
+//   - 不阻塞首屏
+import { maybeAutoPruneMemoryLinks } from '../utils/memoryPalace/autoPrune';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -532,6 +537,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       run();
       return () => { cancelled = true; };
   // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 暮色 2026-07-22：App 启动时检查并执行 memoryLinks 每月自动修剪
+  //   - 距上次修剪 < 30 天 → 跳过（不弹任何东西）
+  //   - 跑了一次且删了东西 → 弹 success toast 告诉用户
+  //   - 失败 / 没数据 → 静默
+  //   - 不阻塞首屏，挂载 3 秒后才跑（让首屏先呼吸）
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 3000));
+              if (cancelled) return;
+              const r = await maybeAutoPruneMemoryLinks(70);
+              if (cancelled) return;
+              if (r.ran && r.result.removed > 0) {
+                  addToast(`已自动修剪 ${r.result.removed} 条冗余记忆关系（每节点最多 ${r.result.topN} 条）`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] auto prune memory links failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast 是稳定引用，跑一次即可
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1330,6 +1361,13 @@ if (!isVisible || !isChattingWithThisChar) {
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
           console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
 
+          // 暮色 2026-07-22：reqBody + apiProtocol 挪到 try 块外面
+          //   原因：catch 块访问不到 try 块作用域里的 const 声明
+          //   之前挪里在 try 里，400 错误时 catch 里 JSON.stringify(reqBody) 报 ReferenceError
+          //   → localStorage 写不进去 + 推系统消息也炸了 → 聊天里看不到错误详情
+          const apiProtocol = (api as any).protocol ?? 'openai';
+          let reqBody: any = null;
+
           try {
               // 1. Calculate time gap
               const recentMsgs = await DB.getRecentMessagesByCharId(charId, 200);
@@ -1370,10 +1408,24 @@ if (!isVisible || !isChattingWithThisChar) {
               // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
               const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
 
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(
+              const systemPromptResult = await ChatPrompts.buildSystemPrompt(
                   char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
                   currentRealtimeConfig, cachedInnerState,
               );
+              // 暮色 2026-07-22：buildSystemPrompt 现在返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}
+              //   之前直接赋给 content 是个对象，京东云 OpenAI 兼容拒收（400）
+              //   修法：拼回 string（仿 useChatAI line 940）
+              //   dynamicTail.realtimeText 给主动消息用（"现在几点了"），innerState 情绪延续，privateNotes 主动消息不需要
+              //   6 段末尾 push 主动消息不需要（max_tokens: 500 承受不起）
+              const sp = systemPromptResult as any;
+              const systemPromptParts = [
+                  sp.bp1Tools,
+                  sp.bp2Rules,
+                  sp.bp3Context,
+                  sp.dynamicTail?.realtimeText,
+                  sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
+              ].filter((p: string) => p && p.trim());
+              const systemPrompt = systemPromptParts.join('\n\n');
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
@@ -1381,7 +1433,7 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
-              const reqBody = {
+              reqBody = {
                   model: api.model,
                   messages: fullMessages,
                   temperature: 0.8,
@@ -1391,7 +1443,6 @@ if (!isVisible || !isChattingWithThisChar) {
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
               // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
               // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
-              const apiProtocol = (api as any).protocol ?? 'openai';
               const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
                   method: 'POST',
                   headers: {
@@ -1400,6 +1451,21 @@ if (!isVisible || !isChattingWithThisChar) {
                   },
                   body: JSON.stringify(reqBody),
               }, 2, 0, apiProtocol);
+
+              // 暮色 2026-07-22：成功路径也把请求体存一份，便于和失败时对比
+              try {
+                  const logEntry = {
+                      ts: new Date().toISOString(),
+                      char: char.name,
+                      charId,
+                      protocol: apiProtocol,
+                      model: api.model,
+                      msgCount: reqBody.messages?.length || 0,
+                      systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
+                      totalBodyChars: JSON.stringify(reqBody).length,
+                  };
+                  localStorage.setItem('sullyos:proactiveLastReq', JSON.stringify(logEntry, null, 2));
+              } catch { /* quota 忽略 */ }
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
@@ -1470,6 +1536,41 @@ if (!isVisible || !isChattingWithThisChar) {
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
+              // 暮色 2026-07-22：失败时把 reqBody + 错误存到 localStorage，下次复现能直接看到具体请求体
+              //   控制台取：copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))
+              //   reqBody 挪到 try 外 + 默认 null，失败时可能是 buildSystemPrompt 阶段就抛了
+              //   （reqBody 还没赋值），catch 里 try/catch 兜住
+              const errMessage = (err as Error)?.message || String(err);
+              const totalBodyChars = reqBody ? JSON.stringify(reqBody).length : 0;
+              // 外层 try/catch 兜住整个诊断 log 写入
+              //   之前 inner try { localStorage.setItem } 只兜了 localStorage 写入
+              //   但 JSON.stringify(errLog) / reqBody.messages? 访问可能炸（reqBody=null 时）
+              //   → catch 块本身就炸了 → 推系统消息进聊天也走不到
+              try {
+                  const errLog = {
+                      ts: new Date().toISOString(),
+                      char: char.name,
+                      charId,
+                      protocol: apiProtocol,
+                      model: api.model,
+                      msgCount: reqBody?.messages?.length || 0,
+                      systemChars: systemPrompt.length,  // 现在 systemPrompt 是 string 了，能拿到长度
+                      totalBodyChars,
+                      firstMsgRole: reqBody?.messages?.[0]?.role,
+                      lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
+                      errMessage,
+                      errStack: (err as Error)?.stack?.slice(0, 600),
+                      reqBody,  // 完整 body
+                  };
+                  localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
+                  console.warn(
+                      `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
+                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
+                      'color:#dc2626;font-weight:bold',
+                  );
+              } catch (diagErr) {
+                  console.error('[Proactive/Global] 诊断 log 写入也炸了:', diagErr);
+              }
           } finally {
               proactiveRunningRef.current = false;
               setProactiveComposingChars(prev => {
@@ -2548,7 +2649,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'life_sim': backupData.lifeSimState = Array.isArray(processedData) ? (processedData[0] || null) : (processedData || null); break;
                   case 'memory_nodes': backupData.memoryNodes = processedData; break;
                   case 'memory_vectors': backupData.memoryVectors = processedData; break;
-                  case 'memory_links': backupData.memoryLinks = pruneMemoryLinks(processedData || []); break;
+                  case 'memory_links': backupData.memoryLinks = pruneMemoryLinksByTopN(processedData || [], 70); break;
                   case 'topic_boxes': backupData.topicBoxes = processedData; break;
                   case 'anticipations': backupData.anticipations = processedData; break;
                   case 'event_boxes': backupData.eventBoxes = processedData; break;

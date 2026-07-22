@@ -39,7 +39,7 @@ interface ChatHeaderShellProps {
     avatarShape?: 'circle' | 'rounded' | 'square';
     headerAlign?: 'left' | 'center';
     headerDensity?: 'compact' | 'default' | 'airy';
-    statusStyle?: 'subtle' | 'pill' | 'dot';
+    statusStyle?: 'subtle' | 'pill' | 'dot' | 'none';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
 }
 
@@ -205,7 +205,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
           ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
           : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
 
-    const onlineStatusNode = headerStyle === 'telegram'
+    const onlineStatusNode = (headerStyle === 'telegram' || statusStyle === 'none')
         ? null
         : statusStyle === 'pill' ? (
             <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>

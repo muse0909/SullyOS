@@ -2086,6 +2086,9 @@ if (keepN > 0) {
     try {
         await navigator.clipboard.writeText(textContent);
         addToast(`已复制 ${selectedMsgIds.size} 条消息`, 'success');
+        // 暮色 2026-07-22：复制后自动退出多选模式回聊天页，不停留在多选页
+        setSelectionMode(false);
+        setSelectedMsgIds(new Set());
     } catch (err) {
         addToast('复制失败', 'error');
     }

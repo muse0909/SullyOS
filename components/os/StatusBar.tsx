@@ -20,6 +20,8 @@ const StatusBar: React.FC = () => {
   const [batteryLevel, setBatteryLevel] = useState<number>(100);
   const [isCharging, setIsCharging] = useState<boolean>(false);
   const [showLogModal, setShowLogModal] = useState(false);
+  // 暮色 2026-07-22：复制 JSON 加"闪一下"反馈，200ms 后恢复
+  const [copiedFlash, setCopiedFlash] = useState(false);
   
   // Format numbers to have leading zeros
   const format = (n: number) => n.toString().padStart(2, '0');
@@ -140,8 +142,31 @@ const StatusBar: React.FC = () => {
           adaptiveHeight
           footer={
               <div className="flex gap-2 w-full">
-                  <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(systemLogs, null, 2)); }} className="flex-1 py-3 bg-slate-100 font-bold rounded-xl text-slate-600">复制 JSON</button>
-                  <button onClick={clearLogs} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg shadow-red-200">清空日志</button>
+                  <button
+                      onClick={async () => {
+                          try {
+                              await navigator.clipboard.writeText(JSON.stringify(systemLogs, null, 2));
+                              // 暮色 2026-07-22：复制后闪一下，200ms 后恢复（视觉反馈）
+                              setCopiedFlash(true);
+                              setTimeout(() => setCopiedFlash(false), 600);
+                          } catch (e) {
+                              // 复制失败时不闪
+                          }
+                      }}
+                      className={`flex-1 py-3 font-bold rounded-xl transition-all duration-200 ${copiedFlash ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200 scale-[0.97]' : 'bg-slate-100 text-slate-600'}`}
+                  >
+                      {copiedFlash ? '已复制 ✓' : '复制 JSON'}
+                  </button>
+                  <button
+                      onClick={() => {
+                          clearLogs();
+                          // 暮色 2026-07-22：清空后关闭弹窗回聊天页
+                          setShowLogModal(false);
+                      }}
+                      className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg shadow-red-200"
+                  >
+                      清空日志
+                  </button>
               </div>
           }
       >

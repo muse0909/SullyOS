@@ -91,7 +91,7 @@ export interface OSTheme {
   chatBackgroundStyle?: 'plain' | 'grid' | 'paper' | 'mesh';
   chatHeaderAlign?: 'left' | 'center';
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
-  chatStatusStyle?: 'subtle' | 'pill' | 'dot';
+  chatStatusStyle?: 'subtle' | 'pill' | 'dot' | 'none';
   chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
 }
 

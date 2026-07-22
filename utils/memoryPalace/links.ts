@@ -318,3 +318,73 @@ export function pruneMemoryLinks(
     }
     return Array.from(bestByKey.values());
 }
+
+/**
+ * 修剪历史 memoryLinks — 按"每个节点最多保留 topN 条关系"做二阶段压缩
+ *
+ * 背景：buildLinks 旧版 bug 累积了 27 万+ 条 link，平均每节点 ~140 条。
+ *   - 索引体积：每条 link 包含 sourceId + targetId + type + strength ≈ 100 字节
+ *     → 27 万条 ≈ 27 MB 纯 IDB 占用
+ *   - 扩散激活：每次检索都遍历节点所有 link，140 条/node × N 节点 = 卡顿
+ *   - 冗余高：每节点保留最强 50 条已足以维持图遍历质量
+ *
+ * 阶段 1：跟 pruneMemoryLinks 一样砍弱边 + 去重（同 source+target+type 留最强）
+ * 阶段 2：每个节点挑 strength 最高的 topN 条 link
+ *   - 一条 link 同时属于 sourceId 和 targetId 两个节点
+ *   - 节点 A 挑中 link(L) ↔ 节点 B 也会"被动保留" link(L)
+ *   - 所以最终每节点实际可能略高于 topN（其他节点挑中它时也算）
+ *   - 这是可以接受的：实际平均 ~50-60 条/node，比当前 ~140 安全很多
+ *
+ * 算法 O(N)，无 O(N²)：
+ *   - byNode Map<nodeId, link[]>：O(N)（每条 link 注册到 source 和 target 两个节点）
+ *   - 每节点 sort + take topN：O(K log K)，K = 该节点关联 link 数
+ *   - 总开销 ≈ O(N + Σ K_i log K_i)，27 万条几秒内跑完
+ *
+ * 不影响 memory_nodes / memory_vectors / messages / assets — 只裁 memory_links。
+ * 弱关系被砍后，buildLinks 在后续 pipeline 跑时按规则自动重建。
+ *
+ * @param links 原始链接列表
+ * @param topN 每个节点最多保留的关系数，默认 70
+ * @param minStrength 阶段 1 弱 emotional 阈值，默认 0.3
+ * @returns 裁剪后的链接列表
+ */
+export function pruneMemoryLinksByTopN(
+    links: MemoryLink[],
+    topN: number = 70,
+    minStrength: number = 0.3,
+): MemoryLink[] {
+    // 阶段 1：先砍弱边 + 去重
+    const base = pruneMemoryLinks(links, minStrength);
+
+    // 阶段 2：按节点分组（一 link 属于 source 和 target 两个节点）
+    const byNode = new Map<string, MemoryLink[]>();
+    for (const link of base) {
+        let listA = byNode.get(link.sourceId);
+        if (!listA) {
+            listA = [];
+            byNode.set(link.sourceId, listA);
+        }
+        listA.push(link);
+        let listB = byNode.get(link.targetId);
+        if (!listB) {
+            listB = [];
+            byNode.set(link.targetId, listB);
+        }
+        listB.push(link);
+    }
+
+    // 每个节点挑 strength 最高的 topN
+    const keepIds = new Set<string>();
+    for (const nodeLinks of byNode.values()) {
+        // sort by strength desc，topN 用 slice 拿
+        // 节点关联数远小于总 link 数（平均 ~140），sort 开销可控
+        nodeLinks.sort((a, b) => b.strength - a.strength);
+        const take = Math.min(topN, nodeLinks.length);
+        for (let i = 0; i < take; i++) {
+            keepIds.add(nodeLinks[i].id);
+        }
+    }
+
+    // 过滤输出
+    return base.filter(l => keepIds.has(l.id));
+}

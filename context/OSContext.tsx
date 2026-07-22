@@ -1361,6 +1361,13 @@ if (!isVisible || !isChattingWithThisChar) {
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
           console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
 
+          // 暮色 2026-07-22：reqBody + apiProtocol 挪到 try 块外面
+          //   原因：catch 块访问不到 try 块作用域里的 const 声明
+          //   之前挪里在 try 里，400 错误时 catch 里 JSON.stringify(reqBody) 报 ReferenceError
+          //   → localStorage 写不进去 + 推系统消息也炸了 → 聊天里看不到错误详情
+          const apiProtocol = (api as any).protocol ?? 'openai';
+          let reqBody: any = null;
+
           try {
               // 1. Calculate time gap
               const recentMsgs = await DB.getRecentMessagesByCharId(charId, 200);
@@ -1412,7 +1419,7 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
-              const reqBody = {
+              reqBody = {
                   model: api.model,
                   messages: fullMessages,
                   temperature: 0.8,
@@ -1422,7 +1429,6 @@ if (!isVisible || !isChattingWithThisChar) {
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
               // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
               // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
-              const apiProtocol = (api as any).protocol ?? 'openai';
               const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
                   method: 'POST',
                   headers: {
@@ -1518,8 +1524,14 @@ if (!isVisible || !isChattingWithThisChar) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
               // 暮色 2026-07-22：失败时把 reqBody + 错误存到 localStorage，下次复现能直接看到具体请求体
               //   控制台取：copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))
+              //   reqBody 挪到 try 外 + 默认 null，失败时可能是 buildSystemPrompt 阶段就抛了
+              //   （reqBody 还没赋值），catch 里 try/catch 兜住
               const errMessage = (err as Error)?.message || String(err);
-              const totalBodyChars = JSON.stringify(reqBody).length;
+              const totalBodyChars = reqBody ? JSON.stringify(reqBody).length : 0;
+              // 外层 try/catch 兜住整个诊断 log 写入
+              //   之前 inner try { localStorage.setItem } 只兜了 localStorage 写入
+              //   但 JSON.stringify(errLog) / reqBody.messages? 访问可能炸（reqBody=null 时）
+              //   → catch 块本身就炸了 → 推系统消息进聊天也走不到
               try {
                   const errLog = {
                       ts: new Date().toISOString(),
@@ -1527,11 +1539,11 @@ if (!isVisible || !isChattingWithThisChar) {
                       charId,
                       protocol: apiProtocol,
                       model: api.model,
-                      msgCount: reqBody.messages?.length || 0,
-                      systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
+                      msgCount: reqBody?.messages?.length || 0,
+                      systemChars: 0,  // systemPrompt 在 try 块里 catch 访问不到，省略
                       totalBodyChars,
-                      firstMsgRole: reqBody.messages?.[0]?.role,
-                      lastMsgRole: reqBody.messages?.[reqBody.messages.length - 1]?.role,
+                      firstMsgRole: reqBody?.messages?.[0]?.role,
+                      lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
                       errMessage,
                       errStack: (err as Error)?.stack?.slice(0, 600),
                       reqBody,  // 完整 body
@@ -1542,20 +1554,20 @@ if (!isVisible || !isChattingWithThisChar) {
                       `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
                       'color:#dc2626;font-weight:bold',
                   );
-              } catch { /* quota 忽略 */ }
 
-              // 暮色 2026-07-22：也推一条系统消息进聊天流（暮色不会 F12）
-              //   内容：model + 错误体 + 关键诊断字段，让暮色截图聊天就能看到 400 详情
-              //   排查完成后改回只 console（不要污染聊天流）
-              try {
-                  const diagText = `[主动消息失败: model=${api.model} | body=${totalBodyChars}字符 | msgs=${reqBody.messages?.length || 0}条 | firstMsgRole=${reqBody.messages?.[0]?.role} | 错误: ${errMessage.slice(0, 300)}]`;
+                  // 暮色 2026-07-22：也推一条系统消息进聊天流（暮色不会 F12）
+                  //   内容：model + 错误体 + 关键诊断字段，让暮色截图聊天就能看到 400 详情
+                  //   排查完成后改回只 console（不要污染聊天流）
+                  const diagText = `[主动消息失败: model=${api.model} | body=${totalBodyChars}字符 | msgs=${reqBody?.messages?.length || 0}条 | firstMsgRole=${reqBody?.messages?.[0]?.role} | 错误: ${errMessage.slice(0, 300)}]`;
                   await DB.saveMessage({
                       charId,
                       role: 'system',
                       type: 'text',
                       content: diagText,
                   });
-              } catch { /* 推不动也别影响外层 */ }
+              } catch (diagErr) {
+                  console.error('[Proactive/Global] 诊断 log 写入也炸了:', diagErr);
+              }
           } finally {
               proactiveRunningRef.current = false;
               setProactiveComposingChars(prev => {

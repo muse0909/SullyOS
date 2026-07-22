@@ -148,6 +148,7 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
 };
 
 // 详情页用的大版便签（2026-07-22：5 type 视觉全部废弃，简化为图背景 + 纯白兜底）
+// 2026-07-23：文字以图中心为原点绝对居中（不依赖图中央留白），半透明白底让字清晰
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
     charName?: string;
@@ -156,30 +157,31 @@ const FullXiaoZhiTiaoCard: React.FC<{
 }> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     return (
         <div
-            className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] text-center bg-no-repeat ${note.styleImageUrl ? 'bg-slate-50' : ''}`}
+            className="relative w-full rounded-2xl shadow-xl min-h-[320px] overflow-hidden bg-no-repeat"
             style={
                 note.styleImageUrl
-                    // 2026-07-22：contain 完整显示不裁切（暮色图边角装饰不能被 cover 裁掉）
+                    // contain 完整显示不裁切（暮色图边角装饰不能被 cover 裁掉）
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
                         backgroundSize: 'contain',
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
+                        backgroundColor: '#f8fafc',  // 浅灰底（contain 模式图外区域颜色，避免透明看着脏）
                     }
-                    // 无图时纯白兜底（等暮色给图后换默认）
+                    // 无图时纯白兜底
                     : { backgroundColor: '#ffffff' }
             }
         >
-            {charName && (
-                <div className="flex items-center justify-end mb-3 text-[11px] font-bold">
-                    {/* 白底图用深色字 + 浅色 drop-shadow */}
-                    <span className={note.styleImageUrl ? 'text-slate-700 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-500'}>— {charName}</span>
+            {/* 文字层：绝对居中（以图中心为原点），给字加半透明白底（清晰可读 + 不压边框） */}
+            <div className="absolute inset-0 flex items-center justify-center p-10 pb-16">
+                <div className={`max-w-[80%] rounded-2xl px-5 py-4 text-center ${note.styleImageUrl ? 'bg-white/85 backdrop-blur-sm shadow-sm' : ''}`}>
+                    {charName && (
+                        <div className="text-[10px] font-bold text-slate-500 mb-1.5">— {charName}</div>
+                    )}
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap break-words text-slate-800">
+                        {note.content}
+                    </div>
                 </div>
-            )}
-
-            {/* 白底图用深色字 + 浅色 drop-shadow（清晰可读） */}
-            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-slate-800 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-800'}`}>
-                {note.content}
             </div>
 
             {/* 右下角时间戳 + 回复按钮 */}
@@ -187,13 +189,13 @@ const FullXiaoZhiTiaoCard: React.FC<{
                 {!hideReplyButton && onReplyClick && (
                     <button
                         onClick={onReplyClick}
-                        className={`w-7 h-7 rounded-full backdrop-blur shadow-sm border flex items-center justify-center active:scale-95 transition-transform text-[11px] ${note.styleImageUrl ? 'bg-white/70 border-slate-200' : 'bg-white/85 border-white/60'}`}
+                        className="w-7 h-7 rounded-full bg-white/85 backdrop-blur shadow-sm border border-white/60 flex items-center justify-center active:scale-95 transition-transform text-[11px]"
                         title="回复"
                     >
                         💬
                     </button>
                 )}
-                <span className={`text-[10px] font-mono ${note.styleImageUrl ? 'text-slate-600 drop-shadow-[0_1px_0_rgba(255,255,255,0.9)]' : 'text-slate-400'}`}>
+                <span className="text-[10px] font-mono text-slate-500 bg-white/70 backdrop-blur-sm px-1.5 py-0.5 rounded">
                     {new Date(note.timestamp).toLocaleString('zh-CN')}
                 </span>
             </div>

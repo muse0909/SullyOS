@@ -113,10 +113,12 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
 
             {/* 主便签（全屏放大版） */}
             <div className="flex-1 overflow-y-auto px-5 pt-6 pb-4 no-scrollbar">
-                <FullNoteCard note={note} charName={charName} />
-                <div className="text-[10px] text-slate-400 text-center mt-3 font-mono">
-                    {new Date(note.timestamp).toLocaleString('zh-CN')}
-                </div>
+                <FullNoteCard
+                    note={note}
+                    charName={charName}
+                    onReplyClick={() => setIsReplying(true)}
+                    hideReplyButton={isReplying}
+                />
 
                 {/* 回复列表 */}
                 {(note.replies && note.replies.length > 0) && (
@@ -128,18 +130,6 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                         {note.replies.map((r) => (
                             <ReplyBubble key={r.id} reply={r} />
                         ))}
-                    </div>
-                )}
-
-                {/* 2026-07-22：默认"回复"按钮（贴在便签下方，居中胶囊） */}
-                {!isReplying && (
-                    <div className="flex justify-center mt-6 mb-2">
-                        <button
-                            onClick={() => setIsReplying(true)}
-                            className="px-5 py-2 rounded-full bg-white/85 backdrop-blur text-slate-600 text-xs font-bold shadow-sm border border-white/60 active:scale-95 transition-transform flex items-center gap-1.5"
-                        >
-                            💬 回复
-                        </button>
                     </div>
                 )}
             </div>
@@ -182,13 +172,19 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
 };
 
 // 详情页用的大版便签（保留 5 种 type 视觉，放大显示）
-const FullNoteCard: React.FC<{ note: RoomNote; charName?: string }> = ({ note, charName }) => {
+// 2026-07-22：右下角放时间戳 + 回复按钮（便签纸内部，暮色要求）
+const FullNoteCard: React.FC<{
+    note: RoomNote;
+    charName?: string;
+    onReplyClick?: () => void;
+    hideReplyButton?: boolean;
+}> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     const type = note.type || 'thought';
     const isSearch = type === 'search';
 
     return (
         <div
-            className="relative w-full rounded-2xl shadow-xl p-6 min-h-[280px]"
+            className="relative w-full rounded-2xl shadow-xl p-6 pb-12 min-h-[280px]"
             style={{
                 backgroundColor: isSearch ? '#d4a574' : (
                     type === 'doodle' ? '#ffffff' :
@@ -239,6 +235,22 @@ const FullNoteCard: React.FC<{ note: RoomNote; charName?: string }> = ({ note, c
 
             <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
                 {note.content}
+            </div>
+
+            {/* 2026-07-22：右下角时间戳 + 回复按钮（贴便签纸内部，暮色要求） */}
+            <div className="absolute bottom-2 right-3 flex items-center gap-2 z-10">
+                {!hideReplyButton && onReplyClick && (
+                    <button
+                        onClick={onReplyClick}
+                        className="w-7 h-7 rounded-full bg-white/85 backdrop-blur shadow-sm border border-white/60 flex items-center justify-center active:scale-95 transition-transform text-[11px]"
+                        title="回复"
+                    >
+                        💬
+                    </button>
+                )}
+                <span className="text-[10px] text-slate-400 font-mono">
+                    {new Date(note.timestamp).toLocaleString('zh-CN')}
+                </span>
             </div>
         </div>
     );

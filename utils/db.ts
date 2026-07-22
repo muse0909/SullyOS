@@ -1920,7 +1920,7 @@ export const DB = {
           });
           clearAndAdd('memory_vectors', upgraded);
       }
-      if (data.memoryLinks) clearAndAdd('memory_links', pruneMemoryLinksByTopN(data.memoryLinks, 50));
+      if (data.memoryLinks) clearAndAdd('memory_links', pruneMemoryLinksByTopN(data.memoryLinks, 70));
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
       if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);

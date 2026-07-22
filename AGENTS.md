@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-22 | memoryLinks 每月自动修剪（30 天间隔）+ topN 50 → 70 | [`changelogs/2026-07-22-auto-prune-monthly.md`](./changelogs/2026-07-22-auto-prune-monthly.md) |
 | 2026-07-20 | 云端同步（多端互通）—— 电脑手机共享聊天记录 + 记忆宫殿 | [`changelogs/2026-07-20-cloud-sync-multi-device.md`](./changelogs/2026-07-20-cloud-sync-multi-device.md) |
 | 2026-07-22 | 主动消息 Claude 协议 400 修复 + 诊断 log（仿 useChatAI 7/17 协议兼容）| [`changelogs/2026-07-22-proactive-claude-protocol-400.md`](./changelogs/2026-07-22-proactive-claude-protocol-400.md) |
 | 2026-07-21 | memoryLinks 支持按节点 topN 修剪 — 清理历史累积的稠密关联图 | [`changelogs/2026-07-21-memory-links-topn-prune.md`](./changelogs/2026-07-21-memory-links-topn-prune.md) |

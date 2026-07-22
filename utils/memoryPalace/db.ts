@@ -592,10 +592,10 @@ export const MemoryLinkDB = {
      *   - 跟 deduplicateAll 的关系：本方法会同时做 dedup，**两者互斥**—
      *     如果数据已 dedup 过只跑 pruneAllByTopN 即可（推荐先跑这个）
      *
-     * @param topN 每个节点最多保留的关系数，默认 50
+     * @param topN 每个节点最多保留的关系数，默认 70
      * @returns { before, after, removed, topN }
      */
-    pruneAllByTopN: async (topN: number = 50): Promise<{ before: number; after: number; removed: number; topN: number }> => {
+    pruneAllByTopN: async (topN: number = 70): Promise<{ before: number; after: number; removed: number; topN: number }> => {
         const db = await openDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE_MEMORY_LINKS, 'readwrite');

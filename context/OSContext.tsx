@@ -9,6 +9,11 @@ import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
+// 暮色 2026-07-22：每月自动跑一次记忆关系网修剪（30 天间隔，避免节点关联数缓慢增长）
+//   - 用户感知：仅在真的删了东西时弹一个 success toast
+//   - 失败 / 跳过（< 30 天）静默
+//   - 不阻塞首屏
+import { maybeAutoPruneMemoryLinks } from '../utils/memoryPalace/autoPrune';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -532,6 +537,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       run();
       return () => { cancelled = true; };
   // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 暮色 2026-07-22：App 启动时检查并执行 memoryLinks 每月自动修剪
+  //   - 距上次修剪 < 30 天 → 跳过（不弹任何东西）
+  //   - 跑了一次且删了东西 → 弹 success toast 告诉用户
+  //   - 失败 / 没数据 → 静默
+  //   - 不阻塞首屏，挂载 3 秒后才跑（让首屏先呼吸）
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 3000));
+              if (cancelled) return;
+              const r = await maybeAutoPruneMemoryLinks(70);
+              if (cancelled) return;
+              if (r.ran && r.result.removed > 0) {
+                  addToast(`已自动修剪 ${r.result.removed} 条冗余记忆关系（每节点最多 ${r.result.topN} 条）`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] auto prune memory links failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast 是稳定引用，跑一次即可
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2603,7 +2634,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'life_sim': backupData.lifeSimState = Array.isArray(processedData) ? (processedData[0] || null) : (processedData || null); break;
                   case 'memory_nodes': backupData.memoryNodes = processedData; break;
                   case 'memory_vectors': backupData.memoryVectors = processedData; break;
-                  case 'memory_links': backupData.memoryLinks = pruneMemoryLinksByTopN(processedData || [], 50); break;
+                  case 'memory_links': backupData.memoryLinks = pruneMemoryLinksByTopN(processedData || [], 70); break;
                   case 'topic_boxes': backupData.topicBoxes = processedData; break;
                   case 'anticipations': backupData.anticipations = processedData; break;
                   case 'event_boxes': backupData.eventBoxes = processedData; break;

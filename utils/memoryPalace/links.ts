@@ -344,13 +344,13 @@ export function pruneMemoryLinks(
  * 弱关系被砍后，buildLinks 在后续 pipeline 跑时按规则自动重建。
  *
  * @param links 原始链接列表
- * @param topN 每个节点最多保留的关系数，默认 50
+ * @param topN 每个节点最多保留的关系数，默认 70
  * @param minStrength 阶段 1 弱 emotional 阈值，默认 0.3
  * @returns 裁剪后的链接列表
  */
 export function pruneMemoryLinksByTopN(
     links: MemoryLink[],
-    topN: number = 50,
+    topN: number = 70,
     minStrength: number = 0.3,
 ): MemoryLink[] {
     // 阶段 1：先砍弱边 + 去重

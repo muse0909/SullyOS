@@ -556,7 +556,7 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
-                    {isLastInGroup && showTimestamp !== 'never' && (
+                    {(isLastInGroup || m.metadata?.isProactive) && showTimestamp !== 'never' && (
                         <div className={`text-[9px] text-slate-400/80 px-1 mt-1 font-medium ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
                 </div>

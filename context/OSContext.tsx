@@ -1493,6 +1493,7 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'emoji',
                                   content: foundEmoji.url,
                                   timestamp: baseTimestamp + offset,
+                                  metadata: { isProactive: true },
                               });
                           } else {
                               const fallbackText = `发送了表情包：${part.content}`;
@@ -1502,6 +1503,7 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'text',
                                   content: fallbackText,
                                   timestamp: baseTimestamp + offset,
+                                  metadata: { isProactive: true },
                               });
                               savedPreviewChunks.push(fallbackText);
                           }
@@ -1520,6 +1522,7 @@ if (!isVisible || !isChattingWithThisChar) {
                               type: 'text',
                               content: chunk,
                               timestamp: baseTimestamp + offset,
+                              metadata: { isProactive: true },
                           });
                           savedPreviewChunks.push(chunk);
                           offset += 1;

@@ -169,6 +169,9 @@ const Chat: React.FC = () => {
     const [perCharApiKey, setPerCharApiKey] = useState('');
     const [perCharApiModel, setPerCharApiModel] = useState('');
     const [showPerCharKey, setShowPerCharKey] = useState(false);
+    const [showPresetPicker, setShowPresetPicker] = useState(false);
+    // 只看 main 类型的预设（暮色 2026-07-24 — 聊天 API 用 main 预设）
+    const mainPresets = (apiPresets || []).filter((p: any) => !p.kind || p.kind === 'main');
     // 打开抽屉 / 切角色时同步当前角色的 apiConfig
     useEffect(() => {
         if (showChatSettingsDrawer && char) {
@@ -195,6 +198,13 @@ const Chat: React.FC = () => {
         setPerCharApiKey('');
         setPerCharApiModel('');
         await updateCharApiConfig(char.id, undefined);
+    };
+    // 从预设加载（只填输入框，不直接保存）
+    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => {
+        setPerCharApiBaseUrl(cfg.baseUrl || '');
+        setPerCharApiKey(cfg.apiKey || '');
+        setPerCharApiModel(cfg.model || '');
+        setShowPresetPicker(false);
     };
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => {
@@ -2541,6 +2551,10 @@ if (keepN > 0) {
                 showPerCharKey={showPerCharKey} setShowPerCharKey={setShowPerCharKey}
                 onSavePerCharApi={handleSavePerCharApi}
                 onClearPerCharApi={handleClearPerCharApi}
+                mainPresets={mainPresets}
+                showPresetPicker={showPresetPicker}
+                setShowPresetPicker={setShowPresetPicker}
+                onLoadPreset={handleLoadPresetIntoPerChar}
             />
 
             {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}

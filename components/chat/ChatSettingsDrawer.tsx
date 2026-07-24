@@ -70,6 +70,18 @@ interface ChatSettingsDrawerProps {
     preserveCount: number;
     setPreserveCount: (v: number) => void;
     onClearHistory: () => void;
+
+    // 角色独立 API（暮色 2026-07-24）
+    perCharApiBaseUrl: string;
+    setPerCharApiBaseUrl: (v: string) => void;
+    perCharApiKey: string;
+    setPerCharApiKey: (v: string) => void;
+    perCharApiModel: string;
+    setPerCharApiModel: (v: string) => void;
+    showPerCharKey: boolean;
+    setShowPerCharKey: (v: boolean) => void;
+    onSavePerCharApi: () => void;
+    onClearPerCharApi: () => void;
 }
 
 const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
@@ -87,6 +99,13 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
     preserveCount, setPreserveCount,
     onClearHistory,
+
+    // 角色独立 API（暮色 2026-07-24）
+    perCharApiBaseUrl, setPerCharApiBaseUrl,
+    perCharApiKey, setPerCharApiKey,
+    perCharApiModel, setPerCharApiModel,
+    showPerCharKey, setShowPerCharKey,
+    onSavePerCharApi, onClearPerCharApi,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -387,6 +406,57 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                                 <p className="text-[10px] text-slate-400 mt-1">留空则只使用内置提示词。</p>
                             </div>
                         )}
+                    </section>
+
+                    {/* === 角色独立 API（暮色 2026-07-24）==  */}
+                    <section className="pt-2 border-t border-slate-100">
+                        <div className="text-[11px] font-bold text-slate-500 mb-2">🔌 这个角色的 API</div>
+                        <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">
+                            留空就用全局 API 设置。设了的话，跟这个角色说话走自己的通道。
+                        </p>
+                        <div className="space-y-2.5">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Base URL</label>
+                                <input
+                                    type="text"
+                                    value={perCharApiBaseUrl}
+                                    onChange={(e) => setPerCharApiBaseUrl(e.target.value)}
+                                    placeholder="留空回退全局"
+                                    className="w-full bg-slate-50 rounded-xl p-2.5 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">API Key</label>
+                                <div className="relative">
+                                    <input
+                                        type={showPerCharKey ? 'text' : 'password'}
+                                        value={perCharApiKey}
+                                        onChange={(e) => setPerCharApiKey(e.target.value)}
+                                        placeholder="留空回退全局"
+                                        className="w-full bg-slate-50 rounded-xl p-2.5 pr-14 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
+                                    />
+                                    <button onClick={() => setShowPerCharKey(s => !s)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5 rounded">
+                                        {showPerCharKey ? '隐藏' : '显示'}
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Model</label>
+                                <input
+                                    type="text"
+                                    value={perCharApiModel}
+                                    onChange={(e) => setPerCharApiModel(e.target.value)}
+                                    placeholder="留空回退全局"
+                                    className="w-full bg-slate-50 rounded-xl p-2.5 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
+                                />
+                            </div>
+                            <div className="flex gap-2 pt-1">
+                                <button onClick={onSavePerCharApi} className="flex-1 py-2.5 bg-emerald-500 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform">保存</button>
+                                {perCharApiBaseUrl && (
+                                    <button onClick={onClearPerCharApi} className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">清空（用全局）</button>
+                                )}
+                            </div>
+                        </div>
                     </section>
 
                     {/* === 管理上下文 / 隐藏历史 === */}

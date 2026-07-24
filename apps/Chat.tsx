@@ -29,7 +29,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -118,6 +118,36 @@ const Chat: React.FC = () => {
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
+    // 角色独立 API 编辑态（暮色 2026-07-24）
+    const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
+    const [perCharApiKey, setPerCharApiKey] = useState('');
+    const [perCharApiModel, setPerCharApiModel] = useState('');
+    const [showPerCharKey, setShowPerCharKey] = useState(false);
+    // 打开抽屉时同步当前角色的 apiConfig
+    useEffect(() => {
+        if (showChatSettingsDrawer && char) {
+            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
+            setPerCharApiKey(char.apiConfig?.apiKey || '');
+            setPerCharApiModel(char.apiConfig?.model || '');
+        }
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    const handleSavePerCharApi = async () => {
+        if (!perCharApiBaseUrl.trim()) {
+            await updateCharApiConfig(char.id, undefined);
+            return;
+        }
+        await updateCharApiConfig(char.id, {
+            baseUrl: perCharApiBaseUrl.trim(),
+            apiKey: perCharApiKey.trim() || undefined,
+            model: perCharApiModel.trim() || undefined,
+        } as any);
+    };
+    const handleClearPerCharApi = async () => {
+        setPerCharApiBaseUrl('');
+        setPerCharApiKey('');
+        setPerCharApiModel('');
+        await updateCharApiConfig(char.id, undefined);
+    };
     const [showChatSearchDrawer, setShowChatSearchDrawer] = useState(false);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
@@ -2503,6 +2533,12 @@ if (keepN > 0) {
                 onForceVectorize={handleForceVectorize}
                 preserveCount={preserveCount} setPreserveCount={setPreserveCount}
                 onClearHistory={handleClearHistory}
+                perCharApiBaseUrl={perCharApiBaseUrl} setPerCharApiBaseUrl={setPerCharApiBaseUrl}
+                perCharApiKey={perCharApiKey} setPerCharApiKey={setPerCharApiKey}
+                perCharApiModel={perCharApiModel} setPerCharApiModel={setPerCharApiModel}
+                showPerCharKey={showPerCharKey} setShowPerCharKey={setShowPerCharKey}
+                onSavePerCharApi={handleSavePerCharApi}
+                onClearPerCharApi={handleClearPerCharApi}
             />
 
             {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}

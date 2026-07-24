@@ -29,7 +29,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -164,6 +164,85 @@ const Chat: React.FC = () => {
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
     charRef.current = char; // Keep ref in sync for async callbacks
+    // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
+    const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
+    const [perCharApiKey, setPerCharApiKey] = useState('');
+    const [perCharApiModel, setPerCharApiModel] = useState('');
+    const [showPerCharKey, setShowPerCharKey] = useState(false);
+    // 模型下拉相关 state（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
+    const [perCharAvailableModels, setPerCharAvailableModels] = useState<string[]>([]);
+    const [perCharModelFilter, setPerCharModelFilter] = useState('');
+    const [showPerCharModelPicker, setShowPerCharModelPicker] = useState(false);
+    const [isPerCharLoadingModels, setIsPerCharLoadingModels] = useState(false);
+    const perCharFilteredModels = useMemo(() => {
+        if (!perCharModelFilter.trim()) return perCharAvailableModels;
+        const f = perCharModelFilter.toLowerCase();
+        return perCharAvailableModels.filter(m => m.toLowerCase().includes(f));
+    }, [perCharAvailableModels, perCharModelFilter]);
+    // 只看 main 类型的预设（暮色 2026-07-24 — 聊天 API 用 main 预设）
+    const mainPresets = (apiPresets || []).filter((p: any) => !p.kind || p.kind === 'main');
+    // 打开抽屉 / 切角色时同步当前角色的 apiConfig
+    useEffect(() => {
+        if (showChatSettingsDrawer && char) {
+            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
+            setPerCharApiKey(char.apiConfig?.apiKey || '');
+            setPerCharApiModel(char.apiConfig?.model || '');
+        }
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    const handleSavePerCharApi = async () => {
+        if (!char) return;
+        if (!perCharApiBaseUrl.trim()) {
+            await updateCharApiConfig(char.id, undefined);
+            return;
+        }
+        await updateCharApiConfig(char.id, {
+            baseUrl: perCharApiBaseUrl.trim(),
+            apiKey: perCharApiKey.trim() || undefined,
+            model: perCharApiModel.trim() || undefined,
+        } as any);
+    };
+    const handleClearPerCharApi = async () => {
+        if (!char) return;
+        setPerCharApiBaseUrl('');
+        setPerCharApiKey('');
+        setPerCharApiModel('');
+        await updateCharApiConfig(char.id, undefined);
+    };
+    // 从预设加载（只填输入框，不直接保存）
+    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => {
+        setPerCharApiBaseUrl(cfg.baseUrl || '');
+        setPerCharApiKey(cfg.apiKey || '');
+        setPerCharApiModel(cfg.model || '');
+    };
+    // 刷新模型列表（角色 API 用，独立 state 不影响全局 availableModels）
+    const handleRefreshPerCharModels = async () => {
+        if (!perCharApiBaseUrl.trim()) return;
+        setIsPerCharLoadingModels(true);
+        try {
+            const baseUrl = perCharApiBaseUrl.replace(/\/+$/, '');
+            const response = await fetch(`${baseUrl}/models`, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            const data = await safeResponseJson(response);
+            const list = data.data || data.models || [];
+            if (!Array.isArray(list)) return;
+            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            setPerCharAvailableModels(models);
+            if (models.length > 0 && !models.includes(perCharApiModel)) {
+                setPerCharApiModel(models[0]);
+            }
+            setShowPerCharModelPicker(true);
+        } catch (err) {
+            console.error('Failed to fetch models:', err);
+        } finally {
+            setIsPerCharLoadingModels(false);
+        }
+    };
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => {
         const fallback = PRESET_THEMES.default;
@@ -2503,6 +2582,20 @@ if (keepN > 0) {
                 onForceVectorize={handleForceVectorize}
                 preserveCount={preserveCount} setPreserveCount={setPreserveCount}
                 onClearHistory={handleClearHistory}
+                perCharApiBaseUrl={perCharApiBaseUrl} setPerCharApiBaseUrl={setPerCharApiBaseUrl}
+                perCharApiKey={perCharApiKey} setPerCharApiKey={setPerCharApiKey}
+                perCharApiModel={perCharApiModel} setPerCharApiModel={setPerCharApiModel}
+                showPerCharKey={showPerCharKey} setShowPerCharKey={setShowPerCharKey}
+                onSavePerCharApi={handleSavePerCharApi}
+                onClearPerCharApi={handleClearPerCharApi}
+                mainPresets={mainPresets}
+                onLoadPreset={handleLoadPresetIntoPerChar}
+                perCharAvailableModels={perCharAvailableModels}
+                perCharFilteredModels={perCharFilteredModels}
+                perCharModelFilter={perCharModelFilter} setPerCharModelFilter={setPerCharModelFilter}
+                showPerCharModelPicker={showPerCharModelPicker} setShowPerCharModelPicker={setShowPerCharModelPicker}
+                isPerCharLoadingModels={isPerCharLoadingModels}
+                onRefreshPerCharModels={handleRefreshPerCharModels}
             />
 
             {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}

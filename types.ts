@@ -1105,6 +1105,19 @@ export interface CharacterProfile {
    * - undefined:    兼容老用户——等同 'full'
    */
   chatMode?: 'full' | 'pure';
+
+  /**
+   * 角色独立 API 配置（暮色 2026-07-24 需求）
+   * - undefined / 缺字段：回退到全局 apiConfig
+   * - 设了：用这个角色的 baseUrl/apiKey/model
+   * - 协议（OpenAI/Claude）、minimaxRegion 等其他字段都是**全局的**，不参与角色级覆盖
+   * - visionBaseUrl/imgbbApiKey/R2/image* 等子资源也不参与角色级覆盖
+   */
+  apiConfig?: {
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+  };
 }
 
 export interface GroupProfile {

@@ -643,7 +643,14 @@ export const useChatAI = ({
 
     const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }) => {
         if (isTyping || !char) return;
-        const effectiveApi = overrideApiConfig || apiConfig;
+        // 角色级 API 优先：char.apiConfig 设了 baseUrl/apiKey/model 就用角色的（暮色 2026-07-24）
+        // 协议、minimaxRegion、visionBaseUrl/R2/image* 等仍走全局
+        const charApi = (char as any).apiConfig;
+        const effectiveApi = overrideApiConfig
+            || (charApi && charApi.baseUrl
+                ? { ...apiConfig, baseUrl: charApi.baseUrl, apiKey: charApi.apiKey || apiConfig.apiKey || '', model: charApi.model || apiConfig.model || '' } as any
+                : null)
+            || apiConfig;
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
         setIsTyping(true);

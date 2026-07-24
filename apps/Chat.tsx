@@ -169,7 +169,16 @@ const Chat: React.FC = () => {
     const [perCharApiKey, setPerCharApiKey] = useState('');
     const [perCharApiModel, setPerCharApiModel] = useState('');
     const [showPerCharKey, setShowPerCharKey] = useState(false);
-    const [showPresetPicker, setShowPresetPicker] = useState(false);
+    // 模型下拉相关 state（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
+    const [perCharAvailableModels, setPerCharAvailableModels] = useState<string[]>([]);
+    const [perCharModelFilter, setPerCharModelFilter] = useState('');
+    const [showPerCharModelPicker, setShowPerCharModelPicker] = useState(false);
+    const [isPerCharLoadingModels, setIsPerCharLoadingModels] = useState(false);
+    const perCharFilteredModels = useMemo(() => {
+        if (!perCharModelFilter.trim()) return perCharAvailableModels;
+        const f = perCharModelFilter.toLowerCase();
+        return perCharAvailableModels.filter(m => m.toLowerCase().includes(f));
+    }, [perCharAvailableModels, perCharModelFilter]);
     // 只看 main 类型的预设（暮色 2026-07-24 — 聊天 API 用 main 预设）
     const mainPresets = (apiPresets || []).filter((p: any) => !p.kind || p.kind === 'main');
     // 打开抽屉 / 切角色时同步当前角色的 apiConfig
@@ -204,7 +213,35 @@ const Chat: React.FC = () => {
         setPerCharApiBaseUrl(cfg.baseUrl || '');
         setPerCharApiKey(cfg.apiKey || '');
         setPerCharApiModel(cfg.model || '');
-        setShowPresetPicker(false);
+    };
+    // 刷新模型列表（角色 API 用，独立 state 不影响全局 availableModels）
+    const handleRefreshPerCharModels = async () => {
+        if (!perCharApiBaseUrl.trim()) return;
+        setIsPerCharLoadingModels(true);
+        try {
+            const baseUrl = perCharApiBaseUrl.replace(/\/+$/, '');
+            const response = await fetch(`${baseUrl}/models`, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            const data = await safeResponseJson(response);
+            const list = data.data || data.models || [];
+            if (!Array.isArray(list)) return;
+            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            setPerCharAvailableModels(models);
+            if (models.length > 0 && !models.includes(perCharApiModel)) {
+                setPerCharApiModel(models[0]);
+            }
+            setShowPerCharModelPicker(true);
+        } catch (err) {
+            console.error('Failed to fetch models:', err);
+        } finally {
+            setIsPerCharLoadingModels(false);
+        }
     };
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => {
@@ -2552,9 +2589,13 @@ if (keepN > 0) {
                 onSavePerCharApi={handleSavePerCharApi}
                 onClearPerCharApi={handleClearPerCharApi}
                 mainPresets={mainPresets}
-                showPresetPicker={showPresetPicker}
-                setShowPresetPicker={setShowPresetPicker}
                 onLoadPreset={handleLoadPresetIntoPerChar}
+                perCharAvailableModels={perCharAvailableModels}
+                perCharFilteredModels={perCharFilteredModels}
+                perCharModelFilter={perCharModelFilter} setPerCharModelFilter={setPerCharModelFilter}
+                showPerCharModelPicker={showPerCharModelPicker} setShowPerCharModelPicker={setShowPerCharModelPicker}
+                isPerCharLoadingModels={isPerCharLoadingModels}
+                onRefreshPerCharModels={handleRefreshPerCharModels}
             />
 
             {/* 搜索聊天记录（从设置抽屉的放大镜进入） */}

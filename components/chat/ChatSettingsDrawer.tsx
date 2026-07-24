@@ -82,11 +82,18 @@ interface ChatSettingsDrawerProps {
     setShowPerCharKey: (v: boolean) => void;
     onSavePerCharApi: () => void;
     onClearPerCharApi: () => void;
-    // 从 API 预设加载（暮色 2026-07-24）
+    // 预设胶囊（暮色 2026-07-24）
     mainPresets: { id: string; name: string; config: { baseUrl?: string; apiKey?: string; model?: string } }[];
-    showPresetPicker: boolean;
-    setShowPresetPicker: (v: boolean) => void;
     onLoadPreset: (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => void;
+    // 模型下拉（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
+    perCharAvailableModels: string[];
+    perCharFilteredModels: string[];
+    perCharModelFilter: string;
+    setPerCharModelFilter: (v: string) => void;
+    showPerCharModelPicker: boolean;
+    setShowPerCharModelPicker: (v: boolean) => void;
+    isPerCharLoadingModels: boolean;
+    onRefreshPerCharModels: () => void;
 }
 
 const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
@@ -111,7 +118,11 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     perCharApiModel, setPerCharApiModel,
     showPerCharKey, setShowPerCharKey,
     onSavePerCharApi, onClearPerCharApi,
-    mainPresets, showPresetPicker, setShowPresetPicker, onLoadPreset,
+    mainPresets, onLoadPreset,
+    perCharAvailableModels, perCharFilteredModels,
+    perCharModelFilter, setPerCharModelFilter,
+    showPerCharModelPicker, setShowPerCharModelPicker,
+    isPerCharLoadingModels, onRefreshPerCharModels,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,78 +217,126 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         )}
                     </section>
 
-                    {/* === 角色独立 API（暮色 2026-07-24，聊天背景下面第一位） === */}
+                    {/* === 角色独立 API（暮色 2026-07-24，聊天背景下面第一位）
+                         样式照搬 ApiQuickFloat 的"主 AI 通道"：绿色卡片 + 胶囊预设 + 刷新模型列表 + 模型下拉 === */}
                     <section className="pt-2 border-t border-slate-100">
                         <div className="text-[11px] font-bold text-slate-500 mb-2">🔌 这个角色的 API</div>
                         <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">
                             留空就用全局 API 设置。设了的话，跟这个角色说话走自己的通道。协议/区域是全局的。
                         </p>
-                        {/* 从 API 预设加载（暮色 2026-07-24） */}
-                        {mainPresets.length > 0 && (
-                            <div className="mb-3">
-                                <button
-                                    onClick={() => setShowPresetPicker(s => !s)}
-                                    className="w-full text-left text-[10px] text-blue-500 font-bold flex items-center justify-between py-1.5"
-                                >
-                                    <span>📋 从 API 预设加载 ({mainPresets.length})</span>
-                                    <span>{showPresetPicker ? '▲' : '▼'}</span>
-                                </button>
-                                {showPresetPicker && (
-                                    <div className="mt-1 space-y-1 animate-fadeIn">
-                                        {mainPresets.map(preset => (
-                                            <button
-                                                key={preset.id}
-                                                onClick={() => onLoadPreset(preset.config)}
-                                                className="w-full text-left px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 active:scale-[0.98] transition-all text-xs"
-                                            >
-                                                <div className="font-bold text-slate-700">{preset.name}</div>
-                                                <div className="text-[10px] text-slate-400 truncate font-mono">{preset.config.baseUrl || '(无 URL)'} · {preset.config.model || '(无 model)'}</div>
-                                            </button>
-                                        ))}
+                        <div className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
+                            {/* 预设胶囊（暮色 2026-07-24） */}
+                            {mainPresets.length > 0 && (
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {mainPresets.map((preset) => {
+                                            const active = perCharApiBaseUrl === preset.config.baseUrl && perCharApiModel === preset.config.model;
+                                            return (
+                                                <button
+                                                    key={preset.id}
+                                                    onClick={() => onLoadPreset(preset.config)}
+                                                    className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all active:scale-95 ${active ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'}`}
+                                                >
+                                                    {preset.name}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
-                                )}
-                            </div>
-                        )}
-                        <div className="space-y-2.5">
+                                </div>
+                            )}
+
+                            {/* URL */}
                             <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Base URL</label>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
                                 <input
                                     type="text"
                                     value={perCharApiBaseUrl}
                                     onChange={(e) => setPerCharApiBaseUrl(e.target.value)}
                                     placeholder="留空回退全局"
-                                    className="w-full bg-slate-50 rounded-xl p-2.5 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
                                 />
                             </div>
+
+                            {/* Key */}
                             <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">API Key</label>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
                                 <div className="relative">
                                     <input
                                         type={showPerCharKey ? 'text' : 'password'}
                                         value={perCharApiKey}
                                         onChange={(e) => setPerCharApiKey(e.target.value)}
                                         placeholder="留空回退全局"
-                                        className="w-full bg-slate-50 rounded-xl p-2.5 pr-14 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-16 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
                                     />
-                                    <button onClick={() => setShowPerCharKey(s => !s)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5 rounded">
+                                    <button onClick={() => setShowPerCharKey(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5">
                                         {showPerCharKey ? '隐藏' : '显示'}
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Model + 刷新模型列表 + 下拉选 */}
                             <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Model</label>
-                                <input
-                                    type="text"
-                                    value={perCharApiModel}
-                                    onChange={(e) => setPerCharApiModel(e.target.value)}
-                                    placeholder="留空回退全局"
-                                    className="w-full bg-slate-50 rounded-xl p-2.5 text-[12px] font-mono border border-slate-200 focus:outline-none focus:border-emerald-300"
-                                />
+                                <div className="flex justify-between items-center mb-1.5 pl-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
+                                    <button
+                                        onClick={onRefreshPerCharModels}
+                                        disabled={isPerCharLoadingModels || !perCharApiBaseUrl.trim()}
+                                        className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 disabled:opacity-50"
+                                    >
+                                        🔄 {isPerCharLoadingModels ? '加载中...' : '刷新模型列表'}
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={() => setShowPerCharModelPicker(s => !s)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all"
+                                >
+                                    <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left" style={{ direction: 'rtl', textOverflow: 'ellipsis' }}>
+                                        <bdi style={{ direction: 'ltr' }}>{perCharApiModel || '点击选择...'}</bdi>
+                                    </span>
+                                    <span className={`text-slate-400 transition-transform ${showPerCharModelPicker ? 'rotate-90' : ''}`}>›</span>
+                                </button>
+                                {showPerCharModelPicker && (
+                                    <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                                        <input
+                                            type="text"
+                                            value={perCharModelFilter}
+                                            onChange={(e) => setPerCharModelFilter(e.target.value)}
+                                            placeholder={`搜索 ${perCharAvailableModels.length} 个模型...`}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs mb-2 outline-none"
+                                        />
+                                        <div className="max-h-48 overflow-y-auto space-y-1">
+                                            {perCharFilteredModels.length > 0 ? (
+                                                perCharFilteredModels.map((m) => (
+                                                    <button
+                                                        key={m}
+                                                        onClick={() => { setPerCharApiModel(m); setShowPerCharModelPicker(false); }}
+                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono break-all ${m === perCharApiModel ? 'bg-emerald-100 text-emerald-700 font-bold' : 'text-slate-600 hover:bg-white'}`}
+                                                    >
+                                                        {m}
+                                                    </button>
+                                                ))
+                                            ) : (
+                                                <div className="text-center text-slate-400 py-4 text-xs">
+                                                    {perCharAvailableModels.length === 0 ? '点击右上角刷新模型列表获取' : `没有匹配 "${perCharModelFilter}" 的模型`}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
+
                             <div className="flex gap-2 pt-1">
-                                <button onClick={onSavePerCharApi} className="flex-1 py-2.5 bg-emerald-500 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform">保存</button>
+                                <button
+                                    onClick={onSavePerCharApi}
+                                    className="flex-1 py-2.5 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-xs font-bold rounded-full active:scale-95 transition-transform"
+                                >
+                                    保存并关闭
+                                </button>
                                 {perCharApiBaseUrl && (
-                                    <button onClick={onClearPerCharApi} className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">清空（用全局）</button>
+                                    <button onClick={onClearPerCharApi} className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-full active:scale-95 transition-transform">
+                                        清空
+                                    </button>
                                 )}
                             </div>
                         </div>

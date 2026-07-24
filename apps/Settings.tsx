@@ -95,143 +95,6 @@ const SettingsSection: React.FC<{
   );
 };
 
-// 单个角色的独立 API 卡片（暮色 2026-07-24）
-// 设了 baseUrl 才会启用；没设 = 回退到全局
-const PerCharApiCard: React.FC<{
-  char: CharacterProfile;
-  onSave: (api: CharacterProfile['apiConfig']) => Promise<void> | void;
-  defaultUrl: string;
-  defaultKey: string;
-}> = ({ char, onSave, defaultUrl, defaultKey }) => {
-  const enabled = !!(char.apiConfig && char.apiConfig.baseUrl);
-  const [open, setOpen] = useState(enabled);
-  const [url, setUrl] = useState(char.apiConfig?.baseUrl || '');
-  const [key, setKey] = useState(char.apiConfig?.apiKey || '');
-  const [model, setModel] = useState(char.apiConfig?.model || '');
-  const [protocol, setProtocol] = useState<'openai' | 'claude'>(char.apiConfig?.protocol || 'openai');
-  const [region, setRegion] = useState<'domestic' | 'overseas'>(char.apiConfig?.minimaxRegion || 'domestic');
-  const [showKey, setShowKey] = useState(false);
-
-  // 同步外部变更
-  useEffect(() => {
-    setUrl(char.apiConfig?.baseUrl || '');
-    setKey(char.apiConfig?.apiKey || '');
-    setModel(char.apiConfig?.model || '');
-    setProtocol(char.apiConfig?.protocol || 'openai');
-    setRegion(char.apiConfig?.minimaxRegion || 'domestic');
-    setOpen(!!(char.apiConfig && char.apiConfig.baseUrl));
-  }, [char.apiConfig]);
-
-  const isMinimax = (url || '').toLowerCase().includes('minimax') || (url || '').toLowerCase().includes('minimax');
-
-  const handleSave = async () => {
-    if (!url.trim()) {
-      // 清空角色级 API
-      await onSave(undefined);
-      setOpen(false);
-      return;
-    }
-    await onSave({
-      baseUrl: url.trim(),
-      apiKey: key.trim(),
-      model: model.trim() || undefined,
-      protocol,
-      minimaxRegion: isMinimax ? region : undefined,
-    });
-  };
-
-  const handleClear = async () => {
-    setUrl('');
-    setKey('');
-    setModel('');
-    setProtocol('openai');
-    setRegion('domestic');
-    await onSave(undefined);
-    setOpen(false);
-  };
-
-  return (
-    <div className={`rounded-2xl border ${enabled ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200 bg-white/40'} transition-all`}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-100 to-blue-100 flex items-center justify-center text-sm shrink-0">
-            {char.avatar ? <img src={char.avatar} alt="" className="w-8 h-8 rounded-full object-cover" /> : (char.name?.[0] || '?')}
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-bold text-slate-800 truncate">{char.name || '未命名'}</div>
-            <div className="text-[10px] text-slate-500 truncate">
-              {enabled ? <span className="text-emerald-600 font-bold">已独立 API</span> : '用全局（点开填自己的）'}
-            </div>
-          </div>
-        </div>
-        <span className="text-slate-400 text-xs shrink-0">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="px-3 pb-3 space-y-2.5 animate-fadeIn">
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Base URL</label>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder={defaultUrl || 'https://api.anthropic.com/v1 或 https://api.minimaxi.com/v1'}
-              className="w-full bg-white border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:border-emerald-300 transition-all"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">API Key</label>
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder={defaultKey ? '（留空用全局 Key）' : 'sk-...'}
-                className="w-full bg-white border border-slate-200/60 rounded-xl px-3 py-2 pr-16 text-xs font-mono focus:bg-white focus:border-emerald-300 transition-all"
-              />
-              <button onClick={() => setShowKey(s => !s)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5 rounded">
-                {showKey ? '隐藏' : '显示'}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Model（留空用全局）</label>
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="例：claude-3-5-sonnet-20241022 / MiniMax-Text-01"
-              className="w-full bg-white border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:border-emerald-300 transition-all"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">协议</label>
-              <div className="flex gap-1 bg-white rounded-xl p-0.5 border border-slate-200/60">
-                <button onClick={() => setProtocol('openai')} className={`flex-1 text-[11px] py-1.5 rounded-lg font-bold ${protocol === 'openai' ? 'bg-emerald-500 text-white' : 'text-slate-500'}`}>OpenAI</button>
-                <button onClick={() => setProtocol('claude')} className={`flex-1 text-[11px] py-1.5 rounded-lg font-bold ${protocol === 'claude' ? 'bg-emerald-500 text-white' : 'text-slate-500'}`}>Claude</button>
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">MiniMax 区域</label>
-              <div className={`flex gap-1 bg-white rounded-xl p-0.5 border border-slate-200/60 ${isMinimax ? '' : 'opacity-40'}`}>
-                <button disabled={!isMinimax} onClick={() => setRegion('domestic')} className={`flex-1 text-[11px] py-1.5 rounded-lg font-bold ${region === 'domestic' ? 'bg-emerald-500 text-white' : 'text-slate-500'} disabled:cursor-not-allowed`}>国内</button>
-                <button disabled={!isMinimax} onClick={() => setRegion('overseas')} className={`flex-1 text-[11px] py-1.5 rounded-lg font-bold ${region === 'overseas' ? 'bg-emerald-500 text-white' : 'text-slate-500'} disabled:cursor-not-allowed`}>海外</button>
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <button onClick={handleSave} disabled={!url.trim()} className="flex-1 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold active:scale-95 transition-all disabled:bg-slate-200 disabled:text-slate-400">保存</button>
-            <button onClick={handleClear} className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-all">清空（用全局）</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const PresetChip: React.FC<{
   preset: ApiPreset;
   active?: boolean;
@@ -301,7 +164,6 @@ const Settings: React.FC = () => {
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
       characters, // 聊天记录 (.txt) 导出用 — 列角色选择
-      updateCharApiConfig, // 角色独立 API（暮色 2026-07-24）
   } = useOS();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -1724,31 +1586,6 @@ const handleSaveTts = () => {
                 <button onClick={async () => { if (!localUrl.trim() || !localKey.trim() || !localModel.trim()) return; setTestingApi(true); setTestApiResult(null); try { const res = await fetch(`${localUrl.trim().replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localKey.trim()}` }, body: JSON.stringify({ model: localModel.trim(), messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5, stream: localStream, }) }); if (res.ok) { const data = await safeResponseJson(res); const reply = data.choices?.[0]?.message?.content || ''; setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`); } else { const text = await res.text().catch(() => ''); setTestApiResult(`❌ HTTP ${res.status}: ${text.slice(0, 100)}`); } } catch (err: any) { setTestApiResult(`❌ 连接失败: ${err.message}`); } finally { setTestingApi(false); } }} disabled={testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()} className={`w-full py-2.5 rounded-2xl font-bold text-sm border mt-2 active:scale-95 transition-all ${testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim() ? 'border-slate-200 text-slate-400 bg-slate-50' : 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10'}`}>{testingApi ? '测试中...' : '🧪 测试连接'}</button>
                 {testApiResult && (<div className={`mt-2 text-xs px-3 py-2 rounded-xl ${testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{testApiResult}</div>)}
             </div>
-        </section>
-        </SettingsSection>
-
-        {/* 3.5 - 角色独立 API（暮色 2026-07-24）每个角色能用不同的 baseUrl/apiKey/model，麦麦用 MiniMax 江澈用 Claude 等 */}
-        <SettingsSection id="perCharApi" icon="👥" title="角色独立 API" subtitle="每个角色用自己的连接·不互相干扰" isOpen={openSectionId === 'perCharApi'} onToggle={toggleSection}>
-        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
-            <p className="text-[11px] text-slate-500 mb-4 leading-relaxed pl-1">
-                为某个角色单独配置 API，触发 AI 时优先用角色级配置。空着就回退到上面"API 配置"里的全局设置。
-                <br/>典型用法：江澈用 Claude，麦麦用 MiniMax。
-            </p>
-            {characters.length === 0 ? (
-                <div className="text-center text-xs text-slate-400 py-6">还没有角色</div>
-            ) : (
-                <div className="space-y-3">
-                    {characters.map((char) => (
-                        <PerCharApiCard
-                            key={char.id}
-                            char={char}
-                            onSave={(api) => updateCharApiConfig(char.id, api)}
-                            defaultUrl={apiConfig.baseUrl}
-                            defaultKey={apiConfig.apiKey}
-                        />
-                    ))}
-                </div>
-            )}
         </section>
         </SettingsSection>
 

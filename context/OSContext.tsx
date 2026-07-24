@@ -149,6 +149,8 @@ interface OSContextType {
   activeCharacterId: string;
   addCharacter: () => void;
   updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
+  /** 便捷：单独更新角色的 API 配置（暮色 2026-07-24 角色独立 API） */
+  updateCharApiConfig: (id: string, apiConfig: CharacterProfile['apiConfig']) => Promise<void>;
   deleteCharacter: (id: string) => void;
   setActiveCharacterId: (id: string) => void;
   
@@ -1849,6 +1851,11 @@ if (!isVisible || !isChattingWithThisChar) {
     await DB.saveCharacter(newChar);
   };
   const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...updates }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
+  // 便捷：单独更新角色的 API 配置（暮色 2026-07-24 — 每个角色独立 API）
+  // apiConfig = null/undefined → 清空角色级 API，回退到全局
+  const updateCharApiConfig = async (id: string, apiConfig: CharacterProfile['apiConfig']) => {
+    return updateCharacter(id, { apiConfig } as any);
+  };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
   
   // Group Methods
@@ -3109,6 +3116,7 @@ if (!isVisible || !isChattingWithThisChar) {
     activeCharacterId,
     addCharacter,
     updateCharacter,
+    updateCharApiConfig,
     deleteCharacter,
     setActiveCharacterId,
     worldbooks,

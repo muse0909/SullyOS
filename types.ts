@@ -1105,6 +1105,23 @@ export interface CharacterProfile {
    * - undefined:    兼容老用户——等同 'full'
    */
   chatMode?: 'full' | 'pure';
+
+  /**
+   * 角色独立 API 配置（暮色 2026-07-24 需求）
+   * - undefined / 缺字段：回退到全局 apiConfig
+   * - 设了：用这个角色的 baseUrl/apiKey/model（麦麦用 MiniMax，江澈用 Claude 等）
+   * 注意：visionBaseUrl/imgbbApiKey/R2/image* 等子字段不参与角色级覆盖——那些是工具/全局资源
+   * 角色级 API 只覆盖主对话的 baseUrl/apiKey/model/minimaxRegion（其他字段从全局取）
+   */
+  apiConfig?: {
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    /** 协议：'openai'（默认）/ 'claude' — 江澈用 Claude 时要设 */
+    protocol?: 'openai' | 'claude';
+    /** 'domestic' → https://api.minimaxi.com / 'overseas' → https://api.minimax.io */
+    minimaxRegion?: 'domestic' | 'overseas';
+  };
 }
 
 export interface GroupProfile {

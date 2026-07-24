@@ -118,36 +118,6 @@ const Chat: React.FC = () => {
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
-    // 角色独立 API 编辑态（暮色 2026-07-24）
-    const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
-    const [perCharApiKey, setPerCharApiKey] = useState('');
-    const [perCharApiModel, setPerCharApiModel] = useState('');
-    const [showPerCharKey, setShowPerCharKey] = useState(false);
-    // 打开抽屉时同步当前角色的 apiConfig
-    useEffect(() => {
-        if (showChatSettingsDrawer && char) {
-            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
-            setPerCharApiKey(char.apiConfig?.apiKey || '');
-            setPerCharApiModel(char.apiConfig?.model || '');
-        }
-    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
-    const handleSavePerCharApi = async () => {
-        if (!perCharApiBaseUrl.trim()) {
-            await updateCharApiConfig(char.id, undefined);
-            return;
-        }
-        await updateCharApiConfig(char.id, {
-            baseUrl: perCharApiBaseUrl.trim(),
-            apiKey: perCharApiKey.trim() || undefined,
-            model: perCharApiModel.trim() || undefined,
-        } as any);
-    };
-    const handleClearPerCharApi = async () => {
-        setPerCharApiBaseUrl('');
-        setPerCharApiKey('');
-        setPerCharApiModel('');
-        await updateCharApiConfig(char.id, undefined);
-    };
     const [showChatSearchDrawer, setShowChatSearchDrawer] = useState(false);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
@@ -194,6 +164,38 @@ const Chat: React.FC = () => {
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
     charRef.current = char; // Keep ref in sync for async callbacks
+    // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
+    const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
+    const [perCharApiKey, setPerCharApiKey] = useState('');
+    const [perCharApiModel, setPerCharApiModel] = useState('');
+    const [showPerCharKey, setShowPerCharKey] = useState(false);
+    // 打开抽屉 / 切角色时同步当前角色的 apiConfig
+    useEffect(() => {
+        if (showChatSettingsDrawer && char) {
+            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
+            setPerCharApiKey(char.apiConfig?.apiKey || '');
+            setPerCharApiModel(char.apiConfig?.model || '');
+        }
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    const handleSavePerCharApi = async () => {
+        if (!char) return;
+        if (!perCharApiBaseUrl.trim()) {
+            await updateCharApiConfig(char.id, undefined);
+            return;
+        }
+        await updateCharApiConfig(char.id, {
+            baseUrl: perCharApiBaseUrl.trim(),
+            apiKey: perCharApiKey.trim() || undefined,
+            model: perCharApiModel.trim() || undefined,
+        } as any);
+    };
+    const handleClearPerCharApi = async () => {
+        if (!char) return;
+        setPerCharApiBaseUrl('');
+        setPerCharApiKey('');
+        setPerCharApiModel('');
+        await updateCharApiConfig(char.id, undefined);
+    };
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => {
         const fallback = PRESET_THEMES.default;

@@ -302,9 +302,11 @@ const FavoriteCard: React.FC<{
           url = URL.createObjectURL(blob);
           setVoiceSrc(url);
         } else {
-          // 3) 都没了 → 标 invalid
+          // 3) 都没了 → 标 invalid，卡片渲染成「语音已失效」灰块，不再弹 toast
+          // 2026-07-22：暮色明确要求关掉这个提示
+          // —— 原因：失效条目多时一次性弹 N 个 toast，10 秒才消失，视觉上「挂着不消」
+          // —— 失效统一由卡片灰显表达，用户想清理进选择模式一键全选删除
           markFavoriteInvalid(item.id);
-          addToast('语音数据已丢失（升级前的老收藏）', 'warning');
         }
         setVoiceResolved(true);
       } catch (e) {
@@ -427,7 +429,7 @@ const EmptyState: React.FC<{ tab: TabKey }> = ({ tab }) => (
       {tab === 'voice' ? '还没有收藏的语音' : '还没有收藏的消息'}
     </div>
     <div className="text-[11px] mt-1.5 text-center max-w-[240px] leading-relaxed">
-      {tab === 'voice' ? 'AI 角色说话时会自动加入收藏' : '聊天页消息操作 → 🌟 收藏'}
+      {tab === 'voice' ? '聊天页 AI 语音条 → 菜单 → 🌟 收藏' : '聊天页消息操作 → 🌟 收藏'}
     </div>
   </div>
 );

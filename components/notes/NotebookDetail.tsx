@@ -1,10 +1,14 @@
 // NotebookDetail — 私密记事详情页（暮色 2026-07-17：点开便签后全屏看 + 回复）
 // 复用 NotebookCard 的便签视觉，放大版 + 完整内容
-// 底部：回复列表 + 回复输入框
+// 暮色 2026-07-22：输入区交互改造
+//   - 默认不显示输入框，便签下方居中显示"💬 回复"按钮
+//   - 点回复 → 输入框 + 发送按钮弹出，input 紧贴输入法（监听 visualViewport）
+//   - 取消 / 发送完 → 收起
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight } from '@phosphor-icons/react';
 import { RoomNote, NoteReply } from '../../types';
+import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
 
 interface NotebookDetailProps {
     note: RoomNote;
@@ -17,6 +21,42 @@ interface NotebookDetailProps {
 const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack, onDelete, onAddReply }) => {
     const [replyText, setReplyText] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // 2026-07-22：输入区交互状态
+    const [isReplying, setIsReplying] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    // 2026-07-22：背景图跟列表页同步（之前硬编码奶油色，看不到用户自己上传的图）
+    const [bgUrl, setBgUrl] = useState<string | null>(null);
+    const [bgBuiltin, setBgBuiltin] = useState<BuiltinBg>('cream-paper');
+    useEffect(() => {
+        const stored = getStoredNotebookBg();
+        if (stored.url) setBgUrl(stored.url);
+        if (stored.builtin) setBgBuiltin(stored.builtin);
+    }, []);
+
+    // 2026-07-22：监听输入法弹起 — visualViewport.height 缩小时 = 键盘弹出
+    //   关键点：visualViewport 在 iOS Safari + Android Chrome 都支持（Hammer 时代就是个老 API）
+    useEffect(() => {
+        if (!isReplying) return;
+        const vv = window.visualViewport;
+        if (!vv) return;
+        const onResize = () => {
+            const kbh = Math.max(0, window.innerHeight - vv.height);
+            setKeyboardHeight(kbh);
+        };
+        vv.addEventListener('resize', onResize);
+        onResize();
+        return () => vv.removeEventListener('resize', onResize);
+    }, [isReplying]);
+
+    // 点了"回复"按钮 → 聚焦 input（触发键盘弹起）
+    useEffect(() => {
+        if (isReplying) {
+            const t = setTimeout(() => inputRef.current?.focus(), 80);
+            return () => clearTimeout(t);
+        }
+    }, [isReplying]);
 
     const submitReply = async () => {
         const text = replyText.trim();
@@ -25,13 +65,30 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
         try {
             await onAddReply(text);
             setReplyText('');
+            setIsReplying(false);  // 2026-07-22：发完自动收起
         } finally {
             setSubmitting(false);
         }
     };
 
+    const cancelReply = () => {
+        setReplyText('');
+        setIsReplying(false);
+    };
+
     return (
-        <div className="absolute inset-0 flex flex-col bg-[#f3eee5]">
+        <div className="absolute inset-0 flex flex-col">
+            {/* 背景层（跟列表页共用 localStorage：sullyos_notebook_bg / sullyos_notebook_bg_default） */}
+            {bgUrl ? (
+                <div
+                    className="absolute inset-0 bg-cover bg-center"
+                    style={{ backgroundImage: `url(${bgUrl})` }}
+                />
+            ) : (
+                <div className="absolute inset-0" style={BUILTIN_BG[bgBuiltin].css} />
+            )}
+            {/* 内容层 */}
+            <div className="relative flex-1 flex flex-col">
             {/* 顶部 */}
             <div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur border-b border-white/40 shrink-0">
                 <button
@@ -56,10 +113,12 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
 
             {/* 主便签（全屏放大版） */}
             <div className="flex-1 overflow-y-auto px-5 pt-6 pb-4 no-scrollbar">
-                <FullNoteCard note={note} charName={charName} />
-                <div className="text-[10px] text-slate-400 text-center mt-3 font-mono">
-                    {new Date(note.timestamp).toLocaleString('zh-CN')}
-                </div>
+                <FullNoteCard
+                    note={note}
+                    charName={charName}
+                    onReplyClick={() => setIsReplying(true)}
+                    hideReplyButton={isReplying}
+                />
 
                 {/* 回复列表 */}
                 {(note.replies && note.replies.length > 0) && (
@@ -75,58 +134,86 @@ const NotebookDetail: React.FC<NotebookDetailProps> = ({ note, charName, onBack,
                 )}
             </div>
 
-            {/* 底部回复输入 */}
-            <div className="px-3 py-3 bg-white/85 backdrop-blur border-t border-white/40 shrink-0 flex items-center gap-2"
-                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <input
-                    type="text"
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } }}
-                    placeholder="说点什么…"
-                    className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-xs text-slate-700 outline-none focus:bg-slate-50 focus:ring-2 focus:ring-emerald-200 transition-all"
-                    disabled={submitting}
-                />
-                <button
-                    onClick={submitReply}
-                    disabled={!replyText.trim() || submitting}
-                    className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all"
-                    aria-label="发送回复"
+            {/* 2026-07-22：弹起的输入框（absolute 贴底，pb 跟键盘高度走） */}
+            {isReplying && (
+                <div
+                    className="absolute left-0 right-0 px-3 py-3 bg-white/95 backdrop-blur border-t border-white/40 flex items-center gap-2 z-30"
+                    style={{ bottom: keyboardHeight }}
                 >
-                    <PaperPlaneRight size={16} weight="fill" />
-                </button>
-            </div>
+                    <button
+                        onClick={cancelReply}
+                        className="px-3 py-2 rounded-full text-xs font-bold text-slate-500 hover:bg-slate-100 active:scale-95 transition-all"
+                    >
+                        取消
+                    </button>
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitReply(); } }}
+                        placeholder="说点什么…"
+                        className="flex-1 px-4 py-2.5 bg-slate-100 rounded-full text-xs text-slate-700 outline-none focus:bg-slate-50 focus:ring-2 focus:ring-emerald-200 transition-all"
+                        disabled={submitting}
+                    />
+                    <button
+                        onClick={submitReply}
+                        disabled={!replyText.trim() || submitting}
+                        className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md flex items-center justify-center disabled:opacity-40 active:scale-95 transition-all"
+                        aria-label="发送回复"
+                    >
+                        <PaperPlaneRight size={16} weight="fill" />
+                    </button>
+                </div>
+            )}
+            </div>{/* end relative flex-1 内容层 */}
         </div>
     );
 };
 
 // 详情页用的大版便签（保留 5 种 type 视觉，放大显示）
-const FullNoteCard: React.FC<{ note: RoomNote; charName?: string }> = ({ note, charName }) => {
+// 2026-07-22：右下角放时间戳 + 回复按钮（便签纸内部，暮色要求）
+const FullNoteCard: React.FC<{
+    note: RoomNote;
+    charName?: string;
+    onReplyClick?: () => void;
+    hideReplyButton?: boolean;
+}> = ({ note, charName, onReplyClick, hideReplyButton }) => {
     const type = note.type || 'thought';
     const isSearch = type === 'search';
 
     return (
         <div
-            className="relative w-full rounded-2xl shadow-xl p-6 min-h-[280px]"
-            style={{
-                backgroundColor: isSearch ? '#d4a574' : (
-                    type === 'doodle' ? '#ffffff' :
-                    type === 'lyric' ? '#fce7f3' :
-                    type === 'gossip' ? '#fef3c7' :
-                    type === 'thought' ? '#dbeafe' : '#ffffff'
-                ),
-                ...(type === 'doodle' && {
-                    backgroundImage: 'linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)',
-                    backgroundSize: '20px 20px',
-                }),
-                ...(type === 'gossip' && {
-                    backgroundImage: 'repeating-linear-gradient(0deg, transparent 0px, transparent 30px, #fde68a 30px, #fde68a 31px)',
-                }),
-            }}
+            className={`relative w-full rounded-2xl shadow-xl p-8 pb-14 min-h-[280px] ${note.styleImageUrl ? 'text-center' : ''}`}
+            style={
+                note.styleImageUrl
+                    // 2026-07-22：暮色自定义样式（背景图 + 文字居中 + 大 padding 让出四周装饰）
+                    ? {
+                        backgroundImage: `url(${note.styleImageUrl})`,
+                        backgroundSize: 'cover',
+                        backgroundPosition: 'center',
+                    }
+                    : {
+                        backgroundColor: isSearch ? '#d4a574' : (
+                            type === 'doodle' ? '#ffffff' :
+                            type === 'lyric' ? '#fce7f3' :
+                            type === 'gossip' ? '#fef3c7' :
+                            type === 'thought' ? '#dbeafe' : '#ffffff'
+                        ),
+                        ...(type === 'doodle' && {
+                            backgroundImage: 'linear-gradient(#e5e7eb 1px, transparent 1px), linear-gradient(90deg, #e5e7eb 1px, transparent 1px)',
+                            backgroundSize: '20px 20px',
+                        }),
+                        ...(type === 'gossip' && {
+                            backgroundImage: 'repeating-linear-gradient(0deg, transparent 0px, transparent 30px, #fde68a 30px, #fde68a 31px)',
+                        }),
+                    }
+            }
         >
             {/* 装饰物（按 type） */}
             {type === 'thought' && (
-                <div className="absolute top-3 left-3 w-7 h-7 rounded-full shadow-md"
+                // 2026-07-22：原 top-3 left-3 跟便签内「感想」徽章重叠，挪到外侧（仿 NotebookCard 列表卡片的位置）
+                <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full shadow-md z-10"
                     style={{ background: 'radial-gradient(circle at 30% 30%, #60a5fa, #2563eb)', border: '2px solid #1e40af' }} />
             )}
             {type === 'doodle' && (
@@ -147,16 +234,32 @@ const FullNoteCard: React.FC<{ note: RoomNote; charName?: string }> = ({ note, c
             )}
 
             <div className="flex items-center justify-between mb-3 text-[11px] font-bold">
-                <span className={`px-2 py-0.5 rounded ${isSearch ? 'bg-black/15 text-stone-100' : 'bg-white/70 text-slate-700'}`}>
+                <span className={`px-2 py-0.5 rounded ${isSearch ? 'bg-black/15 text-stone-100' : note.styleImageUrl ? 'bg-white/80 text-slate-700' : 'bg-white/70 text-slate-700'}`}>
                     {({ thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦' } as Record<string, string>)[type]}
                 </span>
                 {charName && (
-                    <span className={isSearch ? 'text-stone-100' : 'text-slate-500'}>— {charName}</span>
+                    <span className={isSearch ? 'text-stone-100' : note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-500'}>— {charName}</span>
                 )}
             </div>
 
-            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
+            <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : isSearch ? 'text-stone-100' : 'text-slate-800'}`}>
                 {note.content}
+            </div>
+
+            {/* 2026-07-22：右下角时间戳 + 回复按钮（贴便签纸内部，暮色要求） */}
+            <div className="absolute bottom-2 right-3 flex items-center gap-2 z-10">
+                {!hideReplyButton && onReplyClick && (
+                    <button
+                        onClick={onReplyClick}
+                        className={`w-7 h-7 rounded-full backdrop-blur shadow-sm border flex items-center justify-center active:scale-95 transition-transform text-[11px] ${note.styleImageUrl ? 'bg-white/30 border-white/40' : 'bg-white/85 border-white/60'}`}
+                        title="回复"
+                    >
+                        💬
+                    </button>
+                )}
+                <span className={`text-[10px] font-mono ${note.styleImageUrl ? 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : 'text-slate-400'}`}>
+                    {new Date(note.timestamp).toLocaleString('zh-CN')}
+                </span>
             </div>
         </div>
     );

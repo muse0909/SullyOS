@@ -250,6 +250,9 @@ const RoomApp: React.FC = () => {
     const [todaysTodo, setTodaysTodo] = useState<RoomTodo | null>(null);
     // 暮色 2026-07-17：私密记事独立成发现页子页，RoomApp 改用共用 hook（UI 不变）
     // 阶段 2：删除旧 notebookEntry 写入逻辑后，addNote 也不再被 RoomApp 调用，只保留读+删
+    // 2026-07-22 fix：原代码在 char 定义之前调 useRoomNotes(char?.id) → char 处于 TDZ，访问抛 ReferenceError
+    //   修法：把 const char 提到 useRoomNotes 之前（hook 顺序不能改，所以不能挪 hook 调用位置）
+    const char = characters.find(c => c.id === activeCharacterId);
     const { notes: notebookEntries, deleteNote: deleteNoteBase } = useRoomNotes(char?.id);
     const [showSidebar, setShowSidebar] = useState(false);
     const [activePanel, setActivePanel] = useState<'todo' | 'notebook' | 'schedule'>('todo');
@@ -289,8 +292,6 @@ const RoomApp: React.FC = () => {
     const floorInputRef = useRef<HTMLInputElement>(null);
     const actorInputRef = useRef<HTMLInputElement>(null); 
     const customItemInputRef = useRef<HTMLInputElement>(null);
-
-    const char = characters.find(c => c.id === activeCharacterId);
 
     // Custom Item Library State (new: unified with visibility)
     type CustomAsset = { id: string; name: string; image: string; defaultScale: number; description?: string; visibility: 'public' | 'character'; assignedCharIds?: string[] };

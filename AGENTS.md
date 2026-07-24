@@ -279,6 +279,16 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-23 | 主动消息时间戳每条独立显示（打破 30 分钟 group 合并） | [`changelogs/2026-07-23-proactive-msg-timestamp.md`](./changelogs/2026-07-23-proactive-msg-timestamp.md) |
+| 2026-07-23 | 小纸条 — 详情/列表卡清理：列表卡去日期/作者/回复数 3→5 行 + 详情页回复胶囊底部居中去作者名 | [`changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md`](./changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md) |
+| 2026-07-22 | 收藏页清理：关掉「语音数据已丢失」toast 堆叠 + 取消语音自动加入收藏 | [`changelogs/2026-07-22-favorites-voice-cleanup.md`](./changelogs/2026-07-22-favorites-voice-cleanup.md) |
+| 2026-07-22 | 小纸条 — 完全脱离小小窝 app（双系统方案 A：数据/hook/组件/token/prompt/store 全独立） | [`changelogs/2026-07-22-xiaozhitiao-decouple.md`](./changelogs/2026-07-22-xiaozhitiao-decouple.md) |
+| 2026-07-22 | 私密记事 — 第六轮：还原"私密记事" UI 文字（小纸条仅留发现页）| [`changelogs/2026-07-22-privatenotes-round6.md`](./changelogs/2026-07-22-privatenotes-round6.md) |
+| 2026-07-22 | 私密记事 — 第五轮：改名"小纸条" + 自定义样式方案 B + 文字居中避盖图 | [`changelogs/2026-07-22-privatenotes-round5.md`](./changelogs/2026-07-22-privatenotes-round5.md) |
+| 2026-07-22 | 私密记事 — 第四轮：时间戳+回复贴右下角 + prompt 加 emoji/颜文字 | [`changelogs/2026-07-22-privatenotes-round4.md`](./changelogs/2026-07-22-privatenotes-round4.md) |
+| 2026-07-22 | 私密记事 — 第三轮：修 userProfile 报错 + 输入框交互改造 | [`changelogs/2026-07-22-privatenotes-round3.md`](./changelogs/2026-07-22-privatenotes-round3.md) |
+| 2026-07-22 | 私密记事 — 第二轮（位置 + prompt 通用化 + 输入框间距）| [`changelogs/2026-07-22-privatenotes-prompt-round2.md`](./changelogs/2026-07-22-privatenotes-prompt-round2.md) |
+| 2026-07-22 | 私密记事 — UI 4 bug 修复 + prompt 改造 + 自定义入口 | [`changelogs/2026-07-22-privatenotes-ui-and-prompt.md`](./changelogs/2026-07-22-privatenotes-ui-and-prompt.md) |
 | 2026-07-22 | 在线状态样式新增「不显示」选项 | [`changelogs/2026-07-22-status-style-none.md`](./changelogs/2026-07-22-status-style-none.md) |
 | 2026-07-22 | memoryLinks 每月自动修剪（30 天间隔）+ topN 50 → 70 | [`changelogs/2026-07-22-auto-prune-monthly.md`](./changelogs/2026-07-22-auto-prune-monthly.md) |
 | 2026-07-22 | 生图工具 description 收紧（默认不调，仅三种情感场景放行） | [`changelogs/2026-07-22-imagegen-tool-description-tighten.md`](./changelogs/2026-07-22-imagegen-tool-description-tighten.md) |

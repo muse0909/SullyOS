@@ -7,7 +7,8 @@ import {
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
     LifeSimState, HandbookEntry, Tracker, TrackerEntry,
-    VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter
+    VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
+    XiaoZhiTiao  // 2026-07-22：小纸条独立于 RoomNote
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { pruneMemoryLinksByTopN } from './memoryPalace/links';
@@ -19,7 +20,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 62; // Bumped: v62 add messages [charId, type] 复合索引 + 彼方数据表
+const DB_VERSION = 63; // Bumped: v63 add xiao_zhi_tiaos store（小纸条独立于 room_notes）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -34,7 +35,9 @@ const STORE_DIARIES = 'diaries';
 const STORE_TASKS = 'tasks'; 
 const STORE_ANNIVERSARIES = 'anniversaries';
 const STORE_ROOM_TODOS = 'room_todos'; 
-const STORE_ROOM_NOTES = 'room_notes'; 
+const STORE_ROOM_NOTES = 'room_notes';
+// 2026-07-22：小纸条独立 store（与 room_notes 互不可见）
+const STORE_XIAO_ZHI_TIAOS = 'xiao_zhi_tiaos';
 const STORE_GROUPS = 'groups'; 
 const STORE_JOURNAL_STICKERS = 'journal_stickers';
 const STORE_SOCIAL_POSTS = 'social_posts';
@@ -160,6 +163,12 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_ROOM_NOTES)) {
           const notesStore = db.createObjectStore(STORE_ROOM_NOTES, { keyPath: 'id' });
           notesStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // 2026-07-22：小纸条独立 store（跟 room_notes 互不可见）
+      if (!db.objectStoreNames.contains(STORE_XIAO_ZHI_TIAOS)) {
+          const xztStore = db.createObjectStore(STORE_XIAO_ZHI_TIAOS, { keyPath: 'id' });
+          xztStore.createIndex('charId', 'charId', { unique: false });
       }
 
       createStore(STORE_GROUPS, { keyPath: 'id' });
@@ -1211,6 +1220,32 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_ROOM_NOTES, 'readwrite');
       transaction.objectStore(STORE_ROOM_NOTES).delete(id);
+  },
+
+  // ─── 2026-07-22：小纸条独立 CRUD（跟 room_notes 完全分离，互不可见） ───
+  getXiaoZhiTiaos: async (charId: string): Promise<XiaoZhiTiao[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_XIAO_ZHI_TIAOS)) { resolve([]); return; }
+          const transaction = db.transaction(STORE_XIAO_ZHI_TIAOS, 'readonly');
+          const store = transaction.objectStore(STORE_XIAO_ZHI_TIAOS);
+          const index = store.index('charId');
+          const request = index.getAll(IDBKeyRange.only(charId));
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveXiaoZhiTiao: async (xzt: XiaoZhiTiao): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_XIAO_ZHI_TIAOS, 'readwrite');
+      transaction.objectStore(STORE_XIAO_ZHI_TIAOS).put(xzt);
+  },
+
+  deleteXiaoZhiTiao: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_XIAO_ZHI_TIAOS, 'readwrite');
+      transaction.objectStore(STORE_XIAO_ZHI_TIAOS).delete(id);
   },
 
   // ─── Daily Schedule (角色日程表) ───

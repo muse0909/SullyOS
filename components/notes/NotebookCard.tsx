@@ -101,7 +101,16 @@ const NotebookCard: React.FC<NotebookCardProps> = ({ note, onClick, onDelete, ch
             {/* 便签纸（实心 + 圆角 + 阴影 + 描边） */}
             <div
                 className="relative w-full h-48 rounded-2xl shadow-md border border-white/40 p-3.5 pt-7"
-                style={{ backgroundColor: palette.bg, ...(palette.patternCss || {}) }}
+                style={
+                    note.styleImageUrl
+                        // 2026-07-22：暮色自定义样式 — 用图当背景，文字白色半透明
+                        ? {
+                            backgroundImage: `url(${note.styleImageUrl})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                        }
+                        : { backgroundColor: palette.bg, ...(palette.patternCss || {}) }
+                }
             >
                 {/* 顶部徽章 + 时间（便签内左上） */}
                 <div className="flex items-center justify-between mb-2 text-[10px] font-bold">
@@ -111,15 +120,15 @@ const NotebookCard: React.FC<NotebookCardProps> = ({ note, onClick, onDelete, ch
                     >
                         {TYPE_LABELS[type]}
                     </span>
-                    <span style={{ color: palette.ink, opacity: 0.7 }}>
+                    <span style={note.styleImageUrl ? { color: 'rgba(255,255,255,0.85)' } : { color: palette.ink, opacity: 0.7 }}>
                         {new Date(note.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
                     </span>
                 </div>
 
                 {/* 内容预览 */}
                 <div
-                    className="text-[11px] leading-relaxed line-clamp-4 overflow-hidden"
-                    style={{ color: palette.ink }}
+                    className={`text-[11px] leading-relaxed line-clamp-4 overflow-hidden ${note.styleImageUrl ? 'text-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]' : ''}`}
+                    style={note.styleImageUrl ? undefined : { color: palette.ink }}
                 >
                     {note.content}
                 </div>
@@ -127,7 +136,7 @@ const NotebookCard: React.FC<NotebookCardProps> = ({ note, onClick, onDelete, ch
                 {/* 底部作者 + 回复数 */}
                 <div
                     className="absolute bottom-2 left-3.5 right-3.5 flex items-center justify-between text-[9px] font-medium"
-                    style={{ color: palette.ink, opacity: 0.7 }}
+                    style={note.styleImageUrl ? { color: 'rgba(255,255,255,0.85)' } : { color: palette.ink, opacity: 0.7 }}
                 >
                     {charName ? <span>— {charName}</span> : <span />}
                     {(note.replies?.length || 0) > 0 && <span>💬 {note.replies!.length}</span>}

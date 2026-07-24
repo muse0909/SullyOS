@@ -13,7 +13,7 @@ const STORAGE_DEFAULT_KEY = 'sullyos_notebook_bg_default';
 
 export type BuiltinBg = 'cream-paper' | 'dot-grid' | 'kraft';
 
-const BUILTIN_BG: Record<BuiltinBg, { label: string; css: React.CSSProperties }> = {
+export const BUILTIN_BG: Record<BuiltinBg, { label: string; css: React.CSSProperties }> = {
     'cream-paper': {
         label: '奶油信纸',
         css: {

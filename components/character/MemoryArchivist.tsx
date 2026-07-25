@@ -15,6 +15,11 @@ interface MemoryArchivistProps {
     onRefine: (year: string, month: string, summary: string, formattedPrompt?: string) => Promise<void>;
     onDeleteMemories: (ids: string[]) => void;
     onUpdateMemory: (id: string, newSummary: string) => void;
+    /**
+     * 暮色 2026-07-25：手动添加记忆——按指定日期插入一条 MemoryFragment。
+     * date 格式 YYYY-MM-DD，summary 必填，mood 可选。
+     */
+    onAddMemory: (date: string, summary: string, mood?: string) => void;
     onToggleActiveMonth: (year: string, month: string) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
@@ -63,6 +68,12 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [isManageMode, setIsManageMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
+    // 暮色 2026-07-25：手动添加记忆的 modal state
+    const [showAddMemoryModal, setShowAddMemoryModal] = useState(false);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const [addDate, setAddDate] = useState(todayStr);
+    const [addSummary, setAddSummary] = useState('');
+    const [addMood, setAddMood] = useState('');
 
     // --- 全屏输入状态 ---
     const [showFullEditMemory, setShowFullEditMemory] = useState(false);
@@ -303,6 +314,11 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
 
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Time Logs</h4>
                     <div className="flex gap-2">
+                        <button
+                            onClick={() => { setAddDate(todayStr); setAddSummary(''); setAddMood(''); setShowAddMemoryModal(true); }}
+                            title="手动添加记忆"
+                            className="text-[10px] px-3 py-1 rounded-full border bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50 transition-colors font-bold"
+                        >+ 添加</button>
                         {isManageMode && selectedIds.size > 0 && <button onClick={(e) => { e.stopPropagation(); requestDelete(); }} className="text-[10px] bg-red-500 text-white px-3 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform">删除 ({selectedIds.size})</button>}
                         <button onClick={() => { setIsManageMode(!isManageMode); setSelectedIds(new Set()); }} className={`text-[10px] px-3 py-1 rounded-full border transition-colors ${isManageMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{isManageMode ? '完成' : '管理'}</button>
                     </div>
@@ -477,6 +493,59 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                 </div>
                             </div>
                         ))}
+                    </div>
+                </div>
+            </Modal>
+
+            {/* 手动添加记忆 modal（暮色 2026-07-25） */}
+            <Modal
+                isOpen={showAddMemoryModal}
+                title="手动添加记忆"
+                onClose={() => setShowAddMemoryModal(false)}
+                footer={<div className="flex gap-2 w-full">
+                    <button onClick={() => setShowAddMemoryModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
+                    <button
+                        onClick={() => {
+                            if (!addDate.trim() || !addSummary.trim()) return;
+                            onAddMemory(addDate.trim(), addSummary.trim(), addMood.trim() || undefined);
+                            setShowAddMemoryModal(false);
+                            setAddSummary('');
+                            setAddMood('');
+                        }}
+                        disabled={!addDate.trim() || !addSummary.trim()}
+                        className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl shadow-lg shadow-emerald-200 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                    >保存</button>
+                </div>}
+            >
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">日期</label>
+                        <input
+                            type="date"
+                            value={addDate}
+                            onChange={(e) => setAddDate(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">心情（可选）</label>
+                        <input
+                            type="text"
+                            value={addMood}
+                            onChange={(e) => setAddMood(e.target.value)}
+                            placeholder="例：开心 / 平静 / 烦躁 / 心疼"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">记忆内容</label>
+                        <textarea
+                            value={addSummary}
+                            onChange={(e) => setAddSummary(e.target.value)}
+                            placeholder="写这条记忆要记什么..."
+                            rows={5}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:bg-white focus:border-emerald-300 outline-none transition-all resize-none"
+                        />
                     </div>
                 </div>
             </Modal>

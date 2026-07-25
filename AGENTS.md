@@ -280,6 +280,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-07-25 | 记忆宫殿：Time Logs 手动添加 + 精炼 prompt 改"思考"写法 | [`changelogs/2026-07-25-memory-add-and-refine-prompt.md`](./changelogs/2026-07-25-memory-add-and-refine-prompt.md) |
+| 2026-07-25 | 备份 exportFullData 补读记忆宫殿 8 个 store（修备份丢 memoryPalace bug） | [`changelogs/2026-07-25-backup-export-memorypalace.md`](./changelogs/2026-07-25-backup-export-memorypalace.md) |
 | 2026-07-24 | 每个角色独立 API 配置（麦麦 MiniMax / 江澈 Claude 互不干扰） | [`changelogs/2026-07-24-per-character-api.md`](./changelogs/2026-07-24-per-character-api.md) |
 | 2026-07-23 | 主动消息时间戳每条独立显示（打破 30 分钟 group 合并） | [`changelogs/2026-07-23-proactive-msg-timestamp.md`](./changelogs/2026-07-23-proactive-msg-timestamp.md) |
 | 2026-07-23 | 小纸条 — 详情/列表卡清理：列表卡去日期/作者/回复数 3→5 行 + 详情页回复胶囊底部居中去作者名 | [`changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md`](./changelogs/2026-07-23-xiaozhitiao-detail-card-cleanup.md) |

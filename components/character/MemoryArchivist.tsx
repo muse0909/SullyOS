@@ -20,6 +20,8 @@ interface MemoryArchivistProps {
      * date 格式 YYYY-MM-DD，summary 必填，mood 可选。
      */
     onAddMemory: (date: string, summary: string, mood?: string) => void;
+    /** 手动添加按钮提示用（暮色 2026-07-25） */
+    addToast?: (message: string, type?: 'success' | 'error' | 'info' | 'bell') => void;
     onToggleActiveMonth: (year: string, month: string) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
@@ -33,7 +35,7 @@ interface MemoryArchivistProps {
     forceArchiveDefaultPromptId?: string;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onAddMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId, addToast = () => {} }) => {
     // 每个日期的"强制重总结"运行状态
     const [forcingDate, setForcingDate] = useState<string | null>(null);
     // 重总结前弹出模板选择器：把 date 存起来打开 modal
@@ -506,14 +508,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     <button onClick={() => setShowAddMemoryModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
                     <button
                         onClick={() => {
-                            if (!addDate.trim() || !addSummary.trim()) return;
+                            if (!addDate.trim()) {
+                                addToast('请填日期', 'error');
+                                return;
+                            }
+                            if (!addSummary.trim()) {
+                                addToast('请填记忆内容', 'error');
+                                return;
+                            }
                             onAddMemory(addDate.trim(), addSummary.trim(), addMood.trim() || undefined);
                             setShowAddMemoryModal(false);
                             setAddSummary('');
                             setAddMood('');
                         }}
-                        disabled={!addDate.trim() || !addSummary.trim()}
-                        className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl shadow-lg shadow-emerald-200 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                        className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
                     >保存</button>
                 </div>}
             >

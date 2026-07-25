@@ -1213,6 +1213,7 @@ ${isInitialGeneration ? `
                                onDeleteMemories={handleDeleteMemories}
                                onUpdateMemory={handleUpdateMemory}
                                onAddMemory={handleAddMemory}
+                               addToast={addToast}
                                onToggleActiveMonth={handleToggleActiveMonth}
                                onUpdateRefinedMemory={handleUpdateRefinedMemory}
                                onDeleteRefinedMemory={handleDeleteRefinedMemory}

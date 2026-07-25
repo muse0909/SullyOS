@@ -20,6 +20,52 @@ import { recordRecallReceipt } from './recallReceipts';
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
 
+/**
+ * 把记忆的 createdAt 格式化成「日期 时分 · 距今多久时段」
+ * 暮色 2026-07-25：原版只输出日期，AI 看到 (2026/7/24, ...) 跟「今天 7/25」对比
+ *   不会主动换算，会无意识复读 memory 内容里的「今晚/今天/昨天」等模糊时间词。
+ *   现在加「具体几点」+「距今多久」+「智能时段」（早/中/晚/深夜），
+ *   AI 一眼看到「1天前晚间」就不会再把昨天的「今晚」字面搬到现在。
+ *
+ * 输出示例：
+ *   - 5 分钟前:     "2026/7/25 13:38 · 刚刚下午"
+ *   - 30 分钟前:    "2026/7/25 13:13 · 30分钟前下午"
+ *   - 5 小时前:     "2026/7/25 08:30 · 5小时前上午"
+ *   - 1 天前:       "2026/7/24 22:30 · 1天前晚间"
+ *   - 5 天前:       "2026/7/20 22:30 · 5天前晚间"
+ *   - 1 个月前:     "2026/6/25 22:30 · 1个月前晚间"
+ */
+function formatMemoryTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const now = Date.now();
+  const dateStr = d.toLocaleDateString('zh-CN');
+  const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hour = d.getHours();
+
+  let timeOfDay = '凌晨';
+  if (hour >= 5 && hour < 8) timeOfDay = '早晨';
+  else if (hour >= 8 && hour < 12) timeOfDay = '上午';
+  else if (hour >= 12 && hour < 14) timeOfDay = '中午';
+  else if (hour >= 14 && hour < 18) timeOfDay = '下午';
+  else if (hour >= 18 && hour < 20) timeOfDay = '傍晚';
+  else if (hour >= 20 && hour < 23) timeOfDay = '晚上';
+  else if (hour >= 23) timeOfDay = '深夜';
+
+  const diffMs = now - ts;
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  let ageStr: string;
+  if (diffMins < 1) ageStr = '刚刚';
+  else if (diffMins < 60) ageStr = `${diffMins}分钟`;
+  else if (diffHours < 24) ageStr = `${diffHours}小时`;
+  else if (diffDays < 30) ageStr = `${diffDays}天`;
+  else ageStr = `${Math.floor(diffDays / 30)}个月`;
+
+  return `${dateStr} ${timeStr} · ${ageStr}前${timeOfDay}`;
+}
+
 interface RenderItem {
     /** 用于排序：取该 item 内最高的 finalScore */
     score: number;
@@ -197,7 +243,9 @@ export async function expandAndFormat(
         output += `📌 **便利贴（近期重要事项）**\n`;
         for (const node of pinnedNodes) {
             const daysLeft = Math.ceil((node.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
-            output += `- ${node.content}（剩余 ${daysLeft} 天）\n`;
+            // 暮色 2026-07-25：便利贴时间戳同样升级（让 AI 知道是哪天立的重要事项）
+            const pTs = formatMemoryTimestamp(node.createdAt);
+            output += `- ${node.content}（${pTs}·剩余 ${daysLeft} 天）\n`;
         }
         output += `\n`;
         console.log(`📌 [MemoryPalace] 便利贴置顶 ${pinnedNodes.length} 条`);
@@ -249,8 +297,10 @@ export async function expandAndFormat(
 
 function buildStandaloneItem(r: ScoredMemory): RenderItem {
     const node = r.node;
-    const date = new Date(node.createdAt).toLocaleDateString('zh-CN');
-    const body = `(${date}, 重要性: ${node.importance})\n${node.content}`;
+    // 暮色 2026-07-25：日期升级到「日期 时分 · 距今多久时段」 — 防止 AI 复读记忆里
+    //   的「今晚/今天」字面，不主动换算成「昨天/前天」
+    const ts = formatMemoryTimestamp(node.createdAt);
+    const body = `(${ts}, 重要性: ${node.importance})\n${node.content}`;
     return {
         score: r.finalScore,
         room: node.room,
@@ -300,16 +350,18 @@ async function buildBoxItem(
     body += '\n';
 
     if (summary) {
-        const sDate = new Date(summary.createdAt).toLocaleDateString('zh-CN');
-        body += `_整合回忆_ (${sDate}, 重要性 ${summary.importance}, 已压缩 ${box.compressionCount} 次)\n`;
+        // 暮色 2026-07-25：summary 时间戳升级到「日期 时分 · 距今多久时段」
+        const sTs = formatMemoryTimestamp(summary.createdAt);
+        body += `_整合回忆_ (${sTs}, 重要性 ${summary.importance}, 已压缩 ${box.compressionCount} 次)\n`;
         body += `${summary.content}\n`;
     }
 
     if (liveToShow.length > 0) {
         body += summary ? `_新增片段_：\n` : '';
         for (const n of liveToShow) {
-            const d = new Date(n.createdAt).toLocaleDateString('zh-CN');
-            body += `- [${d}] ${n.content}\n`;
+            // 暮色 2026-07-25：活节点时间戳同样升级
+            const nTs = formatMemoryTimestamp(n.createdAt);
+            body += `- [${nTs}] ${n.content}\n`;
         }
         if (omitted > 0) body += `（另有 ${omitted} 条同盒活节点未展示）\n`;
     }

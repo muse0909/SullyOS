@@ -642,6 +642,97 @@ const ApiQuickFloat: React.FC = () => {
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+              {/* 暮色 2026-07-25：云端备份快捷入口移到第 1 个 section
+                  — 暮色刚被恢复覆盖坑了 5 轮对话，要让备份/恢复操作最显眼 */}
+              <QuickSection
+                icon={<CloudArrowUp size={18} weight="bold" />}
+                title="云端备份"
+                subtitle={cloudBackupSubtitle}
+                isOpen={openSection === 'cloudBackup'}
+                onToggle={() => toggleSection('cloudBackup')}
+              >
+                <section className="bg-teal-50/80 rounded-3xl p-4 shadow-sm border border-teal-100/80 space-y-3">
+                  {/* 状态条（已连接 + 去设置入口） */}
+                  {isCloudBackupConfigured ? (
+                    <div className="flex items-center justify-between rounded-2xl bg-emerald-50/80 border border-emerald-200/60 px-3 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                        <span className="text-[11px] text-emerald-900 font-medium truncate">
+                          {cloudBackupConfig.provider === 'github'
+                            ? `GitHub${cloudBackupConfig.githubOwner ? ` @${cloudBackupConfig.githubOwner}` : ''}`
+                            : 'WebDAV'} 已连接
+                        </span>
+                      </div>
+                      <button onClick={handleOpenCloudSettings} className="text-[10px] text-emerald-700 font-bold hover:text-emerald-900 transition-colors shrink-0 ml-2">
+                        去设置 →
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5 space-y-2">
+                      <p className="text-[11px] text-amber-900 leading-relaxed">
+                        还没配置云端备份。
+                      </p>
+                      <button onClick={handleOpenCloudSettings} className="w-full py-2 rounded-xl bg-amber-100 text-amber-800 text-[11px] font-bold active:scale-95 transition-all">
+                        去设置配置 →
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 上次备份时间 */}
+                  {cloudBackupConfig.lastBackupTime && (
+                    <p className="text-[10px] text-slate-400 text-center">
+                      上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
+                      {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
+                    </p>
+                  )}
+
+                  {/* 2 个并排按钮（轻量同步 + 完整）— 暮色 2026-07-21：另一个按钮不强制 opacity-50，只"白底+浅灰文字+cursor-not-allowed"提示不可点 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { mode: 'text_only' as const, label: '轻量同步', iconColor: 'text-sky-500', highlight: 'border-sky-300 bg-sky-50 text-slate-700' },
+                      { mode: 'full' as const, label: '完整', iconColor: 'text-violet-500', highlight: 'border-violet-300 bg-violet-50 text-slate-700' },
+                    ]).map(({ mode, label, iconColor, highlight }) => {
+                      const isThisBackingUp = cloudBackingMode === mode;
+                      const isOtherBackingUp = !!cloudBackingMode && !isThisBackingUp;
+                      return (
+                        <button
+                          key={mode}
+                          onClick={() => handleCloudBackupWithMode(mode)}
+                          disabled={!!cloudBackingMode || !isCloudBackupConfigured}
+                          className={`py-3 border rounded-xl text-xs font-bold shadow-sm transition-all flex flex-col items-center gap-1 ${
+                            isThisBackingUp
+                              ? `${highlight} cursor-wait`
+                              : isOtherBackingUp
+                                ? `bg-white border-slate-200 text-slate-300 cursor-not-allowed`  /* 暮色要：不强制 opacity-50，白底+浅灰文字 */
+                                : `bg-white border-slate-200 text-slate-600 active:scale-95`
+                          }`}
+                        >
+                          <CloudArrowUp size={16} weight="bold" className={iconColor} />
+                          <span>备份到云端</span>
+                          <span className="text-[9px] text-slate-400 font-normal">
+                            {isThisBackingUp ? '备份中…' : label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed text-center px-1">
+                    • 轻量同步：1-3MB · 完整：含图片/美化
+                  </p>
+
+                  {/* 1 个大按钮：从云端恢复 */}
+                  <button
+                    onClick={handleOpenCloudRestore}
+                    disabled={!isCloudBackupConfigured || cloudRestoring}
+                    className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <CloudArrowDown size={16} weight="bold" className="text-emerald-500" />
+                    <span>{cloudRestoring ? '恢复中…' : '从云端恢复'}</span>
+                  </button>
+                </section>
+              </QuickSection>
+
               <QuickSection
                 icon={<Gear size={18} weight="bold" />}
                 title="API 设置"
@@ -1126,95 +1217,6 @@ const ApiQuickFloat: React.FC = () => {
                 </section>
               </QuickSection>
 
-              {/* 暮色 2026-07-21：云端备份快捷入口（第 5 个 section，仿 Settings 云端备份页精简版） */}
-              <QuickSection
-                icon={<CloudArrowUp size={18} weight="bold" />}
-                title="云端备份"
-                subtitle={cloudBackupSubtitle}
-                isOpen={openSection === 'cloudBackup'}
-                onToggle={() => toggleSection('cloudBackup')}
-              >
-                <section className="bg-teal-50/80 rounded-3xl p-4 shadow-sm border border-teal-100/80 space-y-3">
-                  {/* 状态条（已连接 + 去设置入口） */}
-                  {isCloudBackupConfigured ? (
-                    <div className="flex items-center justify-between rounded-2xl bg-emerald-50/80 border border-emerald-200/60 px-3 py-2.5">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                        <span className="text-[11px] text-emerald-900 font-medium truncate">
-                          {cloudBackupConfig.provider === 'github'
-                            ? `GitHub${cloudBackupConfig.githubOwner ? ` @${cloudBackupConfig.githubOwner}` : ''}`
-                            : 'WebDAV'} 已连接
-                        </span>
-                      </div>
-                      <button onClick={handleOpenCloudSettings} className="text-[10px] text-emerald-700 font-bold hover:text-emerald-900 transition-colors shrink-0 ml-2">
-                        去设置 →
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl bg-amber-50/80 border border-amber-200/60 px-3 py-2.5 space-y-2">
-                      <p className="text-[11px] text-amber-900 leading-relaxed">
-                        还没配置云端备份。
-                      </p>
-                      <button onClick={handleOpenCloudSettings} className="w-full py-2 rounded-xl bg-amber-100 text-amber-800 text-[11px] font-bold active:scale-95 transition-all">
-                        去设置配置 →
-                      </button>
-                    </div>
-                  )}
-
-                  {/* 上次备份时间 */}
-                  {cloudBackupConfig.lastBackupTime && (
-                    <p className="text-[10px] text-slate-400 text-center">
-                      上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
-                      {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
-                    </p>
-                  )}
-
-                  {/* 2 个并排按钮（轻量同步 + 完整）— 暮色 2026-07-21：另一个按钮不强制 opacity-50，只"白底+浅灰文字+cursor-not-allowed"提示不可点 */}
-                  <div className="grid grid-cols-2 gap-2">
-                    {([
-                      { mode: 'text_only' as const, label: '轻量同步', iconColor: 'text-sky-500', highlight: 'border-sky-300 bg-sky-50 text-slate-700' },
-                      { mode: 'full' as const, label: '完整', iconColor: 'text-violet-500', highlight: 'border-violet-300 bg-violet-50 text-slate-700' },
-                    ]).map(({ mode, label, iconColor, highlight }) => {
-                      const isThisBackingUp = cloudBackingMode === mode;
-                      const isOtherBackingUp = !!cloudBackingMode && !isThisBackingUp;
-                      return (
-                        <button
-                          key={mode}
-                          onClick={() => handleCloudBackupWithMode(mode)}
-                          disabled={!!cloudBackingMode || !isCloudBackupConfigured}
-                          className={`py-3 border rounded-xl text-xs font-bold shadow-sm transition-all flex flex-col items-center gap-1 ${
-                            isThisBackingUp
-                              ? `${highlight} cursor-wait`
-                              : isOtherBackingUp
-                                ? `bg-white border-slate-200 text-slate-300 cursor-not-allowed`  /* 暮色要：不强制 opacity-50，白底+浅灰文字 */
-                                : `bg-white border-slate-200 text-slate-600 active:scale-95`
-                          }`}
-                        >
-                          <CloudArrowUp size={16} weight="bold" className={iconColor} />
-                          <span>备份到云端</span>
-                          <span className="text-[9px] text-slate-400 font-normal">
-                            {isThisBackingUp ? '备份中…' : label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <p className="text-[10px] text-slate-400 leading-relaxed text-center px-1">
-                    • 轻量同步：1-3MB · 完整：含图片/美化
-                  </p>
-
-                  {/* 1 个大按钮：从云端恢复 */}
-                  <button
-                    onClick={handleOpenCloudRestore}
-                    disabled={!isCloudBackupConfigured || cloudRestoring}
-                    className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <CloudArrowDown size={16} weight="bold" className="text-emerald-500" />
-                    <span>{cloudRestoring ? '恢复中…' : '从云端恢复'}</span>
-                  </button>
-                </section>
-              </QuickSection>
             </div>
 
             <div className="px-5 py-3 border-t border-slate-100 shrink-0">

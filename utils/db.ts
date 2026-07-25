@@ -1863,15 +1863,20 @@ export const DB = {
       }
 
       // messages 处理：
-      //   - text_only 模式：patch mode（按 id 合并不清空），本设备独有消息保留
-      //   - full / media_only 模式：整库替换
+      //   暮色 2026-07-25：所有 mode 都按 ID 合并（patch mode），不整库替换
+      //   改前：full / media_only 模式 store.clear() → 本地独有消息被吃
+      //     场景：phone A 11:00 上传 → phone B 恢复 11:00 → phone A 跟 TA 11:00-12:00 聊 5 轮
+      //           → phone B 12:00 上传（江澈有 3 轮新，麦麦没新）→ phone A 恢复 12:00
+      //           → 麦麦窗口 11:00-12:00 之间的 5 轮被覆盖没了
+      //   改后：所有 mode 都按 ID put（idempotent）
+      //     - 本地有同 ID → 跳过（不丢本地内容）
+      //     - 本地没有 ID → put（合并新内容）
+      //   副作用：失去"整机恢复 messages"的语义
+      //     - 如果用户想"完全替换本地 messages"，先手动清空（Settings 危险区）再恢复
+      //     - 实际场景：多端同步 > 单向恢复，这个 trade-off 可接受
       if (data.messages) {
            if (availableStores.includes(STORE_MESSAGES) && data.messages.length > 0) {
                const store = tx.objectStore(STORE_MESSAGES);
-               const isPatchMode = !data.characters || data.backupMode === 'text_only';
-               if (!isPatchMode) {
-                   store.clear();
-               }
                data.messages.forEach(m => store.put(m));
            }
       }

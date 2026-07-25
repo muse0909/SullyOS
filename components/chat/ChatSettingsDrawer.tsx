@@ -231,7 +231,12 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
                                     <div className="flex gap-2 flex-wrap">
                                         {mainPresets.map((preset) => {
-                                            const active = perCharApiBaseUrl === preset.config.baseUrl && perCharApiModel === preset.config.model;
+                                            // 暮色 2026-07-25：active 判断加上 apiKey — 同 baseUrl + 空/同 model 的预设
+                                            //   （如「即享ant / 即享按量k / ccmax2」共享同上游）只靠 baseUrl+model 会 3 个一起亮
+                                            //   实际上 key 各自独立没串，是显示串了
+                                            const active = perCharApiBaseUrl === preset.config.baseUrl
+                                                && perCharApiKey === preset.config.apiKey
+                                                && perCharApiModel === preset.config.model;
                                             return (
                                                 <button
                                                     key={preset.id}

@@ -1691,7 +1691,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, memoryNodes, memoryVectors, memoryLinks, topicBoxes, anticipations, eventBoxes, memoryBatches] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1724,7 +1724,32 @@ export const DB = {
           getAllFromStore(STORE_HANDBOOK),
           getAllFromStore(STORE_TRACKERS),
           getAllFromStore(STORE_TRACKER_ENTRIES),
+          // 记忆宫殿 7 个 store（之前 exportFullData 根本不读，备份丢 memoryPalace）
+          getAllFromStore('memory_nodes'),
+          getAllFromStore('memory_vectors'),
+          getAllFromStore('memory_links'),
+          getAllFromStore('topic_boxes'),
+          getAllFromStore('anticipations'),
+          getAllFromStore('event_boxes'),
+          getAllFromStore('memory_batches'),
       ]);
+
+      // 读 memoryPalaceHighWaterMarks（高水位线，存在 localStorage 不是 IndexedDB）
+      // 见 OSContext.tsx 解析逻辑：key 是 mp_lastMsgId_<charId>，value 是 lastProcessedMsgId
+      let memoryPalaceHighWaterMarks: Record<string, number> | undefined = undefined;
+      try {
+          for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith('mp_lastMsgId_')) {
+                  const charId = key.replace('mp_lastMsgId_', '');
+                  const val = parseInt(localStorage.getItem(key) || '0', 10);
+                  if (charId && val) {
+                      if (!memoryPalaceHighWaterMarks) memoryPalaceHighWaterMarks = {};
+                      memoryPalaceHighWaterMarks[charId] = val;
+                  }
+              }
+          }
+      } catch (e) { /* localStorage 不可用时忽略 */ }
 
       const userProfile = userProfiles.length > 0 ? {
           name: userProfiles[0].name,
@@ -1750,6 +1775,15 @@ export const DB = {
           handbooks,
           trackers,
           trackerEntries,
+          // 记忆宫殿 8 个字段（之前没被导出所以备份丢）
+          memoryNodes,
+          memoryVectors,
+          memoryLinks,
+          topicBoxes,
+          anticipations,
+          eventBoxes,
+          memoryBatches,
+          memoryPalaceHighWaterMarks,
       };
   },
 

@@ -382,6 +382,18 @@ const Character: React.FC = () => {
 
   const handleDeleteMemories = (ids: string[]) => { if (!formData) return; handleChange('memories', (formData.memories || []).filter(m => !ids.includes(m.id))); addToast(`已删除 ${ids.length} 条记忆`, 'success'); };
   const handleUpdateMemory = (id: string, newSummary: string) => { if (!formData) return; handleChange('memories', (formData.memories || []).map(m => m.id === id ? { ...m, summary: newSummary } : m)); addToast('记忆已更新', 'success'); };
+  // 暮色 2026-07-25：手动添加记忆（按指定日期）
+  const handleAddMemory = (date: string, summary: string, mood?: string) => {
+      if (!formData) return;
+      const newMemory = {
+          id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          date,
+          summary,
+          ...(mood ? { mood } : {}),
+      };
+      handleChange('memories', [newMemory, ...(formData.memories || [])]);
+      addToast(`已添加 ${date} 的记忆`, 'success');
+  };
 
   /**
    * 按指定日期强制重新总结：读原始聊天记录（忽略 hideBeforeMessageId），LLM 总结，
@@ -1200,6 +1212,7 @@ ${isInitialGeneration ? `
                                onRefine={handleRefineMonth}
                                onDeleteMemories={handleDeleteMemories}
                                onUpdateMemory={handleUpdateMemory}
+                               onAddMemory={handleAddMemory}
                                onToggleActiveMonth={handleToggleActiveMonth}
                                onUpdateRefinedMemory={handleUpdateRefinedMemory}
                                onDeleteRefinedMemory={handleDeleteRefinedMemory}

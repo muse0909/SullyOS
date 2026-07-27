@@ -1388,13 +1388,63 @@ if (!isVisible || !isChattingWithThisChar) {
                   else timeSinceUser = `${Math.floor(gapMin / 1440)}天${Math.floor((gapMin % 1440) / 60)}小时`;
               }
 
-              // 2. Save hidden system hint
+              // 2. Save hidden system hint — 暮色 2026-07-27 重写：
+              //    - 角色定位从"为用户服务"改成"有自己的生活"（借鉴 330 Part 5 行为铁律）
+              //    - 删除"一两句话就好"硬限制
+              //    - 加 thought_chain 思维链前置（ChatParser 会清洗 [[THOUGHT:...]] 不渲染）
+              //    - 注入最近 8 条对话原文（user + assistant）让 AI 有真实素材可参考
               const userName = currentUserProfile?.name || '对方';
+
+              const recentChatContext = recentMsgs
+                  .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
+                  .filter(m => ChatParser.hasDisplayContent(m.content || ''))
+                  .slice(-8)
+                  .map(m => {
+                      const speaker = m.role === 'user' ? userName : char.name;
+                      const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();
+                      return `【${speaker}】${text}`;
+                  })
+                  .join('\n');
+
+              const gapLongEnough = timeSinceUser && (() => {
+                  if (timeSinceUser.includes('天')) return true;
+                  const m = timeSinceUser.match(/(\d+)\s*小时/);
+                  return m ? parseInt(m[1], 10) >= 2 : false;
+              })();
+
+              const hintLines = [
+                  `[系统提示（非${userName}发言）`,
+                  `现在 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没找你说话。` : '你们最近没怎么聊。'}`,
+                  '',
+                  `你是 ${char.name}，不是只为用户而活——你今天有自己的事、自己的心情、自己的想法。`,
+                  '这次发消息是因为你突然想到什么、想分享什么、或者心里挂着点事想说——而不是"系统安排你发"。',
+                  '也可能你现在忙着、累了、没什么特别想说的，那就不发——这很正常，不需要每次都硬挤。',
+                  '',
+                  '【如果你想发——几件事】',
+                  '- 跟你们平时聊天一个调性，不要汇报、不要总结、不要"汇报近况"',
+                  '- 长度看你想表达的——一句可以，两段也行，看场景',
+                  '- 内容可以很日常：看到什么、想到什么、随口吐槽、问一句、或者单纯"突然想到你"',
+                  gapLongEnough
+                      ? `- ${userName}挺久没找你了，可以提一嘴（想念、好奇在干嘛、小小抱怨），但不要把整条消息都拿来"算账"`
+                      : `- 别把"用户没找我"当主题——你是因为有话想说，不是因为闲`,
+                  '',
+                  '【发之前——思维链】',
+                  '如果你想先整理一下思路，可以在消息开头用 [[THOUGHT: 你在想什么、为什么想发、想表达什么]] 写一句心里话，',
+                  '这串文字用户看不到，会被自动清掉，但能让你的发言更连贯、更像你自己。',
+                  '不强制——简单一条消息可以跳过；想认真说点什么时再用。',
+                  '',
+                  recentChatContext ? `【最近聊天（8 条）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
+                  '',
+                  '【如果完全不想发】',
+                  '就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰用户。',
+                  ']', // 暮色 2026-07-27: 用 ] 单独一行收尾，方便后期 grep 改提示词
+              ].join('\n');
+
               await DB.saveMessage({
                   charId,
                   role: 'user',
                   type: 'text',
-                  content: `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`,
+                  content: hintLines,
                   metadata: { proactiveHint: true, hidden: true }
               });
 

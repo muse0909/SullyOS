@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-27 | 主动消息 prompt 重写 + thought_chain 思维链前置 | [`changelogs/2026-07-27-proactive-prompt-and-thought-chain.md`](./changelogs/2026-07-27-proactive-prompt-and-thought-chain.md) |
 | 2026-07-27 | Gemini 直连（Google 官方协议）主 API / 识图 / 生图三通道 + GPT 直连快捷入口 | [`changelogs/2026-07-27-gemini-direct-connect.md`](./changelogs/2026-07-27-gemini-direct-connect.md) |
 | 2026-07-25 | 记忆宫殿：Time Logs 手动添加 + 精炼 prompt 改"思考"写法 | [`changelogs/2026-07-25-memory-add-and-refine-prompt.md`](./changelogs/2026-07-25-memory-add-and-refine-prompt.md) |
 | 2026-07-25 | 备份 exportFullData 补读记忆宫殿 8 个 store（修备份丢 memoryPalace bug） | [`changelogs/2026-07-25-backup-export-memorypalace.md`](./changelogs/2026-07-25-backup-export-memorypalace.md) |

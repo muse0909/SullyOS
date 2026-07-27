@@ -179,8 +179,15 @@ const ApiQuickFloat: React.FC = () => {
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localModel, setLocalModel] = useState(apiConfig.model);
-  // 暮色 2026-07-17：API 协议（OpenAI / Claude）— 跟 Settings 同步
-  const [localProtocol, setLocalProtocol] = useState<'openai' | 'claude'>(apiConfig.protocol || 'openai');
+  // 暮色 2026-07-17 → 2026-07-27：API 协议 3 tab 切换（OpenAI / Claude / Gemini）
+  const [localProtocol, setLocalProtocol] = useState<'openai' | 'claude' | 'gemini'>(apiConfig.protocol || 'openai');
+  // 暮色 2026-07-27：主 API 三平台独立 URL/Key/Model（切 tab 不丢）
+  const [localClaudeUrl, setLocalClaudeUrl] = useState(apiConfig.claudeBaseUrl || '');
+  const [localClaudeKey, setLocalClaudeKey] = useState(apiConfig.claudeApiKey || '');
+  const [localClaudeModel, setLocalClaudeModel] = useState(apiConfig.claudeModel || '');
+  const [localGeminiUrl, setLocalGeminiUrl] = useState(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+  const [localGeminiKey, setLocalGeminiKey] = useState(apiConfig.geminiApiKey || '');
+  const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-2.0-flash');
 
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
@@ -190,13 +197,6 @@ const ApiQuickFloat: React.FC = () => {
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
-
-  // 暮色 2026-07-27：Gemini 直连 state（主 API）
-  const [localGeminiUrl, setLocalGeminiUrl] = useState(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-  const [localGeminiKey, setLocalGeminiKey] = useState(apiConfig.geminiApiKey || '');
-  const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-2.0-flash');
-  const [showGeminiMain, setShowGeminiMain] = useState(false);
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
 
   // 暮色 2026-07-15：副 API（记忆宫殿后台处理用 lightLLM）— local state
   const [localLightUrl, setLocalLightUrl] = useState(memoryPalaceConfig?.lightLLM?.baseUrl || '');
@@ -236,8 +236,15 @@ const ApiQuickFloat: React.FC = () => {
     setLocalUrl(apiConfig.baseUrl);
     setLocalKey(apiConfig.apiKey);
     setLocalModel(apiConfig.model);
-    // 暮色 2026-07-17：API 协议同步（Settings 改了这里也要跟着变）
-    setLocalProtocol(apiConfig.protocol || 'openai');
+    // 暮色 2026-07-17 → 2026-07-27：API 协议同步（3 tab 切换，Settings 改了这里也要跟着变）
+    const syncedProtocol: 'openai' | 'claude' | 'gemini' = apiConfig.protocol === 'claude' || apiConfig.protocol === 'gemini' ? apiConfig.protocol : 'openai';
+    setLocalProtocol(syncedProtocol);
+    setLocalClaudeUrl(apiConfig.claudeBaseUrl || '');
+    setLocalClaudeKey(apiConfig.claudeApiKey || '');
+    setLocalClaudeModel(apiConfig.claudeModel || '');
+    setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+    setLocalGeminiKey(apiConfig.geminiApiKey || '');
+    setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
@@ -245,10 +252,6 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
-    // 暮色 2026-07-27：Gemini 直连同步
-    setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-    setLocalGeminiKey(apiConfig.geminiApiKey || '');
-    setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
     // 暮色 2026-07-15：同步副 API（记忆宫殿 lightLLM）— 抽原始字段做 deps，避免对象新引用触发重跑
     if (memoryPalaceConfig?.lightLLM) {
       setLocalLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
@@ -382,13 +385,53 @@ const ApiQuickFloat: React.FC = () => {
 
   // 暮色 2026-07-15：删 COMFYUI 常量 + testComfyuiConnection + comfyuiCanSave — 生图只走 OpenAI 兼容
 
+  // 暮色 2026-07-27：主 API 协议 3 tab 切换 handler
+  //   跟 Settings 同样逻辑：切走前存当前值到旧协议缓存，从新协议缓存读出
+  const switchMainProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+    if (newProtocol === localProtocol) return;
+    if (localProtocol === 'claude') {
+      setLocalClaudeUrl(localUrl);
+      setLocalClaudeKey(localKey);
+      setLocalClaudeModel(localModel);
+    } else if (localProtocol === 'gemini') {
+      setLocalGeminiUrl(localUrl);
+      setLocalGeminiKey(localKey);
+      setLocalGeminiModel(localModel);
+    }
+    if (newProtocol === 'openai') {
+      setLocalUrl(apiConfig.baseUrl || '');
+      setLocalKey(apiConfig.apiKey || '');
+      setLocalModel(apiConfig.model || '');
+    } else if (newProtocol === 'claude') {
+      setLocalUrl(localClaudeUrl || apiConfig.claudeBaseUrl || '');
+      setLocalKey(localClaudeKey || apiConfig.claudeApiKey || '');
+      setLocalModel(localClaudeModel || apiConfig.claudeModel || '');
+    } else {
+      setLocalUrl(localGeminiUrl || apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+      setLocalKey(localGeminiKey || apiConfig.geminiApiKey || '');
+      setLocalModel(localGeminiModel || apiConfig.geminiModel || 'gemini-2.0-flash');
+    }
+    setLocalProtocol(newProtocol);
+  };
+
   const handleSaveAndClose = () => {
     // 暮色 2026-07-15：删 ComfyUI / NAI 分支，只剩 OpenAI 兼容
+    // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套，切回 tab 不丢
+    const mainUpdates: any = {
+      protocol: localProtocol,
+      baseUrl: localProtocol === 'openai' ? localUrl : (apiConfig.baseUrl || ''),
+      apiKey: localProtocol === 'openai' ? localKey : (apiConfig.apiKey || ''),
+      model: localProtocol === 'openai' ? localModel : (apiConfig.model || ''),
+      claudeBaseUrl: localProtocol === 'claude' ? localUrl : localClaudeUrl,
+      claudeApiKey: localProtocol === 'claude' ? localKey : localClaudeKey,
+      claudeModel: localProtocol === 'claude' ? localModel : localClaudeModel,
+      geminiBaseUrl: localProtocol === 'gemini' ? localUrl : localGeminiUrl,
+      geminiApiKey: localProtocol === 'gemini' ? localKey : localGeminiKey,
+      geminiModel: localProtocol === 'gemini' ? localModel : localGeminiModel,
+    };
     updateApiConfig({
       ...apiConfig,
-      baseUrl: localUrl,
-      apiKey: localKey,
-      model: localModel,
+      ...mainUpdates,
       imageBaseUrl: localImageUrl,
       imageApiKey: localImageKey,
       imageModel: localImageModel,
@@ -396,12 +439,6 @@ const ApiQuickFloat: React.FC = () => {
       visionBaseUrl: localVisionUrl,
       visionApiKey: localVisionKey,
       visionModel: localVisionModel,
-      // 暮色 2026-07-17：API 协议（跟 Settings 同步保存）
-      protocol: localProtocol,
-      // 暮色 2026-07-27：Gemini 直连配置
-      geminiBaseUrl: localGeminiUrl,
-      geminiApiKey: localGeminiKey,
-      geminiModel: localGeminiModel,
     });
     addToast('API 配置已保存', 'success');
     setShowPanel(false);
@@ -784,23 +821,31 @@ const ApiQuickFloat: React.FC = () => {
                     </div>
                   ) : null}
 
-                  {/* 暮色 2026-07-17：API 协议切换（从 Settings 高级挪出来，方便快速切） */}
+                  {/* 暮色 2026-07-17 → 2026-07-27：API 协议切换（从 Settings 高级挪出来，方便快速切） — 现在 3 tab */}
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1 text-center">API 协议</label>
                     <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
                       <button
                         type="button"
-                        onClick={() => setLocalProtocol('openai')}
+                        onClick={() => switchMainProtocol('openai')}
                         className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'openai' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
                       >OpenAI</button>
                       <button
                         type="button"
-                        onClick={() => setLocalProtocol('claude')}
+                        onClick={() => switchMainProtocol('claude')}
                         className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'claude' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
                       >Claude</button>
+                      <button
+                        type="button"
+                        onClick={() => switchMainProtocol('gemini')}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'gemini' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                      >Gemini</button>
                     </div>
                     {localProtocol === 'claude' && (
                       <p className="text-[9px] text-amber-500 mt-1.5 leading-relaxed text-center">⚠️ Claude 模式要求服务端支持 /v1/messages + cache_control 透传</p>
+                    )}
+                    {localProtocol === 'gemini' && (
+                      <p className="text-[9px] text-sky-600 mt-1.5 leading-relaxed text-center">🌐 Gemini 直连 — 走 Google 官方协议，需填 Google AI Studio Key</p>
                     )}
                   </div>
 

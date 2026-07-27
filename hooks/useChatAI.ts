@@ -646,11 +646,39 @@ export const useChatAI = ({
         // 角色级 API 优先：char.apiConfig 设了 baseUrl/apiKey/model 就用角色的（暮色 2026-07-24）
         // 协议、minimaxRegion、visionBaseUrl/R2/image* 等仍走全局
         const charApi = (char as any).apiConfig;
-        const effectiveApi = overrideApiConfig
+        let effectiveApi = overrideApiConfig
             || (charApi && charApi.baseUrl
                 ? { ...apiConfig, baseUrl: charApi.baseUrl, apiKey: charApi.apiKey || apiConfig.apiKey || '', model: charApi.model || apiConfig.model || '' } as any
                 : null)
             || apiConfig;
+        // 暮色 2026-07-27：3 tab 协议切换 — 根据 protocol 字段选对应那组的 baseUrl/apiKey/model
+        //   - 角色独立 API 设了 baseUrl 就强制用角色的（保持原有逻辑），协议跟随角色或全局
+        //   - 没设角色 API 时，根据 effectiveApi.protocol 选 claude* / gemini* / baseUrl* 三组
+        //   - 字段是 (effectiveApi as any) 读取，类型上 protocol 在 APIConfig 里有
+        const mainProtocol = (effectiveApi as any).protocol ?? 'openai';
+        const charApiOverridesMain = charApi && charApi.baseUrl;
+        if (!charApiOverridesMain) {
+            const protoResolved = (() => {
+                if (mainProtocol === 'claude') {
+                    return {
+                        baseUrl: (effectiveApi as any).claudeBaseUrl || effectiveApi.baseUrl,
+                        apiKey: (effectiveApi as any).claudeApiKey || effectiveApi.apiKey,
+                        model: (effectiveApi as any).claudeModel || effectiveApi.model,
+                    };
+                }
+                if (mainProtocol === 'gemini') {
+                    return {
+                        baseUrl: (effectiveApi as any).geminiBaseUrl || effectiveApi.baseUrl,
+                        apiKey: (effectiveApi as any).geminiApiKey || effectiveApi.apiKey,
+                        model: (effectiveApi as any).geminiModel || effectiveApi.model,
+                    };
+                }
+                return null;
+            })();
+            if (protoResolved) {
+                effectiveApi = { ...effectiveApi, ...protoResolved } as any;
+            }
+        }
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
         setIsTyping(true);
@@ -924,14 +952,13 @@ export const useChatAI = ({
             //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeProtocol = apiProtocol === 'claude';
-            // 暮色 2026-07-27：Gemini 直连协议自动检测
-            //   - URL 含 generativelanguage.googleapis.com → 走 Google 官方 Gemini 协议
-            //   - 不需要新增 protocol 枚举，填官方 URL 就自动生效
-            //   - 走独立端点 /v1beta/models/{model}:generateContent
-            //   - API Key 走 URL 参数 ?key=xxx（不是 Authorization header）
-            //   - 请求体用 contents/parts 格式（不是 messages）
-            //   - 响应体用 candidates 格式（不是 choices）
-            const useGeminiProtocol = /generativelanguage\.googleapis\.com/i.test(effectiveApi.baseUrl || '');
+            // 暮色 2026-07-27：Gemini 直连协议从「看 URL」改为「读 protocol」字段
+            //   - UI 上 3 tab 平等切换（OpenAI / Claude / Gemini）
+            //   - 选 Gemini 时存到 protocol 字段，baseUrl/apiKey/model 复用同一组
+            //   - 端点: /v1beta/models/{model}:generateContent?key=xxx
+            //   - 请求体: contents/parts + systemInstruction 顶层字段
+            //   - 不挂 tool（Gemini function calling 格式跟 OpenAI 不同；想用 tool 切回 OpenAI）
+            const useGeminiProtocol = apiProtocol === 'gemini';
             // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
             //   - OpenAI 协议：不发 message-level cache_control
             //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
@@ -1261,22 +1288,29 @@ console.log('🖼️ 识图检测', {
 // 如果最近图片已经有描述，跳过识图，避免重复调用
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
-// 暮色 2026-07-27：识图通道选择
-//   - 优先用 visionGemini（独立 Gemini 直连 Key / Model）
-//   - 否则用 visionBaseUrl（OpenAI 兼容中转，URL 含 generativelanguage.googleapis.com 时也走 Gemini 协议）
-//   - 都没配 → 跳过识图
-const useVisionGeminiDirect = !!(effectiveApi as any).visionGeminiBaseUrl && !!(effectiveApi as any).visionGeminiApiKey;
-const useVisionGeminiProtocol = useVisionGeminiDirect
-    || (/generativelanguage\.googleapis\.com/i.test(effectiveApi.visionBaseUrl || '') && !!effectiveApi.visionApiKey);
-const visionActiveUrl = useVisionGeminiDirect
-    ? (effectiveApi as any).visionGeminiBaseUrl
-    : effectiveApi.visionBaseUrl;
-const visionActiveKey = useVisionGeminiDirect
-    ? (effectiveApi as any).visionGeminiApiKey
-    : effectiveApi.visionApiKey;
-const visionActiveModel = useVisionGeminiDirect
-    ? ((effectiveApi as any).visionGeminiModel || 'gemini-2.0-flash')
-    : (effectiveApi.visionModel || 'gemini-1.5-flash');
+// 暮色 2026-07-27：识图 3 tab 协议切换 — 根据 visionProtocol 字段选对应那组的 visionBaseUrl/Key/Model
+//   - 'openai' (默认): visionBaseUrl/visionApiKey/visionModel
+//   - 'claude':         visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
+//   - 'gemini':         visionGeminiBaseUrl/visionGeminiApiKey/visionGeminiModel
+//   - 每个 tab 独立保存自己的值，切换不丢
+const visionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
+const useVisionGeminiProtocol = visionProtocol === 'gemini';
+const useVisionClaudeProtocol = visionProtocol === 'claude';
+const visionActiveUrl = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeBaseUrl || effectiveApi.visionBaseUrl)
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
+        : effectiveApi.visionBaseUrl;
+const visionActiveKey = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeApiKey || effectiveApi.visionApiKey)
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
+        : effectiveApi.visionApiKey;
+const visionActiveModel = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeModel || effectiveApi.visionModel || 'claude-3-5-sonnet-20241022')
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
+        : (effectiveApi.visionModel || 'gemini-1.5-flash');
 
 if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [
@@ -1817,14 +1851,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         if (imgPrompt && !imageGenError) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
-            // 暮色 2026-07-27：生图走 Gemini 直连分支
-            //   - 优先用 imageGeminiBaseUrl/Key/Model（独立配置）
-            //   - 或 imageBaseUrl 含 generativelanguage.googleapis.com
-            //   - 走 :generateContent + responseModalities: ["TEXT", "IMAGE"]
-            //   - 支持 gemini-2.0-flash-exp / imagen-3.0-generate-002 等
+            // 暮色 2026-07-27：生图 Gemini 直连分支（独立配置 imageGemini* 字段）
+            //   - 暮色要求"生图不改 3 tab"，保留 imageGeminiBaseUrl/Key/Model 独立字段
+            //   - 走 :generateContent + responseModalities: ["TEXT", "IMAGE"]（Gemini 多模态）
+            //   - 走 :predict（Imagen 3 专用）
             const useImageGeminiDirect = !!(effectiveApi as any).imageGeminiBaseUrl && !!(effectiveApi as any).imageGeminiApiKey;
-            const useImageGeminiProtocol = useImageGeminiDirect
-                || (/generativelanguage\.googleapis\.com/i.test(effectiveApi.imageBaseUrl || '') && !!effectiveApi.imageApiKey);
+            const useImageGeminiProtocol = useImageGeminiDirect;
             const imageActiveUrl = useImageGeminiDirect ? (effectiveApi as any).imageGeminiBaseUrl : effectiveApi.imageBaseUrl;
             const imageActiveKey = useImageGeminiDirect ? (effectiveApi as any).imageGeminiApiKey : effectiveApi.imageApiKey;
             const imageActiveModel = useImageGeminiDirect

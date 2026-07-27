@@ -174,26 +174,39 @@ export interface APIConfig {
   stream?: boolean;
   // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
   temperature?: number;
-  // 暮色 2026-07-17：API 协议类型
-  //   - 'openai' (默认): 发到 /v1/chat/completions，按 OpenAI 协议，不发 cache_control
-  //   - 'claude':         发到 /v1/messages，按 Claude 协议，发 4 断点 cache_control（等即享加完 Claude 端点再用）
+  // 暮色 2026-07-17 → 2026-07-27：API 协议类型
+  //   - 'openai' (默认): 发到 /v1/chat/completions，按 OpenAI 协议
+  //   - 'claude':         发到 /v1/messages，按 Claude 协议（Anthropic）
+  //   - 'gemini':         发到 /v1beta/models/{model}:generateContent，按 Google 官方 Gemini 协议
   //   Missing → 'openai'（向后兼容老用户）
-  //   上下文：即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"，
-  //          所以 OpenAI 协议下必须把 cache_control 字段去掉。
-  protocol?: 'openai' | 'claude';
-  // 暮色 2026-07-27：Gemini 直连配置（Google 官方协议，独立于 OpenAI 兼容 / Claude 协议）
-  //   - baseUrl 默认 https://generativelanguage.googleapis.com/v1beta
-  //   - apiKey 用 Google AI Studio 申请的 Key
-  //   - model 例 gemini-2.0-flash / gemini-2.5-pro
-  //   - 当 protocol === 'openai' 但 model 以 gemini- 开头且 baseUrl 是 Google 官方时，自动走 Gemini 协议分支
+  //   UI 上 3 个 tab 平等切换（OpenAI / Claude / Gemini），每个 tab 用自己独立的 URL/Key/Model
+  protocol?: 'openai' | 'claude' | 'gemini';
+  // 暮色 2026-07-27：主 API 三平台独立 URL/Key/Model
+  //   - baseUrl/apiKey/model 默认是 OpenAI 协议的（向后兼容老用户）
+  //   - 切到 Claude 时用 claudeBaseUrl/claudeApiKey/claudeModel
+  //   - 切到 Gemini 时用 geminiBaseUrl/geminiApiKey/geminiModel（默认 URL https://generativelanguage.googleapis.com/v1beta）
+  //   - 每个 tab 独立保存自己的值，切换不丢
+  claudeBaseUrl?: string;
+  claudeApiKey?: string;
+  claudeModel?: string;
   geminiBaseUrl?: string;
   geminiApiKey?: string;
   geminiModel?: string;
-  // 识图走 Gemini 直连（独立于主 API 通道，避免识别时跟聊天主模型混）
+  // 暮色 2026-07-27：识图三平台独立配置
+  //   - 跟主 API 同样的三协议 + 独立 URL/Key/Model
+  //   - visionBaseUrl/visionApiKey/visionModel 默认 OpenAI 协议
+  //   - 切到 visionProtocol === 'claude' 用 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
+  //   - 切到 visionProtocol === 'gemini' 用 visionGeminiBaseUrl/visionGeminiApiKey/visionGeminiModel
+  visionProtocol?: 'openai' | 'claude' | 'gemini';
+  visionClaudeBaseUrl?: string;
+  visionClaudeApiKey?: string;
+  visionClaudeModel?: string;
   visionGeminiBaseUrl?: string;
   visionGeminiApiKey?: string;
   visionGeminiModel?: string;
-  // 生图走 Gemini 直连（Google Imagen / Gemini Image）
+  // 暮色 2026-07-27：生图 Gemini 直连（Google Imagen / Gemini Image）
+  //   - 跟主 API / 识图独立，因为生图走 OpenAI 兼容协议 + imageGenProvider 机制
+  //   - 保留 imageGemini* 3 字段供生图 Gemini 分支使用
   imageGeminiBaseUrl?: string;
   imageGeminiApiKey?: string;
   imageGeminiModel?: string;

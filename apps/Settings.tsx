@@ -212,22 +212,15 @@ const Settings: React.FC = () => {
   const [localVisionGeminiUrl, setLocalVisionGeminiUrl] = useState(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
   const [localVisionGeminiKey, setLocalVisionGeminiKey] = useState(apiConfig.visionGeminiApiKey || '');
   const [localVisionGeminiModel, setLocalVisionGeminiModel] = useState(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
-  // 暮色 2026-07-27：生图 Gemini 直连（保留，之前已经做了）
-  const [localImageGeminiUrl, setLocalImageGeminiUrl] = useState(apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-  const [localImageGeminiKey, setLocalImageGeminiKey] = useState(apiConfig.imageGeminiApiKey || '');
-  const [localImageGeminiModel, setLocalImageGeminiModel] = useState(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
+  // 暮色 2026-07-27 晚：删生图 Gemini state（生图只走 OpenAI 兼容，暮色原话"生图不用"）
   const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'volink'>(apiConfig.ttsProvider || 'minimax');
   const [localVolinkTtsBaseUrl, setLocalVolinkTtsBaseUrl] = useState(apiConfig.volinkTtsBaseUrl || '');
   const [localVolinkTtsApiKey, setLocalVolinkTtsApiKey] = useState(apiConfig.volinkTtsApiKey || '');
   const [localVolinkTtsVoice, setLocalVolinkTtsVoice] = useState(apiConfig.volinkTtsVoice || '');
   const [localVolinkTtsModel, setLocalVolinkTtsModel] = useState(apiConfig.volinkTtsModel || '');
-  // 暮色 2026-07-27：3 tab 协议切换 UI 不需要折叠 — 切 tab 即切协议，不需要折叠/展开
-  //   Gemini 直连折叠块已删除（改成 3 tab 平等切换）
-  //   保留生图 Gemini 折叠块（暮色明确说生图不改）
-  const [showGeminiImage, setShowGeminiImage] = useState(false);
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-  const [showImageGeminiKey, setShowImageGeminiKey] = useState(false);
-  const [geminiImageStatus, setGeminiImageStatus] = useState('');
+  // 暮色 2026-07-27：3 tab 协议切换 UI 不需要折叠 — 切 tab 即切协议
+  //   删生图 Gemini 折叠块（暮色原话"生图不用"）
+  //   删生图 Gemini 折叠 state
   const [ttsStatusMsg, setTtsStatusMsg] = useState('');
     
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
@@ -489,9 +482,6 @@ const Settings: React.FC = () => {
       setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalVisionGeminiKey(apiConfig.visionGeminiApiKey || '');
       setLocalVisionGeminiModel(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
-      setLocalImageGeminiUrl(apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-      setLocalImageGeminiKey(apiConfig.imageGeminiApiKey || '');
-      setLocalImageGeminiModel(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
       setLocalStream(apiConfig.stream === true);
       setLocalTemperature(typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85);
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -900,10 +890,7 @@ const handleSaveOpenaiImageApi = () => {
       imageApiKey: localImageKey,
       imageModel: localImageModel,
       imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai'|'comfyui'|'nai' 防以后再加回
-      // 暮色 2026-07-27：生图 Gemini 直连配置
-      imageGeminiBaseUrl: localImageGeminiUrl,
-      imageGeminiApiKey: localImageGeminiKey,
-      imageGeminiModel: localImageGeminiModel,
+      // 暮色 2026-07-27 晚：删生图 Gemini 字段（生图只走 OpenAI 兼容）
     });
     setImageStatusMsg('OpenAI 兼容配置已保存，当前生效');
     setTimeout(() => setImageStatusMsg(''), 2500);
@@ -2057,42 +2044,10 @@ const handleSaveTts = () => {
                   </button>
                 </div>
                 <button onClick={handleSaveOpenaiImageApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-2">{imageStatusMsg || '保存 OpenAI 配置'}</button>
-                {/* 暮色 2026-07-27：生图 Gemini 直连配置块（Google Imagen / Gemini Image） */}
-                <div className="mt-3">
-                    <button
-                        type="button"
-                        onClick={() => setShowGeminiImage(v => !v)}
-                        className="w-full flex items-center justify-between bg-emerald-50/50 border border-emerald-200/50 rounded-xl px-4 py-2.5 active:scale-[0.99] transition-all"
-                    >
-                        <div className="flex items-center gap-2">
-                            <span className="text-base">🌐</span>
-                            <div className="text-left">
-                                <div className="text-xs font-semibold text-emerald-700">Gemini 直连（生图）</div>
-                                <div className="text-[9px] text-emerald-500">Google Imagen · 独立于 OpenAI 兼容生图</div>
-                            </div>
-                        </div>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-4 h-4 text-emerald-400 transition-transform ${showGeminiImage ? 'rotate-180' : ''}`}><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
-                    </button>
-                    {showGeminiImage && (
-                        <div className="mt-2 pl-2 border-l-2 border-emerald-100 space-y-3 py-2">
-                            <p className="text-[10px] text-emerald-600/80 leading-relaxed">Google Imagen / Gemini Image 生图直连。Model 留默认 <code className="text-[9px] bg-emerald-50 px-1 rounded">imagen-3.0-generate-002</code> 或 <code className="text-[9px] bg-emerald-50 px-1 rounded">gemini-2.0-flash-exp</code>（带 image generation）。</p>
-                            <div className="group">
-                                <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest mb-1.5 block pl-1">Image Gemini URL</label>
-                                <input type="text" value={localImageGeminiUrl} onChange={(e) => setLocalImageGeminiUrl(e.target.value)} placeholder="https://generativelanguage.googleapis.com/v1beta" className="w-full bg-white/50 border border-emerald-200/40 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                            </div>
-                            <VisibleKeyInput label="Image Gemini Key" value={localImageGeminiKey} onChange={setLocalImageGeminiKey} placeholder="Google AI Studio 申请的 Key" visible={showImageGeminiKey} onToggle={() => setShowImageGeminiKey(v => !v)} />
-                            <div>
-                                <div className="flex justify-between items-center mb-1.5 pl-1">
-                                    <label className="text-[10px] font-bold text-emerald-700/70 uppercase tracking-widest">Image Gemini Model</label>
-                                    <button onClick={() => fetchModelsFor('image', localImageGeminiUrl, localImageGeminiKey, setGeminiImageStatus)} disabled={isLoadingModels} className="text-[10px] text-emerald-600 font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
-                                </div>
-                                <input type="text" value={localImageGeminiModel} onChange={(e) => setLocalImageGeminiModel(e.target.value)} placeholder="imagen-3.0-generate-002" className="w-full bg-white/50 border border-emerald-200/40 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                                {geminiImageStatus && <p className="text-[10px] text-emerald-600 mt-1 pl-1">{geminiImageStatus}</p>}
-                            </div>
-                            <button onClick={() => { updateApiConfig({ ...apiConfig, imageGeminiBaseUrl: localImageGeminiUrl, imageGeminiApiKey: localImageGeminiKey, imageGeminiModel: localImageGeminiModel }); setGeminiImageStatus('生图 Gemini 直连已保存'); setTimeout(() => setGeminiImageStatus(''), 2000); }} className="w-full py-2.5 rounded-2xl font-bold text-white text-sm shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all">{geminiImageStatus === '生图 Gemini 直连已保存' ? '生图 Gemini 直连已保存' : '保存生图 Gemini 直连'}</button>
-                        </div>
-                    )}
-                </div>
+                {/* 暮色 2026-07-27：删之前的「Gemini 直连（生图）」折叠块
+                   - 暮色反馈"生图这边还有个 Gemini，去掉吧"
+                   - 生图现在只走 OpenAI 兼容协议（暮色原话"生图不用"）
+                   - 删 useChatAI 生图 Gemini 分支、删 imageGemini* 字段、删这块 UI */}
               </div>
 
             {/* 暮色 2026-07-15：删 ComfyUI 本地卡片 + NAI 卡片 — 生图只走 OpenAI 兼容 */}

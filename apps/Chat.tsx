@@ -168,6 +168,17 @@ const Chat: React.FC = () => {
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
     const [perCharApiKey, setPerCharApiKey] = useState('');
     const [perCharApiModel, setPerCharApiModel] = useState('');
+    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换（OpenAI / Claude / Gemini）
+    //   - 跟全局主 API 一致，3 套独立 URL/Key/Model 缓存
+    //   - 切 tab 自动存当前值到旧协议缓存，从新协议缓存读取
+    //   - 加载 Gemini 预设时同步切 protocol + 填对应那组（修暮色报的 401 bug）
+    const [perCharApiProtocol, setPerCharApiProtocol] = useState<'openai' | 'claude' | 'gemini'>('openai');
+    const [perCharApiClaudeUrl, setPerCharApiClaudeUrl] = useState('');
+    const [perCharApiClaudeKey, setPerCharApiClaudeKey] = useState('');
+    const [perCharApiClaudeModel, setPerCharApiClaudeModel] = useState('');
+    const [perCharApiGeminiUrl, setPerCharApiGeminiUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
+    const [perCharApiGeminiKey, setPerCharApiGeminiKey] = useState('');
+    const [perCharApiGeminiModel, setPerCharApiGeminiModel] = useState('gemini-2.0-flash');
     const [showPerCharKey, setShowPerCharKey] = useState(false);
     // 模型下拉相关 state（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
     const [perCharAvailableModels, setPerCharAvailableModels] = useState<string[]>([]);
@@ -187,18 +198,66 @@ const Chat: React.FC = () => {
             setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
             setPerCharApiKey(char.apiConfig?.apiKey || '');
             setPerCharApiModel(char.apiConfig?.model || '');
+            // 暮色 2026-07-27：3 tab 协议 + 3 套独立字段同步
+            setPerCharApiProtocol(((char.apiConfig as any)?.protocol as 'openai' | 'claude' | 'gemini') || 'openai');
+            setPerCharApiClaudeUrl((char.apiConfig as any)?.claudeBaseUrl || '');
+            setPerCharApiClaudeKey((char.apiConfig as any)?.claudeApiKey || '');
+            setPerCharApiClaudeModel((char.apiConfig as any)?.claudeModel || '');
+            setPerCharApiGeminiUrl((char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+            setPerCharApiGeminiKey((char.apiConfig as any)?.geminiApiKey || '');
+            setPerCharApiGeminiModel((char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash');
         }
     }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换 handler
+    //   切走前：把当前 perCharApiBaseUrl/Key/Model 存到旧协议缓存
+    //   切到后：从新协议缓存读取填入
+    const switchPerCharApiProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+        if (newProtocol === perCharApiProtocol) return;
+        if (perCharApiProtocol === 'claude') {
+            setPerCharApiClaudeUrl(perCharApiBaseUrl);
+            setPerCharApiClaudeKey(perCharApiKey);
+            setPerCharApiClaudeModel(perCharApiModel);
+        } else if (perCharApiProtocol === 'gemini') {
+            setPerCharApiGeminiUrl(perCharApiBaseUrl);
+            setPerCharApiGeminiKey(perCharApiKey);
+            setPerCharApiGeminiModel(perCharApiModel);
+        }
+        if (newProtocol === 'openai') {
+            setPerCharApiBaseUrl(char?.apiConfig?.baseUrl || '');
+            setPerCharApiKey(char?.apiConfig?.apiKey || '');
+            setPerCharApiModel(char?.apiConfig?.model || '');
+        } else if (newProtocol === 'claude') {
+            setPerCharApiBaseUrl(perCharApiClaudeUrl || (char?.apiConfig as any)?.claudeBaseUrl || '');
+            setPerCharApiKey(perCharApiClaudeKey || (char?.apiConfig as any)?.claudeApiKey || '');
+            setPerCharApiModel(perCharApiClaudeModel || (char?.apiConfig as any)?.claudeModel || '');
+        } else {
+            setPerCharApiBaseUrl(perCharApiGeminiUrl || (char?.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+            setPerCharApiKey(perCharApiGeminiKey || (char?.apiConfig as any)?.geminiApiKey || '');
+            setPerCharApiModel(perCharApiGeminiModel || (char?.apiConfig as any)?.geminiModel || 'gemini-2.0-flash');
+        }
+        setPerCharApiProtocol(newProtocol);
+    };
     const handleSavePerCharApi = async () => {
         if (!char) return;
-        if (!perCharApiBaseUrl.trim()) {
+        // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套（切回 tab 不丢之前的值）
+        //   - 当前 perCharApiBaseUrl/Key/Model 是当前 tab 的值
+        //   - 另外 2 套从 state 缓存读出（perCharApiClaudeUrl 等）
+        //   - 角色 apiConfig 字段没值（空）→ updateCharApiConfig(undefined) 清空
+        if (!perCharApiBaseUrl.trim() && !perCharApiClaudeUrl.trim() && !perCharApiGeminiUrl.trim()) {
             await updateCharApiConfig(char.id, undefined);
             return;
         }
         await updateCharApiConfig(char.id, {
-            baseUrl: perCharApiBaseUrl.trim(),
-            apiKey: perCharApiKey.trim() || undefined,
-            model: perCharApiModel.trim() || undefined,
+            baseUrl: perCharApiProtocol === 'openai' ? perCharApiBaseUrl.trim() : (char.apiConfig?.baseUrl || ''),
+            apiKey: perCharApiProtocol === 'openai' ? perCharApiKey.trim() || undefined : (char.apiConfig?.apiKey || undefined),
+            model: perCharApiProtocol === 'openai' ? perCharApiModel.trim() || undefined : (char.apiConfig?.model || undefined),
+            protocol: perCharApiProtocol,
+            claudeBaseUrl: perCharApiProtocol === 'claude' ? perCharApiBaseUrl.trim() : perCharApiClaudeUrl,
+            claudeApiKey: perCharApiProtocol === 'claude' ? perCharApiKey.trim() : perCharApiClaudeKey,
+            claudeModel: perCharApiProtocol === 'claude' ? perCharApiModel.trim() : perCharApiClaudeModel,
+            geminiBaseUrl: perCharApiProtocol === 'gemini' ? perCharApiBaseUrl.trim() : perCharApiGeminiUrl,
+            geminiApiKey: perCharApiProtocol === 'gemini' ? perCharApiKey.trim() : perCharApiGeminiKey,
+            geminiModel: perCharApiProtocol === 'gemini' ? perCharApiModel.trim() : perCharApiGeminiModel,
         } as any);
     };
     const handleClearPerCharApi = async () => {
@@ -206,32 +265,77 @@ const Chat: React.FC = () => {
         setPerCharApiBaseUrl('');
         setPerCharApiKey('');
         setPerCharApiModel('');
+        setPerCharApiProtocol('openai');
+        setPerCharApiClaudeUrl('');
+        setPerCharApiClaudeKey('');
+        setPerCharApiClaudeModel('');
+        setPerCharApiGeminiUrl('https://generativelanguage.googleapis.com/v1beta');
+        setPerCharApiGeminiKey('');
+        setPerCharApiGeminiModel('gemini-2.0-flash');
         await updateCharApiConfig(char.id, undefined);
     };
     // 从预设加载（只填输入框，不直接保存）
-    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => {
-        setPerCharApiBaseUrl(cfg.baseUrl || '');
-        setPerCharApiKey(cfg.apiKey || '');
-        setPerCharApiModel(cfg.model || '');
+    // 暮色 2026-07-27：预设也带 protocol 字段，加载时按 protocol 切换 + 填对应那组（修 401 bug）
+    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string; protocol?: 'openai' | 'claude' | 'gemini' }) => {
+        const loadedProto: 'openai' | 'claude' | 'gemini' = (cfg as any).protocol || 'openai';
+        // 切到目标协议 tab
+        if (loadedProto !== perCharApiProtocol) {
+            switchPerCharApiProtocol(loadedProto);
+        }
+        if (loadedProto === 'claude') {
+            setPerCharApiClaudeUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
+            setPerCharApiClaudeKey((cfg as any).claudeApiKey || cfg.apiKey || '');
+            setPerCharApiClaudeModel((cfg as any).claudeModel || cfg.model || '');
+            setPerCharApiBaseUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
+            setPerCharApiKey((cfg as any).claudeApiKey || cfg.apiKey || '');
+            setPerCharApiModel((cfg as any).claudeModel || cfg.model || '');
+        } else if (loadedProto === 'gemini') {
+            setPerCharApiGeminiUrl((cfg as any).geminiBaseUrl || cfg.baseUrl || '');
+            setPerCharApiGeminiKey((cfg as any).geminiApiKey || cfg.apiKey || '');
+            setPerCharApiGeminiModel((cfg as any).geminiModel || cfg.model || '');
+            setPerCharApiBaseUrl((cfg as any).geminiBaseUrl || cfg.baseUrl || '');
+            setPerCharApiKey((cfg as any).geminiApiKey || cfg.apiKey || '');
+            setPerCharApiModel((cfg as any).geminiModel || cfg.model || '');
+        } else {
+            setPerCharApiBaseUrl(cfg.baseUrl || '');
+            setPerCharApiKey(cfg.apiKey || '');
+            setPerCharApiModel(cfg.model || '');
+        }
     };
     // 刷新模型列表（角色 API 用，独立 state 不影响全局 availableModels）
+    // 暮色 2026-07-27：Gemini 协议走 ?key= 参数，OpenAI 走 Authorization
     const handleRefreshPerCharModels = async () => {
         if (!perCharApiBaseUrl.trim()) return;
         setIsPerCharLoadingModels(true);
         try {
             const baseUrl = perCharApiBaseUrl.replace(/\/+$/, '');
-            const response = await fetch(`${baseUrl}/models`, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
-                    'Content-Type': 'application/json',
-                },
-            });
+            const isGemini = /generativelanguage\.googleapis\.com/i.test(baseUrl);
+            let response: Response;
+            if (isGemini) {
+                response = await fetch(`${baseUrl}/models?key=${encodeURIComponent(perCharApiKey || '')}&pageSize=100`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            } else {
+                response = await fetch(`${baseUrl}/models`, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
+                        'Content-Type': 'application/json',
+                    },
+                });
+            }
             if (!response.ok) throw new Error(`Status ${response.status}`);
             const data = await safeResponseJson(response);
             const list = data.data || data.models || [];
             if (!Array.isArray(list)) return;
-            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            // 暮色 2026-07-27：Gemini 响应 name 是 'models/gemini-2.0-flash'，剥前缀
+            const isGeminiResp = /generativelanguage\.googleapis\.com/i.test(perCharApiBaseUrl);
+            const models = list.map((item: any) => {
+                if (typeof item === 'string') return item;
+                const id = item.id || item.name || '';
+                return isGeminiResp ? id.replace(/^models\//, '') : id;
+            }).filter(Boolean);
             setPerCharAvailableModels(models);
             if (models.length > 0 && !models.includes(perCharApiModel)) {
                 setPerCharApiModel(models[0]);
@@ -2585,6 +2689,15 @@ if (keepN > 0) {
                 perCharApiBaseUrl={perCharApiBaseUrl} setPerCharApiBaseUrl={setPerCharApiBaseUrl}
                 perCharApiKey={perCharApiKey} setPerCharApiKey={setPerCharApiKey}
                 perCharApiModel={perCharApiModel} setPerCharApiModel={setPerCharApiModel}
+                // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model
+                perCharApiProtocol={perCharApiProtocol} setPerCharApiProtocol={setPerCharApiProtocol}
+                switchPerCharApiProtocol={switchPerCharApiProtocol}
+                perCharApiClaudeUrl={perCharApiClaudeUrl} setPerCharApiClaudeUrl={setPerCharApiClaudeUrl}
+                perCharApiClaudeKey={perCharApiClaudeKey} setPerCharApiClaudeKey={setPerCharApiClaudeKey}
+                perCharApiClaudeModel={perCharApiClaudeModel} setPerCharApiClaudeModel={setPerCharApiClaudeModel}
+                perCharApiGeminiUrl={perCharApiGeminiUrl} setPerCharApiGeminiUrl={setPerCharApiGeminiUrl}
+                perCharApiGeminiKey={perCharApiGeminiKey} setPerCharApiGeminiKey={setPerCharApiGeminiKey}
+                perCharApiGeminiModel={perCharApiGeminiModel} setPerCharApiGeminiModel={setPerCharApiGeminiModel}
                 showPerCharKey={showPerCharKey} setShowPerCharKey={setShowPerCharKey}
                 onSavePerCharApi={handleSavePerCharApi}
                 onClearPerCharApi={handleClearPerCharApi}

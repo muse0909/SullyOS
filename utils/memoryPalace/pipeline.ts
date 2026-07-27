@@ -83,6 +83,11 @@ export interface LightLLMConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
+    // 暮色 2026-07-27：3 tab 协议切换（跟主 API 一致）
+    //   - 'openai' (默认): 走 /v1/chat/completions
+    //   - 'claude':         走 /v1/messages
+    //   - 'gemini':         走 /v1beta/models/{model}:generateContent
+    protocol?: 'openai' | 'claude' | 'gemini';
 }
 
 // ─── 日期区间记忆加载 ────────────────────────────────

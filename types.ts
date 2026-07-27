@@ -204,12 +204,7 @@ export interface APIConfig {
   visionGeminiBaseUrl?: string;
   visionGeminiApiKey?: string;
   visionGeminiModel?: string;
-  // 暮色 2026-07-27：生图 Gemini 直连（Google Imagen / Gemini Image）
-  //   - 跟主 API / 识图独立，因为生图走 OpenAI 兼容协议 + imageGenProvider 机制
-  //   - 保留 imageGemini* 3 字段供生图 Gemini 分支使用
-  imageGeminiBaseUrl?: string;
-  imageGeminiApiKey?: string;
-  imageGeminiModel?: string;
+  // 暮色 2026-07-27 晚：删 imageGemini* 字段（生图只走 OpenAI 兼容，暮色原话"生图不用"）
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;

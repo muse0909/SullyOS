@@ -111,28 +111,19 @@ async function callCompressionLLM(
     const userMsg = `${oldSummaryBlock}\n${livesText}`;
 
     try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        // 暮色 2026-07-27：改用统一 callLLM helper（支持 OpenAI/Claude/Gemini 三协议）
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(
+            llmConfig,
+            systemPrompt,
+            userMsg,
             {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMsg },
-                    ],
-                    temperature: 0.5,
-                    max_tokens: 8000,
-                    stream: false,
-                }),
+                temperature: 0.5,
+                maxTokens: 8000,
             }
         );
-
-        const reply = data.choices?.[0]?.message?.content || '';
+        const data = result.raw;
+        const reply = result.text;
         const match = reply.match(/\{[\s\S]*\}/);
         if (!match) {
             console.warn(`🗜️ [Compression] LLM 输出无 JSON 对象，原始前 200 字: ${reply.slice(0, 200)}`);

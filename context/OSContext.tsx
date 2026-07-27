@@ -113,6 +113,18 @@ export interface MemoryPalaceGlobalConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
+    // 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）— 跟主 API 一致
+    //   - protocol === 'openai' (默认): 走 /v1/chat/completions
+    //   - protocol === 'claude':         走 /v1/messages
+    //   - protocol === 'gemini':         走 /v1beta/models/{model}:generateContent
+    protocol?: 'openai' | 'claude' | 'gemini';
+    // 三平台独立 URL/Key/Model（切 tab 不丢，跟主 API 一样）
+    claudeBaseUrl?: string;
+    claudeApiKey?: string;
+    claudeModel?: string;
+    geminiBaseUrl?: string;
+    geminiApiKey?: string;
+    geminiModel?: string;
   };
   // Rerank 模型配置（可选增强，接 cross-encoder rerank API）
   // 遵循 Cohere/Jina/SiliconFlow 通用协议：POST {baseUrl}/rerank

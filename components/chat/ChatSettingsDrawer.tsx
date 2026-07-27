@@ -78,6 +78,22 @@ interface ChatSettingsDrawerProps {
     setPerCharApiKey: (v: string) => void;
     perCharApiModel: string;
     setPerCharApiModel: (v: string) => void;
+    // 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）
+    perCharApiProtocol: 'openai' | 'claude' | 'gemini';
+    setPerCharApiProtocol: (v: 'openai' | 'claude' | 'gemini') => void;
+    switchPerCharApiProtocol: (newProtocol: 'openai' | 'claude' | 'gemini') => void;
+    perCharApiClaudeUrl: string;
+    setPerCharApiClaudeUrl: (v: string) => void;
+    perCharApiClaudeKey: string;
+    setPerCharApiClaudeKey: (v: string) => void;
+    perCharApiClaudeModel: string;
+    setPerCharApiClaudeModel: (v: string) => void;
+    perCharApiGeminiUrl: string;
+    setPerCharApiGeminiUrl: (v: string) => void;
+    perCharApiGeminiKey: string;
+    setPerCharApiGeminiKey: (v: string) => void;
+    perCharApiGeminiModel: string;
+    setPerCharApiGeminiModel: (v: string) => void;
     showPerCharKey: boolean;
     setShowPerCharKey: (v: boolean) => void;
     onSavePerCharApi: () => void;
@@ -225,23 +241,57 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                             留空就用全局 API 设置。设了的话，跟这个角色说话走自己的通道。协议/区域是全局的。
                         </p>
                         <div className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
+                            {/* 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）— 跟全局主 API 一致 */}
+                            <div className="bg-slate-50/60 rounded-2xl p-1 flex gap-1 border border-slate-200/50">
+                                {(['openai', 'claude', 'gemini'] as const).map((p) => {
+                                    const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
+                                    const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
+                                    const active = perCharApiProtocol === p;
+                                    return (
+                                        <button
+                                            key={p}
+                                            type="button"
+                                            onClick={() => switchPerCharApiProtocol(p)}
+                                            className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
+                                        >
+                                            <span className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
+                                                style={active ? { background: colorMap[p] } : {}}
+                                            ></span>
+                                            {labelMap[p]}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                             {/* 预设胶囊（暮色 2026-07-24） */}
                             {mainPresets.length > 0 && (
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
                                     <div className="flex gap-2 flex-wrap">
                                         {mainPresets.map((preset) => {
-                                            // 暮色 2026-07-25：active 判断加上 apiKey — 同 baseUrl + 空/同 model 的预设
-                                            //   （如「即享ant / 即享按量k / ccmax2」共享同上游）只靠 baseUrl+model 会 3 个一起亮
-                                            //   实际上 key 各自独立没串，是显示串了
-                                            const active = perCharApiBaseUrl === preset.config.baseUrl
-                                                && perCharApiKey === preset.config.apiKey
-                                                && perCharApiModel === preset.config.model;
+                                            // 暮色 2026-07-27：active 判断用 protocol + 3 套字段（修 401 bug）
+                                            //   - 之前只看 baseUrl+apiKey+model，导致切到 Gemini 预设时 baseUrl 是 Gemini URL
+                                            //     但 key 还是 OpenAI 协议 → 401 Unauthorized
+                                            //   - 现在按预设里记的 protocol 选对应那组字段比较
+                                            const proto = (preset.config as any).protocol || 'openai';
+                                            const activeUrl = proto === 'claude' ? (preset.config as any).claudeBaseUrl
+                                                : proto === 'gemini' ? (preset.config as any).geminiBaseUrl
+                                                : preset.config.baseUrl;
+                                            const activeKey = proto === 'claude' ? (preset.config as any).claudeApiKey
+                                                : proto === 'gemini' ? (preset.config as any).geminiApiKey
+                                                : preset.config.apiKey;
+                                            const activeModel = proto === 'claude' ? (preset.config as any).claudeModel
+                                                : proto === 'gemini' ? (preset.config as any).geminiModel
+                                                : preset.config.model;
+                                            const active = perCharApiProtocol === proto
+                                                && perCharApiBaseUrl === activeUrl
+                                                && perCharApiKey === activeKey
+                                                && perCharApiModel === activeModel;
                                             return (
                                                 <button
                                                     key={preset.id}
                                                     onClick={() => onLoadPreset(preset.config)}
                                                     className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all active:scale-95 ${active ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'}`}
+                                                    title={`${proto} · ${activeUrl || ''}`}
                                                 >
                                                     {preset.name}
                                                 </button>

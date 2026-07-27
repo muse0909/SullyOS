@@ -1851,113 +1851,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         if (imgPrompt && !imageGenError) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
-            // 暮色 2026-07-27：生图 Gemini 直连分支（独立配置 imageGemini* 字段）
-            //   - 暮色要求"生图不改 3 tab"，保留 imageGeminiBaseUrl/Key/Model 独立字段
-            //   - 走 :generateContent + responseModalities: ["TEXT", "IMAGE"]（Gemini 多模态）
-            //   - 走 :predict（Imagen 3 专用）
-            const useImageGeminiDirect = !!(effectiveApi as any).imageGeminiBaseUrl && !!(effectiveApi as any).imageGeminiApiKey;
-            const useImageGeminiProtocol = useImageGeminiDirect;
-            const imageActiveUrl = useImageGeminiDirect ? (effectiveApi as any).imageGeminiBaseUrl : effectiveApi.imageBaseUrl;
-            const imageActiveKey = useImageGeminiDirect ? (effectiveApi as any).imageGeminiApiKey : effectiveApi.imageApiKey;
-            const imageActiveModel = useImageGeminiDirect
-                ? ((effectiveApi as any).imageGeminiModel || 'gemini-2.0-flash-exp')
-                : effectiveApi.imageModel;
-
-            if (useImageGeminiProtocol) {
-                try {
-                    console.log('🌐 [ImageGen Gemini] 直连协议 →', imageActiveModel);
-                    const cleanImgBase = (imageActiveUrl || '').replace(/\/+$/, '');
-                    const isImagen = /^imagen/i.test(imageActiveModel || '');
-                    let geminiRes: Response;
-                    if (isImagen) {
-                        // Imagen 3 走 :predict 端点
-                        geminiRes = await fetch(`${cleanImgBase}/models/${encodeURIComponent(imageActiveModel)}:predict?key=${encodeURIComponent(imageActiveKey || '')}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                instances: [{ prompt: imgPrompt }],
-                                parameters: { sampleCount: 1, aspectRatio: '1:1' },
-                            }),
-                        });
-                    } else {
-                        // Gemini 多模态生图（gemini-2.0-flash-exp / gemini-2.0-flash 等带 image generation 的）
-                        geminiRes = await fetch(`${cleanImgBase}/models/${encodeURIComponent(imageActiveModel)}:generateContent?key=${encodeURIComponent(imageActiveKey || '')}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{ role: 'user', parts: [{ text: imgPrompt }] }],
-                                generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.4 },
-                            }),
-                        });
-                    }
-                    if (!geminiRes.ok) {
-                        const errText = await geminiRes.text().catch(() => '');
-                        throw new Error(`Gemini Image ${geminiRes.status}: ${errText.slice(0, 300)}`);
-                    }
-                    const gj: any = await geminiRes.json();
-                    let geminiImageBase64: string | null = null;
-                    let geminiMime = 'image/png';
-                    if (isImagen) {
-                        // 响应格式: { predictions: [{ bytesBase64Encoded: "..." }] }
-                        geminiImageBase64 = gj?.predictions?.[0]?.bytesBase64Encoded || null;
-                    } else {
-                        // 响应格式: { candidates: [{ content: { parts: [{inlineData},{text}] } }] }
-                        const parts = gj?.candidates?.[0]?.content?.parts || [];
-                        for (const p of parts) {
-                            if (p?.inlineData?.data) {
-                                geminiImageBase64 = p.inlineData.data;
-                                geminiMime = p.inlineData.mimeType || 'image/png';
-                                break;
-                            }
-                        }
-                    }
-                    if (!geminiImageBase64) {
-                        throw new Error(`Gemini 生图未返回图片：${JSON.stringify(gj).slice(0, 300)}`);
-                    }
-                    // Gemini 给的是 base64，转成 data URL 走现有保存 / 上传图床逻辑
-                    const geminiDataUrl = `data:${geminiMime};base64,${geminiImageBase64}`;
-                    // 尝试上传图床拿到永久 URL（跟 OpenAI b64 流程一致）
-                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
-                    let finalImageUrl = geminiDataUrl;
-                    if (_imgbbKey) {
-                        try {
-                            const _formData = new FormData();
-                            _formData.append('image', geminiImageBase64);
-                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
-                                method: 'POST',
-                                body: _formData,
-                            });
-                            const _uploadData: any = await _uploadRes.json().catch(() => ({}));
-                            if (_uploadRes.ok && _uploadData?.data?.url) {
-                                finalImageUrl = _uploadData.data.url;
-                                console.log('🌐 [ImageGen Gemini] 已上传到 imgbb:', finalImageUrl);
-                            } else {
-                                console.warn('🌐 [ImageGen Gemini] imgbb 上传失败，用 data URL 兜底');
-                                onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
-                            }
-                        } catch (uploadErr: any) {
-                            console.warn('🌐 [ImageGen Gemini] imgbb 上传异常:', uploadErr?.message);
-                            onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
-                        }
-                    } else {
-                        console.warn('🌐 [ImageGen Gemini] imgbb 未配置，用 data URL 兜底');
-                        onImageBedWarning?.('未配图床，生图已用原图发送，占内存，建议看完删除');
-                    }
-                    await DB.saveMessage({
-                        charId: char.id,
-                        role: 'assistant',
-                        type: 'image',
-                        content: finalImageUrl,
-                    });
-                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                    imageGenerated = true;
-                    console.log('🌐 [ImageGen Gemini] 生图成功');
-                } catch (geminiImgErr: any) {
-                    imageGenError = geminiImgErr?.message || String(geminiImgErr);
-                    console.warn('🌐 [ImageGen Gemini] 请求失败:', geminiImgErr);
-                }
-            } else {
-                try {
+            // 暮色 2026-07-27 晚：删生图 Gemini 分支
+            //   - 暮色原话"生图不用"3 tab 切换，生图现在只走 OpenAI 兼容协议
+            //   - 删 useImageGeminiDirect / useImageGeminiProtocol / imageActiveUrl/Key/Model 等独立配置
+            //   - 直接走 imageBaseUrl / imageApiKey / imageModel（OpenAI 兼容）
+            try {
                 // 暮色 2026-07-14：生图失败排查 — 打印完整请求体，Netlify 日志里能看到实际发出去的 model 字符串
                 console.log('🎨 [ImageGen] 请求体:', {
                     url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
@@ -2144,7 +2042,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 imageGenError = imgErr?.message || String(imgErr);
                 console.warn('🎨 [ImageGen] 生图请求失败:', imgErr);
             }
-            }  // 暮色 2026-07-27：关闭 useImageGeminiProtocol 的 else 块
         }
 
         if (!imageGenerated) {

@@ -238,28 +238,19 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
 没有变化的可以不写。只写有变化的。`;
 
     try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        // 暮色 2026-07-27：改用统一 callLLM helper（支持 OpenAI/Claude/Gemini 三协议）
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(
+            llmConfig,
+            systemPrompt,
+            '请开始审视。',
             {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: '请开始审视。' },
-                    ],
-                    temperature: 0.6,
-                    max_tokens: 8000,
-                    stream: false,
-                }),
+                temperature: 0.6,
+                maxTokens: 8000,
             }
         );
-
-        const reply = data.choices?.[0]?.message?.content || '';
+        const data = result.raw;
+        const reply = result.text;
         const parsed = safeParseJsonArray(reply);
 
         const validActions = ['resolve', 'deepen', 'fade', 'fulfill', 'disappoint', 'internalize', 'synthesize_user', 'self_insight', 'self_confuse', 'keep'];
@@ -651,29 +642,20 @@ ${memoryContext}
 
     console.log(`🎭 [PersonalityDetect] ${charName} → 调用 LLM（model=${llmConfig.model}, max_tokens=8000）`);
     try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        // 暮色 2026-07-27：改用统一 callLLM helper（支持 OpenAI/Claude/Gemini 三协议）
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(
+            llmConfig,
+            systemPrompt,
+            '请判断。',
             {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: '请判断。' },
-                    ],
-                    temperature: 0.3,
-                    // 8000：给 think 型模型留足思考空间，300 会被 reasoning 吃光
-                    max_tokens: 8000,
-                    stream: false,
-                }),
+                temperature: 0.3,
+                // 8000：给 think 型模型留足思考空间，300 会被 reasoning 吃光
+                maxTokens: 8000,
             }
         );
-
-        const reply = data.choices?.[0]?.message?.content || '';
+        const data = result.raw;
+        const reply = result.text;
         const finishReason = data.choices?.[0]?.finish_reason;
         const usage = data.usage;
         console.log(`🎭 [PersonalityDetect] ${charName} LLM 原始返回 (finish=${finishReason}, usage=${JSON.stringify(usage || {})}):\n${reply}`);

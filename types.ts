@@ -163,6 +163,14 @@ export interface APIConfig {
   imageBaseUrl?: string;
   imageApiKey?: string;
   imageModel?: string;
+  // 暮色 2026-07-28：悬浮球里生图卡片也按 3 tab 保存 3 套字段，UI 跟主 API / 识图 / 副 API 对齐
+  imageProtocol?: 'openai' | 'claude' | 'gemini';
+  imageClaudeBaseUrl?: string;
+  imageClaudeApiKey?: string;
+  imageClaudeModel?: string;
+  imageGeminiBaseUrl?: string;
+  imageGeminiApiKey?: string;
+  imageGeminiModel?: string;
   // 当前生效的生图 provider。决定 AI 调 generate_image 时用哪条通道。
   // openai 兼容：URL/Key/Model 都用 apiConfig.imageBaseUrl/Key/Model（中转/OpenAI 官方）
   // comfyui：写死走本地 127.0.0.1:8190 桥（默认模型 Realistic Vision V6.0 B1）

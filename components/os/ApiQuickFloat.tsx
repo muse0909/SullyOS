@@ -128,6 +128,55 @@ const PresetChip: React.FC<{
   );
 };
 
+const PROTOCOL_TABS = ['openai', 'claude', 'gemini'] as const;
+type ApiProtocol = typeof PROTOCOL_TABS[number];
+
+const ProtocolTabs: React.FC<{
+  value: ApiProtocol;
+  onChange: (value: ApiProtocol) => void;
+}> = ({ value, onChange }) => {
+  const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
+  const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
+  return (
+    <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
+      {PROTOCOL_TABS.map((protocol) => {
+        const active = value === protocol;
+        return (
+          <button
+            key={protocol}
+            type="button"
+            onClick={() => onChange(protocol)}
+            className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
+              style={active ? { background: colorMap[protocol] } : {}}
+            />
+            {labelMap[protocol]}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const PresetHeader: React.FC<{
+  label: string;
+  buttonClassName: string;
+  onSave: () => void;
+}> = ({ label, buttonClassName, onSave }) => (
+  <div className="flex items-center justify-between gap-3 mb-2">
+    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">{label}</label>
+    <button
+      type="button"
+      onClick={onSave}
+      className={`text-[10px] px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform shrink-0 ${buttonClassName}`}
+    >
+      保存为预设
+    </button>
+  </div>
+);
+
 const ApiQuickFloat: React.FC = () => {
   const {
     apiConfig,
@@ -192,6 +241,17 @@ const ApiQuickFloat: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
+  const [localImageProtocol, setLocalImageProtocol] = useState<ApiProtocol>(
+    (apiConfig.imageProtocol as ApiProtocol) || 'openai'
+  );
+  const [localImageClaudeUrl, setLocalImageClaudeUrl] = useState(apiConfig.imageClaudeBaseUrl || '');
+  const [localImageClaudeKey, setLocalImageClaudeKey] = useState(apiConfig.imageClaudeApiKey || '');
+  const [localImageClaudeModel, setLocalImageClaudeModel] = useState(apiConfig.imageClaudeModel || '');
+  const [localImageGeminiUrl, setLocalImageGeminiUrl] = useState(
+    apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
+  );
+  const [localImageGeminiKey, setLocalImageGeminiKey] = useState(apiConfig.imageGeminiApiKey || '');
+  const [localImageGeminiModel, setLocalImageGeminiModel] = useState(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
   // 暮色 2026-07-15：删 localImageGenProvider / comfyui* state — 生图只走 OpenAI 兼容
 
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
@@ -231,11 +291,6 @@ const ApiQuickFloat: React.FC = () => {
   const [localVisionGeminiModel, setLocalVisionGeminiModel] = useState(
     apiConfig.visionGeminiModel || 'gemini-2.0-flash'
   );
-
-  // 暮色 2026-07-27：添加预设弹窗（统一 4 个 API 共享一个）
-  const [showSavePreset, setShowSavePreset] = useState(false);
-  const [presetName, setPresetName] = useState('');
-  const [presetTarget, setPresetTarget] = useState<'main' | 'image' | 'vision' | 'lightLLM'>('main');
 
   const [showMainKey, setShowMainKey] = useState(false);
   const [showImageKey, setShowImageKey] = useState(false);
@@ -282,6 +337,13 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
+    setLocalImageProtocol((apiConfig.imageProtocol as ApiProtocol) || 'openai');
+    setLocalImageClaudeUrl(apiConfig.imageClaudeBaseUrl || '');
+    setLocalImageClaudeKey(apiConfig.imageClaudeApiKey || '');
+    setLocalImageClaudeModel(apiConfig.imageClaudeModel || '');
+    setLocalImageGeminiUrl(apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+    setLocalImageGeminiKey(apiConfig.imageGeminiApiKey || '');
+    setLocalImageGeminiModel(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
     // 暮色 2026-07-15：删 localImageGenProvider / localComfyuiSelectedModel 同步
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
@@ -315,6 +377,13 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.imageBaseUrl,
     apiConfig.imageApiKey,
     apiConfig.imageModel,
+    apiConfig.imageProtocol,
+    apiConfig.imageClaudeBaseUrl,
+    apiConfig.imageClaudeApiKey,
+    apiConfig.imageClaudeModel,
+    apiConfig.imageGeminiBaseUrl,
+    apiConfig.imageGeminiApiKey,
+    apiConfig.imageGeminiModel,
     // 暮色 2026-07-15：删 imageGenProvider — 永远 openai
     apiConfig.visionBaseUrl,
     apiConfig.visionApiKey,
@@ -495,6 +564,34 @@ const ApiQuickFloat: React.FC = () => {
     setLocalProtocol(newProtocol);
   };
 
+  // 暮色 2026-07-28：生图卡片 UI 也对齐 3 tab；底层生图仍走 OpenAI 兼容，先保证配置页不崩、不挤。
+  const switchImageProtocol = (newProtocol: ApiProtocol) => {
+    if (newProtocol === localImageProtocol) return;
+    if (localImageProtocol === 'claude') {
+      setLocalImageClaudeUrl(localImageUrl);
+      setLocalImageClaudeKey(localImageKey);
+      setLocalImageClaudeModel(localImageModel);
+    } else if (localImageProtocol === 'gemini') {
+      setLocalImageGeminiUrl(localImageUrl);
+      setLocalImageGeminiKey(localImageKey);
+      setLocalImageGeminiModel(localImageModel);
+    }
+    if (newProtocol === 'openai') {
+      setLocalImageUrl(apiConfig.imageBaseUrl || '');
+      setLocalImageKey(apiConfig.imageApiKey || '');
+      setLocalImageModel(apiConfig.imageModel || '');
+    } else if (newProtocol === 'claude') {
+      setLocalImageUrl(localImageClaudeUrl || apiConfig.imageClaudeBaseUrl || '');
+      setLocalImageKey(localImageClaudeKey || apiConfig.imageClaudeApiKey || '');
+      setLocalImageModel(localImageClaudeModel || apiConfig.imageClaudeModel || '');
+    } else {
+      setLocalImageUrl(localImageGeminiUrl || apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+      setLocalImageKey(localImageGeminiKey || apiConfig.imageGeminiApiKey || '');
+      setLocalImageModel(localImageGeminiModel || apiConfig.imageGeminiModel || 'gemini-2.0-flash');
+    }
+    setLocalImageProtocol(newProtocol);
+  };
+
   const handleSaveAndClose = () => {
     // 暮色 2026-07-15：删 ComfyUI / NAI 分支，只剩 OpenAI 兼容
     // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套，切回 tab 不丢
@@ -523,13 +620,23 @@ const ApiQuickFloat: React.FC = () => {
       visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : localVisionGeminiKey,
       visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : localVisionGeminiModel,
     };
+    const imageUpdates: any = {
+      imageProtocol: localImageProtocol,
+      imageBaseUrl: localImageProtocol === 'openai' ? localImageUrl : (apiConfig.imageBaseUrl || ''),
+      imageApiKey: localImageProtocol === 'openai' ? localImageKey : (apiConfig.imageApiKey || ''),
+      imageModel: localImageProtocol === 'openai' ? localImageModel : (apiConfig.imageModel || ''),
+      imageClaudeBaseUrl: localImageProtocol === 'claude' ? localImageUrl : localImageClaudeUrl,
+      imageClaudeApiKey: localImageProtocol === 'claude' ? localImageKey : localImageClaudeKey,
+      imageClaudeModel: localImageProtocol === 'claude' ? localImageModel : localImageClaudeModel,
+      imageGeminiBaseUrl: localImageProtocol === 'gemini' ? localImageUrl : localImageGeminiUrl,
+      imageGeminiApiKey: localImageProtocol === 'gemini' ? localImageKey : localImageGeminiKey,
+      imageGeminiModel: localImageProtocol === 'gemini' ? localImageModel : localImageGeminiModel,
+    };
     updateApiConfig({
       ...apiConfig,
       ...mainUpdates,
       ...visionUpdates,
-      imageBaseUrl: localImageUrl,
-      imageApiKey: localImageKey,
-      imageModel: localImageModel,
+      ...imageUpdates,
       imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai' | 'comfyui' | 'nai' 防以后再加回
     });
     addToast('API 配置已保存', 'success');
@@ -588,26 +695,6 @@ const ApiQuickFloat: React.FC = () => {
     }
   };
 
-  // 暮色 2026-07-15：副 API 预设保存 — 弹窗输入名字，存到 apiPresets（kind: memoryPalaceLight）
-  // 暮色 2026-07-27：预设也记 protocol + 3 套字段
-  const handleSaveLightPreset = () => {
-    const name = window.prompt('预设名称', '记忆宫殿副 API')?.trim();
-    if (!name) return;
-    addApiPreset(name, {
-      baseUrl: localLightUrl.trim(),
-      apiKey: localLightKey.trim(),
-      model: localLightModel.trim(),
-      protocol: localLightProtocol,
-      claudeBaseUrl: localLightProtocol === 'claude' ? localLightUrl.trim() : localLightClaudeUrl,
-      claudeApiKey: localLightProtocol === 'claude' ? localLightKey.trim() : localLightClaudeKey,
-      claudeModel: localLightProtocol === 'claude' ? localLightModel.trim() : localLightClaudeModel,
-      geminiBaseUrl: localLightProtocol === 'gemini' ? localLightUrl.trim() : localLightGeminiUrl,
-      geminiApiKey: localLightProtocol === 'gemini' ? localLightKey.trim() : localLightGeminiKey,
-      geminiModel: localLightProtocol === 'gemini' ? localLightModel.trim() : localLightGeminiModel,
-    } as any, 'memoryPalaceLight');
-    addToast(`已保存副 API 预设: ${name}`, 'success');
-  };
-
   // 暮色 2026-07-27：通用"添加预设" — 4 个 API 共用，存当前输入框值
   const handleSavePreset = (target: 'main' | 'image' | 'vision' | 'lightLLM', defaultName: string) => {
     const name = window.prompt('预设名称', defaultName)?.trim();
@@ -630,6 +717,13 @@ const ApiQuickFloat: React.FC = () => {
         imageBaseUrl: localImageUrl.trim(),
         imageApiKey: localImageKey.trim(),
         imageModel: localImageModel.trim(),
+        imageProtocol: localImageProtocol,
+        imageClaudeBaseUrl: localImageProtocol === 'claude' ? localImageUrl.trim() : localImageClaudeUrl,
+        imageClaudeApiKey: localImageProtocol === 'claude' ? localImageKey.trim() : localImageClaudeKey,
+        imageClaudeModel: localImageProtocol === 'claude' ? localImageModel.trim() : localImageClaudeModel,
+        imageGeminiBaseUrl: localImageProtocol === 'gemini' ? localImageUrl.trim() : localImageGeminiUrl,
+        imageGeminiApiKey: localImageProtocol === 'gemini' ? localImageKey.trim() : localImageGeminiKey,
+        imageGeminiModel: localImageProtocol === 'gemini' ? localImageModel.trim() : localImageGeminiModel,
       } as any, 'image');
     } else if (target === 'vision') {
       addApiPreset(name, {
@@ -786,11 +880,36 @@ const ApiQuickFloat: React.FC = () => {
   const loadPreset = (preset: ApiPreset, kind: QuickPresetKind) => {
     const c = preset.config;
     if (kind === 'image') {
-      setLocalImageUrl(c.imageBaseUrl || '');
-      setLocalImageKey(c.imageApiKey || '');
-      setLocalImageModel(c.imageModel || '');
+      const iProto: ApiProtocol = (c as any).imageProtocol || 'openai';
+      switchImageProtocol(iProto);
+      if (iProto === 'claude') {
+        const url = (c as any).imageClaudeBaseUrl || c.imageBaseUrl || '';
+        const key = (c as any).imageClaudeApiKey || c.imageApiKey || '';
+        const model = (c as any).imageClaudeModel || c.imageModel || '';
+        setLocalImageClaudeUrl(url);
+        setLocalImageClaudeKey(key);
+        setLocalImageClaudeModel(model);
+        setLocalImageUrl(url);
+        setLocalImageKey(key);
+        setLocalImageModel(model);
+      } else if (iProto === 'gemini') {
+        const url = (c as any).imageGeminiBaseUrl || c.imageBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+        const key = (c as any).imageGeminiApiKey || c.imageApiKey || '';
+        const model = (c as any).imageGeminiModel || c.imageModel || 'gemini-2.0-flash';
+        setLocalImageGeminiUrl(url);
+        setLocalImageGeminiKey(key);
+        setLocalImageGeminiModel(model);
+        setLocalImageUrl(url);
+        setLocalImageKey(key);
+        setLocalImageModel(model);
+      } else {
+        setLocalImageUrl(c.imageBaseUrl || '');
+        setLocalImageKey(c.imageApiKey || '');
+        setLocalImageModel(c.imageModel || '');
+      }
+      setLocalImageProtocol(iProto);
       // 暮色 2026-07-15：删 setLocalImageGenProvider — 生图只走 OpenAI 兼容
-      addToast(`已加载生图预设: ${preset.name}`, 'info');
+      addToast(`已加载生图预设: ${preset.name} (${iProto === 'claude' ? 'Claude' : iProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
       return;
     }
     if (kind === 'vision') {
@@ -798,18 +917,31 @@ const ApiQuickFloat: React.FC = () => {
       const vProto: 'openai' | 'claude' | 'gemini' = (c as any).visionProtocol || 'openai';
       switchVisionProtocol(vProto);
       if (vProto === 'claude') {
-        setLocalVisionClaudeUrl((c as any).visionClaudeBaseUrl || c.visionBaseUrl || '');
-        setLocalVisionClaudeKey((c as any).visionClaudeApiKey || c.visionApiKey || '');
-        setLocalVisionClaudeModel((c as any).visionClaudeModel || c.visionModel || '');
+        const url = (c as any).visionClaudeBaseUrl || c.visionBaseUrl || '';
+        const key = (c as any).visionClaudeApiKey || c.visionApiKey || '';
+        const model = (c as any).visionClaudeModel || c.visionModel || '';
+        setLocalVisionClaudeUrl(url);
+        setLocalVisionClaudeKey(key);
+        setLocalVisionClaudeModel(model);
+        setLocalVisionUrl(url);
+        setLocalVisionKey(key);
+        setLocalVisionModel(model);
       } else if (vProto === 'gemini') {
-        setLocalVisionGeminiUrl((c as any).visionGeminiBaseUrl || c.visionBaseUrl || '');
-        setLocalVisionGeminiKey((c as any).visionGeminiApiKey || c.visionApiKey || '');
-        setLocalVisionGeminiModel((c as any).visionGeminiModel || c.visionModel || '');
+        const url = (c as any).visionGeminiBaseUrl || c.visionBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+        const key = (c as any).visionGeminiApiKey || c.visionApiKey || '';
+        const model = (c as any).visionGeminiModel || c.visionModel || 'gemini-2.0-flash';
+        setLocalVisionGeminiUrl(url);
+        setLocalVisionGeminiKey(key);
+        setLocalVisionGeminiModel(model);
+        setLocalVisionUrl(url);
+        setLocalVisionKey(key);
+        setLocalVisionModel(model);
       } else {
         setLocalVisionUrl(c.visionBaseUrl || '');
         setLocalVisionKey(c.visionApiKey || '');
         setLocalVisionModel(c.visionModel || '');
       }
+      setLocalVisionProtocol(vProto);
       addToast(`已加载识图预设: ${preset.name} (${vProto === 'claude' ? 'Claude' : vProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
       return;
     }
@@ -818,18 +950,31 @@ const ApiQuickFloat: React.FC = () => {
       const lProto: 'openai' | 'claude' | 'gemini' = (c as any).protocol || 'openai';
       switchLightProtocol(lProto);
       if (lProto === 'claude') {
-        setLocalLightClaudeUrl((c as any).claudeBaseUrl || c.baseUrl || '');
-        setLocalLightClaudeKey((c as any).claudeApiKey || c.apiKey || '');
-        setLocalLightClaudeModel((c as any).claudeModel || c.model || '');
+        const url = (c as any).claudeBaseUrl || c.baseUrl || '';
+        const key = (c as any).claudeApiKey || c.apiKey || '';
+        const model = (c as any).claudeModel || c.model || '';
+        setLocalLightClaudeUrl(url);
+        setLocalLightClaudeKey(key);
+        setLocalLightClaudeModel(model);
+        setLocalLightUrl(url);
+        setLocalLightKey(key);
+        setLocalLightModel(model);
       } else if (lProto === 'gemini') {
-        setLocalLightGeminiUrl((c as any).geminiBaseUrl || c.baseUrl || '');
-        setLocalLightGeminiKey((c as any).geminiApiKey || c.apiKey || '');
-        setLocalLightGeminiModel((c as any).geminiModel || c.model || '');
+        const url = (c as any).geminiBaseUrl || c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+        const key = (c as any).geminiApiKey || c.apiKey || '';
+        const model = (c as any).geminiModel || c.model || 'gemini-2.0-flash';
+        setLocalLightGeminiUrl(url);
+        setLocalLightGeminiKey(key);
+        setLocalLightGeminiModel(model);
+        setLocalLightUrl(url);
+        setLocalLightKey(key);
+        setLocalLightModel(model);
       } else {
         setLocalLightUrl(c.baseUrl || '');
         setLocalLightKey(c.apiKey || '');
         setLocalLightModel(c.model || '');
       }
+      setLocalLightProtocol(lProto);
       addToast(`已加载副 API 预设: ${preset.name} (${lProto === 'claude' ? 'Claude' : lProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
       return;
     }
@@ -837,18 +982,31 @@ const ApiQuickFloat: React.FC = () => {
     const mProto: 'openai' | 'claude' | 'gemini' = (c as any).protocol || 'openai';
     switchMainProtocol(mProto);
     if (mProto === 'claude') {
-      setLocalClaudeUrl((c as any).claudeBaseUrl || c.baseUrl || '');
-      setLocalClaudeKey((c as any).claudeApiKey || c.apiKey || '');
-      setLocalClaudeModel((c as any).claudeModel || c.model || '');
+      const url = (c as any).claudeBaseUrl || c.baseUrl || '';
+      const key = (c as any).claudeApiKey || c.apiKey || '';
+      const model = (c as any).claudeModel || c.model || '';
+      setLocalClaudeUrl(url);
+      setLocalClaudeKey(key);
+      setLocalClaudeModel(model);
+      setLocalUrl(url);
+      setLocalKey(key);
+      setLocalModel(model);
     } else if (mProto === 'gemini') {
-      setLocalGeminiUrl((c as any).geminiBaseUrl || c.baseUrl || '');
-      setLocalGeminiKey((c as any).geminiApiKey || c.apiKey || '');
-      setLocalGeminiModel((c as any).geminiModel || c.model || '');
+      const url = (c as any).geminiBaseUrl || c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+      const key = (c as any).geminiApiKey || c.apiKey || '';
+      const model = (c as any).geminiModel || c.model || 'gemini-2.0-flash';
+      setLocalGeminiUrl(url);
+      setLocalGeminiKey(key);
+      setLocalGeminiModel(model);
+      setLocalUrl(url);
+      setLocalKey(key);
+      setLocalModel(model);
     } else {
       setLocalUrl(c.baseUrl || '');
       setLocalKey(c.apiKey || '');
       setLocalModel(c.model || '');
     }
+    setLocalProtocol(mProto);
     addToast(`已加载 API 预设: ${preset.name} (${mProto === 'claude' ? 'Claude' : mProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
   };
 
@@ -888,10 +1046,21 @@ const ApiQuickFloat: React.FC = () => {
   const isPresetActive = (preset: ApiPreset, kind: QuickPresetKind) => {
     const c: any = preset.config;
     if (kind === 'image') {
+      const iProto: ApiProtocol = c.imageProtocol || 'openai';
+      const iUrl = iProto === 'claude' ? c.imageClaudeBaseUrl
+        : iProto === 'gemini' ? c.imageGeminiBaseUrl
+        : c.imageBaseUrl;
+      const iKey = iProto === 'claude' ? c.imageClaudeApiKey
+        : iProto === 'gemini' ? c.imageGeminiApiKey
+        : c.imageApiKey;
+      const iModel = iProto === 'claude' ? c.imageClaudeModel
+        : iProto === 'gemini' ? c.imageGeminiModel
+        : c.imageModel;
       return (
-        (c.imageBaseUrl || '') === localImageUrl &&
-        (c.imageApiKey || '') === localImageKey &&
-        (c.imageModel || '') === localImageModel
+        localImageProtocol === iProto &&
+        (iUrl || '') === localImageUrl &&
+        (iKey || '') === localImageKey &&
+        (iModel || '') === localImageModel
       );
     }
     if (kind === 'vision') {
@@ -1089,9 +1258,15 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('main')}
               >
                 <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
-                  {mainApiPresets.length > 0 ? (
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
+                  <ProtocolTabs value={localProtocol} onChange={switchMainProtocol} />
+
+                  <div>
+                    <PresetHeader
+                      label="从预设导入"
+                      buttonClassName="bg-emerald-100 text-emerald-600"
+                      onSave={() => handleSavePreset('main', '主 API 预设')}
+                    />
+                    {mainApiPresets.length > 0 ? (
                       <div className="flex gap-2 flex-wrap">
                         {mainApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'main');
@@ -1110,34 +1285,8 @@ const ApiQuickFloat: React.FC = () => {
                           );
                         })}
                       </div>
-                    </div>
-                  ) : null}
-
-                  {/* 暮色 2026-07-17 → 2026-07-27：API 协议切换（从 Settings 高级挪出来，方便快速切） — 现在 3 tab */}
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1 text-center">API 协议</label>
-                    <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
-                      <button
-                        type="button"
-                        onClick={() => switchMainProtocol('openai')}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'openai' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
-                      >OpenAI</button>
-                      <button
-                        type="button"
-                        onClick={() => switchMainProtocol('claude')}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'claude' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
-                      >Claude</button>
-                      <button
-                        type="button"
-                        onClick={() => switchMainProtocol('gemini')}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all ${localProtocol === 'gemini' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
-                      >Gemini</button>
-                    </div>
-                    {localProtocol === 'claude' && (
-                      <p className="text-[9px] text-amber-500 mt-1.5 leading-relaxed text-center">⚠️ Claude 模式要求服务端支持 /v1/messages + cache_control 透传</p>
-                    )}
-                    {localProtocol === 'gemini' && (
-                      <p className="text-[9px] text-sky-600 mt-1.5 leading-relaxed text-center">🌐 Gemini 直连 — 走 Google 官方协议，需填 Google AI Studio Key</p>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 pl-1">暂无预设</p>
                     )}
                   </div>
 
@@ -1232,15 +1381,16 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
-                  {/* 暮色 2026-07-15：删顶部"当前使用"状态条 — 只有一个 provider，section 标题已经说"生图"+ subtitle "OpenAI 兼容"，冗余 */}
-                  {/* 暮色 2026-07-15：删 3 档服务商切换，只剩 OpenAI 兼容 */}
+                  <ProtocolTabs value={localImageProtocol} onChange={switchImageProtocol} />
 
-                  {/* === OpenAI 卡片（暮色 2026-07-15：永远是 OpenAI，去掉条件渲染） === */}
-                  <>
+                  <div>
+                    <PresetHeader
+                      label="从预设导入"
+                      buttonClassName="bg-violet-100 text-violet-600"
+                      onSave={() => handleSavePreset('image', '生图预设')}
+                    />
                     {imageApiPresets.length > 0 ? (
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">生图预设</label>
-                        <div className="flex gap-2 flex-wrap">
+                      <div className="flex gap-2 flex-wrap">
                           {imageApiPresets.map((preset) => {
                             const active = isPresetActive(preset, 'image');
                             return (
@@ -1257,9 +1407,12 @@ const ApiQuickFloat: React.FC = () => {
                               />
                             );
                           })}
-                        </div>
                       </div>
-                    ) : null}
+                    ) : (
+                      <p className="text-[10px] text-slate-400 pl-1">暂无预设</p>
+                    )}
+                  </div>
+
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
                       <input
@@ -1335,7 +1488,6 @@ const ApiQuickFloat: React.FC = () => {
                         </div>
                       ) : null}
                     </div>
-                  </>
 
                   {imageStatusMsg ? <div className="text-xs text-center text-slate-500">{imageStatusMsg}</div> : null}
                 </section>
@@ -1359,37 +1511,16 @@ const ApiQuickFloat: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* 暮色 2026-07-27：副 API 3 tab 协议切换（OpenAI / Claude / Gemini） */}
-                  <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
-                    {(['openai', 'claude', 'gemini'] as const).map(p => {
-                      const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
-                      const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
-                      const active = localLightProtocol === p;
-                      return (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => switchLightProtocol(p)}
-                          className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
-                            style={active ? { background: colorMap[p] } : {}}
-                          ></span>
-                          {labelMap[p]}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <ProtocolTabs value={localLightProtocol} onChange={switchLightProtocol} />
 
                   {/* 副 API 预设（kind: memoryPalaceLight） */}
-                  {lightApiPresets.length > 0 ? (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">从预设导入</label>
-                        <button onClick={handleSaveLightPreset} className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                          保存为预设
-                        </button>
-                      </div>
+                  <div>
+                    <PresetHeader
+                      label="从预设导入"
+                      buttonClassName="bg-emerald-100 text-emerald-600"
+                      onSave={() => handleSavePreset('lightLLM', '记忆宫殿副 API')}
+                    />
+                    {lightApiPresets.length > 0 ? (
                       <div className="flex gap-2 flex-wrap">
                         {lightApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'lightLLM');
@@ -1408,14 +1539,10 @@ const ApiQuickFloat: React.FC = () => {
                           );
                         })}
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex justify-end">
-                      <button onClick={handleSaveLightPreset} className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                        保存为预设
-                      </button>
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-[10px] text-slate-400 pl-1">暂无预设</p>
+                    )}
+                  </div>
 
                   {/* BASE URL */}
                   <div>
@@ -1463,22 +1590,12 @@ const ApiQuickFloat: React.FC = () => {
 
                   {/* 保存 + 测试 */}
                   <div className="space-y-2">
-                    {/* 暮色 2026-07-27：副 API 加「保存为预设」按钮（悬浮球里都要有） */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleSaveLightConfig}
-                        className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all"
-                      >
-                        {lightStatusMsg && !lightTesting ? lightStatusMsg : '保存副 API 配置'}
-                      </button>
-                      <button
-                        onClick={() => handleSavePreset('lightLLM', '记忆宫殿副 API')}
-                        className="px-4 py-3 bg-white border border-emerald-200 text-emerald-600 text-xs font-bold rounded-2xl active:scale-95 transition-all whitespace-nowrap"
-                        title="保存当前副 API 配置为预设"
-                      >
-                        保存为预设
-                      </button>
-                    </div>
+                    <button
+                      onClick={handleSaveLightConfig}
+                      className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all"
+                    >
+                      {lightStatusMsg && !lightTesting ? lightStatusMsg : '保存副 API 配置'}
+                    </button>
                     <button
                       onClick={handleTestLight}
                       disabled={lightTesting || !localLightUrl.trim()}
@@ -1498,30 +1615,15 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('vision')}
               >
                 <section className="bg-sky-50/80 rounded-3xl p-4 shadow-sm border border-sky-100/80 space-y-4">
-                  {/* 暮色 2026-07-27：识图 3 tab 协议切换（OpenAI / Claude / Gemini） */}
-                  <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
-                    {(['openai', 'claude', 'gemini'] as const).map(p => {
-                      const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
-                      const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
-                      const active = localVisionProtocol === p;
-                      return (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => switchVisionProtocol(p)}
-                          className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
-                            style={active ? { background: colorMap[p] } : {}}
-                          ></span>
-                          {labelMap[p]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {visionApiPresets.length > 0 ? (
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">识图预设</label>
+                  <ProtocolTabs value={localVisionProtocol} onChange={switchVisionProtocol} />
+
+                  <div>
+                    <PresetHeader
+                      label="从预设导入"
+                      buttonClassName="bg-sky-100 text-sky-600"
+                      onSave={() => handleSavePreset('vision', '识图预设')}
+                    />
+                    {visionApiPresets.length > 0 ? (
                       <div className="flex gap-2 flex-wrap">
                         {visionApiPresets.map((preset) => {
                           const active = isPresetActive(preset, 'vision');
@@ -1540,8 +1642,10 @@ const ApiQuickFloat: React.FC = () => {
                           );
                         })}
                       </div>
-                    </div>
-                  ) : null}
+                    ) : (
+                      <p className="text-[10px] text-slate-400 pl-1">暂无预设</p>
+                    )}
+                  </div>
 
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
@@ -1629,32 +1733,9 @@ const ApiQuickFloat: React.FC = () => {
             </div>
 
             <div className="px-5 py-3 border-t border-slate-100 shrink-0">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleSavePreset('main', '主 API 预设')}
-                  className="px-4 py-3 bg-white border border-indigo-200 text-indigo-600 text-xs font-bold rounded-2xl active:scale-95 transition-all whitespace-nowrap"
-                  title="把当前主 API + 协议保存为预设"
-                >
-                  保存主 API 为预设
-                </button>
-                <button
-                  onClick={() => handleSavePreset('vision', '识图预设')}
-                  className="px-4 py-3 bg-white border border-sky-200 text-sky-600 text-xs font-bold rounded-2xl active:scale-95 transition-all whitespace-nowrap"
-                  title="把当前识图 + 协议保存为预设"
-                >
-                  保存识图为预设
-                </button>
-                <button
-                  onClick={() => handleSavePreset('image', '生图预设')}
-                  className="px-4 py-3 bg-white border border-violet-200 text-violet-600 text-xs font-bold rounded-2xl active:scale-95 transition-all whitespace-nowrap"
-                  title="把当前生图保存为预设"
-                >
-                  保存生图为预设
-                </button>
-              </div>
               <button
                 onClick={handleSaveAndClose}
-                className="w-full mt-2 py-3 rounded-2xl font-bold text-white shadow-lg shadow-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-600 active:scale-95 transition-all"
+                className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-600 active:scale-95 transition-all"
               >
                 保存并关闭
               </button>

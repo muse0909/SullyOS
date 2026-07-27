@@ -1,7 +1,7 @@
 # 主动消息 prompt 重写 + thought_chain 思维链前置
 
 **日期**：2026-07-27
-**涉及 commit**：（待 git commit 后填）
+**涉及 commit**：`5b68007`
 
 ## 改了什么
 

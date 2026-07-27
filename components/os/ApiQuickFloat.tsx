@@ -191,6 +191,13 @@ const ApiQuickFloat: React.FC = () => {
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
 
+  // 暮色 2026-07-27：Gemini 直连 state（主 API）
+  const [localGeminiUrl, setLocalGeminiUrl] = useState(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+  const [localGeminiKey, setLocalGeminiKey] = useState(apiConfig.geminiApiKey || '');
+  const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-2.0-flash');
+  const [showGeminiMain, setShowGeminiMain] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+
   // 暮色 2026-07-15：副 API（记忆宫殿后台处理用 lightLLM）— local state
   const [localLightUrl, setLocalLightUrl] = useState(memoryPalaceConfig?.lightLLM?.baseUrl || '');
   const [localLightKey, setLocalLightKey] = useState(memoryPalaceConfig?.lightLLM?.apiKey || '');
@@ -238,6 +245,10 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
+    // 暮色 2026-07-27：Gemini 直连同步
+    setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+    setLocalGeminiKey(apiConfig.geminiApiKey || '');
+    setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
     // 暮色 2026-07-15：同步副 API（记忆宫殿 lightLLM）— 抽原始字段做 deps，避免对象新引用触发重跑
     if (memoryPalaceConfig?.lightLLM) {
       setLocalLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
@@ -255,6 +266,10 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.visionBaseUrl,
     apiConfig.visionApiKey,
     apiConfig.visionModel,
+    // 暮色 2026-07-27：Gemini 直连同步
+    apiConfig.geminiBaseUrl,
+    apiConfig.geminiApiKey,
+    apiConfig.geminiModel,
     memoryPalaceConfig?.lightLLM?.baseUrl,
     memoryPalaceConfig?.lightLLM?.apiKey,
     memoryPalaceConfig?.lightLLM?.model,
@@ -383,6 +398,10 @@ const ApiQuickFloat: React.FC = () => {
       visionModel: localVisionModel,
       // 暮色 2026-07-17：API 协议（跟 Settings 同步保存）
       protocol: localProtocol,
+      // 暮色 2026-07-27：Gemini 直连配置
+      geminiBaseUrl: localGeminiUrl,
+      geminiApiKey: localGeminiKey,
+      geminiModel: localGeminiModel,
     });
     addToast('API 配置已保存', 'success');
     setShowPanel(false);

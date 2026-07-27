@@ -181,6 +181,22 @@ export interface APIConfig {
   //   上下文：即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"，
   //          所以 OpenAI 协议下必须把 cache_control 字段去掉。
   protocol?: 'openai' | 'claude';
+  // 暮色 2026-07-27：Gemini 直连配置（Google 官方协议，独立于 OpenAI 兼容 / Claude 协议）
+  //   - baseUrl 默认 https://generativelanguage.googleapis.com/v1beta
+  //   - apiKey 用 Google AI Studio 申请的 Key
+  //   - model 例 gemini-2.0-flash / gemini-2.5-pro
+  //   - 当 protocol === 'openai' 但 model 以 gemini- 开头且 baseUrl 是 Google 官方时，自动走 Gemini 协议分支
+  geminiBaseUrl?: string;
+  geminiApiKey?: string;
+  geminiModel?: string;
+  // 识图走 Gemini 直连（独立于主 API 通道，避免识别时跟聊天主模型混）
+  visionGeminiBaseUrl?: string;
+  visionGeminiApiKey?: string;
+  visionGeminiModel?: string;
+  // 生图走 Gemini 直连（Google Imagen / Gemini Image）
+  imageGeminiBaseUrl?: string;
+  imageGeminiApiKey?: string;
+  imageGeminiModel?: string;
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;

@@ -924,6 +924,14 @@ export const useChatAI = ({
             //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeProtocol = apiProtocol === 'claude';
+            // 暮色 2026-07-27：Gemini 直连协议自动检测
+            //   - URL 含 generativelanguage.googleapis.com → 走 Google 官方 Gemini 协议
+            //   - 不需要新增 protocol 枚举，填官方 URL 就自动生效
+            //   - 走独立端点 /v1beta/models/{model}:generateContent
+            //   - API Key 走 URL 参数 ?key=xxx（不是 Authorization header）
+            //   - 请求体用 contents/parts 格式（不是 messages）
+            //   - 响应体用 candidates 格式（不是 choices）
+            const useGeminiProtocol = /generativelanguage\.googleapis\.com/i.test(effectiveApi.baseUrl || '');
             // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
             //   - OpenAI 协议：不发 message-level cache_control
             //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
@@ -1253,7 +1261,24 @@ console.log('🖼️ 识图检测', {
 // 如果最近图片已经有描述，跳过识图，避免重复调用
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
-if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
+// 暮色 2026-07-27：识图通道选择
+//   - 优先用 visionGemini（独立 Gemini 直连 Key / Model）
+//   - 否则用 visionBaseUrl（OpenAI 兼容中转，URL 含 generativelanguage.googleapis.com 时也走 Gemini 协议）
+//   - 都没配 → 跳过识图
+const useVisionGeminiDirect = !!(effectiveApi as any).visionGeminiBaseUrl && !!(effectiveApi as any).visionGeminiApiKey;
+const useVisionGeminiProtocol = useVisionGeminiDirect
+    || (/generativelanguage\.googleapis\.com/i.test(effectiveApi.visionBaseUrl || '') && !!effectiveApi.visionApiKey);
+const visionActiveUrl = useVisionGeminiDirect
+    ? (effectiveApi as any).visionGeminiBaseUrl
+    : effectiveApi.visionBaseUrl;
+const visionActiveKey = useVisionGeminiDirect
+    ? (effectiveApi as any).visionGeminiApiKey
+    : effectiveApi.visionApiKey;
+const visionActiveModel = useVisionGeminiDirect
+    ? ((effectiveApi as any).visionGeminiModel || 'gemini-2.0-flash')
+    : (effectiveApi.visionModel || 'gemini-1.5-flash');
+
+if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [
             {
                 role: 'system',
@@ -1283,39 +1308,93 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             }
         ];
 
-    const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
-    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
-        const visionMessages = buildVisionMessages(imageUrl);
-        const requestBody = {
-            model: effectiveApi.visionModel || 'gemini-1.5-flash',
-            messages: visionMessages,
-            temperature: 0.3,
-            stream: false
+    // 暮色 2026-07-27：识图走 Gemini 直连时构造 Gemini contents 格式
+    //   - base64 dataURL 拆 mimeType + data
+    //   - 外链：Google Imagen 也能 fetch HTTPS 公开图（不用下到本地）
+    const buildGeminiVisionBody = (imageUrl: string) => {
+        const systemText = buildVisionMessages(imageUrl)[0].content;
+        const userText = buildVisionMessages(imageUrl)[1].content[0].text;
+        let inlineData: any;
+        if (imageUrl.startsWith('data:')) {
+            const m = imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+            if (m) inlineData = { mimeType: m[1], data: m[2] };
+        }
+        const parts: any[] = [{ text: userText }];
+        if (inlineData) {
+            parts.push({ inline_data: inlineData });
+        } else {
+            // 外链：Google 端支持 fileData 引用公开 URL
+            parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/*' } });
+        }
+        return {
+            contents: [{ role: 'user', parts }],
+            systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
         };
+    };
+
+    const visionUrl = useVisionGeminiProtocol
+        ? (visionActiveUrl || '').replace(/\/+$/, '')
+        : normalizeApiUrl(visionActiveUrl);
+    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
+        const requestModel = visionActiveModel;
         const logBase = {
             timestamp: new Date().toISOString(),
-            url: `${visionUrl}/chat/completions`,
-            model: requestBody.model,
+            url: useVisionGeminiProtocol
+                ? `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
+                : `${visionUrl}/chat/completions`,
+            model: requestModel,
             mode,
+            protocol: useVisionGeminiProtocol ? 'gemini' : 'openai',
             image: imageUrl.startsWith('data:image')
                 ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
                 : { kind: 'url', url: imageUrl },
-            body: {
-                ...requestBody,
-                messages: summarizeVisionMessagesForLog(visionMessages)
-            }
         };
 
         try {
             saveVisionReqLog({ ...logBase, status: 'requesting' });
-            const data = await safeFetchJson(`${visionUrl}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${effectiveApi.visionApiKey}`
-                },
-                body: JSON.stringify(requestBody)
-            }, 0);
+            let data: any;
+            if (useVisionGeminiProtocol) {
+                // 暮色 2026-07-27：Gemini 协议直连（独立 Key / Model 可用）
+                const geminiBody = buildGeminiVisionBody(imageUrl);
+                const res = await fetch(`${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(visionActiveKey || '')}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(geminiBody),
+                });
+                if (!res.ok) {
+                    const errText = await res.text().catch(() => '');
+                    throw new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                }
+                const gj: any = await res.json();
+                const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                // 转 OpenAI 格式让下游代码无感
+                data = {
+                    choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
+                    usage: gj?.usageMetadata ? {
+                        prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
+                        completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
+                        total_tokens: gj.usageMetadata.totalTokenCount || 0,
+                    } : undefined,
+                };
+                console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字`);
+            } else {
+                const visionMessages = buildVisionMessages(imageUrl);
+                const requestBody = {
+                    model: requestModel,
+                    messages: visionMessages,
+                    temperature: 0.3,
+                    stream: false,
+                };
+                data = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${visionActiveKey}`
+                    },
+                    body: JSON.stringify(requestBody)
+                }, 0);
+            }
             saveVisionReqLog({ ...logBase, status: 'ok' });
             return data;
         } catch (err: any) {
@@ -1415,6 +1494,41 @@ ${visionDesc}
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;
+            // 暮色 2026-07-27：Gemini 协议请求体（独立于 OpenAI / Claude）
+            //   - contents: [{ role: 'user' | 'model', parts: [{text}] }]
+            //   - systemInstruction 顶层字段（不是 role:system 插在 messages 里）
+            //   - 端点: ${baseUrl}/models/{model}:generateContent?key=xxx
+            //   - 不带 Authorization header（key 走 URL 参数）
+            //   - 不挂 tool（Gemini function calling 格式不同；想用 tool 切回 OpenAI 中转）
+            let geminiRequestBody: any = null;
+            let geminiUrl = '';
+            if (useGeminiProtocol) {
+                const systemText = `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`;
+                const contents = cleanedApiMessages
+                    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+                    .map((m: any) => {
+                        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                        return {
+                            role: m.role === 'assistant' ? 'model' : 'user',
+                            parts: [{ text: text.slice(0, 30000) }]  // 单条 30k 截断，护 token 上限
+                        };
+                    });
+                // Gemini 第一个 turn 必须是 user，没有就补一条
+                if (contents.length === 0 || contents[0].role !== 'user') {
+                    contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
+                }
+                geminiRequestBody = {
+                    contents,
+                    systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                    generationConfig: {
+                        temperature: userTemp,
+                        maxOutputTokens: 8000,
+                    },
+                };
+                const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
+                geminiUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(effectiveApi.apiKey || '')}`;
+                console.log(`🌐 [Gemini] 直连协议 → ${geminiUrl.split('?')[0]}?key=***`);
+            }
             const baseReqBody: any = {
                 model: effectiveApi.model,
                 messages: fullMessages,
@@ -1522,10 +1636,43 @@ if (toolsList.length > 0) {
                 }
             }
 
-            let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                body: JSON.stringify(baseReqBody)
-            }, 2, 0, apiProtocol);
+            let data: any;
+            if (useGeminiProtocol && geminiRequestBody) {
+                // 暮色 2026-07-27：Gemini 协议直连 fetch（不走 OpenAI 兼容的 safeFetchJson）
+                //   - Gemini 返回的字段是 candidates[].content.parts[].text
+                //   - 转成 OpenAI 格式 choices[].message.content，后续代码无感
+                //   - 解析 usageMetadata → usage（token 徽标能用）
+                const geminiHeaders = { 'Content-Type': 'application/json' };
+                const geminiRes = await fetch(geminiUrl, {
+                    method: 'POST',
+                    headers: geminiHeaders,
+                    body: JSON.stringify(geminiRequestBody),
+                });
+                if (!geminiRes.ok) {
+                    const errText = await geminiRes.text().catch(() => '');
+                    throw new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                }
+                const geminiJson: any = await geminiRes.json();
+                const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                data = {
+                    choices: [{
+                        message: { role: 'assistant', content: geminiText },
+                        finish_reason: geminiFinish,
+                    }],
+                    usage: geminiJson?.usageMetadata ? {
+                        prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
+                        completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
+                        total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
+                    } : undefined,
+                };
+                console.log(`🌐 [Gemini] 响应 ${geminiText.length} 字 | usage=${JSON.stringify(data.usage)}`);
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(baseReqBody)
+                }, 2, 0, apiProtocol);
+            }
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -1670,7 +1817,115 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         if (imgPrompt && !imageGenError) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
-            try {
+            // 暮色 2026-07-27：生图走 Gemini 直连分支
+            //   - 优先用 imageGeminiBaseUrl/Key/Model（独立配置）
+            //   - 或 imageBaseUrl 含 generativelanguage.googleapis.com
+            //   - 走 :generateContent + responseModalities: ["TEXT", "IMAGE"]
+            //   - 支持 gemini-2.0-flash-exp / imagen-3.0-generate-002 等
+            const useImageGeminiDirect = !!(effectiveApi as any).imageGeminiBaseUrl && !!(effectiveApi as any).imageGeminiApiKey;
+            const useImageGeminiProtocol = useImageGeminiDirect
+                || (/generativelanguage\.googleapis\.com/i.test(effectiveApi.imageBaseUrl || '') && !!effectiveApi.imageApiKey);
+            const imageActiveUrl = useImageGeminiDirect ? (effectiveApi as any).imageGeminiBaseUrl : effectiveApi.imageBaseUrl;
+            const imageActiveKey = useImageGeminiDirect ? (effectiveApi as any).imageGeminiApiKey : effectiveApi.imageApiKey;
+            const imageActiveModel = useImageGeminiDirect
+                ? ((effectiveApi as any).imageGeminiModel || 'gemini-2.0-flash-exp')
+                : effectiveApi.imageModel;
+
+            if (useImageGeminiProtocol) {
+                try {
+                    console.log('🌐 [ImageGen Gemini] 直连协议 →', imageActiveModel);
+                    const cleanImgBase = (imageActiveUrl || '').replace(/\/+$/, '');
+                    const isImagen = /^imagen/i.test(imageActiveModel || '');
+                    let geminiRes: Response;
+                    if (isImagen) {
+                        // Imagen 3 走 :predict 端点
+                        geminiRes = await fetch(`${cleanImgBase}/models/${encodeURIComponent(imageActiveModel)}:predict?key=${encodeURIComponent(imageActiveKey || '')}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                instances: [{ prompt: imgPrompt }],
+                                parameters: { sampleCount: 1, aspectRatio: '1:1' },
+                            }),
+                        });
+                    } else {
+                        // Gemini 多模态生图（gemini-2.0-flash-exp / gemini-2.0-flash 等带 image generation 的）
+                        geminiRes = await fetch(`${cleanImgBase}/models/${encodeURIComponent(imageActiveModel)}:generateContent?key=${encodeURIComponent(imageActiveKey || '')}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ role: 'user', parts: [{ text: imgPrompt }] }],
+                                generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.4 },
+                            }),
+                        });
+                    }
+                    if (!geminiRes.ok) {
+                        const errText = await geminiRes.text().catch(() => '');
+                        throw new Error(`Gemini Image ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                    }
+                    const gj: any = await geminiRes.json();
+                    let geminiImageBase64: string | null = null;
+                    let geminiMime = 'image/png';
+                    if (isImagen) {
+                        // 响应格式: { predictions: [{ bytesBase64Encoded: "..." }] }
+                        geminiImageBase64 = gj?.predictions?.[0]?.bytesBase64Encoded || null;
+                    } else {
+                        // 响应格式: { candidates: [{ content: { parts: [{inlineData},{text}] } }] }
+                        const parts = gj?.candidates?.[0]?.content?.parts || [];
+                        for (const p of parts) {
+                            if (p?.inlineData?.data) {
+                                geminiImageBase64 = p.inlineData.data;
+                                geminiMime = p.inlineData.mimeType || 'image/png';
+                                break;
+                            }
+                        }
+                    }
+                    if (!geminiImageBase64) {
+                        throw new Error(`Gemini 生图未返回图片：${JSON.stringify(gj).slice(0, 300)}`);
+                    }
+                    // Gemini 给的是 base64，转成 data URL 走现有保存 / 上传图床逻辑
+                    const geminiDataUrl = `data:${geminiMime};base64,${geminiImageBase64}`;
+                    // 尝试上传图床拿到永久 URL（跟 OpenAI b64 流程一致）
+                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
+                    let finalImageUrl = geminiDataUrl;
+                    if (_imgbbKey) {
+                        try {
+                            const _formData = new FormData();
+                            _formData.append('image', geminiImageBase64);
+                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
+                                method: 'POST',
+                                body: _formData,
+                            });
+                            const _uploadData: any = await _uploadRes.json().catch(() => ({}));
+                            if (_uploadRes.ok && _uploadData?.data?.url) {
+                                finalImageUrl = _uploadData.data.url;
+                                console.log('🌐 [ImageGen Gemini] 已上传到 imgbb:', finalImageUrl);
+                            } else {
+                                console.warn('🌐 [ImageGen Gemini] imgbb 上传失败，用 data URL 兜底');
+                                onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
+                            }
+                        } catch (uploadErr: any) {
+                            console.warn('🌐 [ImageGen Gemini] imgbb 上传异常:', uploadErr?.message);
+                            onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
+                        }
+                    } else {
+                        console.warn('🌐 [ImageGen Gemini] imgbb 未配置，用 data URL 兜底');
+                        onImageBedWarning?.('未配图床，生图已用原图发送，占内存，建议看完删除');
+                    }
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'assistant',
+                        type: 'image',
+                        content: finalImageUrl,
+                    });
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    imageGenerated = true;
+                    console.log('🌐 [ImageGen Gemini] 生图成功');
+                } catch (geminiImgErr: any) {
+                    imageGenError = geminiImgErr?.message || String(geminiImgErr);
+                    console.warn('🌐 [ImageGen Gemini] 请求失败:', geminiImgErr);
+                }
+            } else {
+                try {
                 // 暮色 2026-07-14：生图失败排查 — 打印完整请求体，Netlify 日志里能看到实际发出去的 model 字符串
                 console.log('🎨 [ImageGen] 请求体:', {
                     url: `${normalizeApiUrl(effectiveApi.imageBaseUrl)}/images/generations`,
@@ -1857,6 +2112,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 imageGenError = imgErr?.message || String(imgErr);
                 console.warn('🎨 [ImageGen] 生图请求失败:', imgErr);
             }
+            }  // 暮色 2026-07-27：关闭 useImageGeminiProtocol 的 else 块
         }
 
         if (!imageGenerated) {

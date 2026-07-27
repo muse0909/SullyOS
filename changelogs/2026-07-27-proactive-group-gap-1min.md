@@ -1,7 +1,7 @@
 # 主动消息 group 边界：30 分钟 → 1 分钟（proactive 永远独立）
 
 **日期**：2026-07-27
-**涉及 commit**：（待 git commit 后填）
+**涉及 commit**：`f0a80c0`
 
 ## 改了什么
 

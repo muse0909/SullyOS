@@ -2851,15 +2851,29 @@ if (keepN > 0) {
                 {displayMessages.map((m, i) => {
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    const messageGroupGapMs = 30 * 60 * 1000;
-                    const breaksWithPrevious =
-                        !prevMessage ||
-                        prevMessage.role !== m.role ||
-                        Math.abs(m.timestamp - prevMessage.timestamp) > messageGroupGapMs;
-                    const breaksWithNext =
-                        !nextMessage ||
-                        nextMessage.role !== m.role ||
-                        Math.abs(nextMessage.timestamp - m.timestamp) > messageGroupGapMs;
+                    // 暮色 2026-07-27：group 边界规则——
+                    //   - 普通 user/AI 对话：30 分钟（保持原节奏）
+                    //   - 主动消息（isProactive=true）之间：永远独立 group（哪怕 0 秒间隔）
+                    //   - 主动消息 ↔ 普通消息：1 分钟 gap
+                    //   跟 7/23 改的"主动消息每条打时间戳"互补——这次解决 group 边界，
+                    //   7/23 解决时间戳显示
+                    const PROACTIVE_GAP_MS = 60 * 1000;
+                    const USER_CHAT_GAP_MS = 30 * 60 * 1000;
+                    const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
+                        if (!neighbor) return true;
+                        if (neighbor.role !== cur.role) return true;
+                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
+                        const curProactive = !!cur.metadata?.isProactive;
+                        const neighborProactive = !!neighbor.metadata?.isProactive;
+                        // 主动消息之间永远独立（哪怕 0 秒）
+                        if (curProactive && neighborProactive) return true;
+                        // 任何一边是主动消息：用 1 分钟规则
+                        if (curProactive || neighborProactive) return gap > PROACTIVE_GAP_MS;
+                        // 普通 user/AI 对话：30 分钟规则（不变）
+                        return gap > USER_CHAT_GAP_MS;
+                    };
+                    const breaksWithPrevious = calcBreaks(m, prevMessage);
+                    const breaksWithNext = calcBreaks(nextMessage, m);
                     return (
                         <MessageItem
                             key={m.id || i}

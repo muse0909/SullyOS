@@ -2854,13 +2854,14 @@ if (keepN > 0) {
                 {displayMessages.map((m, i) => {
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    // 暮色 2026-07-27：group 边界规则——
-                    //   - 普通 user/AI 对话：30 分钟（保持原节奏）
-                    //   - 主动消息（isProactive=true）之间：永远独立 group（哪怕 0 秒间隔）
-                    //   - 主动消息 ↔ 普通消息：1 分钟 gap
-                    //   跟 7/23 改的"主动消息每条打时间戳"互补——这次解决 group 边界，
-                    //   7/23 解决时间戳显示
-                    const PROACTIVE_GAP_MS = 60 * 1000;
+                    // 暮色 2026-07-27 v2：proactive 永远独立 group（不光是 proactive 之间）
+                    //   暮色反馈"主动消息和正常聊天回复的最后一条消息合并成一个时间戳"——
+                    //   根因是 calcBreaks v1 只把 proactive↔proactive 设成永远独立，
+                    //   assistant 正常回复跟 assistant proactive 仍按 1 分钟规则（同分钟<1分钟→合并）
+                    //   + formatTime 只显示 HH:MM，秒级看不出来
+                    //   改：proactive 跟任何消息 0 分钟 gap 永远独立（视觉上错开）
+                    //   formatTime 不动（暮色日常聊天节奏不变）
+                    //   配套：MessageItem.tsx 时间戳加视觉标记
                     const USER_CHAT_GAP_MS = 30 * 60 * 1000;
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
@@ -2868,10 +2869,8 @@ if (keepN > 0) {
                         const gap = Math.abs(cur.timestamp - neighbor.timestamp);
                         const curProactive = !!cur.metadata?.isProactive;
                         const neighborProactive = !!neighbor.metadata?.isProactive;
-                        // 主动消息之间永远独立（哪怕 0 秒）
-                        if (curProactive && neighborProactive) return true;
-                        // 任何一边是主动消息：用 1 分钟规则
-                        if (curProactive || neighborProactive) return gap > PROACTIVE_GAP_MS;
+                        // 任何一边是主动消息：永远独立 group（哪怕 0 秒）
+                        if (curProactive || neighborProactive) return true;
                         // 普通 user/AI 对话：30 分钟规则（不变）
                         return gap > USER_CHAT_GAP_MS;
                     };

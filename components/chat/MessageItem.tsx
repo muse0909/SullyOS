@@ -557,7 +557,20 @@ const MessageItem = React.memo(({
                         {content}
                     </div>
                     {(isLastInGroup || m.metadata?.isProactive) && showTimestamp !== 'never' && (
-                        <div className={`text-[9px] text-slate-400/80 px-1 mt-1 font-medium ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
+                        <div className={`text-[9px] px-1 mt-1 font-medium flex items-center gap-1 ${
+                            // 暮色 2026-07-27 v2：主动消息时间戳加视觉标记，跟普通时间戳区分
+                            // 根因：formatTime 只显示 HH:MM，秒级看不出来
+                            //   AI 正常 22:00:00 + proactive 22:00:30 文本都是 "22:00"——
+                            //   看着像合并。加紫色小圆点 + 略深色背景，秒级看不出来也能认出"这是主动"
+                            m.metadata?.isProactive
+                                ? 'text-violet-500/85 bg-violet-50/70 rounded-full px-2'
+                                : 'text-slate-400/80'
+                        } ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
+                            {m.metadata?.isProactive && (
+                                <span className="w-1 h-1 rounded-full bg-violet-400 shrink-0" />
+                            )}
+                            {formatTime(m.timestamp)}
+                        </div>
                     )}
                 </div>
 

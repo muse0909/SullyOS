@@ -1363,9 +1363,26 @@ if (!isVisible || !isChattingWithThisChar) {
           }
 
           // Determine which API to use
+          // 暮色 2026-07-27：3 层优先级
+          //   1. 副 API 开关打开 + 配了 baseUrl → 走副 API
+          //   2. 角色独立 API 开关打开 + 角色配了 baseUrl → 走角色独立 API（proactiveConfig.useCharApi）
+          //   3. 都没开 → 走全局主 API
           const pCfg = char.proactiveConfig;
-          const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
-          const api = useSecondary ? pCfg!.secondaryApi! : currentApiConfig;
+          const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
+          const useCharApi = !useSecondary && !!(pCfg?.useCharApi && char.apiConfig?.baseUrl);
+          let api: any;
+          let apiSource: 'secondary' | 'char' | 'main';
+          if (useSecondary) {
+              api = pCfg!.secondaryApi!;
+              apiSource = 'secondary';
+          } else if (useCharApi) {
+              // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 3 套字段 + protocol）
+              api = char.apiConfig;
+              apiSource = 'char';
+          } else {
+              api = currentApiConfig;
+              apiSource = 'main';
+          }
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
@@ -1373,7 +1390,7 @@ if (!isVisible || !isChattingWithThisChar) {
 
           proactiveRunningRef.current = true;
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
-          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
+          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name} (API source: ${apiSource}${apiSource === 'char' ? ` protocol=${(api as any).protocol || 'openai'}` : ''})`);
 
           // 暮色 2026-07-22：reqBody + apiProtocol 挪到 try 块外面
           //   原因：catch 块访问不到 try 块作用域里的 const 声明

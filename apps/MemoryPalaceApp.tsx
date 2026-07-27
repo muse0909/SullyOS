@@ -2468,13 +2468,12 @@ export default function MemoryPalaceApp() {
                                             key={p.id}
                                             onClick={() => {
                                                 // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
-                                                const loadedProto: 'openai' | 'claude' | 'gemini' = (p.config as any).protocol || 'openai';
-                                                switchLightProtocol(loadedProto);
-                                                if (loadedProto === 'claude') {
+                                                switchLightProtocol(proto);
+                                                if (proto === 'claude') {
                                                     setLightClaudeUrl((p.config as any).claudeBaseUrl || p.config.baseUrl || '');
                                                     setLightClaudeKey((p.config as any).claudeApiKey || p.config.apiKey || '');
                                                     setLightClaudeModel((p.config as any).claudeModel || p.config.model || '');
-                                                } else if (loadedProto === 'gemini') {
+                                                } else if (proto === 'gemini') {
                                                     setLightGeminiUrl((p.config as any).geminiBaseUrl || p.config.baseUrl || '');
                                                     setLightGeminiKey((p.config as any).geminiApiKey || p.config.apiKey || '');
                                                     setLightGeminiModel((p.config as any).geminiModel || p.config.model || '');
@@ -2488,7 +2487,7 @@ export default function MemoryPalaceApp() {
                                                 color: active ? '#065f46' : '#166534',
                                                 cursor: 'pointer',
                                             }}
-                                            title={`${loadedProto} · ${activeUrl || ''}`}
+                                            title={`${proto} · ${activeUrl || ''}`}
                                         >
                                             {p.name}{active ? ' ✓' : ''}
                                         </button>

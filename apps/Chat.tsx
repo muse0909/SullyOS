@@ -245,20 +245,23 @@ const Chat: React.FC = () => {
         //   - 角色 apiConfig 字段没值（空）→ updateCharApiConfig(undefined) 清空
         if (!perCharApiBaseUrl.trim() && !perCharApiClaudeUrl.trim() && !perCharApiGeminiUrl.trim()) {
             await updateCharApiConfig(char.id, undefined);
-            return;
-        }
-        await updateCharApiConfig(char.id, {
-            baseUrl: perCharApiProtocol === 'openai' ? perCharApiBaseUrl.trim() : (char.apiConfig?.baseUrl || ''),
-            apiKey: perCharApiProtocol === 'openai' ? perCharApiKey.trim() || undefined : (char.apiConfig?.apiKey || undefined),
-            model: perCharApiProtocol === 'openai' ? perCharApiModel.trim() || undefined : (char.apiConfig?.model || undefined),
-            protocol: perCharApiProtocol,
-            claudeBaseUrl: perCharApiProtocol === 'claude' ? perCharApiBaseUrl.trim() : perCharApiClaudeUrl,
-            claudeApiKey: perCharApiProtocol === 'claude' ? perCharApiKey.trim() : perCharApiClaudeKey,
+        } else {
+            await updateCharApiConfig(char.id, {
+                baseUrl: perCharApiProtocol === 'openai' ? perCharApiBaseUrl.trim() : (char.apiConfig?.baseUrl || ''),
+                apiKey: perCharApiProtocol === 'openai' ? perCharApiKey.trim() || undefined : (char.apiConfig?.apiKey || undefined),
+                model: perCharApiProtocol === 'openai' ? perCharApiModel.trim() || undefined : (char.apiConfig?.model || undefined),
+                protocol: perCharApiProtocol,
+                claudeBaseUrl: perCharApiProtocol === 'claude' ? perCharApiBaseUrl.trim() : perCharApiClaudeUrl,
+                claudeApiKey: perCharApiProtocol === 'claude' ? perCharApiKey.trim() : perCharApiClaudeKey,
             claudeModel: perCharApiProtocol === 'claude' ? perCharApiModel.trim() : perCharApiClaudeModel,
             geminiBaseUrl: perCharApiProtocol === 'gemini' ? perCharApiBaseUrl.trim() : perCharApiGeminiUrl,
             geminiApiKey: perCharApiProtocol === 'gemini' ? perCharApiKey.trim() : perCharApiGeminiKey,
             geminiModel: perCharApiProtocol === 'gemini' ? perCharApiModel.trim() : perCharApiGeminiModel,
         } as any);
+        }
+        // 暮色 2026-07-27：保存后自动关闭侧拉栏
+        setShowChatSettingsDrawer(false);
+        addToast('角色 API 配置已保存', 'success');
     };
     const handleClearPerCharApi = async () => {
         if (!char) return;

@@ -1040,6 +1040,10 @@ export interface CharacterProfile {
       apiKey: string;
       model: string;
     };
+    // 暮色 2026-07-27：增加「角色独立 API 开关」
+    //   - 优先级：useSecondaryApi > useCharApi > 全局主 API
+    //   - 三个开关都关 → 走全局主 API
+    useCharApi?: boolean;
   };
 
   // 情绪Buff系统

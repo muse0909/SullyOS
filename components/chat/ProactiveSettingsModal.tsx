@@ -34,6 +34,10 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
     const [secKey, setSecKey] = useState(saved?.secondaryApi?.apiKey ?? '');
     const [secModel, setSecModel] = useState(saved?.secondaryApi?.model ?? '');
     const [showApiSection, setShowApiSection] = useState(saved?.useSecondaryApi ?? false);
+    // 暮色 2026-07-27：增加「角色独立 API 开关」
+    //   优先级：副 API > 角色独立 API > 主 API
+    //   全部留空走主 API
+    const [useCharApi, setUseCharApi] = useState(saved?.useCharApi ?? false);
 
     // Reset form when modal opens with new char data
     useEffect(() => {
@@ -46,6 +50,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
             setSecKey(s?.secondaryApi?.apiKey ?? '');
             setSecModel(s?.secondaryApi?.model ?? '');
             setShowApiSection(s?.useSecondaryApi ?? false);
+            setUseCharApi(s?.useCharApi ?? false);
         }
     }, [isOpen, char.id]);
 
@@ -59,6 +64,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                 apiKey: secKey,
                 model: secModel,
             } : undefined,
+            useCharApi: useCharApi && !useSecondaryApi,  // 副 API 优先
         });
         onClose();
     };
@@ -180,6 +186,28 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                     </div>
                                 </div>
                             )}
+
+                            {/* 暮色 2026-07-27：角色独立 API 开关（在副 API 开关下面） */}
+                            <div className="pt-2 mt-2 border-t border-slate-100">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-bold text-slate-700">使用角色独立 API</span>
+                                    <button
+                                        onClick={() => setUseCharApi(!useCharApi)}
+                                        className={`w-12 h-7 rounded-full transition-colors relative ${useCharApi ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                    >
+                                        <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${useCharApi ? 'translate-x-5' : 'translate-x-0'}`} />
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-slate-400 leading-relaxed">
+                                    走这个角色自己的 API（角色编辑里配的那个，含 3 tab 协议）。
+                                    <br />优先级：<b className="text-violet-500">副 API &gt; 角色独立 API &gt; 主 API</b>。都关就走主 API。
+                                </p>
+                                {!char.apiConfig?.baseUrl && (
+                                    <p className="text-[11px] text-amber-500 mt-1">
+                                        ⚠️ 角色还没配独立 API（留空就是用全局）。去「这个角色的 API」填一下。
+                                    </p>
+                                )}
+                            </div>
                         </div>
                     </>
                 )}

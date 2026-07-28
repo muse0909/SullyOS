@@ -28,6 +28,14 @@ import { ProactiveChat } from '../utils/proactiveChat';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
+const isValidChatMessage = (m: any): m is Message => {
+    return !!m && typeof m === 'object' && typeof m.role === 'string' && typeof m.id === 'number';
+};
+
+const sanitizeChatMessages = (items: any[]): Message[] => {
+    return (items || []).filter(isValidChatMessage);
+};
+
 const Chat: React.FC = () => {
        const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
@@ -80,6 +88,7 @@ const Chat: React.FC = () => {
         } catch { return 0; }
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
+    const safeMessages = useMemo(() => sanitizeChatMessages(messages), [messages]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -390,7 +399,7 @@ const Chat: React.FC = () => {
         if (!char?.id || !msg) return;
         try {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${msg}]` });
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            setMessages(sanitizeChatMessages(await DB.getRecentMessagesByCharId(char.id, 200)));
         } catch (e) {
             console.warn('🖼️ [ImageBed] 推警告系统消息失败:', e);
         }
@@ -426,11 +435,12 @@ const Chat: React.FC = () => {
         if (relevant.length === 0) return;
 
         setMessages((prev) => {
+            const safePrev = sanitizeChatMessages(prev);
             // 收集现有 clientId（去重）
             const existing = new Set(
-                prev.filter((m) => m.clientId).map((m) => m.clientId as string)
+                safePrev.filter((m) => m.clientId).map((m) => m.clientId as string)
             );
-            const additions: typeof prev = [];
+            const additions: Message[] = [];
             for (const cm of relevant) {
                 if (existing.has(cm.clientId)) continue;
                 // 用负数 id 避免跟本地 IndexedDB auto-increment 冲突
@@ -448,8 +458,8 @@ const Chat: React.FC = () => {
                 } as any);
                 existing.add(cm.clientId);
             }
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions].sort((a, b) => a.timestamp - b.timestamp);
+            if (additions.length === 0) return safePrev;
+            return [...safePrev, ...additions].sort((a, b) => a.timestamp - b.timestamp);
         });
     });
 
@@ -507,7 +517,7 @@ const Chat: React.FC = () => {
         const data = voiceDataMap[msgId];
         if (!data) {
             // No voice data yet — trigger TTS generation (e.g. placeholder voice bar clicked)
-            const msg = messages.find(m => m.id === msgId);
+            const msg = safeMessages.find(m => m.id === msgId);
             if (msg) handleManualTts(msg, false);
             return;
         }
@@ -647,8 +657,8 @@ const Chat: React.FC = () => {
         const voiceProfile = char.voiceProfile;
         if (!voiceProfile?.voiceId && (!voiceProfile?.timberWeights || voiceProfile.timberWeights.length === 0)) return;
         // Scan recent assistant messages for unprocessed <语音> tags
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const msg = messages[i];
+        for (let i = safeMessages.length - 1; i >= 0; i--) {
+            const msg = safeMessages[i];
             // Stop scanning once we hit a non-assistant message (end of current AI response batch)
             if (msg.role !== 'assistant') break;
             if (msg.type !== 'text') continue;
@@ -667,15 +677,16 @@ const Chat: React.FC = () => {
             const detail = (e as CustomEvent).detail as { charId: string; content: string; timestamp: number };
             if (!detail || detail.charId !== char.id) return;
             setMessages((prev) => {
+                const safePrev = sanitizeChatMessages(prev);
                 // 防重：如果最后一条已经是这条（避免快速触发重复）
-                if (prev.length > 0) {
-                    const last = prev[prev.length - 1];
+                if (safePrev.length > 0) {
+                    const last = safePrev[safePrev.length - 1];
                     if (last.content === detail.content && last.role === 'assistant' && (Date.now() - (last.timestamp || 0)) < 5000) {
-                        return prev;
+                        return safePrev;
                     }
                 }
-                const nextId = Math.max(0, ...prev.map((m) => m.id)) + 1;
-                return [...prev, {
+                const nextId = Math.max(0, ...safePrev.map((m) => m.id)) + 1;
+                return [...safePrev, {
                     id: nextId,
                     charId: char.id,
                     role: 'assistant',
@@ -690,7 +701,7 @@ const Chat: React.FC = () => {
         return () => window.removeEventListener('sullyos:direct-ai-message', handler);
     }, [char?.id]);
 
-    const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const canReroll = !isTyping && safeMessages.length > 0 && safeMessages[safeMessages.length - 1].role === 'assistant';
 
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
     const handleTranslateToggle = useCallback((msgId: number) => {
@@ -730,9 +741,9 @@ const Chat: React.FC = () => {
     // mount is what keeps previously-generated voice bars alive across
     // chat entries.
     useEffect(() => {
-        if (!messages.length) return;
+        if (!safeMessages.length) return;
         const map = voiceDataMap;
-        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        const toFetch = safeMessages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
         (async () => {
@@ -756,7 +767,7 @@ const Chat: React.FC = () => {
             setVoiceDataMap(prev => ({ ...updates, ...prev }));
         })();
         return () => { cancelled = true; };
-    }, [messages]);
+    }, [safeMessages]);
 
     // Revoke blob URLs when switching characters / unmounting to avoid leaks.
     useEffect(() => {
@@ -785,7 +796,7 @@ const Chat: React.FC = () => {
             const currentChar = charRef.current;
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
-            const chatScopeMsgs = allMsgs
+            const chatScopeMsgs = sanitizeChatMessages(allMsgs)
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
@@ -800,7 +811,7 @@ const Chat: React.FC = () => {
                 const retryMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
-                const chatScopeMsgs = retryMsgs
+                const chatScopeMsgs = sanitizeChatMessages(retryMsgs)
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
@@ -871,7 +882,7 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
-                const filtered = allMsgs
+                const filtered = sanitizeChatMessages(allMsgs)
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
@@ -1015,7 +1026,7 @@ const Chat: React.FC = () => {
 
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
-        const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        const currentLastId = safeMessages.length > 0 ? safeMessages[safeMessages.length - 1].id : null;
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place
         // 用户在翻历史时（不在底部）即使有 last ID 变化也强制不滚——避免翻着看着被甩回最新
@@ -1126,7 +1137,7 @@ const Chat: React.FC = () => {
                 scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
             }
         }
-    }, [messages, isTyping, recallStatus, searchStatus, diaryStatus, selectionMode]);
+    }, [safeMessages, isTyping, recallStatus, searchStatus, diaryStatus, selectionMode]);
 
     const formatTime = (ts: number) => {
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -1142,7 +1153,7 @@ const Chat: React.FC = () => {
         if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
         
         if (type === 'image') {
-            const recentChat = messages.slice(-10).map(m => {
+            const recentChat = safeMessages.slice(-10).map(m => {
                 const sender = m.role === 'user' ? userProfile.name : char.name;
                 return `${sender}: ${m.content.substring(0, 100)}`;
             });
@@ -1203,15 +1214,15 @@ const Chat: React.FC = () => {
     };
 
     const handleReroll = async () => {
-        if (isTyping || messages.length === 0) return;
+        if (isTyping || safeMessages.length === 0) return;
 
-        const lastMsg = messages[messages.length - 1];
+        const lastMsg = safeMessages[safeMessages.length - 1];
         if (lastMsg.role !== 'assistant') return;
 
         const toDeleteIds: number[] = [];
-        let index = messages.length - 1;
-        while (index >= 0 && messages[index].role === 'assistant') {
-            toDeleteIds.push(messages[index].id);
+        let index = safeMessages.length - 1;
+        while (index >= 0 && safeMessages[index].role === 'assistant') {
+            toDeleteIds.push(safeMessages[index].id);
             index--;
         }
 
@@ -1219,7 +1230,7 @@ const Chat: React.FC = () => {
 
         await DB.deleteMessages(toDeleteIds);
         discardVoiceForMessages(toDeleteIds);
-        const newHistory = messages.slice(0, index + 1);
+        const newHistory = safeMessages.slice(0, index + 1);
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
 
@@ -1292,7 +1303,7 @@ const Chat: React.FC = () => {
         );
 
         // ② 写回 DB 持久化
-        const stale = messages.filter(
+        const stale = safeMessages.filter(
             (msg: Message) => msg.role === 'user' && isBase64Img(msg.content)
         );
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
@@ -1413,7 +1424,7 @@ const Chat: React.FC = () => {
             metadata: { fromMcdMiniApp: true },
         } as any);
         ProactiveChat.markUserContact(char.id);
-        const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+        const recent = sanitizeChatMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         setMessages(recent);
         triggerAI(recent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1740,7 +1751,7 @@ const Chat: React.FC = () => {
                 const processedIds = processedMsgs.map(m => m.id);
                 await DB.deleteMessages(processedIds);
                 discardVoiceForMessages(processedIds);
-                const remaining = allMessages.filter(m => m.id > hwm);
+                const remaining = sanitizeChatMessages(allMessages).filter(m => m.id > hwm);
                 setMessages(remaining.slice(-200));
                 setTotalMsgCount(remaining.length);
                 setVisibleCount(LOAD_BATCH_SIZE);
@@ -1753,7 +1764,7 @@ const Chat: React.FC = () => {
 
         // 原有逻辑（无记忆宫殿 or 所有消息已处理）
 const keepN = preserveCount ?? 10;
-const allMessages = await DB.getMessagesByCharId(char.id, true);
+const allMessages = sanitizeChatMessages(await DB.getMessagesByCharId(char.id, true));
 
 if (keepN > 0) {
     const toKeep = allMessages.slice(-keepN);
@@ -2230,7 +2241,7 @@ if (keepN > 0) {
 
        const handleCopySelected = async () => {
     if (selectedMsgIds.size === 0) return;
-    const selectedMsgs = messages.filter(m => selectedMsgIds.has(m.id!));
+    const selectedMsgs = safeMessages.filter(m => selectedMsgIds.has(m.id!));
     const textContent = selectedMsgs
         .map(m => {
             if (m.type === 'text') return m.content;
@@ -2319,7 +2330,7 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
-    const displayMessages = useMemo(() => messages
+    const displayMessages = useMemo(() => sanitizeChatMessages(messages)
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })

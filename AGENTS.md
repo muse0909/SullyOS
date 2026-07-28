@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |
 | 2026-07-28 | API 浮窗 4 张配置卡片统一 | [`changelogs/2026-07-28-api-quickfloat-unify.md`](./changelogs/2026-07-28-api-quickfloat-unify.md) |
 | 2026-07-27 | 悬浮球/主动消息 5 处补全 + loadedProto bug 修 | [`changelogs/2026-07-27-float-proactive-etc.md`](./changelogs/2026-07-27-float-proactive-etc.md) |
 | 2026-07-27 | 3 个 API 反馈修复（删生图 Gemini 折叠块 + 副 API/角色 API 加 3 tab 切换） | [`changelogs/2026-07-27-api-feedback-fixes.md`](./changelogs/2026-07-27-api-feedback-fixes.md) |

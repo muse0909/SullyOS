@@ -17,6 +17,10 @@ const ForwardCard: React.FC<{
 }> = ({ forwardData, commonLayout, selectionMode }) => {
     const [expanded, setExpanded] = useState(false);
 
+    const safeMessages = Array.isArray(forwardData?.messages)
+        ? forwardData.messages.filter((msg: any) => !!msg && typeof msg === 'object' && typeof msg.role === 'string')
+        : [];
+
     const handleCardClick = (e: React.MouseEvent) => {
         if (selectionMode) return;
         e.stopPropagation();
@@ -63,7 +67,7 @@ const ForwardCard: React.FC<{
 
                     {/* Messages List */}
                     <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                        {(forwardData.messages || []).map((msg: any, i: number) => {
+                        {safeMessages.map((msg: any, i: number) => {
                             const isUser = msg.role === 'user';
                             const senderName = isUser ? forwardData.fromUserName : forwardData.fromCharName;
                             return (

@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
 | 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |
 | 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |
 | 2026-07-28 | API 浮窗 4 张配置卡片统一 | [`changelogs/2026-07-28-api-quickfloat-unify.md`](./changelogs/2026-07-28-api-quickfloat-unify.md) |

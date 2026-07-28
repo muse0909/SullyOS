@@ -431,7 +431,7 @@ const Chat: React.FC = () => {
     useCloudMessages((cloudMsgs) => {
         if (!char?.id) return;
         // 只处理当前角色（useCloudMessages 是单例回调，多角色切来切去可能收到别的角色的）
-        const relevant = cloudMsgs.filter((m) => m.charId === char.id);
+        const relevant = sanitizeChatMessages(cloudMsgs).filter((m) => m.charId === char.id);
         if (relevant.length === 0) return;
 
         setMessages((prev) => {
@@ -2554,7 +2554,7 @@ if (keepN > 0) {
                  </div>
              )}
 
-             <ChatModals
+            <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
                  emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
@@ -2566,7 +2566,7 @@ if (keepN > 0) {
                     try { localStorage.setItem('chat_active_archive_prompt_id', id); } catch {}
                 }}
                 editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing} archiveProgress={archiveProgress}
-                selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
+                selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={safeMessages}
                 allHistoryMessages={allHistoryMessages}
                 
                 newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
@@ -3045,7 +3045,7 @@ if (keepN > 0) {
                 onClose={() => setMcdAppOpen(false)}
                 char={char}
                 userProfile={userProfile}
-                messages={messages}
+                messages={safeMessages}
                 isTyping={isTyping}
                 onSendMessage={handleMcdMiniAppSend}
                 onStateChange={handleMcdMiniAppStateChange}

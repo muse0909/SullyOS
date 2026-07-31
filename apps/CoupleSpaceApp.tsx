@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision } = useOS();
+  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision, jumpToChat } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');
@@ -195,8 +195,11 @@ const CoupleSpaceApp: React.FC = () => {
     reload();
     addToast({ type: 'info', message: `邀请已发送给 ${char.name}，等 ta 回应...` });
 
-    // 4. 跳转到角色的聊天
-    setTimeout(() => openApp(AppID.Chat), 600);
+    // 4. 跳转到角色的私聊（用 jumpToChat 真正跳到江澈的 chat，不是联系人列表）
+    //   暮色 2026-07-31 反馈"跳的是联系人页，不是聊天页"——之前用 openApp(AppID.Chat) 错
+    //   SullyOS 已经有 jumpToChat（line 3230）：设 pending ref + setActiveCharacterId + setActiveApp
+    //   WeChat mount 时 consume pending ref 自动 open 私聊
+    setTimeout(() => jumpToChat(char.id), 600);
 
     // 5. 触发 AI 决策（异步，不等返回）
     //   暮色 2026-07-31 选 B 完整版：让江澈用 LLM 决定接受/拒绝

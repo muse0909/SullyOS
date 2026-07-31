@@ -164,6 +164,8 @@ interface OSContextType {
   // 暮色 2026-07-31：情侣空间全局 action（MessageItem 卡片能调，不依赖 CoupleSpaceApp 挂载）
   coupleSpaceAccept: (charId: string) => Promise<void>;
   coupleSpaceDecline: (charId: string) => Promise<void>;
+  // AI 决策完整版（暮色选 B）：让角色用 LLM 决定接受/拒绝
+  requestCoupleSpaceDecision: (charId: string) => Promise<void>;
   /** 便捷：单独更新角色的 API 配置（暮色 2026-07-24 角色独立 API） */
   updateCharApiConfig: (id: string, apiConfig: CharacterProfile['apiConfig']) => Promise<void>;
   deleteCharacter: (id: string) => void;
@@ -3329,6 +3331,8 @@ if (!isVisible || !isChattingWithThisChar) {
     // 暮色 2026-07-31：情侣空间全局 action，MessageItem 卡片能调（不依赖 CoupleSpaceApp 挂载）
     coupleSpaceAccept,
     coupleSpaceDecline,
+    // AI 决策完整版（暮色选 B）
+    requestCoupleSpaceDecision,
     updateCharApiConfig,
     deleteCharacter,
     setActiveCharacterId,

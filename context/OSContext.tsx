@@ -9,6 +9,8 @@ import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
+// 暮色 2026-08-01：情侣空间 AI 主动打卡接 runProactive
+import { shouldTriggerAiCheckin, pickRandomTask, addCheckin } from '../utils/coupleSpaceStorage';
 // 暮色 2026-07-22：每月自动跑一次记忆关系网修剪（30 天间隔，避免节点关联数缓慢增长）
 //   - 用户感知：仅在真的删了东西时弹一个 success toast
 //   - 失败 / 跳过（< 30 天）静默
@@ -1367,6 +1369,38 @@ if (!isVisible || !isChattingWithThisChar) {
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled`);
+              return;
+          }
+
+          // 暮色 2026-08-01：情侣空间 AI 主动打卡
+          //   触发条件：30% 概率 / 一天最多 3 条 / 距上次主动 > 6 小时
+          //   命中 → addCheckin + 推系统消息进聊天流（type: 'couple_space_event'）
+          //   **不调 LLM**：一个 trigger 只产生一个事件（主动打卡 OR 主动消息，不会两个一起）
+          //   行为区别于"连接中断"等技术状态 — 这是用户行为触发的，AI 应该能主动引用
+          if (shouldTriggerAiCheckin('default', charId)) {
+              const today = new Date().toISOString().split('T')[0];
+              const task = pickRandomTask();
+              addCheckin('default', charId, {
+                  date: today,
+                  taskId: task.id,
+                  taskName: task.name,
+                  content: `ta 完成了「${task.name}」`,
+                  fromUser: false,
+                  fromChar: true,
+              });
+              await DB.saveMessage({
+                  charId,
+                  role: 'system',
+                  type: 'couple_space_event',
+                  content: `[情侣空间事件] ${char.name} 完成了「${task.name}」`,
+                  metadata: { source: 'couple_space_ai_checkin', taskId: task.id },
+              });
+              console.log(`🎯 [CoupleSpace/Proactive] ${char.name} 主动打卡：${task.name}`);
+              // 推 unread badge + 通知气泡（沿用主动消息的事件）
+              window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                  detail: { charId, charName: char.name, body: `完成了「${task.name}」` }
+              }));
+              drainQueuedProactive();
               return;
           }
 

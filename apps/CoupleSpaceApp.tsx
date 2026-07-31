@@ -19,6 +19,8 @@ import {
   daysTogether,
   addCheckin,
   initSpace,
+  deleteSpace,
+  setAnnivDate,
 } from '../utils/coupleSpaceStorage';
 import Modal from '../components/os/Modal';
 import {
@@ -28,6 +30,8 @@ import {
   Plus,
   Flame as FlameIcon,
   Check as CheckIcon,
+  Gear as GearIcon,
+  Warning as WarningIcon,
 } from '@phosphor-icons/react';
 
 // ──────────────────────────────────────────
@@ -51,6 +55,12 @@ const CoupleSpaceApp: React.FC = () => {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteSelectedCharId, setInviteSelectedCharId] = useState<string>('');
   const [inviteAnnivDate, setInviteAnnivDate] = useState<string>(todayStr());
+
+  // 暮色 2026-07-31 反馈"没有关掉情侣空间的设置"
+  //   设置弹窗：改关系开始日 + 解除情侣空间
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [editableAnnivDate, setEditableAnnivDate] = useState<string>('');
+  const [showUnbindConfirm, setShowUnbindConfirm] = useState(false);
 
   const reload = () => {
     setSpaces(getAllSpaces());
@@ -82,6 +92,51 @@ const CoupleSpaceApp: React.FC = () => {
     setInviteAnnivDate(todayStr());
     setInviteSelectedCharId('');
     setShowInviteModal(true);
+  };
+
+  // 打开设置弹窗（暮色 2026-07-31：关掉情侣空间 + 改开始日）
+  const openSettingsModal = () => {
+    if (activeSpace) {
+      setEditableAnnivDate(activeSpace.annivDate);
+      setShowSettingsModal(true);
+    }
+  };
+
+  // 保存关系开始日
+  const handleSaveAnnivDate = () => {
+    if (!activeSpace || !editableAnnivDate) return;
+    setAnnivDate('default', activeSpace.charId, editableAnnivDate);
+    setShowSettingsModal(false);
+    reload();
+    addToast({ type: 'success', message: '关系开始日已更新' });
+  };
+
+  // 解除情侣空间（删除数据 + 推消息 + 跳回 gate）
+  const handleUnbindSpace = async () => {
+    if (!activeSpace) return;
+    const char = characters.find(c => c.id === activeSpace.charId);
+    deleteSpace('default', activeSpace.charId);
+    // 推一条 system 消息告诉角色（跟开通时对称）
+    try {
+      await DB.saveMessage({
+        charId: activeSpace.charId,
+        role: 'system',
+        type: 'couple_space_event',
+        content: '暮色关掉了和你的情侣空间。',
+        metadata: {
+          source: 'couple_space_unbind',
+          pairId: activeSpace.pairId,
+        },
+      });
+    } catch (e) {
+      console.error('[coupleSpace] 发送解除消息失败', e);
+    }
+    setShowUnbindConfirm(false);
+    setShowSettingsModal(false);
+    setView('gate');
+    setActiveCharId('');
+    reload();
+    addToast({ type: 'info', message: `已解除和 ${char?.name || 'TA'} 的情侣空间` });
   };
 
   // 提交邀请
@@ -256,7 +311,14 @@ const CoupleSpaceApp: React.FC = () => {
         <h1 className="text-base font-bold text-slate-800 tracking-wide">
           我 & {char?.name || 'TA'}
         </h1>
-        <div className="w-9 h-9" />
+        {/* 暮色 2026-07-31：加齿轮入口到空间设置（改日期 / 解除） */}
+        <button
+          onClick={openSettingsModal}
+          className="w-9 h-9 flex items-center justify-center rounded-full text-rose-400 hover:bg-rose-50 active:scale-95 transition-transform"
+          aria-label="设置"
+        >
+          <GearIcon size={20} weight="bold" />
+        </button>
       </div>
 
       {/* 关系天数 + 设置入口 */}
@@ -317,6 +379,25 @@ const CoupleSpaceApp: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 暮色 2026-07-31：情侣空间设置弹窗（齿轮入口） */}
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        charName={char?.name || 'TA'}
+        editableAnnivDate={editableAnnivDate}
+        setEditableAnnivDate={setEditableAnnivDate}
+        onSaveAnniv={handleSaveAnnivDate}
+        onUnbindClick={() => setShowUnbindConfirm(true)}
+      />
+
+      {/* 解除确认弹窗（二次确认） */}
+      <UnbindConfirmModal
+        isOpen={showUnbindConfirm}
+        onClose={() => setShowUnbindConfirm(false)}
+        onConfirm={handleUnbindSpace}
+        charName={char?.name || 'TA'}
+      />
     </div>
   );
 };
@@ -630,6 +711,122 @@ const Last7DaysStrip: React.FC<{ space: CoupleSpace }> = ({ space }) => {
         </div>
       </div>
     </div>
+  );
+};
+
+// ──────────────────────────────────────────
+// 设置弹窗（暮色 2026-07-31 反馈"没有关掉情侣空间的设置"）
+//   改关系开始日 + 解除情侣空间
+// ──────────────────────────────────────────
+
+const SettingsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  charName: string;
+  editableAnnivDate: string;
+  setEditableAnnivDate: (d: string) => void;
+  onSaveAnniv: () => void;
+  onUnbindClick: () => void;
+}> = ({ isOpen, onClose, charName, editableAnnivDate, setEditableAnnivDate, onSaveAnniv, onUnbindClick }) => {
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="情侣空间设置"
+      footer={
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+        >
+          关闭
+        </button>
+      }
+    >
+      <div className="space-y-5">
+        {/* 关系开始日 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">关系开始日</div>
+          <div className="text-[10px] text-slate-400 mb-2">在 {charName} 的关系从哪一天开始算？</div>
+          <input
+            type="date"
+            value={editableAnnivDate}
+            onChange={e => setEditableAnnivDate(e.target.value)}
+            max={todayStr()}
+            className="w-full px-3 py-2.5 bg-slate-50 rounded-2xl text-sm text-slate-800 border border-slate-200 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+          />
+          <button
+            onClick={onSaveAnniv}
+            disabled={!editableAnnivDate}
+            className="w-full mt-3 py-2.5 bg-rose-400 text-white font-bold rounded-full active:scale-95 transition-transform disabled:opacity-50"
+          >
+            保存
+          </button>
+        </div>
+
+        {/* 分隔线 */}
+        <div className="h-px bg-slate-200" />
+
+        {/* 解除情侣空间 */}
+        <div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <WarningIcon size={14} weight="fill" className="text-red-500" />
+            <div className="text-xs text-red-500 font-medium">解除情侣空间</div>
+          </div>
+          <div className="text-[10px] text-slate-500 mb-3 leading-relaxed">
+            解除后会删除所有打卡 / 时间线 / 悄悄话数据，<span className="text-red-500 font-medium">不可恢复</span>。
+          </div>
+          <button
+            onClick={onUnbindClick}
+            className="w-full py-2.5 bg-red-50 text-red-500 font-bold rounded-full border border-red-200/60 active:scale-95 transition-transform"
+          >
+            解除...
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// 解除确认弹窗（二次确认）
+const UnbindConfirmModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  charName: string;
+}> = ({ isOpen, onClose, onConfirm, charName }) => {
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="确定要解除吗？"
+      footer={
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+          >
+            再想想
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2.5 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-transform"
+          >
+            确认解除
+          </button>
+        </div>
+      }
+    >
+      <div className="text-center py-2">
+        <div className="text-4xl mb-3">💔</div>
+        <div className="text-sm text-slate-700 leading-relaxed">
+          和 <span className="font-bold text-rose-500">{charName}</span> 的情侣空间会被删除
+        </div>
+        <div className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+          所有打卡 / 时间线 / 悄悄话都会消失<br />
+          还会告诉 {charName} 这个决定
+        </div>
+      </div>
+    </Modal>
   );
 };
 

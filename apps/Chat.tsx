@@ -28,6 +28,14 @@ import { ProactiveChat } from '../utils/proactiveChat';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
+const isValidChatMessage = (m: any): m is Message => {
+    return !!m && typeof m === 'object' && typeof m.role === 'string' && typeof m.id === 'number';
+};
+
+const sanitizeChatMessages = (items: any[]): Message[] => {
+    return (items || []).filter(isValidChatMessage);
+};
+
 const Chat: React.FC = () => {
        const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
@@ -80,6 +88,7 @@ const Chat: React.FC = () => {
         } catch { return 0; }
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
+    const safeMessages = useMemo(() => sanitizeChatMessages(messages), [messages]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -168,6 +177,17 @@ const Chat: React.FC = () => {
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
     const [perCharApiKey, setPerCharApiKey] = useState('');
     const [perCharApiModel, setPerCharApiModel] = useState('');
+    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换（OpenAI / Claude / Gemini）
+    //   - 跟全局主 API 一致，3 套独立 URL/Key/Model 缓存
+    //   - 切 tab 自动存当前值到旧协议缓存，从新协议缓存读取
+    //   - 加载 Gemini 预设时同步切 protocol + 填对应那组（修暮色报的 401 bug）
+    const [perCharApiProtocol, setPerCharApiProtocol] = useState<'openai' | 'claude' | 'gemini'>('openai');
+    const [perCharApiClaudeUrl, setPerCharApiClaudeUrl] = useState('');
+    const [perCharApiClaudeKey, setPerCharApiClaudeKey] = useState('');
+    const [perCharApiClaudeModel, setPerCharApiClaudeModel] = useState('');
+    const [perCharApiGeminiUrl, setPerCharApiGeminiUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
+    const [perCharApiGeminiKey, setPerCharApiGeminiKey] = useState('');
+    const [perCharApiGeminiModel, setPerCharApiGeminiModel] = useState('gemini-2.0-flash');
     const [showPerCharKey, setShowPerCharKey] = useState(false);
     // 模型下拉相关 state（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
     const [perCharAvailableModels, setPerCharAvailableModels] = useState<string[]>([]);
@@ -182,56 +202,175 @@ const Chat: React.FC = () => {
     // 只看 main 类型的预设（暮色 2026-07-24 — 聊天 API 用 main 预设）
     const mainPresets = (apiPresets || []).filter((p: any) => !p.kind || p.kind === 'main');
     // 打开抽屉 / 切角色时同步当前角色的 apiConfig
+    // 暮色 2026-07-31 修：之前只同步 3 套独立缓存（Claude*/Gemini*/BaseUrl*），
+    //   但 perCharApiBaseUrl/Key/Model 永远从 char.apiConfig.baseUrl/apiKey/model 读
+    //   → 重开抽屉时如果 protocol 是 gemini/claude，tab 在那但输入框显示 OpenAI 那组的值（空），
+    //     看起来像"没保存"
+    //   修：同步完 3 套缓存 + protocol 之后，按当前 protocol 把对应那组填进 perCharApiBaseUrl/Key/Model
+    //     （跟 switchPerCharApiProtocol 切 tab 时的逻辑保持一致）
     useEffect(() => {
         if (showChatSettingsDrawer && char) {
-            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
-            setPerCharApiKey(char.apiConfig?.apiKey || '');
-            setPerCharApiModel(char.apiConfig?.model || '');
+            const proto = ((char.apiConfig as any)?.protocol as 'openai' | 'claude' | 'gemini') || 'openai';
+            const claudeUrl = (char.apiConfig as any)?.claudeBaseUrl || '';
+            const claudeKey = (char.apiConfig as any)?.claudeApiKey || '';
+            const claudeModel = (char.apiConfig as any)?.claudeModel || '';
+            const geminiUrl = (char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+            const geminiKey = (char.apiConfig as any)?.geminiApiKey || '';
+            const geminiModel = (char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash';
+            setPerCharApiProtocol(proto);
+            setPerCharApiClaudeUrl(claudeUrl);
+            setPerCharApiClaudeKey(claudeKey);
+            setPerCharApiClaudeModel(claudeModel);
+            setPerCharApiGeminiUrl(geminiUrl);
+            setPerCharApiGeminiKey(geminiKey);
+            setPerCharApiGeminiModel(geminiModel);
+            // 按当前 protocol 填入对应的 baseUrl/Key/Model，让输入框跟 tab 状态对齐
+            if (proto === 'claude') {
+                setPerCharApiBaseUrl(claudeUrl);
+                setPerCharApiKey(claudeKey);
+                setPerCharApiModel(claudeModel);
+            } else if (proto === 'gemini') {
+                setPerCharApiBaseUrl(geminiUrl);
+                setPerCharApiKey(geminiKey);
+                setPerCharApiModel(geminiModel);
+            } else {
+                setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
+                setPerCharApiKey(char.apiConfig?.apiKey || '');
+                setPerCharApiModel(char.apiConfig?.model || '');
+            }
         }
-    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model, (char as any)?.apiConfig?.protocol, (char as any)?.apiConfig?.claudeBaseUrl, (char as any)?.apiConfig?.claudeApiKey, (char as any)?.apiConfig?.claudeModel, (char as any)?.apiConfig?.geminiBaseUrl, (char as any)?.apiConfig?.geminiApiKey, (char as any)?.apiConfig?.geminiModel]);
+    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换 handler
+    //   切走前：把当前 perCharApiBaseUrl/Key/Model 存到旧协议缓存
+    //   切到后：从新协议缓存读取填入
+    const switchPerCharApiProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+        if (newProtocol === perCharApiProtocol) return;
+        if (perCharApiProtocol === 'claude') {
+            setPerCharApiClaudeUrl(perCharApiBaseUrl);
+            setPerCharApiClaudeKey(perCharApiKey);
+            setPerCharApiClaudeModel(perCharApiModel);
+        } else if (perCharApiProtocol === 'gemini') {
+            setPerCharApiGeminiUrl(perCharApiBaseUrl);
+            setPerCharApiGeminiKey(perCharApiKey);
+            setPerCharApiGeminiModel(perCharApiModel);
+        }
+        if (newProtocol === 'openai') {
+            setPerCharApiBaseUrl(char?.apiConfig?.baseUrl || '');
+            setPerCharApiKey(char?.apiConfig?.apiKey || '');
+            setPerCharApiModel(char?.apiConfig?.model || '');
+        } else if (newProtocol === 'claude') {
+            setPerCharApiBaseUrl(perCharApiClaudeUrl || (char?.apiConfig as any)?.claudeBaseUrl || '');
+            setPerCharApiKey(perCharApiClaudeKey || (char?.apiConfig as any)?.claudeApiKey || '');
+            setPerCharApiModel(perCharApiClaudeModel || (char?.apiConfig as any)?.claudeModel || '');
+        } else {
+            setPerCharApiBaseUrl(perCharApiGeminiUrl || (char?.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+            setPerCharApiKey(perCharApiGeminiKey || (char?.apiConfig as any)?.geminiApiKey || '');
+            setPerCharApiModel(perCharApiGeminiModel || (char?.apiConfig as any)?.geminiModel || 'gemini-2.0-flash');
+        }
+        setPerCharApiProtocol(newProtocol);
+    };
     const handleSavePerCharApi = async () => {
         if (!char) return;
-        if (!perCharApiBaseUrl.trim()) {
+        // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套（切回 tab 不丢之前的值）
+        //   - 当前 perCharApiBaseUrl/Key/Model 是当前 tab 的值
+        //   - 另外 2 套从 state 缓存读出（perCharApiClaudeUrl 等）
+        //   - 角色 apiConfig 字段没值（空）→ updateCharApiConfig(undefined) 清空
+        if (!perCharApiBaseUrl.trim() && !perCharApiClaudeUrl.trim() && !perCharApiGeminiUrl.trim()) {
             await updateCharApiConfig(char.id, undefined);
-            return;
-        }
-        await updateCharApiConfig(char.id, {
-            baseUrl: perCharApiBaseUrl.trim(),
-            apiKey: perCharApiKey.trim() || undefined,
-            model: perCharApiModel.trim() || undefined,
+        } else {
+            await updateCharApiConfig(char.id, {
+                baseUrl: perCharApiProtocol === 'openai' ? perCharApiBaseUrl.trim() : (char.apiConfig?.baseUrl || ''),
+                apiKey: perCharApiProtocol === 'openai' ? perCharApiKey.trim() || undefined : (char.apiConfig?.apiKey || undefined),
+                model: perCharApiProtocol === 'openai' ? perCharApiModel.trim() || undefined : (char.apiConfig?.model || undefined),
+                protocol: perCharApiProtocol,
+                claudeBaseUrl: perCharApiProtocol === 'claude' ? perCharApiBaseUrl.trim() : perCharApiClaudeUrl,
+                claudeApiKey: perCharApiProtocol === 'claude' ? perCharApiKey.trim() : perCharApiClaudeKey,
+            claudeModel: perCharApiProtocol === 'claude' ? perCharApiModel.trim() : perCharApiClaudeModel,
+            geminiBaseUrl: perCharApiProtocol === 'gemini' ? perCharApiBaseUrl.trim() : perCharApiGeminiUrl,
+            geminiApiKey: perCharApiProtocol === 'gemini' ? perCharApiKey.trim() : perCharApiGeminiKey,
+            geminiModel: perCharApiProtocol === 'gemini' ? perCharApiModel.trim() : perCharApiGeminiModel,
         } as any);
+        }
+        // 暮色 2026-07-27：保存后自动关闭侧拉栏
+        setShowChatSettingsDrawer(false);
+        addToast('角色 API 配置已保存', 'success');
     };
     const handleClearPerCharApi = async () => {
         if (!char) return;
         setPerCharApiBaseUrl('');
         setPerCharApiKey('');
         setPerCharApiModel('');
+        setPerCharApiProtocol('openai');
+        setPerCharApiClaudeUrl('');
+        setPerCharApiClaudeKey('');
+        setPerCharApiClaudeModel('');
+        setPerCharApiGeminiUrl('https://generativelanguage.googleapis.com/v1beta');
+        setPerCharApiGeminiKey('');
+        setPerCharApiGeminiModel('gemini-2.0-flash');
         await updateCharApiConfig(char.id, undefined);
     };
     // 从预设加载（只填输入框，不直接保存）
-    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => {
-        setPerCharApiBaseUrl(cfg.baseUrl || '');
-        setPerCharApiKey(cfg.apiKey || '');
-        setPerCharApiModel(cfg.model || '');
+    // 暮色 2026-07-27：预设也带 protocol 字段，加载时按 protocol 切换 + 填对应那组（修 401 bug）
+    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string; protocol?: 'openai' | 'claude' | 'gemini' }) => {
+        const loadedProto: 'openai' | 'claude' | 'gemini' = (cfg as any).protocol || 'openai';
+        // 切到目标协议 tab
+        if (loadedProto !== perCharApiProtocol) {
+            switchPerCharApiProtocol(loadedProto);
+        }
+        if (loadedProto === 'claude') {
+            setPerCharApiClaudeUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
+            setPerCharApiClaudeKey((cfg as any).claudeApiKey || cfg.apiKey || '');
+            setPerCharApiClaudeModel((cfg as any).claudeModel || cfg.model || '');
+            setPerCharApiBaseUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
+            setPerCharApiKey((cfg as any).claudeApiKey || cfg.apiKey || '');
+            setPerCharApiModel((cfg as any).claudeModel || cfg.model || '');
+        } else if (loadedProto === 'gemini') {
+            setPerCharApiGeminiUrl((cfg as any).geminiBaseUrl || cfg.baseUrl || '');
+            setPerCharApiGeminiKey((cfg as any).geminiApiKey || cfg.apiKey || '');
+            setPerCharApiGeminiModel((cfg as any).geminiModel || cfg.model || '');
+            setPerCharApiBaseUrl((cfg as any).geminiBaseUrl || cfg.baseUrl || '');
+            setPerCharApiKey((cfg as any).geminiApiKey || cfg.apiKey || '');
+            setPerCharApiModel((cfg as any).geminiModel || cfg.model || '');
+        } else {
+            setPerCharApiBaseUrl(cfg.baseUrl || '');
+            setPerCharApiKey(cfg.apiKey || '');
+            setPerCharApiModel(cfg.model || '');
+        }
     };
     // 刷新模型列表（角色 API 用，独立 state 不影响全局 availableModels）
+    // 暮色 2026-07-27：Gemini 协议走 ?key= 参数，OpenAI 走 Authorization
     const handleRefreshPerCharModels = async () => {
         if (!perCharApiBaseUrl.trim()) return;
         setIsPerCharLoadingModels(true);
         try {
             const baseUrl = perCharApiBaseUrl.replace(/\/+$/, '');
-            const response = await fetch(`${baseUrl}/models`, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
-                    'Content-Type': 'application/json',
-                },
-            });
+            const isGemini = /generativelanguage\.googleapis\.com/i.test(baseUrl);
+            let response: Response;
+            if (isGemini) {
+                response = await fetch(`${baseUrl}/models?key=${encodeURIComponent(perCharApiKey || '')}&pageSize=100`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            } else {
+                response = await fetch(`${baseUrl}/models`, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${perCharApiKey || 'sk-none'}`,
+                        'Content-Type': 'application/json',
+                    },
+                });
+            }
             if (!response.ok) throw new Error(`Status ${response.status}`);
             const data = await safeResponseJson(response);
             const list = data.data || data.models || [];
             if (!Array.isArray(list)) return;
-            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            // 暮色 2026-07-27：Gemini 响应 name 是 'models/gemini-2.0-flash'，剥前缀
+            const isGeminiResp = /generativelanguage\.googleapis\.com/i.test(perCharApiBaseUrl);
+            const models = list.map((item: any) => {
+                if (typeof item === 'string') return item;
+                const id = item.id || item.name || '';
+                return isGeminiResp ? id.replace(/^models\//, '') : id;
+            }).filter(Boolean);
             setPerCharAvailableModels(models);
             if (models.length > 0 && !models.includes(perCharApiModel)) {
                 setPerCharApiModel(models[0]);
@@ -283,7 +422,7 @@ const Chat: React.FC = () => {
         if (!char?.id || !msg) return;
         try {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${msg}]` });
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            setMessages(sanitizeChatMessages(await DB.getRecentMessagesByCharId(char.id, 200)));
         } catch (e) {
             console.warn('🖼️ [ImageBed] 推警告系统消息失败:', e);
         }
@@ -315,15 +454,16 @@ const Chat: React.FC = () => {
     useCloudMessages((cloudMsgs) => {
         if (!char?.id) return;
         // 只处理当前角色（useCloudMessages 是单例回调，多角色切来切去可能收到别的角色的）
-        const relevant = cloudMsgs.filter((m) => m.charId === char.id);
+        const relevant = sanitizeChatMessages(cloudMsgs).filter((m) => m.charId === char.id);
         if (relevant.length === 0) return;
 
         setMessages((prev) => {
+            const safePrev = sanitizeChatMessages(prev);
             // 收集现有 clientId（去重）
             const existing = new Set(
-                prev.filter((m) => m.clientId).map((m) => m.clientId as string)
+                safePrev.filter((m) => m.clientId).map((m) => m.clientId as string)
             );
-            const additions: typeof prev = [];
+            const additions: Message[] = [];
             for (const cm of relevant) {
                 if (existing.has(cm.clientId)) continue;
                 // 用负数 id 避免跟本地 IndexedDB auto-increment 冲突
@@ -341,8 +481,8 @@ const Chat: React.FC = () => {
                 } as any);
                 existing.add(cm.clientId);
             }
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions].sort((a, b) => a.timestamp - b.timestamp);
+            if (additions.length === 0) return safePrev;
+            return [...safePrev, ...additions].sort((a, b) => a.timestamp - b.timestamp);
         });
     });
 
@@ -400,7 +540,7 @@ const Chat: React.FC = () => {
         const data = voiceDataMap[msgId];
         if (!data) {
             // No voice data yet — trigger TTS generation (e.g. placeholder voice bar clicked)
-            const msg = messages.find(m => m.id === msgId);
+            const msg = safeMessages.find(m => m.id === msgId);
             if (msg) handleManualTts(msg, false);
             return;
         }
@@ -540,8 +680,8 @@ const Chat: React.FC = () => {
         const voiceProfile = char.voiceProfile;
         if (!voiceProfile?.voiceId && (!voiceProfile?.timberWeights || voiceProfile.timberWeights.length === 0)) return;
         // Scan recent assistant messages for unprocessed <语音> tags
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const msg = messages[i];
+        for (let i = safeMessages.length - 1; i >= 0; i--) {
+            const msg = safeMessages[i];
             // Stop scanning once we hit a non-assistant message (end of current AI response batch)
             if (msg.role !== 'assistant') break;
             if (msg.type !== 'text') continue;
@@ -560,15 +700,16 @@ const Chat: React.FC = () => {
             const detail = (e as CustomEvent).detail as { charId: string; content: string; timestamp: number };
             if (!detail || detail.charId !== char.id) return;
             setMessages((prev) => {
+                const safePrev = sanitizeChatMessages(prev);
                 // 防重：如果最后一条已经是这条（避免快速触发重复）
-                if (prev.length > 0) {
-                    const last = prev[prev.length - 1];
+                if (safePrev.length > 0) {
+                    const last = safePrev[safePrev.length - 1];
                     if (last.content === detail.content && last.role === 'assistant' && (Date.now() - (last.timestamp || 0)) < 5000) {
-                        return prev;
+                        return safePrev;
                     }
                 }
-                const nextId = Math.max(0, ...prev.map((m) => m.id)) + 1;
-                return [...prev, {
+                const nextId = Math.max(0, ...safePrev.map((m) => m.id)) + 1;
+                return [...safePrev, {
                     id: nextId,
                     charId: char.id,
                     role: 'assistant',
@@ -583,7 +724,7 @@ const Chat: React.FC = () => {
         return () => window.removeEventListener('sullyos:direct-ai-message', handler);
     }, [char?.id]);
 
-    const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const canReroll = !isTyping && safeMessages.length > 0 && safeMessages[safeMessages.length - 1].role === 'assistant';
 
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
     const handleTranslateToggle = useCallback((msgId: number) => {
@@ -623,9 +764,9 @@ const Chat: React.FC = () => {
     // mount is what keeps previously-generated voice bars alive across
     // chat entries.
     useEffect(() => {
-        if (!messages.length) return;
+        if (!safeMessages.length) return;
         const map = voiceDataMap;
-        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        const toFetch = safeMessages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
         (async () => {
@@ -649,7 +790,7 @@ const Chat: React.FC = () => {
             setVoiceDataMap(prev => ({ ...updates, ...prev }));
         })();
         return () => { cancelled = true; };
-    }, [messages]);
+    }, [safeMessages]);
 
     // Revoke blob URLs when switching characters / unmounting to avoid leaks.
     useEffect(() => {
@@ -678,7 +819,7 @@ const Chat: React.FC = () => {
             const currentChar = charRef.current;
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
-            const chatScopeMsgs = allMsgs
+            const chatScopeMsgs = sanitizeChatMessages(allMsgs)
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
@@ -693,7 +834,7 @@ const Chat: React.FC = () => {
                 const retryMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
-                const chatScopeMsgs = retryMsgs
+                const chatScopeMsgs = sanitizeChatMessages(retryMsgs)
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
@@ -764,7 +905,7 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
-                const filtered = allMsgs
+                const filtered = sanitizeChatMessages(allMsgs)
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
@@ -826,6 +967,22 @@ const Chat: React.FC = () => {
         window.addEventListener('emotion-updated', handler);
         return () => window.removeEventListener('emotion-updated', handler);
     }, [activeCharacterId, updateCharacter]);
+
+    // 暮色 2026-07-31：监听情侣空间邀请卡接受/拒绝事件
+    //   OSContext.coupleSpaceAccept / coupleSpaceDecline 改完 IndexedDB 后 dispatch 这个事件
+    //   Chat 收到后 reload 当前角色的 messages，让 MessageItem 重新渲染（按钮消失 / 卡变"已接受"）
+    //   位置必须在 reloadMessages 声明之后（line 822）—— hooks 引用 forward 声明会 TDZ
+    useEffect(() => {
+        if (!char?.id) return;
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { charId: string; status: 'accepted' | 'declined' };
+            if (!detail || detail.charId !== char.id) return;
+            // reload 当前可见窗口的 messages
+            reloadMessages(visibleCountRef.current);
+        };
+        window.addEventListener('coupleSpaceInviteResolved', handler);
+        return () => window.removeEventListener('coupleSpaceInviteResolved', handler);
+    }, [char?.id, reloadMessages]);
 
     // 🛟 人格抢救：进聊天后发现角色被卡在"情感型 0.3"显示（真实存储可能是 emotional/0.3，
     // 也可能是 undefined —— UI 的 `|| 'emotional'` 和 `?? 0.3` fallback 让两者看起来一样）。
@@ -908,7 +1065,7 @@ const Chat: React.FC = () => {
 
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
-        const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        const currentLastId = safeMessages.length > 0 ? safeMessages[safeMessages.length - 1].id : null;
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place
         // 用户在翻历史时（不在底部）即使有 last ID 变化也强制不滚——避免翻着看着被甩回最新
@@ -1019,7 +1176,7 @@ const Chat: React.FC = () => {
                 scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
             }
         }
-    }, [messages, isTyping, recallStatus, searchStatus, diaryStatus, selectionMode]);
+    }, [safeMessages, isTyping, recallStatus, searchStatus, diaryStatus, selectionMode]);
 
     const formatTime = (ts: number) => {
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -1035,7 +1192,7 @@ const Chat: React.FC = () => {
         if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
         
         if (type === 'image') {
-            const recentChat = messages.slice(-10).map(m => {
+            const recentChat = safeMessages.slice(-10).map(m => {
                 const sender = m.role === 'user' ? userProfile.name : char.name;
                 return `${sender}: ${m.content.substring(0, 100)}`;
             });
@@ -1096,15 +1253,15 @@ const Chat: React.FC = () => {
     };
 
     const handleReroll = async () => {
-        if (isTyping || messages.length === 0) return;
+        if (isTyping || safeMessages.length === 0) return;
 
-        const lastMsg = messages[messages.length - 1];
+        const lastMsg = safeMessages[safeMessages.length - 1];
         if (lastMsg.role !== 'assistant') return;
 
         const toDeleteIds: number[] = [];
-        let index = messages.length - 1;
-        while (index >= 0 && messages[index].role === 'assistant') {
-            toDeleteIds.push(messages[index].id);
+        let index = safeMessages.length - 1;
+        while (index >= 0 && safeMessages[index].role === 'assistant') {
+            toDeleteIds.push(safeMessages[index].id);
             index--;
         }
 
@@ -1112,7 +1269,7 @@ const Chat: React.FC = () => {
 
         await DB.deleteMessages(toDeleteIds);
         discardVoiceForMessages(toDeleteIds);
-        const newHistory = messages.slice(0, index + 1);
+        const newHistory = safeMessages.slice(0, index + 1);
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
 
@@ -1185,7 +1342,7 @@ const Chat: React.FC = () => {
         );
 
         // ② 写回 DB 持久化
-        const stale = messages.filter(
+        const stale = safeMessages.filter(
             (msg: Message) => msg.role === 'user' && isBase64Img(msg.content)
         );
         await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
@@ -1306,7 +1463,7 @@ const Chat: React.FC = () => {
             metadata: { fromMcdMiniApp: true },
         } as any);
         ProactiveChat.markUserContact(char.id);
-        const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+        const recent = sanitizeChatMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         setMessages(recent);
         triggerAI(recent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1633,7 +1790,7 @@ const Chat: React.FC = () => {
                 const processedIds = processedMsgs.map(m => m.id);
                 await DB.deleteMessages(processedIds);
                 discardVoiceForMessages(processedIds);
-                const remaining = allMessages.filter(m => m.id > hwm);
+                const remaining = sanitizeChatMessages(allMessages).filter(m => m.id > hwm);
                 setMessages(remaining.slice(-200));
                 setTotalMsgCount(remaining.length);
                 setVisibleCount(LOAD_BATCH_SIZE);
@@ -1646,7 +1803,7 @@ const Chat: React.FC = () => {
 
         // 原有逻辑（无记忆宫殿 or 所有消息已处理）
 const keepN = preserveCount ?? 10;
-const allMessages = await DB.getMessagesByCharId(char.id, true);
+const allMessages = sanitizeChatMessages(await DB.getMessagesByCharId(char.id, true));
 
 if (keepN > 0) {
     const toKeep = allMessages.slice(-keepN);
@@ -2123,7 +2280,7 @@ if (keepN > 0) {
 
        const handleCopySelected = async () => {
     if (selectedMsgIds.size === 0) return;
-    const selectedMsgs = messages.filter(m => selectedMsgIds.has(m.id!));
+    const selectedMsgs = safeMessages.filter(m => selectedMsgIds.has(m.id!));
     const textContent = selectedMsgs
         .map(m => {
             if (m.type === 'text') return m.content;
@@ -2155,7 +2312,8 @@ if (keepN > 0) {
 
     const handleForwardToCharacter = async (targetCharId: string) => {
         if (!char) return;
-        const selectedMsgs = messages
+        // 用 safeMessages（已 sanitize）而不是 messages，避免 m.role 抛 null
+        const selectedMsgs = safeMessages
             .filter(m => selectedMsgIds.has(m.id))
             .sort((a, b) => a.id - b.id);
 
@@ -2212,7 +2370,7 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
-    const displayMessages = useMemo(() => messages
+    const displayMessages = useMemo(() => sanitizeChatMessages(messages)
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
@@ -2436,7 +2594,7 @@ if (keepN > 0) {
                  </div>
              )}
 
-             <ChatModals
+            <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
                  emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
@@ -2448,7 +2606,7 @@ if (keepN > 0) {
                     try { localStorage.setItem('chat_active_archive_prompt_id', id); } catch {}
                 }}
                 editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing} archiveProgress={archiveProgress}
-                selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
+                selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={safeMessages}
                 allHistoryMessages={allHistoryMessages}
                 
                 newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
@@ -2585,6 +2743,15 @@ if (keepN > 0) {
                 perCharApiBaseUrl={perCharApiBaseUrl} setPerCharApiBaseUrl={setPerCharApiBaseUrl}
                 perCharApiKey={perCharApiKey} setPerCharApiKey={setPerCharApiKey}
                 perCharApiModel={perCharApiModel} setPerCharApiModel={setPerCharApiModel}
+                // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model
+                perCharApiProtocol={perCharApiProtocol} setPerCharApiProtocol={setPerCharApiProtocol}
+                switchPerCharApiProtocol={switchPerCharApiProtocol}
+                perCharApiClaudeUrl={perCharApiClaudeUrl} setPerCharApiClaudeUrl={setPerCharApiClaudeUrl}
+                perCharApiClaudeKey={perCharApiClaudeKey} setPerCharApiClaudeKey={setPerCharApiClaudeKey}
+                perCharApiClaudeModel={perCharApiClaudeModel} setPerCharApiClaudeModel={setPerCharApiClaudeModel}
+                perCharApiGeminiUrl={perCharApiGeminiUrl} setPerCharApiGeminiUrl={setPerCharApiGeminiUrl}
+                perCharApiGeminiKey={perCharApiGeminiKey} setPerCharApiGeminiKey={setPerCharApiGeminiKey}
+                perCharApiGeminiModel={perCharApiGeminiModel} setPerCharApiGeminiModel={setPerCharApiGeminiModel}
                 showPerCharKey={showPerCharKey} setShowPerCharKey={setShowPerCharKey}
                 onSavePerCharApi={handleSavePerCharApi}
                 onClearPerCharApi={handleClearPerCharApi}
@@ -2736,17 +2903,34 @@ if (keepN > 0) {
                 )}
 
                 {displayMessages.map((m, i) => {
+                    // 防御：sanitizeChatMessages 应已过滤 null，但渲染时再兜一道。
+                    // 之前 m.role 在 MessageItem 里没守卫，遇到 null 直接白屏。
+                    if (!m) return null;
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    const messageGroupGapMs = 30 * 60 * 1000;
-                    const breaksWithPrevious =
-                        !prevMessage ||
-                        prevMessage.role !== m.role ||
-                        Math.abs(m.timestamp - prevMessage.timestamp) > messageGroupGapMs;
-                    const breaksWithNext =
-                        !nextMessage ||
-                        nextMessage.role !== m.role ||
-                        Math.abs(nextMessage.timestamp - m.timestamp) > messageGroupGapMs;
+                    // 暮色 2026-07-27 v2：proactive 永远独立 group（不光是 proactive 之间）
+                    //   暮色反馈"主动消息和正常聊天回复的最后一条消息合并成一个时间戳"——
+                    //   根因是 calcBreaks v1 只把 proactive↔proactive 设成永远独立，
+                    //   assistant 正常回复跟 assistant proactive 仍按 1 分钟规则（同分钟<1分钟→合并）
+                    //   + formatTime 只显示 HH:MM，秒级看不出来
+                    //   改：proactive 跟任何消息 0 分钟 gap 永远独立（视觉上错开）
+                    //   formatTime 不动（暮色日常聊天节奏不变）
+                    //   配套：MessageItem.tsx 时间戳加视觉标记
+                    const USER_CHAT_GAP_MS = 30 * 60 * 1000;
+                    const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
+                        if (!neighbor) return true;
+                        if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
+                        if (neighbor.role !== cur.role) return true;
+                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
+                        const curProactive = !!cur.metadata?.isProactive;
+                        const neighborProactive = !!neighbor.metadata?.isProactive;
+                        // 任何一边是主动消息：永远独立 group（哪怕 0 秒）
+                        if (curProactive || neighborProactive) return true;
+                        // 普通 user/AI 对话：30 分钟规则（不变）
+                        return gap > USER_CHAT_GAP_MS;
+                    };
+                    const breaksWithPrevious = calcBreaks(m, prevMessage);
+                    const breaksWithNext = calcBreaks(nextMessage, m);
                     return (
                         <MessageItem
                             key={m.id || i}
@@ -2905,7 +3089,7 @@ if (keepN > 0) {
                 onClose={() => setMcdAppOpen(false)}
                 char={char}
                 userProfile={userProfile}
-                messages={messages}
+                messages={safeMessages}
                 isTyping={isTyping}
                 onSendMessage={handleMcdMiniAppSend}
                 onStateChange={handleMcdMiniAppStateChange}

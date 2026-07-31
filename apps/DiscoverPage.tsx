@@ -2,8 +2,9 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState } from 'react';
-import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook } from '@phosphor-icons/react';
+import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
+import { AppID } from '../types';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
 import MomentsSettingsPage from './MomentsSettingsPage';
@@ -128,9 +129,34 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <span className="flex-1 text-sm font-medium text-slate-800">日记</span>
             <CaretRight size={16} className="text-slate-300" />
           </button>
+          <div className="border-t border-slate-100" />
+          {/* 暮色 2026-07-31：情侣空间入口 — 直接打开独立 app，不在 DiscoverPage 内嵌 */}
+          <CoupleSpaceEntry onClose={onClose} />
         </div>
       </div>
     </div>
+  );
+};
+
+// 暮色 2026-07-31：情侣空间入口
+// 在 DiscoverPage 入口列表里加一项，点直接关掉发现页 + 打开 CoupleSpaceApp
+const CoupleSpaceEntry: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { openApp } = useOS();
+  return (
+    <button
+      onClick={() => {
+        onClose();
+        // 下一帧再 openApp，避免 DiscoverPage onClose 路由冲突
+        setTimeout(() => openApp(AppID.CoupleSpace), 50);
+      }}
+      className="w-full flex items-center gap-3 px-4 py-4 active:bg-rose-50 transition-colors text-left"
+    >
+      <div className="w-7 h-7 rounded-full bg-rose-50 flex items-center justify-center">
+        <HeartIcon size={16} weight="fill" className="text-rose-500" />
+      </div>
+      <span className="flex-1 text-sm font-medium text-slate-800">情侣空间</span>
+      <CaretRight size={16} className="text-slate-300" />
+    </button>
   );
 };
 

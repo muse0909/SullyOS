@@ -568,9 +568,24 @@ export default function MemoryPalaceApp() {
     const [testResult, setTestResult] = useState<string | null>(null);
 
     // 副 API 配置（全局配置）
+    // 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）— 跟主 API 一致
     const [lightUrl, setLightUrl] = useState(memoryPalaceConfig.lightLLM.baseUrl || '');
     const [lightKey, setLightKey] = useState(memoryPalaceConfig.lightLLM.apiKey || '');
     const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
+    const [lightProtocol, setLightProtocol] = useState<'openai' | 'claude' | 'gemini'>(
+        (memoryPalaceConfig.lightLLM as any).protocol || 'openai'
+    );
+    // 三平台独立 URL/Key/Model 缓存
+    const [lightClaudeUrl, setLightClaudeUrl] = useState((memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
+    const [lightClaudeKey, setLightClaudeKey] = useState((memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
+    const [lightClaudeModel, setLightClaudeModel] = useState((memoryPalaceConfig.lightLLM as any).claudeModel || '');
+    const [lightGeminiUrl, setLightGeminiUrl] = useState(
+        (memoryPalaceConfig.lightLLM as any).geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
+    );
+    const [lightGeminiKey, setLightGeminiKey] = useState((memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
+    const [lightGeminiModel, setLightGeminiModel] = useState(
+        (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash'
+    );
     const [lightSaved, setLightSaved] = useState(false);
     const [testingLight, setTestingLight] = useState(false);
     const [lightTestResult, setLightTestResult] = useState<string | null>(null);
@@ -578,6 +593,40 @@ export default function MemoryPalaceApp() {
     const [showLightModelList, setShowLightModelList] = useState(false);
     const [loadingLightModels, setLoadingLightModels] = useState(false);
     const [lightModelStatus, setLightModelStatus] = useState('');
+
+    // 暮色 2026-07-27：副 API 3 tab 协议切换 handler
+    //   切走前：把当前 lightUrl/Key/Model 存到旧协议缓存
+    //   切到后：从新协议缓存读取填入
+    const switchLightProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+        if (newProtocol === lightProtocol) return;
+        if (lightProtocol === 'claude') {
+            setLightClaudeUrl(lightUrl);
+            setLightClaudeKey(lightKey);
+            setLightClaudeModel(lightModel);
+        } else if (lightProtocol === 'gemini') {
+            setLightGeminiUrl(lightUrl);
+            setLightGeminiKey(lightKey);
+            setLightGeminiModel(lightModel);
+        }
+        if (newProtocol === 'openai') {
+            setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
+            setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
+            setLightModel(memoryPalaceConfig.lightLLM.model || '');
+        } else if (newProtocol === 'claude') {
+            setLightUrl(lightClaudeUrl || (memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
+            setLightKey(lightClaudeKey || (memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
+            setLightModel(lightClaudeModel || (memoryPalaceConfig.lightLLM as any).claudeModel || '');
+        } else {
+            setLightUrl(
+                lightGeminiUrl
+                || (memoryPalaceConfig.lightLLM as any).geminiBaseUrl
+                || 'https://generativelanguage.googleapis.com/v1beta'
+            );
+            setLightKey(lightGeminiKey || (memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
+            setLightModel(lightGeminiModel || (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash');
+        }
+        setLightProtocol(newProtocol);
+    };
 
     // Rerank 配置（全局；cross-encoder 二次排序，独立于主召回的可选增强通道）
     const [rrEnabled, setRrEnabled] = useState(!!memoryPalaceConfig.rerank?.enabled);
@@ -606,6 +655,17 @@ export default function MemoryPalaceApp() {
         setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
         setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
         setLightModel(memoryPalaceConfig.lightLLM.model || '');
+        // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model 同步
+        setLightProtocol(((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'claude' | 'gemini') || 'openai');
+        setLightClaudeUrl((memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
+        setLightClaudeKey((memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
+        setLightClaudeModel((memoryPalaceConfig.lightLLM as any).claudeModel || '');
+        setLightGeminiUrl(
+            (memoryPalaceConfig.lightLLM as any).geminiBaseUrl
+            || 'https://generativelanguage.googleapis.com/v1beta'
+        );
+        setLightGeminiKey((memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
+        setLightGeminiModel((memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash');
         setRrEnabled(!!memoryPalaceConfig.rerank?.enabled);
         setRrUrl(memoryPalaceConfig.rerank?.baseUrl || '');
         setRrKey(memoryPalaceConfig.rerank?.apiKey || '');
@@ -994,15 +1054,27 @@ export default function MemoryPalaceApp() {
     };
 
     const handleSaveLightApi = () => {
-        const api = {
-            baseUrl: lightUrl.trim(),
-            apiKey: lightKey.trim(),
-            model: lightModel.trim(),
+        // 暮色 2026-07-27：3 tab 协议 + 同时存 3 套（切回 tab 不丢之前的值）
+        const api: any = {
+            baseUrl: lightProtocol === 'openai' ? lightUrl.trim() : (memoryPalaceConfig.lightLLM.baseUrl || ''),
+            apiKey: lightProtocol === 'openai' ? lightKey.trim() : (memoryPalaceConfig.lightLLM.apiKey || ''),
+            model: lightProtocol === 'openai' ? lightModel.trim() : (memoryPalaceConfig.lightLLM.model || ''),
+            protocol: lightProtocol,
+            claudeBaseUrl: lightProtocol === 'claude' ? lightUrl.trim() : lightClaudeUrl,
+            claudeApiKey: lightProtocol === 'claude' ? lightKey.trim() : lightClaudeKey,
+            claudeModel: lightProtocol === 'claude' ? lightModel.trim() : lightClaudeModel,
+            geminiBaseUrl: lightProtocol === 'gemini' ? lightUrl.trim() : lightGeminiUrl,
+            geminiApiKey: lightProtocol === 'gemini' ? lightKey.trim() : lightGeminiKey,
+            geminiModel: lightProtocol === 'gemini' ? lightModel.trim() : lightGeminiModel,
         };
         updateMemoryPalaceConfig({ lightLLM: api });
         // 一次性写到全局 lightLLM + 所有角色的 emotionConfig.api
         // （各角色 enabled 标志保持不变；记忆宫殿轻量 LLM 与情绪 API 共用一份配置）
-        syncEmotionApiToAllCharacters(api);
+        syncEmotionApiToAllCharacters({
+            baseUrl: api.baseUrl,
+            apiKey: api.apiKey,
+            model: api.model,
+        });
         setLightSaved(true);
         setTimeout(() => setLightSaved(false), 2000);
     };
@@ -1014,7 +1086,15 @@ export default function MemoryPalaceApp() {
             baseUrl: lightUrl.trim(),
             apiKey: lightKey.trim(),
             model: lightModel.trim(),
-        }, 'memoryPalaceLight');
+            // 暮色 2026-07-27：预设也记当前协议
+            protocol: lightProtocol,
+            claudeBaseUrl: lightProtocol === 'claude' ? lightUrl.trim() : lightClaudeUrl,
+            claudeApiKey: lightProtocol === 'claude' ? lightKey.trim() : lightClaudeKey,
+            claudeModel: lightProtocol === 'claude' ? lightModel.trim() : lightClaudeModel,
+            geminiBaseUrl: lightProtocol === 'gemini' ? lightUrl.trim() : lightGeminiUrl,
+            geminiApiKey: lightProtocol === 'gemini' ? lightKey.trim() : lightGeminiKey,
+            geminiModel: lightProtocol === 'gemini' ? lightModel.trim() : lightGeminiModel,
+        } as any, 'memoryPalaceLight');
         addToast('副 API 预设已保存', 'success');
     };
 
@@ -1026,18 +1106,34 @@ export default function MemoryPalaceApp() {
         setLoadingLightModels(true);
         setLightModelStatus('正在连接...');
         try {
-            const response = await fetch(`${lightUrl.trim().replace(/\/+$/, '')}/models`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${lightKey.trim()}`,
-                    'Content-Type': 'application/json',
-                },
-            });
+            // 暮色 2026-07-27：副 API 3 tab 协议 — Gemini 走 ?key= 参数，OpenAI 走 Authorization
+            const isGemini = /generativelanguage\.googleapis\.com/i.test(lightUrl.trim());
+            const baseUrl = lightUrl.trim().replace(/\/+$/, '');
+            let response: Response;
+            if (isGemini) {
+                response = await fetch(`${baseUrl}/models?key=${encodeURIComponent(lightKey.trim())}&pageSize=100`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            } else {
+                response = await fetch(`${baseUrl}/models`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${lightKey.trim()}`,
+                        'Content-Type': 'application/json',
+                    },
+                });
+            }
             if (!response.ok) throw new Error(`Status ${response.status}`);
             const data = await safeResponseJson(response);
             const list = data.data || data.models || [];
             if (!Array.isArray(list)) throw new Error('Bad format');
-            const models = list.map((item: any) => item.id || item).filter(Boolean);
+            // Gemini 响应 name 是 'models/gemini-2.0-flash'，剥前缀
+            const models = list.map((item: any) => {
+                if (typeof item === 'string') return item;
+                const id = item.id || item.name || '';
+                return isGemini ? id.replace(/^models\//, '') : id;
+            }).filter(Boolean);
             setAvailableModels(models);
             if (models.length > 0 && !models.includes(lightModel)) setLightModel(models[0]);
             setShowLightModelList(models.length > 0);
@@ -2351,29 +2447,98 @@ export default function MemoryPalaceApp() {
                     {lightPresets.length > 0 && (
                         <div style={{ marginBottom: 10 }}>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {lightPresets.map(p => (
-                                    <button key={p.id} onClick={() => {
-                                        setLightUrl(p.config.baseUrl);
-                                        setLightKey(p.config.apiKey);
-                                        setLightModel(p.config.model);
-                                        setLightTestResult(null);
-                                    }} style={{
-                                        padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                        border: '1px solid #bbf7d0', background: 'white', color: '#166534',
-                                        cursor: 'pointer',
-                                    }}>
-                                        {p.name}
-                                    </button>
-                                ))}
+                                {lightPresets.map(p => {
+                                    // 暮色 2026-07-27：active 判断用 protocol + 3 套字段
+                                    const proto = (p.config as any).protocol || 'openai';
+                                    const activeUrl = proto === 'claude' ? (p.config as any).claudeBaseUrl
+                                        : proto === 'gemini' ? (p.config as any).geminiBaseUrl
+                                        : p.config.baseUrl;
+                                    const activeKey = proto === 'claude' ? (p.config as any).claudeApiKey
+                                        : proto === 'gemini' ? (p.config as any).geminiApiKey
+                                        : p.config.apiKey;
+                                    const activeModel = proto === 'claude' ? (p.config as any).claudeModel
+                                        : proto === 'gemini' ? (p.config as any).geminiModel
+                                        : p.config.model;
+                                    const active = lightProtocol === proto
+                                        && lightUrl === activeUrl
+                                        && lightKey === activeKey
+                                        && lightModel === activeModel;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            onClick={() => {
+                                                // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
+                                                switchLightProtocol(proto);
+                                                if (proto === 'claude') {
+                                                    setLightClaudeUrl((p.config as any).claudeBaseUrl || p.config.baseUrl || '');
+                                                    setLightClaudeKey((p.config as any).claudeApiKey || p.config.apiKey || '');
+                                                    setLightClaudeModel((p.config as any).claudeModel || p.config.model || '');
+                                                } else if (proto === 'gemini') {
+                                                    setLightGeminiUrl((p.config as any).geminiBaseUrl || p.config.baseUrl || '');
+                                                    setLightGeminiKey((p.config as any).geminiApiKey || p.config.apiKey || '');
+                                                    setLightGeminiModel((p.config as any).geminiModel || p.config.model || '');
+                                                }
+                                                setLightTestResult(null);
+                                            }}
+                                            style={{
+                                                padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                                                border: active ? '1px solid #10b981' : '1px solid #bbf7d0',
+                                                background: active ? '#d1fae5' : 'white',
+                                                color: active ? '#065f46' : '#166534',
+                                                cursor: 'pointer',
+                                            }}
+                                            title={`${proto} · ${activeUrl || ''}`}
+                                        >
+                                            {p.name}{active ? ' ✓' : ''}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
+
+                    {/* 暮色 2026-07-27：副 API 3 tab 协议切换（OpenAI / Claude / Gemini） */}
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                        {(['openai', 'claude', 'gemini'] as const).map((p) => {
+                            const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
+                            const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
+                            const active = lightProtocol === p;
+                            return (
+                                <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => switchLightProtocol(p)}
+                                    style={{
+                                        flex: 1,
+                                        padding: '6px 8px',
+                                        borderRadius: 8,
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        border: active ? '1px solid #86efac' : '1px solid #e5e7eb',
+                                        background: active ? 'white' : '#f9fafb',
+                                        color: active ? '#166534' : '#6b7280',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                    }}
+                                >
+                                    <span style={{
+                                        width: 8, height: 8, borderRadius: '50%',
+                                        background: active ? colorMap[p] : '#cbd5e1',
+                                    }}></span>
+                                    {labelMap[p]}
+                                </button>
+                            );
+                        })}
+                    </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div>
                             <label className={labelClass}>BASE URL</label>
                             <input type="text" value={lightUrl} onChange={e => setLightUrl(e.target.value)}
-                                placeholder="https://api.siliconflow.cn/v1" className={inputClass} />
+                                placeholder={lightProtocol === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : lightProtocol === 'claude' ? 'https://api.anthropic.com (走 OpenAI 兼容中转时填中转站 URL)' : 'https://api.siliconflow.cn/v1'} className={inputClass} />
                         </div>
                         <div>
                             <label className={labelClass}>API KEY</label>

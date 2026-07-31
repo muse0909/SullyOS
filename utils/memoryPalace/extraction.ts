@@ -412,30 +412,21 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
 如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
 
     try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        // 暮色 2026-07-27：改用统一 callLLM helper（支持 OpenAI/Claude/Gemini 三协议）
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(
+            llmConfig,
+            systemPrompt,
+            `对话内容：\n${conversationText}`,
             {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `对话内容：\n${conversationText}` },
-                    ],
-                    temperature: 0.4,
-                    // 12000 比 16000 留余量：避免 LLM 顶满 cap 导致 JSON 输出被 truncate
-                    // buffer 路径 pipeline 上层 CHUNK_SIZE=250 已经在切分 → 单 call 输出可控
-                    max_tokens: 12000,
-                    stream: false,
-                }),
+                temperature: 0.4,
+                // 12000 比 16000 留余量：避免 LLM 顶满 cap 导致 JSON 输出被 truncate
+                // buffer 路径 pipeline 上层 CHUNK_SIZE=250 已经在切分 → 单 call 输出可控
+                maxTokens: 12000,
             }
         );
-
-        const reply = data.choices?.[0]?.message?.content || '';
+        const data = result.raw;
+        const reply = result.text;
         const parsed = safeParseJsonArray(reply);
 
         if (parsed.length === 0 && reply.trim().length > 0) {

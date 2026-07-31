@@ -6,6 +6,8 @@ import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
 import { createPortal } from 'react-dom';
+import { useOS } from '../../context/OSContext';
+import { Heart as HeartIcon } from '@phosphor-icons/react';
 
 
 // --- Forward Card with expand/collapse ---
@@ -16,6 +18,10 @@ const ForwardCard: React.FC<{
     selectionMode: boolean;
 }> = ({ forwardData, commonLayout, selectionMode }) => {
     const [expanded, setExpanded] = useState(false);
+
+    const safeMessages = Array.isArray(forwardData?.messages)
+        ? forwardData.messages.filter((msg: any) => !!msg && typeof msg === 'object' && typeof msg.role === 'string')
+        : [];
 
     const handleCardClick = (e: React.MouseEvent) => {
         if (selectionMode) return;
@@ -63,7 +69,7 @@ const ForwardCard: React.FC<{
 
                     {/* Messages List */}
                     <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                        {(forwardData.messages || []).map((msg: any, i: number) => {
+                        {safeMessages.map((msg: any, i: number) => {
                             const isUser = msg.role === 'user';
                             const senderName = isUser ? forwardData.fromUserName : forwardData.fromCharName;
                             return (
@@ -242,8 +248,14 @@ const MessageItem = React.memo(({
     onMcdSendCart,
     onMcdCandidate,
 }: MessageItemProps) => {
-    const isUser = m.role === 'user';
-    const isSystem = m.role === 'system';
+    // 暮色 2026-07-31：情侣空间邀请卡片"接受/拒绝"按钮调 OSContext 全局方法
+    //   之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
+    const { coupleSpaceAccept, coupleSpaceDecline, characters, userProfile } = useOS();
+
+    // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
+    // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
+    const isUser = (m as any)?.role === 'user';
+    const isSystem = (m as any)?.role === 'system';
     const spacingClass = messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5');
     const marginBottom = spacingClass;
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
@@ -360,6 +372,131 @@ const MessageItem = React.memo(({
             )}
         </div>
     );
+
+    // --- SPECIAL CARDS (early return, 不依赖 isSystem) ---
+    // 暮色 2026-07-31 反馈"没看到邀请卡片就直接开通了"
+    //   根因：requestCoupleSpaceInviteFromChar 推的消息 role='assistant'（LLM 生成的邀请文案）
+    //   之前卡渲染条件用 isSystem (role==='system') 兜底，导致 assistant 角色的邀请卡不渲染
+    //   暮色只看到江澈气泡文本 + 60s 后 AI 默认 accept 跳过
+    //   修法：让 type='couple_space_invite' 单独触发卡片渲染，不管 role 是 system 还是 assistant
+    if (m.type === 'couple_space_invite') {
+        const inviteStatus = m.metadata?.status; // 'pending' | 'accepted' | 'declined' | undefined
+        const isPending = inviteStatus === 'pending' || !inviteStatus; // 兼容老数据：没 status 字段也按 pending 渲染按钮
+        const charId = m.charId;
+        // 暮色 2026-07-31 反馈"暮色主动邀请的卡显示成'麦麦 邀请你'"（错的）
+        //   根因：之前统一用 charId 找角色，但实际：
+        //     - role='system' (暮色主动邀请) → 发送者是用户 (userProfile)
+        //     - role='assistant' (AI 主动邀请) → 发送者是角色
+        //   修法：根据 m.role 选发送者
+        const isUserInviting = m.role === 'system';
+        const senderName = isUserInviting
+            ? (userProfile?.name || '我')
+            : (characters.find(c => c.id === charId)?.name || 'TA');
+        const senderAvatar = isUserInviting
+            ? userProfile?.avatar
+            : characters.find(c => c.id === charId)?.avatar;
+        // 暮色 2026-07-31 反馈"邀请卡没有粉色渐变，只有一个纯色"
+        //   修法：用三色渐变（from-rose-200 via-rose-50 to-pink-200）+ 明显的深色边框
+        // 暮色 2026-08-01 反馈"按钮变成相应状态"——accepted/declined 后按钮消失，状态胶囊显示 X 已接受/拒绝
+        //   pending: 接受+拒绝两按钮
+        //   accepted: 按钮消失 → "X 已接受你的邀请" 胶囊（绿色）
+        //   declined: 按钮消失 → "X 已拒绝你的邀请" 胶囊（灰色）
+        const isAccepted = inviteStatus === 'accepted';
+        const isDeclined = inviteStatus === 'declined';
+
+        // 已接受 / 已拒绝 状态：渲染状态胶囊（按钮消失）
+        if (isAccepted || isDeclined) {
+            const statusCardClass = isAccepted
+                ? 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border-emerald-200/70'
+                : 'bg-gradient-to-br from-slate-100 via-white to-slate-50 border-slate-200/70';
+            const statusIcon = isAccepted ? '✅' : '🚫';
+            const statusText = isAccepted
+                ? `${senderName} 已接受你的邀请。`
+                : `${senderName} 已拒绝你的邀请。`;
+            const statusTextClass = isAccepted ? 'text-emerald-600' : 'text-slate-500';
+            return (
+                <div className={`flex items-center justify-center w-full my-3 px-4 ${selectionMode ? 'pl-12' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className={`${statusCardClass} rounded-3xl p-4 max-w-[300px] w-full border-2 shadow-sm`} {...interactionProps}>
+                        <div className="flex items-center gap-3">
+                            <div className="text-2xl shrink-0">{statusIcon}</div>
+                            <div className={`text-sm font-medium leading-relaxed ${statusTextClass}`}>
+                                {statusText}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // pending: 渲染原版邀请卡（接受/拒绝两按钮）
+        return (
+            <div className={`flex items-center justify-center w-full my-4 px-4 ${selectionMode ? 'pl-12' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                {selectionMode && (
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                        </div>
+                    </div>
+                )}
+                <div className="bg-gradient-to-br from-rose-200 via-rose-50 to-pink-200 rounded-3xl p-5 max-w-[300px] w-full border-2 border-rose-300/70 shadow-md" {...interactionProps}>
+                    {/* 发送者头部：头像 + 名字 */}
+                    <div className="flex items-center gap-2 mb-3">
+                        <div className="w-8 h-8 rounded-full bg-white/80 flex items-center justify-center overflow-hidden shrink-0 border border-rose-200">
+                            {senderAvatar ? (
+                                <img src={senderAvatar} alt={senderName} className="w-full h-full object-cover" />
+                            ) : (
+                                <HeartIcon size={14} weight="fill" className="text-rose-400" />
+                            )}
+                        </div>
+                        <div className="text-[11px] font-bold text-rose-700">
+                            {senderName} 邀请你
+                        </div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-3xl mb-2">💕</div>
+                        <div className="text-sm font-bold mb-1 text-rose-600">
+                            情侣空间邀请
+                        </div>
+                        <div className="text-[10px] text-rose-400 mb-3 tracking-wide">
+                            {m.metadata?.annivDate ? `在 ${m.metadata.annivDate} · Day 1` : '从今天开始'}
+                        </div>
+                        <div className="text-[11px] text-slate-600 leading-relaxed mb-4">
+                            {m.content}
+                        </div>
+                        {isPending && (
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        coupleSpaceDecline(charId);
+                                    }}
+                                    className="flex-1 py-2 bg-white text-slate-500 text-xs font-bold rounded-full border border-slate-200 active:scale-95 transition-transform"
+                                >
+                                    拒绝
+                                </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        coupleSpaceAccept(charId);
+                                    }}
+                                    className="flex-1 py-2 bg-rose-400 text-white text-xs font-bold rounded-full active:scale-95 transition-transform"
+                                >
+                                    接受
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
@@ -557,7 +694,20 @@ const MessageItem = React.memo(({
                         {content}
                     </div>
                     {(isLastInGroup || m.metadata?.isProactive) && showTimestamp !== 'never' && (
-                        <div className={`text-[9px] text-slate-400/80 px-1 mt-1 font-medium ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
+                        <div className={`text-[9px] px-1 mt-1 font-medium flex items-center gap-1 ${
+                            // 暮色 2026-07-27 v2：主动消息时间戳加视觉标记，跟普通时间戳区分
+                            // 根因：formatTime 只显示 HH:MM，秒级看不出来
+                            //   AI 正常 22:00:00 + proactive 22:00:30 文本都是 "22:00"——
+                            //   看着像合并。加紫色小圆点 + 略深色背景，秒级看不出来也能认出"这是主动"
+                            m.metadata?.isProactive
+                                ? 'text-violet-500/85 bg-violet-50/70 rounded-full px-2'
+                                : 'text-slate-400/80'
+                        } ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
+                            {m.metadata?.isProactive && (
+                                <span className="w-1 h-1 rounded-full bg-violet-400 shrink-0" />
+                            )}
+                            {formatTime(m.timestamp)}
+                        </div>
                     )}
                 </div>
 

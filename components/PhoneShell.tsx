@@ -39,6 +39,7 @@ import MemoryPalaceApp from '../apps/MemoryPalaceApp';
 import HandbookApp from '../apps/HandbookApp';
 import QQBridge from '../apps/QQBridge';
 import VRWorldApp from '../apps/VRWorldApp';
+import CoupleSpaceApp from '../apps/CoupleSpaceApp';  // 暮色 2026-07-31：用户-角色双人小窝
 import { SpecialMomentsApp } from './ValentineEvent';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { AppID } from '../types';
@@ -425,6 +426,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Handbook: return <HandbookApp />;
       case AppID.QQBridge: return <QQBridge />;
       case AppID.VRWorld: return <VRWorldApp />;
+      case AppID.CoupleSpace: return <CoupleSpaceApp />;  // 暮色 2026-07-31
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;

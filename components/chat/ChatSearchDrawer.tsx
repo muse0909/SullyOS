@@ -5,6 +5,10 @@ import { MagnifyingGlass, X, CaretDown, CaretUp } from '@phosphor-icons/react';
 import { DB } from '../../utils/db';
 import { Message, CharacterProfile } from '../../types';
 
+const isValidSearchMessage = (m: any): m is Message => {
+    return !!m && typeof m === 'object' && typeof m.role === 'string' && typeof m.id === 'number' && typeof m.content === 'string';
+};
+
 interface ChatSearchDrawerProps {
     isOpen: boolean;
     onClose: () => void;
@@ -61,7 +65,7 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
         DB.getMessagesByCharId(activeCharacter.id, true).then((msgs) => {
             if (cancelled) return;
             // 跟 Chat.tsx 一样的过滤：date/call 来源不进聊天主界面
-            const filtered = msgs.filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call');
+            const filtered = msgs.filter(isValidSearchMessage).filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call');
             setAllMessages(filtered);
             setLoading(false);
             setTimeout(() => inputRef.current?.focus(), 80);

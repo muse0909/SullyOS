@@ -645,12 +645,63 @@ export const useChatAI = ({
         if (isTyping || !char) return;
         // 角色级 API 优先：char.apiConfig 设了 baseUrl/apiKey/model 就用角色的（暮色 2026-07-24）
         // 协议、minimaxRegion、visionBaseUrl/R2/image* 等仍走全局
+        // 暮色 2026-07-31 修：3 tab 协议下，角色 API 可能在 claude*/gemini* 而不是 baseUrl
+        //   之前只判 charApi.baseUrl（OpenAI 字段），导致设了 Gemini 角色 API 但 baseUrl 是空
+        //   → 角色 API 被忽略，全局 Gemini（柚子 youzi.today gemini-2.5-pro）顶上去
+        //   修：判断扩展到 3 套 baseUrl 任何一个非空就视为"设了角色 API"；
+        //       构造 effectiveApi 时按 charApi.protocol 选对应那组字段
         const charApi = (char as any).apiConfig;
-        const effectiveApi = overrideApiConfig
-            || (charApi && charApi.baseUrl
-                ? { ...apiConfig, baseUrl: charApi.baseUrl, apiKey: charApi.apiKey || apiConfig.apiKey || '', model: charApi.model || apiConfig.model || '' } as any
+        const charProtocol = (charApi?.protocol as 'openai' | 'claude' | 'gemini' | undefined) || 'openai';
+        const charHasAnyApi = !!charApi && !!(
+            charApi.baseUrl
+            || (charApi as any).claudeBaseUrl
+            || (charApi as any).geminiBaseUrl
+        );
+        let effectiveApi = overrideApiConfig
+            || (charHasAnyApi
+                ? {
+                    ...apiConfig,
+                    baseUrl: charProtocol === 'claude' ? ((charApi as any).claudeBaseUrl || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiBaseUrl || '')
+                        : (charApi.baseUrl || ''),
+                    apiKey: charProtocol === 'claude' ? ((charApi as any).claudeApiKey || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiApiKey || '')
+                        : (charApi.apiKey || ''),
+                    model: charProtocol === 'claude' ? ((charApi as any).claudeModel || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiModel || '')
+                        : (charApi.model || ''),
+                    protocol: charProtocol,
+                } as any
                 : null)
             || apiConfig;
+        // 暮色 2026-07-27：3 tab 协议切换 — 根据 protocol 字段选对应那组的 baseUrl/apiKey/model
+        //   - 角色独立 API 设了 baseUrl 就强制用角色的（保持原有逻辑），协议跟随角色或全局
+        //   - 没设角色 API 时，根据 effectiveApi.protocol 选 claude* / gemini* / baseUrl* 三组
+        //   - 字段是 (effectiveApi as any) 读取，类型上 protocol 在 APIConfig 里有
+        const mainProtocol = (effectiveApi as any).protocol ?? 'openai';
+        const charApiOverridesMain = charHasAnyApi;
+        if (!charApiOverridesMain) {
+            const protoResolved = (() => {
+                if (mainProtocol === 'claude') {
+                    return {
+                        baseUrl: (effectiveApi as any).claudeBaseUrl || effectiveApi.baseUrl,
+                        apiKey: (effectiveApi as any).claudeApiKey || effectiveApi.apiKey,
+                        model: (effectiveApi as any).claudeModel || effectiveApi.model,
+                    };
+                }
+                if (mainProtocol === 'gemini') {
+                    return {
+                        baseUrl: (effectiveApi as any).geminiBaseUrl || effectiveApi.baseUrl,
+                        apiKey: (effectiveApi as any).geminiApiKey || effectiveApi.apiKey,
+                        model: (effectiveApi as any).geminiModel || effectiveApi.model,
+                    };
+                }
+                return null;
+            })();
+            if (protoResolved) {
+                effectiveApi = { ...effectiveApi, ...protoResolved } as any;
+            }
+        }
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
         setIsTyping(true);
@@ -924,6 +975,13 @@ export const useChatAI = ({
             //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
             const useClaudeProtocol = apiProtocol === 'claude';
+            // 暮色 2026-07-27：Gemini 直连协议从「看 URL」改为「读 protocol」字段
+            //   - UI 上 3 tab 平等切换（OpenAI / Claude / Gemini）
+            //   - 选 Gemini 时存到 protocol 字段，baseUrl/apiKey/model 复用同一组
+            //   - 端点: /v1beta/models/{model}:generateContent?key=xxx
+            //   - 请求体: contents/parts + systemInstruction 顶层字段
+            //   - 不挂 tool（Gemini function calling 格式跟 OpenAI 不同；想用 tool 切回 OpenAI）
+            const useGeminiProtocol = apiProtocol === 'gemini';
             // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
             //   - OpenAI 协议：不发 message-level cache_control
             //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
@@ -941,7 +999,11 @@ export const useChatAI = ({
                 cleanedApiMessages = cleanedApiMessages.map((m: any) => {
                     if (m.role !== 'system') return m;
                     const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                    return { role: 'user', content: `[系统消息] ${text}` };
+                    // 暮色 2026-07-31：只对情侣空间事件用 [情侣空间事件] 前缀（让 AI 主动引用），
+                    //   其他技术状态消息用 [系统状态] 前缀（AI 不要主动回应"连接中断"这类）
+                    const isCoupleSpace = m.type === 'couple_space_invite' || m.type === 'couple_space_event';
+                    const prefix = isCoupleSpace ? '[情侣空间事件]' : '[系统状态]';
+                    return { role: 'user', content: `${prefix} ${text}` };
                 });
             }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
@@ -1253,7 +1315,31 @@ console.log('🖼️ 识图检测', {
 // 如果最近图片已经有描述，跳过识图，避免重复调用
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
-if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effectiveApi.visionApiKey) {
+// 暮色 2026-07-27：识图 3 tab 协议切换 — 根据 visionProtocol 字段选对应那组的 visionBaseUrl/Key/Model
+//   - 'openai' (默认): visionBaseUrl/visionApiKey/visionModel
+//   - 'claude':         visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
+//   - 'gemini':         visionGeminiBaseUrl/visionGeminiApiKey/visionGeminiModel
+//   - 每个 tab 独立保存自己的值，切换不丢
+const visionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
+const useVisionGeminiProtocol = visionProtocol === 'gemini';
+const useVisionClaudeProtocol = visionProtocol === 'claude';
+const visionActiveUrl = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeBaseUrl || effectiveApi.visionBaseUrl)
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
+        : effectiveApi.visionBaseUrl;
+const visionActiveKey = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeApiKey || effectiveApi.visionApiKey)
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
+        : effectiveApi.visionApiKey;
+const visionActiveModel = visionProtocol === 'claude'
+    ? ((effectiveApi as any).visionClaudeModel || effectiveApi.visionModel || 'claude-3-5-sonnet-20241022')
+    : visionProtocol === 'gemini'
+        ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
+        : (effectiveApi.visionModel || 'gemini-1.5-flash');
+
+if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [
             {
                 role: 'system',
@@ -1283,39 +1369,93 @@ if (hasImageInLatest && !alreadyDescribed && effectiveApi.visionBaseUrl && effec
             }
         ];
 
-    const visionUrl = normalizeApiUrl(effectiveApi.visionBaseUrl);
-    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
-        const visionMessages = buildVisionMessages(imageUrl);
-        const requestBody = {
-            model: effectiveApi.visionModel || 'gemini-1.5-flash',
-            messages: visionMessages,
-            temperature: 0.3,
-            stream: false
+    // 暮色 2026-07-27：识图走 Gemini 直连时构造 Gemini contents 格式
+    //   - base64 dataURL 拆 mimeType + data
+    //   - 外链：Google Imagen 也能 fetch HTTPS 公开图（不用下到本地）
+    const buildGeminiVisionBody = (imageUrl: string) => {
+        const systemText = buildVisionMessages(imageUrl)[0].content;
+        const userText = buildVisionMessages(imageUrl)[1].content[0].text;
+        let inlineData: any;
+        if (imageUrl.startsWith('data:')) {
+            const m = imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+            if (m) inlineData = { mimeType: m[1], data: m[2] };
+        }
+        const parts: any[] = [{ text: userText }];
+        if (inlineData) {
+            parts.push({ inline_data: inlineData });
+        } else {
+            // 外链：Google 端支持 fileData 引用公开 URL
+            parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/*' } });
+        }
+        return {
+            contents: [{ role: 'user', parts }],
+            systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
         };
+    };
+
+    const visionUrl = useVisionGeminiProtocol
+        ? (visionActiveUrl || '').replace(/\/+$/, '')
+        : normalizeApiUrl(visionActiveUrl);
+    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
+        const requestModel = visionActiveModel;
         const logBase = {
             timestamp: new Date().toISOString(),
-            url: `${visionUrl}/chat/completions`,
-            model: requestBody.model,
+            url: useVisionGeminiProtocol
+                ? `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
+                : `${visionUrl}/chat/completions`,
+            model: requestModel,
             mode,
+            protocol: useVisionGeminiProtocol ? 'gemini' : 'openai',
             image: imageUrl.startsWith('data:image')
                 ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
                 : { kind: 'url', url: imageUrl },
-            body: {
-                ...requestBody,
-                messages: summarizeVisionMessagesForLog(visionMessages)
-            }
         };
 
         try {
             saveVisionReqLog({ ...logBase, status: 'requesting' });
-            const data = await safeFetchJson(`${visionUrl}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${effectiveApi.visionApiKey}`
-                },
-                body: JSON.stringify(requestBody)
-            }, 0);
+            let data: any;
+            if (useVisionGeminiProtocol) {
+                // 暮色 2026-07-27：Gemini 协议直连（独立 Key / Model 可用）
+                const geminiBody = buildGeminiVisionBody(imageUrl);
+                const res = await fetch(`${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(visionActiveKey || '')}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(geminiBody),
+                });
+                if (!res.ok) {
+                    const errText = await res.text().catch(() => '');
+                    throw new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                }
+                const gj: any = await res.json();
+                const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                // 转 OpenAI 格式让下游代码无感
+                data = {
+                    choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
+                    usage: gj?.usageMetadata ? {
+                        prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
+                        completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
+                        total_tokens: gj.usageMetadata.totalTokenCount || 0,
+                    } : undefined,
+                };
+                console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字`);
+            } else {
+                const visionMessages = buildVisionMessages(imageUrl);
+                const requestBody = {
+                    model: requestModel,
+                    messages: visionMessages,
+                    temperature: 0.3,
+                    stream: false,
+                };
+                data = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${visionActiveKey}`
+                    },
+                    body: JSON.stringify(requestBody)
+                }, 0);
+            }
             saveVisionReqLog({ ...logBase, status: 'ok' });
             return data;
         } catch (err: any) {
@@ -1415,6 +1555,41 @@ ${visionDesc}
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;
+            // 暮色 2026-07-27：Gemini 协议请求体（独立于 OpenAI / Claude）
+            //   - contents: [{ role: 'user' | 'model', parts: [{text}] }]
+            //   - systemInstruction 顶层字段（不是 role:system 插在 messages 里）
+            //   - 端点: ${baseUrl}/models/{model}:generateContent?key=xxx
+            //   - 不带 Authorization header（key 走 URL 参数）
+            //   - 不挂 tool（Gemini function calling 格式不同；想用 tool 切回 OpenAI 中转）
+            let geminiRequestBody: any = null;
+            let geminiUrl = '';
+            if (useGeminiProtocol) {
+                const systemText = `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`;
+                const contents = cleanedApiMessages
+                    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+                    .map((m: any) => {
+                        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                        return {
+                            role: m.role === 'assistant' ? 'model' : 'user',
+                            parts: [{ text: text.slice(0, 30000) }]  // 单条 30k 截断，护 token 上限
+                        };
+                    });
+                // Gemini 第一个 turn 必须是 user，没有就补一条
+                if (contents.length === 0 || contents[0].role !== 'user') {
+                    contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
+                }
+                geminiRequestBody = {
+                    contents,
+                    systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                    generationConfig: {
+                        temperature: userTemp,
+                        maxOutputTokens: 8000,
+                    },
+                };
+                const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
+                geminiUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(effectiveApi.apiKey || '')}`;
+                console.log(`🌐 [Gemini] 直连协议 → ${geminiUrl.split('?')[0]}?key=***`);
+            }
             const baseReqBody: any = {
                 model: effectiveApi.model,
                 messages: fullMessages,
@@ -1522,10 +1697,43 @@ if (toolsList.length > 0) {
                 }
             }
 
-            let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                body: JSON.stringify(baseReqBody)
-            }, 2, 0, apiProtocol);
+            let data: any;
+            if (useGeminiProtocol && geminiRequestBody) {
+                // 暮色 2026-07-27：Gemini 协议直连 fetch（不走 OpenAI 兼容的 safeFetchJson）
+                //   - Gemini 返回的字段是 candidates[].content.parts[].text
+                //   - 转成 OpenAI 格式 choices[].message.content，后续代码无感
+                //   - 解析 usageMetadata → usage（token 徽标能用）
+                const geminiHeaders = { 'Content-Type': 'application/json' };
+                const geminiRes = await fetch(geminiUrl, {
+                    method: 'POST',
+                    headers: geminiHeaders,
+                    body: JSON.stringify(geminiRequestBody),
+                });
+                if (!geminiRes.ok) {
+                    const errText = await geminiRes.text().catch(() => '');
+                    throw new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                }
+                const geminiJson: any = await geminiRes.json();
+                const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                data = {
+                    choices: [{
+                        message: { role: 'assistant', content: geminiText },
+                        finish_reason: geminiFinish,
+                    }],
+                    usage: geminiJson?.usageMetadata ? {
+                        prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
+                        completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
+                        total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
+                    } : undefined,
+                };
+                console.log(`🌐 [Gemini] 响应 ${geminiText.length} 字 | usage=${JSON.stringify(data.usage)}`);
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(baseReqBody)
+                }, 2, 0, apiProtocol);
+            }
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -1670,6 +1878,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         if (imgPrompt && !imageGenError) {
             console.log('🎨 [ImageGen] AI 触发生图, prompt:', imgPrompt);
 
+            // 暮色 2026-07-27 晚：删生图 Gemini 分支
+            //   - 暮色原话"生图不用"3 tab 切换，生图现在只走 OpenAI 兼容协议
+            //   - 删 useImageGeminiDirect / useImageGeminiProtocol / imageActiveUrl/Key/Model 等独立配置
+            //   - 直接走 imageBaseUrl / imageApiKey / imageModel（OpenAI 兼容）
             try {
                 // 暮色 2026-07-14：生图失败排查 — 打印完整请求体，Netlify 日志里能看到实际发出去的 model 字符串
                 console.log('🎨 [ImageGen] 请求体:', {

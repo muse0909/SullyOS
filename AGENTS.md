@@ -279,6 +279,30 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-31 | 彼方 saveVRNovel 漏写 — 上传小说 TypeError | [`changelogs/2026-07-31-vrworld-savevrnovel.md`](./changelogs/2026-07-31-vrworld-savevrnovel.md) |
+| 2026-07-31 | 情侣空间接受/拒绝 UI 反馈 + 邀请卡状态视觉区分 | [`changelogs/2026-07-31-couple-space-accept-feedback.md`](./changelogs/2026-07-31-couple-space-accept-feedback.md) |
+| 2026-07-31 | 紧急修复：聊天页 TDZ 崩溃（coupleSpaceInviteResolved useEffect 位置错） | [`changelogs/2026-07-31-chat-tdz-after-couple-space.md`](./changelogs/2026-07-31-chat-tdz-after-couple-space.md) |
+| 2026-08-01 | 情侣空间 AI 真决策（LLM 完整请求体）+ 状态胶囊带名字 | [`changelogs/2026-08-01-couple-space-ai-decision-v2.md`](./changelogs/2026-08-01-couple-space-ai-decision-v2.md) |
+| 2026-08-01 | 情侣空间第一阶段 3 模块补完：时间线 + 悄悄话 + AI 主动打卡 | [`changelogs/2026-08-01-couple-space-3tabs.md`](./changelogs/2026-08-01-couple-space-3tabs.md) |
+| 2026-08-01 | 情侣空间 handoff — 下一个窗口接力指南 | [`changelogs/2026-08-01-couple-space-handoff.md`](./changelogs/2026-08-01-couple-space-handoff.md) |
+| 2026-07-31 | 情侣空间（CoupleSpace）— 阶段 1：基础设施 + 最小骨架（3 模块开发中） | [`changelogs/2026-07-31-couple-space-stage1.md`](./changelogs/2026-07-31-couple-space-stage1.md) |
+| 2026-07-31 | 聊天页 null 消息渲染守卫（MessageItem m.role 兜底） | [`changelogs/2026-07-31-chat-null-msg-guard.md`](./changelogs/2026-07-31-chat-null-msg-guard.md) |
+| 2026-07-31 | ChatSettingsDrawer 漏 destructure perCharApiProtocol — 聊天设置崩 | [`changelogs/2026-07-31-chatsettings-destructure-fix.md`](./changelogs/2026-07-31-chatsettings-destructure-fix.md) |
+| 2026-07-31 | 角色 API 重开抽屉时输入框不同步（按 protocol 重新同步 + 补 deps） | [`changelogs/2026-07-31-chatsettings-reopen-sync.md`](./changelogs/2026-07-31-chatsettings-reopen-sync.md) |
+| 2026-07-31 | useChatAI 角色 API 优先级判断扩展到 3 套 baseUrl（修 Gemini/Claude 角色 API 被全局顶掉） | [`changelogs/2026-07-31-perchar-api-3tab-eval.md`](./changelogs/2026-07-31-perchar-api-3tab-eval.md) |
+| 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
+| 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |
+| 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |
+| 2026-07-28 | API 浮窗 4 张配置卡片统一 | [`changelogs/2026-07-28-api-quickfloat-unify.md`](./changelogs/2026-07-28-api-quickfloat-unify.md) |
+| 2026-07-27 | 悬浮球/主动消息 5 处补全 + loadedProto bug 修 | [`changelogs/2026-07-27-float-proactive-etc.md`](./changelogs/2026-07-27-float-proactive-etc.md) |
+| 2026-07-27 | 3 个 API 反馈修复（删生图 Gemini 折叠块 + 副 API/角色 API 加 3 tab 切换） | [`changelogs/2026-07-27-api-feedback-fixes.md`](./changelogs/2026-07-27-api-feedback-fixes.md) |
+| 2026-07-27 | API 配置 3 tab 协议平等切换（OpenAI / Claude / Gemini） | [`changelogs/2026-07-27-api-3tab-protocol.md`](./changelogs/2026-07-27-api-3tab-protocol.md) |
+| 2026-07-31 | 彼方 / 520 捏人器修复：fork 完整 character_creator.html | [`changelogs/2026-07-31-like520-character-creator-fork.md`](./changelogs/2026-07-31-like520-character-creator-fork.md) |
+| 2026-07-31 | 彼方（VRWorldApp）修复：补 9 个缺失 DB 方法 + reloadAll try/finally | [`changelogs/2026-07-31-vrworld-missing-db-methods.md`](./changelogs/2026-07-31-vrworld-missing-db-methods.md) |
+| 2026-07-27 | 主动消息 prompt 重写 + thought_chain 思维链前置 | [`changelogs/2026-07-27-proactive-prompt-and-thought-chain.md`](./changelogs/2026-07-27-proactive-prompt-and-thought-chain.md) |
+| 2026-07-27 | 主动消息 group 边界：30 分钟 → 1 分钟（proactive 永远独立） | [`changelogs/2026-07-27-proactive-group-gap-1min.md`](./changelogs/2026-07-27-proactive-group-gap-1min.md) |
+| 2026-07-27 | 主动消息时间戳 v2：proactive 永远独立 group + 紫色视觉标记（追根因版） | [`changelogs/2026-07-27-proactive-msg-timestamp-v2.md`](./changelogs/2026-07-27-proactive-msg-timestamp-v2.md) |
+| 2026-07-27 | Gemini 直连（Google 官方协议）主 API / 识图 / 生图三通道 + GPT 直连快捷入口 | [`changelogs/2026-07-27-gemini-direct-connect.md`](./changelogs/2026-07-27-gemini-direct-connect.md) |
 | 2026-07-25 | 记忆宫殿：Time Logs 手动添加 + 精炼 prompt 改"思考"写法 | [`changelogs/2026-07-25-memory-add-and-refine-prompt.md`](./changelogs/2026-07-25-memory-add-and-refine-prompt.md) |
 | 2026-07-25 | 备份 exportFullData 补读记忆宫殿 8 个 store（修备份丢 memoryPalace bug） | [`changelogs/2026-07-25-backup-export-memorypalace.md`](./changelogs/2026-07-25-backup-export-memorypalace.md) |
 | 2026-07-24 | 每个角色独立 API 配置（麦麦 MiniMax / 江澈 Claude 互不干扰） | [`changelogs/2026-07-24-per-character-api.md`](./changelogs/2026-07-24-per-character-api.md) |

@@ -250,7 +250,7 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     // 暮色 2026-07-31：情侣空间邀请卡片"接受/拒绝"按钮调 OSContext 全局方法
     //   之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
-    const { coupleSpaceAccept, coupleSpaceDecline, characters } = useOS();
+    const { coupleSpaceAccept, coupleSpaceDecline, characters, userProfile } = useOS();
 
     // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
     // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
@@ -382,8 +382,18 @@ const MessageItem = React.memo(({
     if (m.type === 'couple_space_invite') {
         const isPending = m.metadata?.status === 'pending';
         const charId = m.charId;
-        // 暮色 2026-07-31 反馈"看不到是谁发的" — 卡片加发送者（角色头像 + 名字）
-        const sender = characters.find(c => c.id === charId);
+        // 暮色 2026-07-31 反馈"暮色主动邀请的卡显示成'麦麦 邀请你'"（错的）
+        //   根因：之前统一用 charId 找角色，但实际：
+        //     - role='system' (暮色主动邀请) → 发送者是用户 (userProfile)
+        //     - role='assistant' (AI 主动邀请) → 发送者是角色
+        //   修法：根据 m.role 选发送者
+        const isUserInviting = m.role === 'system';
+        const senderName = isUserInviting
+            ? (userProfile?.name || '我')
+            : (characters.find(c => c.id === charId)?.name || 'TA');
+        const senderAvatar = isUserInviting
+            ? userProfile?.avatar
+            : characters.find(c => c.id === charId)?.avatar;
         // 暮色 2026-07-31 反馈"邀请卡没有粉色渐变，只有一个纯色"
         //   修法：用三色渐变（from-rose-200 via-rose-50 to-pink-200）+ 明显的深色边框
         return (
@@ -399,14 +409,14 @@ const MessageItem = React.memo(({
                     {/* 发送者头部：头像 + 名字 */}
                     <div className="flex items-center gap-2 mb-3">
                         <div className="w-8 h-8 rounded-full bg-white/80 flex items-center justify-center overflow-hidden shrink-0 border border-rose-200">
-                            {sender?.avatar ? (
-                                <img src={sender.avatar} alt={sender.name} className="w-full h-full object-cover" />
+                            {senderAvatar ? (
+                                <img src={senderAvatar} alt={senderName} className="w-full h-full object-cover" />
                             ) : (
                                 <HeartIcon size={14} weight="fill" className="text-rose-400" />
                             )}
                         </div>
                         <div className="text-[11px] font-bold text-rose-700">
-                            {sender?.name || 'TA'} 邀请你
+                            {senderName} 邀请你
                         </div>
                     </div>
                     <div className="text-center">

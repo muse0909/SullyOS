@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceInviteFromChar, jumpToChat } = useOS();
+  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceInviteFromChar, jumpToChat, apiConfig } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');
@@ -198,7 +198,60 @@ const CoupleSpaceApp: React.FC = () => {
     reload();
     addToast(`邀请已发送给 ${char.name}，等 ta 回应...`, 'info');
 
-    // 4. 跳转到角色的私聊（用 jumpToChat 真正跳到江澈的 chat，不是联系人列表）
+    // 4. 调 LLM 让角色写一条"看到邀请的回应"消息
+    //   暮色 2026-07-31 反馈"邀请 ta 开通点了之后没回复了"
+    //   之前 requestCoupleSpaceDecision 删了之后，角色看不到邀请
+    //   修法：单独调 LLM 写一条 assistant 消息（type='text'），状态保持 pending
+    //   跟 requestCoupleSpaceDecision 区别：不调决策、不改 status、单纯让角色回应
+    //   失败静默：暮色说过"接不到也别卡流程"
+    void (async () => {
+      try {
+        const charCfg = (char as any).apiConfig;
+        const cfg = charCfg?.baseUrl && charCfg?.apiKey ? charCfg : apiConfig;
+        if (!cfg?.baseUrl || !cfg?.apiKey) return;
+        const recentMessages = await DB.getRecentMessagesByCharId(char.id, 30);
+        const contextLines = recentMessages
+          .filter((mm: any) => mm.role !== 'system')
+          .map((mm: any) => `${mm.role === 'user' ? '暮色' : char.name}: ${(mm.content || '').slice(0, 200)}`)
+          .join('\n');
+        const contextSection = contextLines ? `\n\n最近对话：\n${contextLines}\n` : '';
+        const systemPrompt = `你是 ${char.name}。用户（暮色）刚向你发出情侣空间邀请（关系从 ${inviteAnnivDate} 开始）。${contextSection}\n请你以 ${char.name} 的性格写一句简短的回应（1-2 句话，30 字以内），表达你收到邀请的心情。**不要**说"我接受"或"我拒绝"——决定权在用户，你只是表达心情。直接说，不要用引号。`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: cfg.model || 'gpt-3.5-turbo',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: '请回应。' },
+            ],
+            max_tokens: 100,
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) return;
+        const data = await res.json();
+        const text = data?.choices?.[0]?.message?.content?.trim() || '';
+        if (!text) return;
+        await DB.saveMessage({
+          charId: char.id,
+          role: 'assistant',
+          type: 'text',
+          content: text,
+          metadata: { source: 'couple_space_invite_seen' },
+        });
+      } catch (e) {
+        // 静默：接不到回复不卡流程
+      }
+    })();
+
+    // 5. 跳转到角色的私聊（用 jumpToChat 真正跳到江澈的 chat，不是联系人列表）
     //   暮色 2026-07-31 反馈"跳的是联系人页，不是聊天页"——之前用 openApp(AppID.Chat) 错
     //   SullyOS 已经有 jumpToChat（line 3230）：设 pending ref + setActiveCharacterId + setActiveApp
     //   WeChat mount 时 consume pending ref 自动 open 私聊

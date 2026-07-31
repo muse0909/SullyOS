@@ -246,8 +246,10 @@ const MessageItem = React.memo(({
     onMcdSendCart,
     onMcdCandidate,
 }: MessageItemProps) => {
-    const isUser = m.role === 'user';
-    const isSystem = m.role === 'system';
+    // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
+    // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
+    const isUser = (m as any)?.role === 'user';
+    const isSystem = (m as any)?.role === 'system';
     const spacingClass = messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5');
     const marginBottom = spacingClass;
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';

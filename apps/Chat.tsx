@@ -2273,7 +2273,8 @@ if (keepN > 0) {
 
     const handleForwardToCharacter = async (targetCharId: string) => {
         if (!char) return;
-        const selectedMsgs = messages
+        // 用 safeMessages（已 sanitize）而不是 messages，避免 m.role 抛 null
+        const selectedMsgs = safeMessages
             .filter(m => selectedMsgIds.has(m.id))
             .sort((a, b) => a.id - b.id);
 
@@ -2863,6 +2864,9 @@ if (keepN > 0) {
                 )}
 
                 {displayMessages.map((m, i) => {
+                    // 防御：sanitizeChatMessages 应已过滤 null，但渲染时再兜一道。
+                    // 之前 m.role 在 MessageItem 里没守卫，遇到 null 直接白屏。
+                    if (!m) return null;
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
                     // 暮色 2026-07-27 v2：proactive 永远独立 group（不光是 proactive 之间）
@@ -2876,6 +2880,7 @@ if (keepN > 0) {
                     const USER_CHAT_GAP_MS = 30 * 60 * 1000;
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
+                        if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
                         if (neighbor.role !== cur.role) return true;
                         const gap = Math.abs(cur.timestamp - neighbor.timestamp);
                         const curProactive = !!cur.metadata?.isProactive;

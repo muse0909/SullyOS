@@ -281,6 +281,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 |---|---|---|
 | 2026-07-31 | 聊天页 null 消息渲染守卫（MessageItem m.role 兜底） | [`changelogs/2026-07-31-chat-null-msg-guard.md`](./changelogs/2026-07-31-chat-null-msg-guard.md) |
 | 2026-07-31 | ChatSettingsDrawer 漏 destructure perCharApiProtocol — 聊天设置崩 | [`changelogs/2026-07-31-chatsettings-destructure-fix.md`](./changelogs/2026-07-31-chatsettings-destructure-fix.md) |
+| 2026-07-31 | 角色 API 重开抽屉时输入框不同步（按 protocol 重新同步 + 补 deps） | [`changelogs/2026-07-31-chatsettings-reopen-sync.md`](./changelogs/2026-07-31-chatsettings-reopen-sync.md) |
 | 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
 | 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |
 | 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |

@@ -202,21 +202,44 @@ const Chat: React.FC = () => {
     // 只看 main 类型的预设（暮色 2026-07-24 — 聊天 API 用 main 预设）
     const mainPresets = (apiPresets || []).filter((p: any) => !p.kind || p.kind === 'main');
     // 打开抽屉 / 切角色时同步当前角色的 apiConfig
+    // 暮色 2026-07-31 修：之前只同步 3 套独立缓存（Claude*/Gemini*/BaseUrl*），
+    //   但 perCharApiBaseUrl/Key/Model 永远从 char.apiConfig.baseUrl/apiKey/model 读
+    //   → 重开抽屉时如果 protocol 是 gemini/claude，tab 在那但输入框显示 OpenAI 那组的值（空），
+    //     看起来像"没保存"
+    //   修：同步完 3 套缓存 + protocol 之后，按当前 protocol 把对应那组填进 perCharApiBaseUrl/Key/Model
+    //     （跟 switchPerCharApiProtocol 切 tab 时的逻辑保持一致）
     useEffect(() => {
         if (showChatSettingsDrawer && char) {
-            setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
-            setPerCharApiKey(char.apiConfig?.apiKey || '');
-            setPerCharApiModel(char.apiConfig?.model || '');
-            // 暮色 2026-07-27：3 tab 协议 + 3 套独立字段同步
-            setPerCharApiProtocol(((char.apiConfig as any)?.protocol as 'openai' | 'claude' | 'gemini') || 'openai');
-            setPerCharApiClaudeUrl((char.apiConfig as any)?.claudeBaseUrl || '');
-            setPerCharApiClaudeKey((char.apiConfig as any)?.claudeApiKey || '');
-            setPerCharApiClaudeModel((char.apiConfig as any)?.claudeModel || '');
-            setPerCharApiGeminiUrl((char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-            setPerCharApiGeminiKey((char.apiConfig as any)?.geminiApiKey || '');
-            setPerCharApiGeminiModel((char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash');
+            const proto = ((char.apiConfig as any)?.protocol as 'openai' | 'claude' | 'gemini') || 'openai';
+            const claudeUrl = (char.apiConfig as any)?.claudeBaseUrl || '';
+            const claudeKey = (char.apiConfig as any)?.claudeApiKey || '';
+            const claudeModel = (char.apiConfig as any)?.claudeModel || '';
+            const geminiUrl = (char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+            const geminiKey = (char.apiConfig as any)?.geminiApiKey || '';
+            const geminiModel = (char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash';
+            setPerCharApiProtocol(proto);
+            setPerCharApiClaudeUrl(claudeUrl);
+            setPerCharApiClaudeKey(claudeKey);
+            setPerCharApiClaudeModel(claudeModel);
+            setPerCharApiGeminiUrl(geminiUrl);
+            setPerCharApiGeminiKey(geminiKey);
+            setPerCharApiGeminiModel(geminiModel);
+            // 按当前 protocol 填入对应的 baseUrl/Key/Model，让输入框跟 tab 状态对齐
+            if (proto === 'claude') {
+                setPerCharApiBaseUrl(claudeUrl);
+                setPerCharApiKey(claudeKey);
+                setPerCharApiModel(claudeModel);
+            } else if (proto === 'gemini') {
+                setPerCharApiBaseUrl(geminiUrl);
+                setPerCharApiKey(geminiKey);
+                setPerCharApiModel(geminiModel);
+            } else {
+                setPerCharApiBaseUrl(char.apiConfig?.baseUrl || '');
+                setPerCharApiKey(char.apiConfig?.apiKey || '');
+                setPerCharApiModel(char.apiConfig?.model || '');
+            }
         }
-    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model]);
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model, (char as any)?.apiConfig?.protocol, (char as any)?.apiConfig?.claudeBaseUrl, (char as any)?.apiConfig?.claudeApiKey, (char as any)?.apiConfig?.claudeModel, (char as any)?.apiConfig?.geminiBaseUrl, (char as any)?.apiConfig?.geminiApiKey, (char as any)?.apiConfig?.geminiModel]);
     // 暮色 2026-07-27：角色独立 API 3 tab 协议切换 handler
     //   切走前：把当前 perCharApiBaseUrl/Key/Model 存到旧协议缓存
     //   切到后：从新协议缓存读取填入

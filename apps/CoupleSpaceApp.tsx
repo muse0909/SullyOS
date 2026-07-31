@@ -9,9 +9,9 @@
 //   - 任务清单：去掉"说早安"和"看朋友圈"，合并"听歌"+"一起听"为"邀请一起听"
 //   - Launcher 不放图标（暮色 2026-07-31 "Launcher 主页的就不要了"），只从发现页进
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
-import { CoupleSpace, CharacterProfile, DEFAULT_COUPLE_TASKS, AppID } from '../types';
+import { CoupleSpace, CoupleTimelineItem, CoupleWhisper, CharacterProfile, DEFAULT_COUPLE_TASKS, AppID } from '../types';
 import { DB } from '../utils/db';
 import {
   getAllSpaces,
@@ -25,6 +25,12 @@ import {
   expireOldPendingInvites,
   deleteSpace,
   setAnnivDate,
+  addTimelineItem,
+  updateTimelineItem,
+  deleteTimelineItem,
+  addWhisper,
+  markWhispersRead,
+  deleteWhisper,
 } from '../utils/coupleSpaceStorage';
 import Modal from '../components/os/Modal';
 import {
@@ -36,6 +42,11 @@ import {
   Check as CheckIcon,
   Gear as GearIcon,
   Warning as WarningIcon,
+  PencilSimple,
+  Trash,
+  PaperPlaneTilt,
+  ArrowUUpLeft,
+  X,
 } from '@phosphor-icons/react';
 
 // ──────────────────────────────────────────
@@ -501,27 +512,10 @@ const CoupleSpaceApp: React.FC = () => {
           <CheckinTab space={activeSpace} char={char} onUpdate={reload} />
         )}
         {tab === 'timeline' && (
-          <div className="bg-white/60 rounded-2xl p-6 text-center">
-            <div className="text-rose-300 text-xs mb-2">时间线模块</div>
-            <div className="text-slate-400 text-sm">开发中，下一轮做</div>
-            <div className="text-[10px] text-slate-400 mt-2">
-              共 {activeSpace.timeline.length} 条记录
-            </div>
-          </div>
+          <TimelineTab space={activeSpace} char={char} onUpdate={reload} />
         )}
         {tab === 'whisper' && (
-          <div className="bg-white/60 rounded-2xl p-6 text-center">
-            <div className="text-rose-300 text-xs mb-2">悄悄话模块</div>
-            <div className="text-slate-400 text-sm">开发中，下一轮做</div>
-            <div className="text-[10px] text-slate-400 mt-2">
-              共 {activeSpace.whispers.length} 条
-              {activeSpace.whisperUnread > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 bg-rose-400 text-white rounded-full text-[9px]">
-                  {activeSpace.whisperUnread} 未读
-                </span>
-              )}
-            </div>
-          </div>
+          <WhisperTab space={activeSpace} char={char} onUpdate={reload} />
         )}
       </div>
 
@@ -937,6 +931,648 @@ const Last7DaysStrip: React.FC<{ space: CoupleSpace }> = ({ space }) => {
               </div>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────
+// 通用确认弹窗（暮色 2026-08-01：情侣空间统一用）
+// ──────────────────────────────────────────
+
+const ConfirmModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+  confirmText?: string;
+  confirmStyle?: 'primary' | 'danger';
+}> = ({ isOpen, onClose, onConfirm, title, message, confirmText = '确定', confirmStyle = 'primary' }) => {
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title}
+      footer={
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`flex-1 py-2.5 text-white font-bold rounded-full active:scale-95 transition-transform ${
+              confirmStyle === 'danger' ? 'bg-rose-500' : 'bg-rose-400'
+            }`}
+          >
+            {confirmText}
+          </button>
+        </div>
+      }
+    >
+      <div className="text-sm text-slate-600 leading-relaxed text-center py-2">
+        {message}
+      </div>
+    </Modal>
+  );
+};
+
+// ──────────────────────────────────────────
+// 时间线 Tab
+// ──────────────────────────────────────────
+
+const MOOD_OPTIONS: { value: NonNullable<CoupleTimelineItem['mood']>; emoji: string; label: string }[] = [
+  { value: 'happy', emoji: '😊', label: '开心' },
+  { value: 'sweet', emoji: '🍯', label: '甜蜜' },
+  { value: 'miss', emoji: '🥺', label: '想念' },
+  { value: 'sad', emoji: '😢', label: '难过' },
+  { value: 'angry', emoji: '😠', label: '生气' },
+  { value: 'neutral', emoji: '😐', label: '一般' },
+];
+
+const moodEmoji = (m: CoupleTimelineItem['mood']): string => {
+  return MOOD_OPTIONS.find(o => o.value === m)?.emoji || '📌';
+};
+
+const sourceLabel = (s: CoupleTimelineItem['source'], charName: string): string => {
+  if (s === 'user-manual') return '我加';
+  if (s === 'char-manual') return charName;
+  return 'AI 抽取';
+};
+
+const sourceBadgeClass = (s: CoupleTimelineItem['source']): string => {
+  if (s === 'user-manual') return 'bg-rose-100 text-rose-500';
+  if (s === 'char-manual') return 'bg-pink-100 text-pink-500';
+  return 'bg-slate-100 text-slate-500';
+};
+
+const TimelineTab: React.FC<{
+  space: CoupleSpace;
+  char: CharacterProfile | null;
+  onUpdate: () => void;
+}> = ({ space, char, onUpdate }) => {
+  const { addToast } = useOS();
+  const charName = char?.name || 'TA';
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  const editing = editingId ? space.timeline.find(t => t.id === editingId) || null : null;
+
+  const handleAdd = (data: {
+    title: string;
+    content: string;
+    date: string;
+    mood?: CoupleTimelineItem['mood'];
+    source: 'user-manual' | 'char-manual';
+  }) => {
+    const result = addTimelineItem('default', space.charId, data);
+    if (result) {
+      onUpdate();
+      addToast('已添加时间线记录', 'success');
+      setShowAddModal(false);
+    } else {
+      addToast('添加失败', 'error');
+    }
+  };
+
+  const handleSaveEdit = (data: {
+    title: string;
+    content: string;
+    date: string;
+    mood?: CoupleTimelineItem['mood'];
+    source: 'user-manual' | 'char-manual';
+  }) => {
+    if (!editingId) return;
+    const result = updateTimelineItem('default', space.charId, editingId, data);
+    if (result) {
+      onUpdate();
+      addToast('已更新', 'success');
+      setEditingId(null);
+    } else {
+      addToast('更新失败', 'error');
+    }
+  };
+
+  const handleDelete = () => {
+    if (!deleteId) return;
+    const result = deleteTimelineItem('default', space.charId, deleteId);
+    if (result) {
+      onUpdate();
+      addToast('已删除', 'success');
+      setDeleteId(null);
+    } else {
+      addToast('删除失败', 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* 顶部：统计 + 添加按钮 */}
+      <div className="flex items-center justify-between px-1">
+        <div className="text-xs text-slate-500 font-medium">
+          共 {space.timeline.length} 条记录
+        </div>
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="px-3 py-1.5 bg-rose-400 text-white text-xs font-medium rounded-full active:scale-95 transition-transform flex items-center gap-1"
+        >
+          <Plus size={12} weight="bold" />
+          添加
+        </button>
+      </div>
+
+      {/* 空状态 */}
+      {space.timeline.length === 0 && (
+        <div className="bg-white/60 rounded-2xl p-6 text-center">
+          <div className="text-rose-300 text-xs mb-2">时间线</div>
+          <div className="text-slate-400 text-sm">还没有记录，点上方"添加"记下重要时刻吧</div>
+        </div>
+      )}
+
+      {/* 列表 */}
+      <div className="space-y-2">
+        {space.timeline.map(item => (
+          <TimelineItemCard
+            key={item.id}
+            item={item}
+            charName={charName}
+            onEdit={() => setEditingId(item.id)}
+            onDelete={() => setDeleteId(item.id)}
+          />
+        ))}
+      </div>
+
+      {/* 添加模态框 */}
+      <AddTimelineItemModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onSubmit={handleAdd}
+        title="添加时间线记录"
+      />
+
+      {/* 编辑模态框 */}
+      {editing && (
+        <AddTimelineItemModal
+          isOpen={true}
+          onClose={() => setEditingId(null)}
+          onSubmit={handleSaveEdit}
+          initial={{
+            title: editing.title,
+            content: editing.content,
+            date: editing.date,
+            mood: editing.mood,
+            source: (editing.source === 'ai-extract' ? 'user-manual' : editing.source) as 'user-manual' | 'char-manual',
+          }}
+          title="编辑时间线"
+        />
+      )}
+
+      {/* 删除确认 */}
+      <ConfirmModal
+        isOpen={!!deleteId}
+        onClose={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        title="删除这条记录？"
+        message="删除后无法恢复"
+        confirmText="删除"
+        confirmStyle="danger"
+      />
+    </div>
+  );
+};
+
+// 单条时间线卡片
+const TimelineItemCard: React.FC<{
+  item: CoupleTimelineItem;
+  charName: string;
+  onEdit: () => void;
+  onDelete: () => void;
+}> = ({ item, charName, onEdit, onDelete }) => {
+  return (
+    <div className="bg-white rounded-2xl p-3 border border-rose-100/60">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-rose-100 to-pink-100 flex items-center justify-center text-lg shrink-0">
+          {moodEmoji(item.mood)}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="text-sm font-medium text-slate-800 truncate">
+              {item.title}
+            </div>
+            <div className="text-[10px] text-slate-400 shrink-0">
+              {item.date.slice(5)}
+            </div>
+          </div>
+          {item.content && (
+            <div className="text-xs text-slate-500 mt-1 leading-relaxed line-clamp-3 break-words">
+              {item.content}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-medium ${sourceBadgeClass(item.source)}`}>
+              {sourceLabel(item.source, charName)}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 shrink-0">
+          <button
+            onClick={onEdit}
+            className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-500 active:scale-95 transition-all"
+            aria-label="编辑"
+          >
+            <PencilSimple size={12} weight="bold" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-500 active:scale-95 transition-all"
+            aria-label="删除"
+          >
+            <Trash size={12} weight="bold" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 时间线添加/编辑模态框
+const AddTimelineItemModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: {
+    title: string;
+    content: string;
+    date: string;
+    mood?: CoupleTimelineItem['mood'];
+    source: 'user-manual' | 'char-manual';
+  }) => void;
+  initial?: {
+    title: string;
+    content: string;
+    date: string;
+    mood?: CoupleTimelineItem['mood'];
+    source: 'user-manual' | 'char-manual';
+  };
+  title?: string;
+}> = ({ isOpen, onClose, onSubmit, initial, title }) => {
+  const [text, setText] = useState(initial?.title || '');
+  const [content, setContent] = useState(initial?.content || '');
+  const [date, setDate] = useState(initial?.date || todayStr());
+  const [mood, setMood] = useState<CoupleTimelineItem['mood']>(initial?.mood);
+  const [source, setSource] = useState<'user-manual' | 'char-manual'>(
+    initial?.source || 'user-manual'
+  );
+
+  // 弹窗打开时初始化
+  useEffect(() => {
+    if (isOpen) {
+      setText(initial?.title || '');
+      setContent(initial?.content || '');
+      setDate(initial?.date || todayStr());
+      setMood(initial?.mood);
+      setSource(initial?.source || 'user-manual');
+    }
+  }, [isOpen, initial]);
+
+  const handleSubmit = () => {
+    if (!text.trim()) return;
+    onSubmit({
+      title: text.trim(),
+      content: content.trim(),
+      date,
+      mood,
+      source,
+    });
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title || '添加时间线记录'}
+      footer={
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!text.trim()}
+            className="flex-1 py-2.5 bg-rose-400 text-white font-bold rounded-full active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            保存
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        {/* 标题 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-medium">标题</div>
+          <input
+            type="text"
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder="比如：第一次牵手"
+            className="w-full px-3 py-2.5 bg-slate-50 rounded-2xl text-sm text-slate-800 border border-slate-200 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+          />
+        </div>
+
+        {/* 内容 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-medium">详情（可选）</div>
+          <textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            placeholder="记录一下这一刻..."
+            rows={3}
+            className="w-full px-3 py-2.5 bg-slate-50 rounded-2xl text-sm text-slate-800 border border-slate-200 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100 resize-none"
+          />
+        </div>
+
+        {/* 日期 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-medium">日期</div>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            max={todayStr()}
+            className="w-full px-3 py-2.5 bg-slate-50 rounded-2xl text-sm text-slate-800 border border-slate-200 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+          />
+        </div>
+
+        {/* 心情 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">心情（可选）</div>
+          <div className="flex flex-wrap gap-1.5">
+            {MOOD_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setMood(mood === opt.value ? undefined : opt.value)}
+                className={`px-2.5 py-1.5 rounded-full text-xs flex items-center gap-1 transition-all ${
+                  mood === opt.value
+                    ? 'bg-rose-400 text-white'
+                    : 'bg-slate-50 text-slate-600 active:scale-95'
+                }`}
+              >
+                <span>{opt.emoji}</span>
+                <span>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 谁加的 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">谁加的</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSource('user-manual')}
+              className={`flex-1 py-2 rounded-full text-xs font-medium transition-all ${
+                source === 'user-manual'
+                  ? 'bg-rose-400 text-white'
+                  : 'bg-slate-50 text-slate-600 active:scale-95'
+              }`}
+            >
+              我
+            </button>
+            <button
+              onClick={() => setSource('char-manual')}
+              className={`flex-1 py-2 rounded-full text-xs font-medium transition-all ${
+                source === 'char-manual'
+                  ? 'bg-rose-400 text-white'
+                  : 'bg-slate-50 text-slate-600 active:scale-95'
+              }`}
+            >
+              模拟 ta
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ──────────────────────────────────────────
+// 悄悄话 Tab
+// ──────────────────────────────────────────
+
+const WhisperTab: React.FC<{
+  space: CoupleSpace;
+  char: CharacterProfile | null;
+  onUpdate: () => void;
+}> = ({ space, char, onUpdate }) => {
+  const { addToast } = useOS();
+  const charName = char?.name || 'TA';
+  const [text, setText] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevUnreadRef = useRef(space.whisperUnread);
+
+  // 进入 tab 自动标记已读
+  useEffect(() => {
+    if (space.whisperUnread > 0) {
+      markWhispersRead('default', space.charId);
+      // 短暂延迟后 reload（避免 mark 完但 onUpdate 没生效就滚）
+      const t = setTimeout(() => onUpdate(), 50);
+      return () => clearTimeout(t);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [space.charId]);
+
+  // 新消息滚到底
+  useEffect(() => {
+    if (prevUnreadRef.current !== space.whisperUnread || space.whispers.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+    prevUnreadRef.current = space.whisperUnread;
+  }, [space.whispers.length, space.whisperUnread]);
+
+  const handleSend = () => {
+    const trimmed = text.trim();
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    const result = addWhisper('default', space.charId, {
+      from: 'user',
+      content: trimmed,
+    });
+    setSubmitting(false);
+    if (result) {
+      setText('');
+      onUpdate();
+    } else {
+      addToast('发送失败', 'error');
+    }
+  };
+
+  const handleDelete = () => {
+    if (!deletingId) return;
+    const result = deleteWhisper('default', space.charId, deletingId);
+    if (result) {
+      onUpdate();
+      addToast('已删除', 'success');
+      setDeletingId(null);
+    } else {
+      addToast('删除失败', 'error');
+    }
+  };
+
+  // 倒序：最新在上（情侣空间消息流习惯）
+  const list = useMemo(() => [...space.whispers].reverse(), [space.whispers]);
+
+  return (
+    <div className="flex flex-col h-full min-h-[400px]">
+      {/* 顶部统计 */}
+      <div className="flex items-center justify-between px-1 mb-2">
+        <div className="text-xs text-slate-500 font-medium">
+          共 {space.whispers.length} 条悄悄话
+        </div>
+        {space.whisperUnread > 0 && (
+          <div className="text-[10px] text-rose-500 font-medium">
+            {space.whisperUnread} 条未读
+          </div>
+        )}
+      </div>
+
+      {/* 列表 */}
+      <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-2">
+        {list.length === 0 ? (
+          <div className="bg-white/60 rounded-2xl p-6 text-center">
+            <div className="text-rose-300 text-xs mb-2">悄悄话</div>
+            <div className="text-slate-400 text-sm">在下面写第一句悄悄话给 ta 吧</div>
+          </div>
+        ) : (
+          list.map(w => (
+            <WhisperItem
+              key={w.id}
+              whisper={w}
+              charName={charName}
+              charAvatar={char?.avatar}
+              onDelete={() => setDeletingId(w.id)}
+            />
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* 底部输入区 */}
+      <div className="shrink-0 pt-2 border-t border-rose-100/60">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={`跟 ${charName} 说悄悄话…`}
+            rows={1}
+            className="flex-1 px-3 py-2 bg-white rounded-2xl text-sm text-slate-800 border border-rose-100/60 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100 resize-none max-h-24"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!text.trim() || submitting}
+            className="w-10 h-10 flex items-center justify-center bg-rose-400 text-white rounded-full active:scale-95 transition-transform disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            aria-label="发送"
+          >
+            <PaperPlaneTilt size={16} weight="fill" />
+          </button>
+        </div>
+        <div className="text-[9px] text-slate-400 mt-1 px-1">
+          Enter 发送 · Shift+Enter 换行
+        </div>
+      </div>
+
+      {/* 删除确认 */}
+      <ConfirmModal
+        isOpen={!!deletingId}
+        onClose={() => setDeletingId(null)}
+        onConfirm={handleDelete}
+        title="删除这条悄悄话？"
+        message="删除后无法恢复"
+        confirmText="删除"
+        confirmStyle="danger"
+      />
+    </div>
+  );
+};
+
+// 单条悄悄话
+const WhisperItem: React.FC<{
+  whisper: CoupleWhisper;
+  charName: string;
+  charAvatar?: string;
+  onDelete: () => void;
+}> = ({ whisper, charName, charAvatar, onDelete }) => {
+  const isUser = whisper.from === 'user';
+  const isUnread = !isUser && !whisper.isRead;
+
+  const time = useMemo(() => {
+    const d = new Date(whisper.createdAt);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) {
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    }
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  }, [whisper.createdAt]);
+
+  return (
+    <div className={`flex items-start gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
+      {/* 头像 */}
+      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-rose-200 to-pink-200 flex items-center justify-center overflow-hidden shrink-0">
+        {isUser ? (
+          <span className="text-rose-500 text-[10px] font-bold">我</span>
+        ) : charAvatar ? (
+          <img src={charAvatar} alt={charName} className="w-full h-full object-cover" />
+        ) : (
+          <HeartIcon size={12} weight="fill" className="text-rose-400" />
+        )}
+      </div>
+
+      {/* 气泡 + 时间 */}
+      <div className={`flex flex-col max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
+        <div className="flex items-center gap-1.5 mb-0.5 px-1">
+          <span className="text-[10px] text-slate-500 font-medium">
+            {isUser ? '我' : charName}
+          </span>
+          {isUnread && (
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+          )}
+        </div>
+        <div
+          className={`px-3 py-2 rounded-2xl text-sm leading-relaxed break-words ${
+            isUser
+              ? 'bg-rose-400 text-white rounded-tr-md'
+              : isUnread
+                ? 'bg-white border-2 border-rose-200 text-slate-800 rounded-tl-md'
+                : 'bg-white border border-rose-100/60 text-slate-800 rounded-tl-md'
+          }`}
+          onDoubleClick={onDelete}
+        >
+          {whisper.content}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5 px-1">
+          <span className="text-[9px] text-slate-400">{time}</span>
+          <button
+            onClick={onDelete}
+            className="text-[9px] text-slate-300 hover:text-rose-500 active:scale-95 transition-all"
+            aria-label="删除"
+          >
+            删除
+          </button>
         </div>
       </div>
     </div>

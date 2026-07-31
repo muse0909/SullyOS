@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision, requestCoupleSpaceInviteFromChar, jumpToChat } = useOS();
+  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceInviteFromChar, jumpToChat } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');

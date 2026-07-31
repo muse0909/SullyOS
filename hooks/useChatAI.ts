@@ -645,10 +645,33 @@ export const useChatAI = ({
         if (isTyping || !char) return;
         // 角色级 API 优先：char.apiConfig 设了 baseUrl/apiKey/model 就用角色的（暮色 2026-07-24）
         // 协议、minimaxRegion、visionBaseUrl/R2/image* 等仍走全局
+        // 暮色 2026-07-31 修：3 tab 协议下，角色 API 可能在 claude*/gemini* 而不是 baseUrl
+        //   之前只判 charApi.baseUrl（OpenAI 字段），导致设了 Gemini 角色 API 但 baseUrl 是空
+        //   → 角色 API 被忽略，全局 Gemini（柚子 youzi.today gemini-2.5-pro）顶上去
+        //   修：判断扩展到 3 套 baseUrl 任何一个非空就视为"设了角色 API"；
+        //       构造 effectiveApi 时按 charApi.protocol 选对应那组字段
         const charApi = (char as any).apiConfig;
+        const charProtocol = (charApi?.protocol as 'openai' | 'claude' | 'gemini' | undefined) || 'openai';
+        const charHasAnyApi = !!charApi && !!(
+            charApi.baseUrl
+            || (charApi as any).claudeBaseUrl
+            || (charApi as any).geminiBaseUrl
+        );
         let effectiveApi = overrideApiConfig
-            || (charApi && charApi.baseUrl
-                ? { ...apiConfig, baseUrl: charApi.baseUrl, apiKey: charApi.apiKey || apiConfig.apiKey || '', model: charApi.model || apiConfig.model || '' } as any
+            || (charHasAnyApi
+                ? {
+                    ...apiConfig,
+                    baseUrl: charProtocol === 'claude' ? ((charApi as any).claudeBaseUrl || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiBaseUrl || '')
+                        : (charApi.baseUrl || ''),
+                    apiKey: charProtocol === 'claude' ? ((charApi as any).claudeApiKey || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiApiKey || '')
+                        : (charApi.apiKey || ''),
+                    model: charProtocol === 'claude' ? ((charApi as any).claudeModel || '')
+                        : charProtocol === 'gemini' ? ((charApi as any).geminiModel || '')
+                        : (charApi.model || ''),
+                    protocol: charProtocol,
+                } as any
                 : null)
             || apiConfig;
         // 暮色 2026-07-27：3 tab 协议切换 — 根据 protocol 字段选对应那组的 baseUrl/apiKey/model
@@ -656,7 +679,7 @@ export const useChatAI = ({
         //   - 没设角色 API 时，根据 effectiveApi.protocol 选 claude* / gemini* / baseUrl* 三组
         //   - 字段是 (effectiveApi as any) 读取，类型上 protocol 在 APIConfig 里有
         const mainProtocol = (effectiveApi as any).protocol ?? 'openai';
-        const charApiOverridesMain = charApi && charApi.baseUrl;
+        const charApiOverridesMain = charHasAnyApi;
         if (!charApiOverridesMain) {
             const protoResolved = (() => {
                 if (mainProtocol === 'claude') {

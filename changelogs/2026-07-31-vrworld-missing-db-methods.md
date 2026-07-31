@@ -1,7 +1,7 @@
 # 彼方（VRWorldApp）修复：补 9 个缺失的 DB 方法 + reloadAll try/finally 兜底
 
 **日期**：2026-07-31
-**涉及 commit**：（待 git commit 后填）
+**涉及 commit**：`276e533`
 
 ## 改了什么
 

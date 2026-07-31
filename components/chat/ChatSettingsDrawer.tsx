@@ -132,6 +132,15 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     perCharApiBaseUrl, setPerCharApiBaseUrl,
     perCharApiKey, setPerCharApiKey,
     perCharApiModel, setPerCharApiModel,
+    // 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）— 之前 destructure 漏了这两个
+    //   导致 `perCharApiProtocol is not defined` 整个聊天设置崩（Props interface 有但 destructure 没拿进来）
+    perCharApiProtocol, setPerCharApiProtocol, switchPerCharApiProtocol,
+    perCharApiClaudeUrl, setPerCharApiClaudeUrl,
+    perCharApiClaudeKey, setPerCharApiClaudeKey,
+    perCharApiClaudeModel, setPerCharApiClaudeModel,
+    perCharApiGeminiUrl, setPerCharApiGeminiUrl,
+    perCharApiGeminiKey, setPerCharApiGeminiKey,
+    perCharApiGeminiModel, setPerCharApiGeminiModel,
     showPerCharKey, setShowPerCharKey,
     onSavePerCharApi, onClearPerCharApi,
     mainPresets, onLoadPreset,

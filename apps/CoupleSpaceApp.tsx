@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceInviteFromChar, jumpToChat, apiConfig } = useOS();
+  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceInviteFromChar, jumpToChat, apiConfig, decideCoupleSpaceInvite } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');
@@ -151,8 +151,11 @@ const CoupleSpaceApp: React.FC = () => {
   };
 
   // 提交邀请
-  // 暮色 2026-07-31 反馈"前面咱们说的你不记得了吗"——补完整 miya 流程
-  // 完整版 B：markPending + 发邀请消息 + 跳聊天 + AI 决策（让江澈用 LLM 决定接受/拒绝）
+  // 暮色 2026-08-01 反馈"用户发邀请应该触发 LLM 真决定接/拒 + 写回应消息"
+  //   完整版 C：markPending + 发邀请卡 + LLM 真决定（decideCoupleSpaceInvite 'respond'）
+  //   - LLM accept: 自动 acceptInvite + 改 message status='accepted' + 写 assistant 心情消息
+  //   - LLM decline: 自动 declineInvite + 改 message status='declined' + 写 assistant 拒绝消息（说明原因）
+  //   - LLM 失败: 保持 pending，等用户手动按按钮
   const handleConfirmInvite = async () => {
     if (!inviteSelectedCharId) {
       addToast('请选一个 ta', 'error');
@@ -198,69 +201,84 @@ const CoupleSpaceApp: React.FC = () => {
     reload();
     addToast(`邀请已发送给 ${char.name}，等 ta 回应...`, 'info');
 
-    // 4. 调 LLM 让角色写一条"看到邀请的回应"消息
-    //   暮色 2026-07-31 反馈"邀请 ta 开通点了之后没回复了"
-    //   之前 requestCoupleSpaceDecision 删了之后，角色看不到邀请
-    //   修法：单独调 LLM 写一条 assistant 消息（type='text'），状态保持 pending
-    //   跟 requestCoupleSpaceDecision 区别：不调决策、不改 status、单纯让角色回应
-    //   失败静默：暮色说过"接不到也别卡流程"
-    void (async () => {
-      try {
-        const charCfg = (char as any).apiConfig;
-        const cfg = charCfg?.baseUrl && charCfg?.apiKey ? charCfg : apiConfig;
-        if (!cfg?.baseUrl || !cfg?.apiKey) return;
-        const recentMessages = await DB.getRecentMessagesByCharId(char.id, 30);
-        const contextLines = recentMessages
-          .filter((mm: any) => mm.role !== 'system')
-          .map((mm: any) => `${mm.role === 'user' ? '暮色' : char.name}: ${(mm.content || '').slice(0, 200)}`)
-          .join('\n');
-        const contextSection = contextLines ? `\n\n最近对话：\n${contextLines}\n` : '';
-        const systemPrompt = `你是 ${char.name}。用户（暮色）刚向你发出情侣空间邀请（关系从 ${inviteAnnivDate} 开始）。${contextSection}\n请你以 ${char.name} 的性格写一句简短的回应（1-2 句话，30 字以内），表达你收到邀请的心情。**不要**说"我接受"或"我拒绝"——决定权在用户，你只是表达心情。直接说，不要用引号。`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
-        const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${cfg.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: cfg.model || 'gpt-3.5-turbo',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: '请回应。' },
-            ],
-            max_tokens: 100,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (!res.ok) return;
-        const data = await res.json();
-        const text = data?.choices?.[0]?.message?.content?.trim() || '';
-        if (!text) return;
-        await DB.saveMessage({
-          charId: char.id,
-          role: 'assistant',
-          type: 'text',
-          content: text,
-          metadata: { source: 'couple_space_invite_seen' },
-        });
-      } catch (e) {
-        // 静默：接不到回复不卡流程
-      }
-    })();
-
-    // 5. 跳转到角色的私聊（用 jumpToChat 真正跳到江澈的 chat，不是联系人列表）
-    //   暮色 2026-07-31 反馈"跳的是联系人页，不是聊天页"——之前用 openApp(AppID.Chat) 错
-    //   SullyOS 已经有 jumpToChat（line 3230）：设 pending ref + setActiveCharacterId + setActiveApp
-    //   WeChat mount 时 consume pending ref 自动 open 私聊
+    // 4. 跳转到私聊（暮色能看到邀请卡 + 角色回应消息）
     setTimeout(() => jumpToChat(char.id), 600);
 
-    // 暮色 2026-07-31 反馈"没点接受/拒绝直接就开通了"
-    //   之前这里调 requestCoupleSpaceDecision，60s 后 AI 默认 accept 跳过
-    //   暮色要的：等用户手动点，不点就不开通
-    //   跟"让 ta 邀请我"流程保持一致：只发邀请卡，不触发 AI 决策
+    // 5. 调 LLM 真决定接/拒（fire-and-forget，避免阻塞 UI）
+    //   暮色 2026-08-01 反馈"什么情况都接受"——这次是 LLM 真判断（不是 60s 超时默认）
+    //   失败 fallback：保持 pending，等用户手动按按钮
+    void (async () => {
+      try {
+        const decision = await decideCoupleSpaceInvite(char.id, 'respond', inviteAnnivDate);
+        if (!decision) {
+          console.log('[coupleSpace] AI 决策失败/无 API，保持 pending 等用户手动按按钮');
+          return;
+        }
+        if (decision.action === 'accept') {
+          // LLM 接受：自动调用 acceptInvite + 改 message status
+          const { acceptInvite } = await import('../utils/coupleSpaceStorage');
+          acceptInvite('default', char.id);
+          try {
+            const { updateMessageMeta } = await import('../utils/db');
+            const msgs = await DB.getMessagesByCharId(char.id, true);
+            const pending = msgs
+              .filter((mm: any) => mm.type === 'couple_space_invite' && mm.metadata?.status === 'pending')
+              .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+            if (pending[0]?.id) {
+              await updateMessageMeta(pending[0].id, { status: 'accepted', resolvedAt: Date.now() });
+            }
+          } catch (e) {
+            console.error('[coupleSpace] 更新邀请卡 status 失败', e);
+          }
+          const responseText = decision.message || `${char.name}接受了你的情侣空间邀请 💕`;
+          try {
+            await DB.saveMessage({
+              charId: char.id,
+              role: 'assistant',
+              type: 'text',
+              content: responseText,
+              metadata: { source: 'couple_space_ai_decision', decision: 'accept' },
+            });
+          } catch (e) {
+            console.error('[coupleSpace] 写 AI 接受回应消息失败', e);
+          }
+          addToast(`${char.name} 接受了你的邀请 💕`, 'success');
+          window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId: char.id, status: 'accepted' } }));
+        } else {
+          // LLM 拒绝：自动调用 declineInvite + 改 message status
+          const { declineInvite } = await import('../utils/coupleSpaceStorage');
+          declineInvite('default', char.id);
+          try {
+            const { updateMessageMeta } = await import('../utils/db');
+            const msgs = await DB.getMessagesByCharId(char.id, true);
+            const pending = msgs
+              .filter((mm: any) => mm.type === 'couple_space_invite' && mm.metadata?.status === 'pending')
+              .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+            if (pending[0]?.id) {
+              await updateMessageMeta(pending[0].id, { status: 'declined', resolvedAt: Date.now() });
+            }
+          } catch (e) {
+            console.error('[coupleSpace] 更新邀请卡 status 失败', e);
+          }
+          const responseText = decision.message || `${char.name}婉拒了你的情侣空间邀请。`;
+          try {
+            await DB.saveMessage({
+              charId: char.id,
+              role: 'assistant',
+              type: 'text',
+              content: responseText,
+              metadata: { source: 'couple_space_ai_decision', decision: 'decline' },
+            });
+          } catch (e) {
+            console.error('[coupleSpace] 写 AI 拒绝回应消息失败', e);
+          }
+          addToast(`${char.name} 婉拒了邀请`, 'info');
+          window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId: char.id, status: 'declined' } }));
+        }
+      } catch (e) {
+        console.error('[coupleSpace] AI 决策整体失败', e);
+      }
+    })();
   };
 
   // 暮色手动接受邀请（卡片上"接受"按钮 onClick）

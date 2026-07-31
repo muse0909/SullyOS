@@ -164,6 +164,9 @@ interface OSContextType {
   // 暮色 2026-07-31：情侣空间全局 action（MessageItem 卡片能调，不依赖 CoupleSpaceApp 挂载）
   coupleSpaceAccept: (charId: string) => Promise<void>;
   coupleSpaceDecline: (charId: string) => Promise<void>;
+  // 暮色 2026-08-01：让 LLM 用完整请求体（向量化记忆 + 上下文 + system prompt）真判断接/拒
+  //   返回 { action: 'accept' | 'decline', message } | null（null = 失败/没 API，保持 pending）
+  decideCoupleSpaceInvite: (charId: string, scenario: 'respond' | 'invite', annivDate: string) => Promise<{ action: 'accept' | 'decline'; message: string } | null>;
   // 暮色 2026-07-31：让角色主动发邀请给用户（调 LLM 生成邀请文案 + 推消息 + 跳聊天）
   requestCoupleSpaceInviteFromChar: (charId: string) => Promise<void>;
   /** 便捷：单独更新角色的 API 配置（暮色 2026-07-24 角色独立 API） */
@@ -1954,6 +1957,99 @@ if (!isVisible || !isChattingWithThisChar) {
   // 修法：接受/拒绝后同步更新 IndexedDB 邀请卡 metadata.status='accepted'/'declined'，
   //   发 'coupleSpaceInviteResolved' 事件让 Chat reload messages（按钮自动消失），
   //   加 toast 给暮色明确反馈。
+
+  // 暮色 2026-08-01 反馈"完全没聊天记录还是邀请了" + "什么情况都接受，拒绝设置没意义"
+  //   暮色要的"AI 决策"是 LLM 用完整请求体（向量化记忆 + 上下文 + system prompt）真判断接/拒。
+  //   之前 requestCoupleSpaceDecision 60s 超时默认 accept = 假 AI 决策 → 暮色删了。
+  //   这次重做：复用 ChatPrompts.buildSystemPrompt（pure 模式）+ 最近 history（按 char.contextLimit 默认 100），
+  //   OpenAI 协议 fetch（60s timeout），prompt 末尾加暮色定的 scenario instruction，
+  //   LLM 返回 {action, message}，调用方根据 action 自动 acceptInvite/declineInvite。
+  //   失败 fallback：返回 null → 调用方保持 pending，等用户手动按钮决定。
+  const decideCoupleSpaceInvite = async (
+    charId: string,
+    scenario: 'respond' | 'invite',
+    annivDate: string,
+  ): Promise<{ action: 'accept' | 'decline'; message: string } | null> => {
+    const char = characters.find(c => c.id === charId);
+    if (!char) return null;
+    const cfg = char.apiConfig?.baseUrl && char.apiConfig?.apiKey ? char.apiConfig : apiConfig;
+    if (!cfg?.baseUrl || !cfg?.apiKey) return null;
+
+    // 1. 拿最近 history（按 char.contextLimit 默认 100，不限制多少条）
+    const limit = (char as any).contextLimit || 100;
+    const history = await DB.getRecentMessagesByCharId(charId, limit, true).catch(() => [] as any[]);
+
+    // 2. 构造 system prompt（pure 模式：跳过朋友圈/音乐/群聊/日记/笔记/心声底色，但保留记忆宫殿 + 角色卡 + 世界书）
+    const systemPromptResult = await ChatPrompts.buildSystemPrompt(
+      char, userProfile, groups, [], [], history as any,
+      realtimeConfig, undefined, null, false, undefined,
+      'pure',
+    );
+    const systemPrompt = `${systemPromptResult.bp3Context}\n\n${systemPromptResult.bp1Tools}\n\n${systemPromptResult.bp2Rules}`;
+    const dynamicTail = systemPromptResult.dynamicTail;
+
+    // 3. 拼 messages 数组（完整 history + scenario instruction）
+    const scenarioInstruction = scenario === 'respond'
+      ? `用户向你发出情侣空间邀请（关系从 ${annivDate} 开始）。基于你们的关系，真判断接受还是拒绝。可以接受也可以拒绝。返回 JSON: {"action": "accept" | "decline", "message": "你接受时对用户说的话 OR 拒绝时说明原因的话"}`
+      : `你想主动发情侣空间邀请给用户吗？基于你们的关系判断。如果想发，message 是你的邀请文案（2-3 句，100 字以内，自然口吻）。如果不想发，message 是你婉拒的理由（1-2 句）。返回 JSON: {"action": "accept" | "decline", "message": "邀请文案 OR 拒绝理由"}`;
+
+    const apiMessages: any[] = [
+      { role: 'system', content: systemPrompt },
+      ...history
+        .filter((m: any) => m.role !== 'system')
+        .map((m: any) => ({ role: m.role, content: (m.content || '').slice(0, 2000) })),
+      { role: 'user', content: scenarioInstruction },
+    ];
+    if (dynamicTail) {
+      apiMessages.push({ role: 'system', content: dynamicTail });
+    }
+
+    // 4. 调 LLM（OpenAI 协议；60s timeout）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    try {
+      const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: cfg.model || 'gpt-3.5-turbo',
+          messages: apiMessages,
+          max_tokens: 200,
+          temperature: 0.7,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        console.warn(`[coupleSpace] AI 决策 LLM 返 HTTP ${res.status}`);
+        return null;
+      }
+      const data = await res.json();
+      const text: string = data?.choices?.[0]?.message?.content?.trim() || '';
+      if (!text) return null;
+
+      // parse JSON（LLM 可能返 ```json ... ``` 包裹）
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      let parsed: any;
+      try { parsed = JSON.parse(jsonMatch[0]); } catch { return null; }
+      const action: 'accept' | 'decline' = parsed.action === 'decline' ? 'decline' : 'accept';
+      const message = (parsed.message || '').toString().trim();
+      return { action, message };
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      if (e?.name === 'AbortError') {
+        console.warn('[coupleSpace] AI 决策 60s 超时');
+      } else {
+        console.error('[coupleSpace] AI 决策失败', e);
+      }
+      return null;
+    }
+  };
+
   const markInviteMessageResolved = async (charId: string, newStatus: 'accepted' | 'declined') => {
     try {
       const allMsgs = await DB.getMessagesByCharId(charId, true);
@@ -2056,21 +2152,44 @@ if (!isVisible || !isChattingWithThisChar) {
   //   修法：直接删函数（含 OSContext 暴露），不留任何触发可能
   //   后续要"让 ta 决定"功能：重新加，但默认行为是 pending + 等用户点
 
-  // 暮色 2026-07-31：让角色主动发邀请给用户
-  //   暮色在 CoupleSpaceApp 点"让 ta 邀请我" → 选角色 → 调 LLM 让角色以自己身份写邀请文案
-  //   → 推 type='couple_space_invite' role='assistant' status='pending' 的消息到聊天
-  //   暮色在聊天看卡片 + 接受/拒绝（点接受/拒绝触发 coupleSpaceAccept / Decline）
+  // 暮色 2026-08-01：让角色主动发邀请给用户（调 decideCoupleSpaceInvite 真判断）
+  //   暮色在 CoupleSpaceApp 点"让 ta 邀请我" → 选角色 → 调 LLM 完整请求体让角色决定
+  //   - 角色想发：推 type='couple_space_invite' role='assistant' status='pending' 的消息
+  //     暮色在聊天看卡片 + 接受/拒绝（点接受/拒绝触发 coupleSpaceAccept / Decline）
+  //   - 角色不想发（"我跟你还不熟"）：写一条 assistant 消息说明理由，不发邀请卡
+  //   - API 失败：写一条 assistant 消息"我需要想想"，不发邀请卡
+  //   暮色 2026-08-01 反馈：没聊天记录也邀请不合理 → 改 decideCoupleSpaceInvite 'invite' 场景真判断
   //   暮色 2026-07-31 反馈：已开通过的不能重新发
   //   → markPending 原生行为：open 状态直接 return，UI 层（CharSelectForInviteModal）过滤已开通角色
-  //   暮色 2026-07-31 反馈：没点接受/拒绝直接就开通了
-  //   → 不调 requestCoupleSpaceDecision，等用户手动点
   const requestCoupleSpaceInviteFromChar = async (charId: string) => {
     const { markPending } = await import('../utils/coupleSpaceStorage');
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
-    // 1. 标 pending（markPending 原生行为：open 状态直接 return existing）
+    // 1. 调 LLM 真判断：角色想不想主动发邀请（用完整请求体：system prompt + 上下文 + 记忆宫殿）
     const annivDate = new Date().toISOString().split('T')[0];
+    const decision = await decideCoupleSpaceInvite(charId, 'invite', annivDate);
+
+    // 2. 失败 / decline：写 assistant 消息（不发邀请卡）
+    if (!decision || decision.action === 'decline') {
+      const reason = decision?.message || '我需要再想想。';
+      try {
+        await DB.saveMessage({
+          charId,
+          role: 'assistant',
+          type: 'text',
+          content: reason,
+          metadata: { source: 'couple_space_invite_declined' },
+        });
+      } catch (e) {
+        console.error('[coupleSpace] 写拒绝消息失败', e);
+      }
+      addToast(decision?.action === 'decline' ? `${char.name} 婉拒了主动邀请` : `${char.name} 暂时不想发邀请`, 'info');
+      jumpToChat(charId);
+      return;
+    }
+
+    // 3. accept：标 pending（markPending 原生行为：open 状态直接 return existing）
     const space = markPending({
       profileId: 'default',
       charId,
@@ -2078,60 +2197,13 @@ if (!isVisible || !isChattingWithThisChar) {
       profileName: '我',
       annivDate,
     });
-    // 已开通过 — 直接退出，UI 层已过滤
     if (space.status === 'open') {
       console.log('[coupleSpace] 已开通过，不重新发邀请');
       return;
     }
 
-    // 2. 调 LLM 生成邀请文案（用 50 条上下文 + 角色独立 API）
-    let inviteText = `${char.name}想和暮色开通情侣空间（从 ${annivDate} 开始）。点下方"接受"开通，或"拒绝"放弃。`;
-    try {
-      const charCfg = char.apiConfig;
-      const cfg = charCfg?.baseUrl && charCfg?.apiKey ? charCfg : apiConfig;
-      if (cfg?.baseUrl && cfg?.apiKey) {
-        const recentMessages = await DB.getRecentMessagesByCharId(charId, 50);
-        const contextLines = recentMessages
-          .filter(m => m.role !== 'system')
-          .map(m => {
-            const label = m.role === 'user' ? '暮色' : char.name;
-            return `${label}: ${(m.content || '').slice(0, 200)}`;
-          })
-          .join('\n');
-        const contextSection = contextLines
-          ? `\n\n最近对话：\n${contextLines}\n`
-          : '';
-        const systemPrompt = `你是 ${char.name}。基于你和暮色的关系，你想主动发情侣空间邀请给暮色。${contextSection}\n请你以 ${char.name} 的性格和语气，写一段简短的邀请文案（2-3 句话），自然地邀请暮色和你一起开通情侣空间。不要超过 100 字。`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000);
-        const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${cfg.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: cfg.model || 'gpt-3.5-turbo',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: '请写邀请文案。' },
-            ],
-            max_tokens: 200,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          const text = data?.choices?.[0]?.message?.content || '';
-          if (text.trim()) inviteText = text.trim();
-        }
-      }
-    } catch (e) {
-      console.error('[coupleSpace] 角色生成邀请文案失败，用默认文案', e);
-    }
-
-    // 3. 推消息（role: 'assistant' 让暮色看到是角色发的）
+    // 4. 推邀请卡（用 LLM 写的邀请文案）
+    const inviteText = decision.message || `${char.name}想和暮色开通情侣空间（从 ${annivDate} 开始）。点下方"接受"开通，或"拒绝"放弃。`;
     try {
       await DB.saveMessage({
         charId,
@@ -2149,7 +2221,7 @@ if (!isVisible || !isChattingWithThisChar) {
       console.error('[coupleSpace] 发送角色邀请消息失败', e);
     }
 
-    // 4. 跳到江澈的私聊（让暮色看邀请卡片）
+    // 5. 跳到私聊
     jumpToChat(charId);
   };
 
@@ -3414,6 +3486,8 @@ if (!isVisible || !isChattingWithThisChar) {
     // 暮色 2026-07-31：情侣空间全局 action，MessageItem 卡片能调（不依赖 CoupleSpaceApp 挂载）
     coupleSpaceAccept,
     coupleSpaceDecline,
+    // 暮色 2026-08-01：让 LLM 用完整请求体真判断接/拒（不是 60s 超时默认 accept）
+    decideCoupleSpaceInvite,
     // 暮色 2026-07-31：让角色主动发邀请
     requestCoupleSpaceInviteFromChar,
     updateCharApiConfig,

@@ -204,12 +204,10 @@ const CoupleSpaceApp: React.FC = () => {
     //   WeChat mount 时 consume pending ref 自动 open 私聊
     setTimeout(() => jumpToChat(char.id), 600);
 
-    // 5. 触发 AI 决策（异步，不等返回）
-    //   暮色 2026-07-31 选 B 完整版：让江澈用 LLM 决定接受/拒绝
-    //   失败/超时 → 默认接受（不会卡流程）
-    requestCoupleSpaceDecision(char.id).catch(e => {
-      console.error('[coupleSpace] AI 决策失败', e);
-    });
+    // 暮色 2026-07-31 反馈"没点接受/拒绝直接就开通了"
+    //   之前这里调 requestCoupleSpaceDecision，60s 后 AI 默认 accept 跳过
+    //   暮色要的：等用户手动点，不点就不开通
+    //   跟"让 ta 邀请我"流程保持一致：只发邀请卡，不触发 AI 决策
   };
 
   // 暮色手动接受邀请（卡片上"接受"按钮 onClick）
@@ -346,6 +344,7 @@ const CoupleSpaceApp: React.FC = () => {
           isOpen={showCharSelectForInviteModal}
           onClose={() => setShowCharSelectForInviteModal(false)}
           characters={characters}
+          existingCharIds={new Set(spaces.map(s => s.charId))}
           onConfirm={async (charId) => {
             setShowCharSelectForInviteModal(false);
             const char = characters.find(c => c.id === charId);
@@ -580,15 +579,18 @@ const InviteModal: React.FC<{
 };
 
 // 暮色 2026-07-31 反馈"让 ta 邀请我没有选择角色功能"——加一个只选角色的弹窗
-// 区别于 InviteModal：不要日期（关系开始日用今天），不要状态过滤
-// （即使已开通也允许重新发邀请——resetToPending 会把状态重置为 pending）
+// 区别于 InviteModal：
+//   - 不要日期（关系开始日用今天）
+//   - 暮色反馈"已开通的不能重新发"——只显示未开通的角色
 const CharSelectForInviteModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   characters: CharacterProfile[];
+  existingCharIds: Set<string>;
   onConfirm: (charId: string) => void;
-}> = ({ isOpen, onClose, characters, onConfirm }) => {
+}> = ({ isOpen, onClose, characters, existingCharIds, onConfirm }) => {
   const [selectedCharId, setSelectedCharId] = useState<string>('');
+  const available = characters.filter(c => !existingCharIds.has(c.id));
 
   return (
     <Modal
@@ -619,13 +621,15 @@ const CharSelectForInviteModal: React.FC<{
           <div className="text-[10px] text-slate-400 mb-2 leading-relaxed">
             选一个角色，ta 会主动发邀请卡片给你
           </div>
-          {characters.length === 0 ? (
+          {available.length === 0 ? (
             <div className="text-xs text-slate-400 text-center py-6">
-              还没有角色，先去聊天里加一个
+              {characters.length === 0
+                ? '还没有角色，先去聊天里加一个'
+                : '所有角色都已开通情侣空间'}
             </div>
           ) : (
             <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
-              {characters.map(char => (
+              {available.map(char => (
                 <button
                   key={char.id}
                   onClick={() => setSelectedCharId(char.id)}

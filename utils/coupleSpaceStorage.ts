@@ -103,11 +103,10 @@ export function initSpace(opts: {
 
 /**
  * 暮色发起邀请：标 pending 状态（不直接开通）
- * 暮色 2026-07-31 选 B（完整版 AI 自动决策）：发邀请消息后等 AI 角色回应
- * 暮色 2026-07-31 反馈"已经开通的没重置"：bug 是 open 状态不重置
- *   修法：open 也重置为 pending（让暮色能重新邀请）—— 实际上让 UI 拦截，
- *   markPending 维持原行为：open 直接 return
- *   关键："让 ta 邀请我"按钮在 open 状态下**不显示**
+ * 暮色 2026-07-31：行为定下来
+ *   - 已开通过 (status === 'open')：直接 return existing，不重置
+ *   - UI 层（"让 ta 邀请我"弹窗）只显示未开通的角色
+ *   - 暮色原话"已经开通的不能重新发"
  */
 export function markPending(opts: {
   profileId: string;
@@ -146,20 +145,6 @@ export function markPending(opts: {
     whispers: [],
     whisperUnread: 0,
   };
-  upsertSpace(space);
-  return space;
-}
-
-/**
- * 暮色 2026-07-31 反馈"已经开通的没重置" — 加 force 参数强制重置
- * 暮色场景："让 ta 邀请我" — open 状态不重置会让邀请卡渲染成"已开通"看不到按钮
- * 修法：让"让 ta 邀请我"调这个而不是 markPending
- */
-export function resetToPending(profileId: string, charId: string): CoupleSpace | null {
-  const space = getSpace(profileId, charId);
-  if (!space) return null;
-  space.status = 'pending';
-  space.lastInviteAt = Date.now();
   upsertSpace(space);
   return space;
 }

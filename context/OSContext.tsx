@@ -2088,26 +2088,31 @@ if (!isVisible || !isChattingWithThisChar) {
   };
   
   // 暮色 2026-07-31：让角色主动发邀请给用户
-  //   暮色在 CoupleSpaceApp 点"让 ta 邀请我" → 调 LLM 让角色以自己身份写邀请文案
+  //   暮色在 CoupleSpaceApp 点"让 ta 邀请我" → 选角色 → 调 LLM 让角色以自己身份写邀请文案
   //   → 推 type='couple_space_invite' role='assistant' status='pending' 的消息到聊天
   //   暮色在聊天看卡片 + 接受/拒绝（点接受/拒绝触发 coupleSpaceAccept / Decline）
-  //   暮色 2026-07-31 反馈"已经开通的没重置" — 用 resetToPending 强制重置（让邀请卡显示）
+  //   暮色 2026-07-31 反馈：已开通过的不能重新发
+  //   → markPending 原生行为：open 状态直接 return，UI 层（CharSelectForInviteModal）过滤已开通角色
+  //   暮色 2026-07-31 反馈：没点接受/拒绝直接就开通了
+  //   → 不调 requestCoupleSpaceDecision，等用户手动点
   const requestCoupleSpaceInviteFromChar = async (charId: string) => {
-    const { markPending, resetToPending } = await import('../utils/coupleSpaceStorage');
+    const { markPending } = await import('../utils/coupleSpaceStorage');
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
-    // 1. 标 pending（已开通过的话用 resetToPending 强制重置）
+    // 1. 标 pending（markPending 原生行为：open 状态直接 return existing）
     const annivDate = new Date().toISOString().split('T')[0];
-    let space = markPending({
+    const space = markPending({
       profileId: 'default',
       charId,
       charName: char.name,
       profileName: '我',
       annivDate,
     });
-    if (space.status !== 'pending') {
-      space = resetToPending('default', charId) || space;
+    // 已开通过 — 直接退出，UI 层已过滤
+    if (space.status === 'open') {
+      console.log('[coupleSpace] 已开通过，不重新发邀请');
+      return;
     }
 
     // 2. 调 LLM 生成邀请文案（用 50 条上下文 + 角色独立 API）

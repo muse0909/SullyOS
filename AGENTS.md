@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-07-31 | 彼方 saveVRNovel 漏写 — 上传小说 TypeError | [`changelogs/2026-07-31-vrworld-savevrnovel.md`](./changelogs/2026-07-31-vrworld-savevrnovel.md) |
 | 2026-07-31 | 情侣空间（CoupleSpace）— 阶段 1：基础设施 + 最小骨架（3 模块开发中） | [`changelogs/2026-07-31-couple-space-stage1.md`](./changelogs/2026-07-31-couple-space-stage1.md) |
 | 2026-07-31 | 聊天页 null 消息渲染守卫（MessageItem m.role 兜底） | [`changelogs/2026-07-31-chat-null-msg-guard.md`](./changelogs/2026-07-31-chat-null-msg-guard.md) |
 | 2026-07-31 | ChatSettingsDrawer 漏 destructure perCharApiProtocol — 聊天设置崩 | [`changelogs/2026-07-31-chatsettings-destructure-fix.md`](./changelogs/2026-07-31-chatsettings-destructure-fix.md) |

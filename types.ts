@@ -35,6 +35,7 @@ export enum AppID {
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
   QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
   VRWorld = 'vrworld', // 彼方 — 角色自主登入的虚拟世界
+  CoupleSpace = 'couple_space', // 情侣空间 — 用户和 AI 角色的双人小窝（基础版 3 模块：打卡 / 时间线 / 悄悄话）
 }
 
 export interface SystemLog {
@@ -389,7 +390,105 @@ export interface NoteReply {
     timestamp: number;
 }
 
-// ─── 2026-07-22：小纸条（独立于 RoomNote / 私密记事）
+// ─── 2026-07-31：情侣空间（CoupleSpace）
+//   暮色 2026-07-31 启动的基础版：3 模块（打卡 / 时间线 / 悄悄话）
+//   暮色 2026-07-31 确认：用户-角色一对一，每对独立数据
+//   暮色 2026-07-31 确认：只服务暮色一个人，profile/char 数据隔离
+//   关系开始日（annivDate）可设置，不强制从功能上线日开始算
+//   邀请机制照抄 miya：发邀请消息 + AI 决策接受/拒绝
+//   AI 主动打卡：30% 概率 / 一天最多 3 条 / 距离上次主动 > 6 小时
+//   时间线条目来源：AI 自动从记忆宫殿抽取 + 用户/角色手动添加
+export interface CoupleSpace {
+  pairId: string;            // `${profileId}__${charId}` — 一对用户-角色一份
+  profileId: string;         // 用户人设 ID（暮色只一个 profile，留扩展）
+  charId: string;             // 角色 ID
+  status: 'open' | 'pending' | 'declined' | 'expired';
+
+  // 关系元数据
+  annivDate: string;          // YYYY-MM-DD — 关系开始日（用户可改）
+  openedAt: number;           // 空间开通时间戳
+  lastInviteAt: number;       // 上次邀请时间戳
+
+  // 打卡模块
+  checkins: CoupleCheckin[];
+  consecutiveDays: number;    // 连续打卡天数
+  lastCheckinDate: string;    // YYYY-MM-DD — 上次打卡日期
+  charLastProactiveDate: string;  // YYYY-MM-DD — 角色上次主动打卡日期（防刷屏）
+
+  // 时间线模块
+  timeline: CoupleTimelineItem[];
+
+  // 悄悄话模块
+  whispers: CoupleWhisper[];
+  whisperUnread: number;      // 用户未读悄悄话数
+}
+
+export interface CoupleCheckin {
+  id: string;
+  date: string;               // YYYY-MM-DD
+  taskId: string;             // 任务 ID
+  taskName: string;           // 任务名（冗余存，任务可能被删）
+  content: string;            // AI 生成的内容 / 用户填的内容
+  fromUser: boolean;          // 用户打的卡
+  fromChar: boolean;          // 角色打的卡
+  createdAt: number;
+}
+
+export interface CoupleTimelineItem {
+  id: string;
+  date: string;               // YYYY-MM-DD
+  title: string;
+  content: string;
+  mood?: 'happy' | 'sad' | 'neutral' | 'sweet' | 'angry' | 'miss';
+  source: 'ai-extract' | 'user-manual' | 'char-manual';
+  sourceRef?: string;         // 来源引用：聊天 msgId / 记忆节点 ID
+  images?: string[];
+  createdAt: number;
+}
+
+export interface CoupleWhisper {
+  id: string;
+  from: 'user' | 'char';
+  content: string;
+  createdAt: number;
+  isRead: boolean;
+  replyToId?: string;         // 悄悄话可以回复
+}
+
+// 邀请消息（嵌入聊天消息里，type: 'couple_space_invite'）
+// 暮色 2026-07-31 确认：照抄 miya 的 miya-couple-invite.js
+export interface CoupleInviteMessage {
+  inviteId: string;
+  contactId: string;          // 角色 contactId
+  profileId: string;          // 用户 profileId
+  profileName: string;        // 用户人设名（冗余存，避免改名找不到）
+  charName: string;            // 角色名
+  status: 'pending' | 'open' | 'declined' | 'expired';
+  sentAt: number;
+  decidedAt: number;
+  responseNote: string;
+}
+
+// 默认任务清单（暮色 2026-07-31 确认去掉"和 ta 说早安"和"看 ta 的朋友圈"）
+// "和 ta 说早安"：主动消息每天在做
+// "看 ta 的朋友圈" → 改成"写悄悄话"
+// "听 ta 推荐的歌"+"一起听一首歌"重复 → 合成"邀请一起听"
+export const DEFAULT_COUPLE_TASKS: { id: string; name: string; emoji: string; trigger: string }[] = [
+  { id: 'praise', name: '夸 ta 一下', emoji: '💗', trigger: 'ai-praise' },
+  { id: 'write-whisper', name: '写悄悄话', emoji: '💌', trigger: 'ai-whisper' },
+  { id: 'care-mood', name: '问 ta 今天心情', emoji: '🤔', trigger: 'ai-mood' },
+  { id: 'hug', name: '和 ta 贴贴', emoji: '🤗', trigger: 'ai-hug' },
+  { id: 'love-letter', name: '给 ta 写一封信', emoji: '✉️', trigger: 'ai-letter' },
+  { id: 'goodnight-kiss', name: '晚安吻', emoji: '🌙', trigger: 'ai-goodnight' },
+  { id: 'drink-water', name: '提醒 ta 喝水', emoji: '💧', trigger: 'ai-care' },
+  { id: 'invite-listen', name: '邀请一起听', emoji: '🎧', trigger: 'ai-listen-together' },
+  { id: 'write-diary', name: '写今天的日记', emoji: '📔', trigger: 'ai-diary' },
+  { id: 'date-idea', name: '提一个约会建议', emoji: '🌸', trigger: 'ai-date' },
+  { id: 'apologize', name: '主动道歉/和解', emoji: '🕊️', trigger: 'ai-apology' },
+  { id: 'anniversary', name: '庆祝纪念日', emoji: '🎉', trigger: 'ai-celebrate' },
+];
+
+
 //   暮色要求"小纸条完全脱离小小窝 app" — 单独数据模型 + 单独 token + 单独 prompt
 //   注：跟 RoomNote 结构相似但独立存表 / 独立 AI 写入路径，互不可见
 export interface XiaoZhiTiao {

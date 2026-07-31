@@ -99,6 +99,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
+  { id: AppID.CoupleSpace, name: '情侣空间', icon: 'CoupleSpace', color: 'rose' },  // 暮色 2026-07-31：用户-角色双人小窝（基础版 3 模块）
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
 ];
 

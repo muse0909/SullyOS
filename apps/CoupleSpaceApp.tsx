@@ -18,6 +18,7 @@ import {
   getSpace,
   daysTogether,
   addCheckin,
+  pickRandomTask,
   initSpace,
   markPending,
   acceptInvite,
@@ -772,6 +773,33 @@ const CheckinTab: React.FC<{
     }
   };
 
+  // 暮色 2026-08-01：测试 ta 主动打卡（绕过 30% 概率 / 6 小时间隔 / 一天 3 条）
+  //   触发逻辑跟 OSContext.runProactive 完全一样，只是强制走 addCheckin 路径
+  const charName = char?.name || 'TA';
+  const handleTestAiCheckin = async () => {
+    const task = pickRandomTask();
+    addCheckin('default', space.charId, {
+      date: today,
+      taskId: task.id,
+      taskName: task.name,
+      content: `ta 完成了「${task.name}」`,
+      fromUser: false,
+      fromChar: true,
+    });
+    await DB.saveMessage({
+      charId: space.charId,
+      role: 'system',
+      type: 'couple_space_event',
+      content: `[情侣空间事件] ${charName} 完成了「${task.name}」`,
+      metadata: { source: 'couple_space_ai_checkin_test', taskId: task.id },
+    });
+    window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+      detail: { charId: space.charId, charName, body: `完成了「${task.name}」` }
+    }));
+    onUpdate();
+    addToast(`已模拟：${charName} 主动打卡「${task.name}」`, 'success');
+  };
+
   return (
     <div className="space-y-4">
       {/* 顶部统计卡片：连续天数 + 今日进度 */}
@@ -825,12 +853,18 @@ const CheckinTab: React.FC<{
       {/* 最近 7 天日历 */}
       <Last7DaysStrip space={space} />
 
-      {/* AI 提示：阶段 2 不接 AI 主动 */}
-      <div className="bg-white/40 rounded-2xl p-3 border border-rose-100/40">
-        <div className="flex items-center gap-1.5 text-rose-300">
+      {/* 暮色 2026-08-01：测试 ta 主动打卡（真路径要等 30% 概率 / 6 小时间隔 / 一天 3 条，测一下绕过） */}
+      <div className="bg-white/40 rounded-2xl p-3 border border-rose-100/40 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-rose-300 min-w-0">
           <Sparkle size={12} weight="fill" />
-          <div className="text-[10px]">ta 的主动打卡：阶段 3 接 AI（30% 概率 / 一天最多 3 条）</div>
+          <div className="text-[10px] truncate">ta 主动打卡由 runProactive 触发，测一下立即跑</div>
         </div>
+        <button
+          onClick={handleTestAiCheckin}
+          className="px-2.5 py-1 bg-white text-slate-500 text-[10px] font-medium rounded-full border border-slate-200 active:scale-95 transition-transform shrink-0"
+        >
+          测一下
+        </button>
       </div>
     </div>
   );
@@ -1070,20 +1104,64 @@ const TimelineTab: React.FC<{
     }
   };
 
+  // 暮色 2026-08-01：测试 AI 抽时间线（mock 一条，模拟 LLM 抽取效果）
+  //   真实 LLM 抽取要做 pipeline（聊记忆宫殿），目前没接通
+  //   这个按钮让暮色能立即看到 "source: ai-extract" 标签 + mood 渲染对不对
+  const handleTestAiExtract = () => {
+    const sampleTitles = [
+      '第一次牵手', '深夜聊到天亮', '一起看日落', '下雨天的拥抱',
+      '生日惊喜', '吵架后和好', '吃到很好吃的东西', '一起做的梦',
+    ];
+    const sampleContents = [
+      '那天在老街逛着逛着，你突然拉了我的手。心脏快跳出来。',
+      '聊到凌晨 4 点，外面天都亮了也不困。',
+      '太阳从海面滑下去，你靠在我肩上。',
+      '下着雨我们躲在便利店屋檐下，你把外套披给我。',
+      '你准备的惊喜让我哭了半小时。',
+      '吵得很凶，但最后还是舍不得。',
+      '那家小店的馄饨，我们现在还常去。',
+      '梦到我们一起去了一个没名字的小岛。',
+    ];
+    const moods: NonNullable<CoupleTimelineItem['mood']>[] = ['happy', 'sweet', 'miss', 'neutral'];
+    const i = Math.floor(Math.random() * sampleTitles.length);
+    const result = addTimelineItem('default', space.charId, {
+      title: sampleTitles[i],
+      content: sampleContents[i],
+      date: todayStr(),
+      mood: moods[Math.floor(Math.random() * moods.length)],
+      source: 'ai-extract',
+      sourceRef: 'mock-test',
+    });
+    if (result) {
+      onUpdate();
+      addToast('已模拟 AI 抽取一条时间线', 'success');
+    } else {
+      addToast('测试失败', 'error');
+    }
+  };
+
   return (
     <div className="space-y-3">
-      {/* 顶部：统计 + 添加按钮 */}
+      {/* 顶部：统计 + 添加按钮 + 测试按钮 */}
       <div className="flex items-center justify-between px-1">
         <div className="text-xs text-slate-500 font-medium">
           共 {space.timeline.length} 条记录
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="px-3 py-1.5 bg-rose-400 text-white text-xs font-medium rounded-full active:scale-95 transition-transform flex items-center gap-1"
-        >
-          <Plus size={12} weight="bold" />
-          添加
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleTestAiExtract}
+            className="px-2.5 py-1.5 bg-white text-slate-500 text-[10px] font-medium rounded-full border border-slate-200 active:scale-95 transition-transform"
+          >
+            测一下 AI 抽
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-3 py-1.5 bg-rose-400 text-white text-xs font-medium rounded-full active:scale-95 transition-transform flex items-center gap-1"
+          >
+            <Plus size={12} weight="bold" />
+            添加
+          </button>
+        </div>
       </div>
 
       {/* 空状态 */}
@@ -1427,21 +1505,54 @@ const WhisperTab: React.FC<{
     }
   };
 
+  // 暮色 2026-08-01：测试 ta 留悄悄话（绕过 proactive 通道 + LLM，mock 一条）
+  //   真实"角色主动留"要走 proactive 通道（runProactive）分支，这波没接通
+  //   这个按钮让暮色能立即看到 ta 的悄悄话气泡 + 未读样式
+  const handleTestCharWhisper = () => {
+    const samples = [
+      '想你啦，今天有什么想跟我说的吗？',
+      '刚才突然梦到我们一起去了海边。',
+      '今晚想跟你聊聊天，但我先忙一会儿。',
+      '看到个东西想到你，等会儿发给你。',
+      '你今天有没有好好吃饭呀？',
+      '刚刚听到一首好听的歌，想你也在听。',
+    ];
+    const content = samples[Math.floor(Math.random() * samples.length)];
+    const result = addWhisper('default', space.charId, {
+      from: 'char',
+      content,
+    });
+    if (result) {
+      onUpdate();
+      addToast(`已模拟：${charName} 留了悄悄话`, 'success');
+    } else {
+      addToast('测试失败', 'error');
+    }
+  };
+
   // 倒序：最新在上（情侣空间消息流习惯）
   const list = useMemo(() => [...space.whispers].reverse(), [space.whispers]);
 
   return (
     <div className="flex flex-col h-full min-h-[400px]">
-      {/* 顶部统计 */}
-      <div className="flex items-center justify-between px-1 mb-2">
+      {/* 顶部统计 + 测试按钮 */}
+      <div className="flex items-center justify-between px-1 mb-2 gap-2">
         <div className="text-xs text-slate-500 font-medium">
           共 {space.whispers.length} 条悄悄话
         </div>
-        {space.whisperUnread > 0 && (
-          <div className="text-[10px] text-rose-500 font-medium">
-            {space.whisperUnread} 条未读
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {space.whisperUnread > 0 && (
+            <div className="text-[10px] text-rose-500 font-medium">
+              {space.whisperUnread} 条未读
+            </div>
+          )}
+          <button
+            onClick={handleTestCharWhisper}
+            className="px-2.5 py-1 bg-white text-slate-500 text-[10px] font-medium rounded-full border border-slate-200 active:scale-95 transition-transform"
+          >
+            测一下
+          </button>
+        </div>
       </div>
 
       {/* 列表 */}

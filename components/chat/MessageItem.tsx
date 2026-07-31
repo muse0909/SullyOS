@@ -371,6 +371,9 @@ const MessageItem = React.memo(({
     if (isSystem) {
         // 暮色 2026-07-31：情侣空间邀请消息 — 渲染成马卡龙粉渐变卡片
         if (m.type === 'couple_space_invite') {
+            // status: 'pending' 显示接受/拒绝按钮；status: 'open' / 其他只显示卡片
+            const isPending = m.metadata?.status === 'pending';
+            const charId = m.charId;
             return (
                 <div className={`flex items-center justify-center w-full my-4 px-4 ${selectionMode ? 'pl-12' : ''} animate-fade-in relative transition-[padding] duration-300`}>
                     {selectionMode && (
@@ -383,13 +386,37 @@ const MessageItem = React.memo(({
                     <div className="bg-gradient-to-br from-rose-100 to-pink-100 rounded-3xl p-5 max-w-[300px] w-full border border-rose-200/60 shadow-sm" {...interactionProps}>
                         <div className="text-center">
                             <div className="text-3xl mb-2">💕</div>
-                            <div className="text-sm font-bold text-rose-600 mb-1">情侣空间已开通</div>
+                            <div className="text-sm font-bold text-rose-600 mb-1">
+                                {isPending ? '情侣空间邀请' : '情侣空间已开通'}
+                            </div>
                             <div className="text-[10px] text-rose-400 mb-3 tracking-wide">
                                 {m.metadata?.annivDate ? `在 ${m.metadata.annivDate} · Day 1` : '从今天开始'}
                             </div>
-                            <div className="text-[11px] text-slate-500 leading-relaxed">
+                            <div className="text-[11px] text-slate-500 leading-relaxed mb-4">
                                 {m.content}
                             </div>
+                            {isPending && (
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            (window as any).__coupleSpaceDecline?.(charId);
+                                        }}
+                                        className="flex-1 py-2 bg-white text-slate-500 text-xs font-bold rounded-full border border-slate-200 active:scale-95 transition-transform"
+                                    >
+                                        拒绝
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            (window as any).__coupleSpaceAccept?.(charId);
+                                        }}
+                                        className="flex-1 py-2 bg-rose-400 text-white text-xs font-bold rounded-full active:scale-95 transition-transform"
+                                    >
+                                        接受
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

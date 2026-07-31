@@ -96,6 +96,94 @@ export function initSpace(opts: {
   return space;
 }
 
+// 暮色 2026-07-31 反馈"前面咱们说的你不记得了吗"——补完整 miya 流程：
+//   暮色点"邀请" → markPending（状态 pending）→ 发邀请消息到聊天 → AI 决策
+//   → acceptInvite（pending → open）/ declineInvite（pending → declined）
+// 之前我简化掉了 AI 决策那步，暮色不认账。
+
+/**
+ * 暮色发起邀请：标 pending 状态（不直接开通）
+ * 暮色 2026-07-31 选 B（完整版 AI 自动决策）：发邀请消息后等 AI 角色回应
+ */
+export function markPending(opts: {
+  profileId: string;
+  charId: string;
+  charName: string;
+  profileName: string;
+  annivDate: string;
+}): CoupleSpace {
+  const now = Date.now();
+  const pairId = makePairId(opts.profileId, opts.charId);
+  const existing = getSpace(opts.profileId, opts.charId);
+
+  if (existing) {
+    // 已存在 — 如果是 open 就不动；其他状态重置为 pending
+    if (existing.status === 'open') return existing;
+    existing.status = 'pending';
+    existing.annivDate = opts.annivDate;
+    existing.lastInviteAt = now;
+    upsertSpace(existing);
+    return existing;
+  }
+
+  const space: CoupleSpace = {
+    pairId,
+    profileId: opts.profileId,
+    charId: opts.charId,
+    status: 'pending',
+    annivDate: opts.annivDate,
+    openedAt: 0,             // 还没开
+    lastInviteAt: now,
+    checkins: [],
+    consecutiveDays: 0,
+    lastCheckinDate: '',
+    charLastProactiveDate: '',
+    timeline: [],
+    whispers: [],
+    whisperUnread: 0,
+  };
+  upsertSpace(space);
+  return space;
+}
+
+/**
+ * AI 决定接受邀请（pending → open）
+ * 暮色手动接受 + AI 决策成功都走这个
+ */
+export function acceptInvite(profileId: string, charId: string): CoupleSpace | null {
+  const space = getSpace(profileId, charId);
+  if (!space) return null;
+  space.status = 'open';
+  space.openedAt = space.openedAt || Date.now();
+  upsertSpace(space);
+  return space;
+}
+
+/**
+ * AI 决定拒绝邀请（pending → declined）
+ */
+export function declineInvite(profileId: string, charId: string): CoupleSpace | null {
+  const space = getSpace(profileId, charId);
+  if (!space) return null;
+  space.status = 'declined';
+  upsertSpace(space);
+  return space;
+}
+
+/**
+ * 重新发邀请（pending 的可以把旧的标 expired，自己重新发）
+ * 暮色 2026-07-31 反馈"可以多次发邀请"：跟 miya 的 expireOldPendingInvites 行为一致
+ */
+export function expireOldPendingInvites(profileId: string, charId: string): void {
+  const all = readAll();
+  const pairId = makePairId(profileId, charId);
+  const space = all[pairId];
+  if (space && space.status === 'pending') {
+    space.status = 'expired';
+    upsertSpace(space);
+  }
+}
+
 // ──────────────────────────────────────────
 // 关系开始日
 // ──────────────────────────────────────────

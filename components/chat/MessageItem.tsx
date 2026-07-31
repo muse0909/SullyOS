@@ -380,7 +380,8 @@ const MessageItem = React.memo(({
     //   暮色只看到江澈气泡文本 + 60s 后 AI 默认 accept 跳过
     //   修法：让 type='couple_space_invite' 单独触发卡片渲染，不管 role 是 system 还是 assistant
     if (m.type === 'couple_space_invite') {
-        const isPending = m.metadata?.status === 'pending';
+        const inviteStatus = m.metadata?.status; // 'pending' | 'accepted' | 'declined' | undefined
+        const isPending = inviteStatus === 'pending' || !inviteStatus; // 兼容老数据：没 status 字段也按 pending 渲染按钮
         const charId = m.charId;
         // 暮色 2026-07-31 反馈"暮色主动邀请的卡显示成'麦麦 邀请你'"（错的）
         //   根因：之前统一用 charId 找角色，但实际：
@@ -396,6 +397,25 @@ const MessageItem = React.memo(({
             : characters.find(c => c.id === charId)?.avatar;
         // 暮色 2026-07-31 反馈"邀请卡没有粉色渐变，只有一个纯色"
         //   修法：用三色渐变（from-rose-200 via-rose-50 to-pink-200）+ 明显的深色边框
+        // 暮色 2026-07-31 反馈"接受/拒绝点完应该变成已拒绝或者已接受"
+        //   修法：根据 inviteStatus 给卡不同视觉（已接受绿色 / 已拒绝灰色 / pending 渐变粉）
+        const isAccepted = inviteStatus === 'accepted';
+        const isDeclined = inviteStatus === 'declined';
+        const cardClass = isAccepted
+            ? 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border-emerald-200/70'
+            : isDeclined
+                ? 'bg-gradient-to-br from-slate-100 via-white to-slate-50 border-slate-200/70'
+                : 'bg-gradient-to-br from-rose-200 via-rose-50 to-pink-200 border-rose-300/70';
+        const titleText = isAccepted
+            ? '情侣空间已接受 💕'
+            : isDeclined
+                ? '情侣空间邀请已拒绝'
+                : '情侣空间邀请';
+        const titleClass = isAccepted
+            ? 'text-emerald-600'
+            : isDeclined
+                ? 'text-slate-500'
+                : 'text-rose-600';
         return (
             <div className={`flex items-center justify-center w-full my-4 px-4 ${selectionMode ? 'pl-12' : ''} animate-fade-in relative transition-[padding] duration-300`}>
                 {selectionMode && (
@@ -405,7 +425,7 @@ const MessageItem = React.memo(({
                         </div>
                     </div>
                 )}
-                <div className="bg-gradient-to-br from-rose-200 via-rose-50 to-pink-200 rounded-3xl p-5 max-w-[300px] w-full border-2 border-rose-300/70 shadow-md" {...interactionProps}>
+                <div className={`${cardClass} rounded-3xl p-5 max-w-[300px] w-full border-2 shadow-md`} {...interactionProps}>
                     {/* 发送者头部：头像 + 名字 */}
                     <div className="flex items-center gap-2 mb-3">
                         <div className="w-8 h-8 rounded-full bg-white/80 flex items-center justify-center overflow-hidden shrink-0 border border-rose-200">
@@ -420,9 +440,9 @@ const MessageItem = React.memo(({
                         </div>
                     </div>
                     <div className="text-center">
-                        <div className="text-3xl mb-2">💕</div>
-                        <div className="text-sm font-bold text-rose-600 mb-1">
-                            {isPending ? '情侣空间邀请' : '情侣空间已开通'}
+                        <div className="text-3xl mb-2">{isAccepted ? '✅' : isDeclined ? '🚫' : '💕'}</div>
+                        <div className={`text-sm font-bold mb-1 ${titleClass}`}>
+                            {titleText}
                         </div>
                         <div className="text-[10px] text-rose-400 mb-3 tracking-wide">
                             {m.metadata?.annivDate ? `在 ${m.metadata.annivDate} · Day 1` : '从今天开始'}

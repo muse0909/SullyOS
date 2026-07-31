@@ -1946,10 +1946,60 @@ if (!isVisible || !isChattingWithThisChar) {
   //   之前 window 全局方案：CoupleSpaceApp 没挂载时 window.__coupleSpaceAccept 不存在
   //   修法：挂到 OSContext，永远可用
   //   暮色 2026-07-31 反馈"接受后不要跳回空间，留在聊天页"——去掉 setActiveApp
+  // 暮色 2026-07-31 反馈"点接受/拒绝按钮没反应" + "都是直接开通了"
+  //   根因：acceptInvite / declineInvite 只改 localStorage 的 space.status，
+  //   不动 IndexedDB 里的邀请卡 message.metadata.status。
+  //   → space 真的开了（暮色看 gate 视图能找到），但 message 还显示 pending，
+  //     MessageItem 按钮还在 + 没 toast 反馈 → 暮色觉得"没反应 + 自动开通"。
+  // 修法：接受/拒绝后同步更新 IndexedDB 邀请卡 metadata.status='accepted'/'declined'，
+  //   发 'coupleSpaceInviteResolved' 事件让 Chat reload messages（按钮自动消失），
+  //   加 toast 给暮色明确反馈。
+  const markInviteMessageResolved = async (charId: string, newStatus: 'accepted' | 'declined') => {
+    try {
+      const allMsgs = await DB.getMessagesByCharId(charId, true);
+      // 找最新一条 pending 的邀请卡（同一对可能有多张，标记最后那张）
+      const pending = allMsgs
+        .filter((m: any) => m.type === 'couple_space_invite' && m.metadata?.status === 'pending')
+        .sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+      const target = pending[0];
+      if (target?.id) {
+        await DB.updateMessageMeta(target.id, { status: newStatus, resolvedAt: Date.now() });
+      }
+    } catch (e) {
+      console.error(`[coupleSpace] 更新邀请卡 status=${newStatus} 失败`, e);
+    }
+  };
+
   const coupleSpaceAccept = async (charId: string) => {
     const { acceptInvite } = await import('../utils/coupleSpaceStorage');
     const space = acceptInvite('default', charId);
-    if (!space) return;
+    if (!space) {
+      // space 找不到（之前没 markPending / 已解除 / localStorage 清空）
+      //   暮色场景：点接受卡 = 重建关系。调 markPending 重建 + 再 accept。
+      const char = characters.find(c => c.id === charId);
+      if (!char) {
+        addToast('接受失败：找不到角色', 'error');
+        return;
+      }
+      const { markPending } = await import('../utils/coupleSpaceStorage');
+      const annivDate = new Date().toISOString().split('T')[0];
+      markPending({
+        profileId: 'default',
+        charId,
+        charName: char.name,
+        profileName: '我',
+        annivDate,
+      });
+      const rebuilt = acceptInvite('default', charId);
+      if (!rebuilt) {
+        addToast('接受失败，请重试', 'error');
+        return;
+      }
+      addToast(`和 ${char.name} 的情侣空间已开通 💕`, 'success');
+      await markInviteMessageResolved(charId, 'accepted');
+      window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId, status: 'accepted' } }));
+      return;
+    }
     try {
       await DB.saveMessage({
         charId,
@@ -1965,13 +2015,23 @@ if (!isVisible || !isChattingWithThisChar) {
     } catch (e) {
       console.error('[coupleSpace] 发送开通消息失败', e);
     }
+    const char = characters.find(c => c.id === charId);
+    addToast(`和 ${char?.name || 'TA'} 的情侣空间已开通 💕`, 'success');
+    await markInviteMessageResolved(charId, 'accepted');
+    window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId, status: 'accepted' } }));
     // 暮色 2026-07-31 反馈"不要跳回空间，留在聊天页"——去掉 setActiveApp
   };
 
   const coupleSpaceDecline = async (charId: string) => {
     const { declineInvite } = await import('../utils/coupleSpaceStorage');
     const space = declineInvite('default', charId);
-    if (!space) return;
+    if (!space) {
+      const char = characters.find(c => c.id === charId);
+      addToast(`已拒绝 ${char?.name || 'TA'} 的情侣空间邀请`, 'info');
+      await markInviteMessageResolved(charId, 'declined');
+      window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId, status: 'declined' } }));
+      return;
+    }
     try {
       await DB.saveMessage({
         charId,
@@ -1983,6 +2043,10 @@ if (!isVisible || !isChattingWithThisChar) {
     } catch (e) {
       console.error('[coupleSpace] 发送拒绝消息失败', e);
     }
+    const char = characters.find(c => c.id === charId);
+    addToast(`已拒绝 ${char?.name || 'TA'} 的情侣空间邀请`, 'info');
+    await markInviteMessageResolved(charId, 'declined');
+    window.dispatchEvent(new CustomEvent('coupleSpaceInviteResolved', { detail: { charId, status: 'declined' } }));
   };
 
   // 暮色 2026-07-31 删 requestCoupleSpaceDecision：

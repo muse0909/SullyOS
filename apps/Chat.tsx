@@ -724,6 +724,21 @@ const Chat: React.FC = () => {
         return () => window.removeEventListener('sullyos:direct-ai-message', handler);
     }, [char?.id]);
 
+    // 暮色 2026-07-31：监听情侣空间邀请卡接受/拒绝事件
+    //   OSContext.coupleSpaceAccept / coupleSpaceDecline 改完 IndexedDB 后 dispatch 这个事件
+    //   Chat 收到后 reload 当前角色的 messages，让 MessageItem 重新渲染（按钮消失 / 卡变"已接受"）
+    useEffect(() => {
+        if (!char?.id) return;
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { charId: string; status: 'accepted' | 'declined' };
+            if (!detail || detail.charId !== char.id) return;
+            // reload 当前可见窗口的 messages
+            reloadMessages(visibleCountRef.current);
+        };
+        window.addEventListener('coupleSpaceInviteResolved', handler);
+        return () => window.removeEventListener('coupleSpaceInviteResolved', handler);
+    }, [char?.id, reloadMessages]);
+
     const canReroll = !isTyping && safeMessages.length > 0 && safeMessages[safeMessages.length - 1].role === 'assistant';
 
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---

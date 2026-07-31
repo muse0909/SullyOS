@@ -1,7 +1,7 @@
 # 彼方 / 520 捏人器修复：fork 完整 character_creator.html
 
 **日期**：2026-07-31
-**涉及 commit**：（待 git commit 后填）
+**涉及 commit**：`a20fb48`
 
 ## 改了什么
 

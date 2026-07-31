@@ -17,8 +17,17 @@ import {
   getSpace,
   daysTogether,
   addCheckin,
+  initSpace,
 } from '../utils/coupleSpaceStorage';
-import { Heart as HeartIcon, ArrowLeft, Sparkle, Plus, X, Flame as FlameIcon, Check as CheckIcon } from '@phosphor-icons/react';
+import Modal from '../components/os/Modal';
+import {
+  Heart as HeartIcon,
+  ArrowLeft,
+  Sparkle,
+  Plus,
+  Flame as FlameIcon,
+  Check as CheckIcon,
+} from '@phosphor-icons/react';
 
 // ──────────────────────────────────────────
 // 视图状态
@@ -27,6 +36,8 @@ import { Heart as HeartIcon, ArrowLeft, Sparkle, Plus, X, Flame as FlameIcon, Ch
 type View = 'gate' | 'space';
 type Tab = 'checkin' | 'timeline' | 'whisper';
 
+const todayStr = () => new Date().toISOString().split('T')[0];
+
 const CoupleSpaceApp: React.FC = () => {
   const { closeApp, characters, activeCharacterId, addToast } = useOS();
   const [view, setView] = useState<View>('gate');
@@ -34,14 +45,17 @@ const CoupleSpaceApp: React.FC = () => {
   const [tab, setTab] = useState<Tab>('checkin');
   const [spaces, setSpaces] = useState<CoupleSpace[]>([]);
   const [activeSpace, setActiveSpace] = useState<CoupleSpace | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+
+  // 邀请弹窗状态
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteSelectedCharId, setInviteSelectedCharId] = useState<string>('');
+  const [inviteAnnivDate, setInviteAnnivDate] = useState<string>(todayStr());
 
   const reload = () => {
     setSpaces(getAllSpaces());
     if (activeCharId) {
       setActiveSpace(getSpace('default', activeCharId));
     }
-    setReloadKey(k => k + 1);
   };
 
   useEffect(() => {
@@ -61,6 +75,37 @@ const CoupleSpaceApp: React.FC = () => {
       setActiveCharId(activeCharacterId);
     }
   }, [activeCharacterId]);
+
+  // 打开邀请弹窗（重置默认值）
+  const openInviteModal = () => {
+    setInviteAnnivDate(todayStr());
+    setInviteSelectedCharId('');
+    setShowInviteModal(true);
+  };
+
+  // 提交邀请
+  const handleConfirmInvite = () => {
+    if (!inviteSelectedCharId) {
+      addToast({ type: 'error', message: '请选一个 ta' });
+      return;
+    }
+    const char = characters.find(c => c.id === inviteSelectedCharId);
+    if (!char) return;
+
+    initSpace({
+      profileId: 'default',
+      charId: char.id,
+      charName: char.name,
+      profileName: '我',
+      annivDate: inviteAnnivDate,
+    });
+
+    setShowInviteModal(false);
+    setActiveCharId(char.id);
+    setView('space');
+    reload();
+    addToast({ type: 'success', message: `和 ${char.name} 的情侣空间已开通` });
+  };
 
   // ──────────────────────────────────────────
   // Gate 视图：空间列表 + 邀请入口
@@ -131,9 +176,7 @@ const CoupleSpaceApp: React.FC = () => {
           )}
 
           <button
-            onClick={() => {
-              addToast({ type: 'info', message: '邀请功能开发中，敬请期待' });
-            }}
+            onClick={openInviteModal}
             className="w-full bg-gradient-to-r from-rose-100 to-pink-100 rounded-2xl p-4 border-2 border-dashed border-rose-200/80 active:scale-[0.98] transition-transform"
           >
             <div className="flex flex-col items-center gap-2 text-rose-400">
@@ -141,10 +184,22 @@ const CoupleSpaceApp: React.FC = () => {
                 <Plus size={20} weight="bold" />
               </div>
               <div className="text-sm font-medium">邀请 ta 开通情侣空间</div>
-              <div className="text-[10px] text-rose-300">（开发中）</div>
             </div>
           </button>
         </div>
+
+        {/* 邀请弹窗 */}
+        <InviteModal
+          isOpen={showInviteModal}
+          onClose={() => setShowInviteModal(false)}
+          onConfirm={handleConfirmInvite}
+          characters={characters}
+          existingCharIds={new Set(spaces.map(s => s.charId))}
+          selectedCharId={inviteSelectedCharId}
+          setSelectedCharId={setInviteSelectedCharId}
+          annivDate={inviteAnnivDate}
+          setAnnivDate={setInviteAnnivDate}
+        />
       </div>
     );
   }
@@ -166,7 +221,6 @@ const CoupleSpaceApp: React.FC = () => {
 
   return (
     <div className="absolute inset-0 flex flex-col bg-gradient-to-b from-rose-50 via-white to-pink-50">
-      {/* 顶部 Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-white/70 backdrop-blur-md border-b border-rose-100/60 shrink-0">
         <button
           onClick={() => setView('gate')}
@@ -181,7 +235,7 @@ const CoupleSpaceApp: React.FC = () => {
         <div className="w-9 h-9" />
       </div>
 
-      {/* 关系天数 */}
+      {/* 关系天数 + 设置入口 */}
       <div className="px-4 py-4 text-center bg-white/40 shrink-0">
         <div className="text-3xl font-black text-rose-400 tracking-tighter">{days}</div>
         <div className="text-[10px] text-slate-500 mt-1 tracking-wider">DAYS TOGETHER</div>
@@ -244,6 +298,108 @@ const CoupleSpaceApp: React.FC = () => {
 };
 
 // ──────────────────────────────────────────
+// 邀请弹窗（暮色 2026-07-31 反馈"没邀请测不了"，先做简化版）
+//   简化版：暮色点开通就直接 initSpace（不等 AI 决策）
+//   后续阶段：补"发邀请消息到聊天 + AI 决策"（miya 完整机制）
+// ──────────────────────────────────────────
+
+const InviteModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  characters: CharacterProfile[];
+  existingCharIds: Set<string>;
+  selectedCharId: string;
+  setSelectedCharId: (id: string) => void;
+  annivDate: string;
+  setAnnivDate: (d: string) => void;
+}> = ({ isOpen, onClose, onConfirm, characters, existingCharIds, selectedCharId, setSelectedCharId, annivDate, setAnnivDate }) => {
+  const available = characters.filter(c => !existingCharIds.has(c.id));
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="邀请 ta 开通情侣空间"
+      footer={
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!selectedCharId}
+            className="flex-1 py-2.5 bg-rose-400 text-white font-bold rounded-full active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            开通
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        {/* 选 ta */}
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">选择 ta</div>
+          {available.length === 0 ? (
+            <div className="text-xs text-slate-400 text-center py-6">
+              {characters.length === 0
+                ? '还没有角色，先去聊天里加一个'
+                : '所有角色都已开通情侣空间'}
+            </div>
+          ) : (
+            <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
+              {available.map(char => (
+                <button
+                  key={char.id}
+                  onClick={() => setSelectedCharId(char.id)}
+                  className={`w-full flex items-center gap-3 p-2.5 rounded-2xl transition-all ${
+                    selectedCharId === char.id
+                      ? 'bg-rose-50 border border-rose-200'
+                      : 'bg-slate-50 border border-transparent active:scale-[0.98]'
+                  }`}
+                >
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-rose-200 to-pink-200 flex items-center justify-center overflow-hidden shrink-0">
+                    {char.avatar ? (
+                      <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <HeartIcon size={16} weight="fill" className="text-rose-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="text-sm font-medium text-slate-800">{char.name}</div>
+                  </div>
+                  {selectedCharId === char.id && (
+                    <CheckIcon size={16} weight="bold" className="text-rose-500" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 关系开始日 */}
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">关系开始日</div>
+          <input
+            type="date"
+            value={annivDate}
+            onChange={e => setAnnivDate(e.target.value)}
+            max={todayStr()}
+            className="w-full px-3 py-2.5 bg-slate-50 rounded-2xl text-sm text-slate-800 border border-slate-200 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+          />
+          <div className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+            可以填历史日期，比如你和 ta 第一次说话那天
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ──────────────────────────────────────────
 // 打卡 Tab（阶段 2：完整实现）
 // ──────────────────────────────────────────
 
@@ -253,7 +409,7 @@ const CheckinTab: React.FC<{
   onUpdate: () => void;
 }> = ({ space, char, onUpdate }) => {
   const { addToast } = useOS();
-  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const today = useMemo(() => todayStr(), []);
 
   // 12 个任务今天打卡状态
   const taskStatus = useMemo(() => {
@@ -286,13 +442,6 @@ const CheckinTab: React.FC<{
     } else {
       addToast({ type: 'error', message: '打卡失败' });
     }
-  };
-
-  // 撤销打卡（长按任务卡片）
-  const handleUndoCheckin = (taskId: string) => {
-    // 简化：直接调 addCheckin 覆盖（用最新的 fromUser=false 标记）
-    // 实际应该用单独的 removeCheckin 函数，阶段 3 再加
-    addToast({ type: 'info', message: '撤销功能下个版本加' });
   };
 
   return (
@@ -332,7 +481,7 @@ const CheckinTab: React.FC<{
       <div>
         <div className="flex items-center justify-between mb-2 px-1">
           <div className="text-xs text-slate-500 font-medium">今日任务</div>
-          <div className="text-[10px] text-slate-400">点打卡 / 长按撤销</div>
+          <div className="text-[10px] text-slate-400">点打卡 · 长按撤销</div>
         </div>
         <div className="space-y-2">
           {taskStatus.map(task => (
@@ -340,7 +489,6 @@ const CheckinTab: React.FC<{
               key={task.id}
               task={task}
               onCheckin={() => handleUserCheckin(task.id)}
-              onUndo={() => handleUndoCheckin(task.id)}
             />
           ))}
         </div>
@@ -364,38 +512,13 @@ const CheckinTab: React.FC<{
 const CheckinTaskCard: React.FC<{
   task: typeof DEFAULT_COUPLE_TASKS[number] & { userDone: boolean; charDone: boolean };
   onCheckin: () => void;
-  onUndo: () => void;
-}> = ({ task, onCheckin, onUndo }) => {
-  const [longPressTimer, setLongPressTimer] = useState<number | null>(null);
-
-  const handleTouchStart = () => {
-    if (!task.userDone) return;
-    const t = window.setTimeout(() => {
-      onUndo();
-    }, 800);
-    setLongPressTimer(t);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimer) {
-      window.clearTimeout(longPressTimer);
-      setLongPressTimer(null);
-    }
-  };
-
+}> = ({ task, onCheckin }) => {
   return (
-    <div
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onMouseDown={handleTouchStart}
-      onMouseUp={handleTouchEnd}
-      onMouseLeave={handleTouchEnd}
-      className={`bg-white rounded-2xl p-3 border transition-all ${
-        task.userDone || task.charDone
-          ? 'border-rose-200/60 bg-rose-50/30'
-          : 'border-rose-100/60 active:scale-[0.98]'
-      }`}
-    >
+    <div className={`bg-white rounded-2xl p-3 border transition-all ${
+      task.userDone || task.charDone
+        ? 'border-rose-200/60 bg-rose-50/30'
+        : 'border-rose-100/60 active:scale-[0.98]'
+    }`}>
       <div className="flex items-center gap-3">
         <div className={`text-2xl shrink-0 ${task.userDone ? 'grayscale' : ''}`}>
           {task.emoji}
@@ -423,10 +546,7 @@ const CheckinTaskCard: React.FC<{
         </div>
         {!task.userDone && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onCheckin();
-            }}
+            onClick={onCheckin}
             className="px-3 py-1.5 bg-rose-400 text-white rounded-full text-xs font-medium active:scale-95 transition-transform shrink-0"
           >
             打卡
@@ -456,20 +576,20 @@ const Last7DaysStrip: React.FC<{ space: CoupleSpace }> = ({ space }) => {
             const count = space.checkins.filter(c => c.date === date).length;
             const userCount = space.checkins.filter(c => c.date === date && c.fromUser).length;
             const charCount = space.checkins.filter(c => c.date === date && c.fromChar).length;
-            const isToday = date === new Date().toISOString().split('T')[0];
+            const isToday = date === todayStr();
             return (
               <div key={date} className="flex-1 text-center">
                 <div className={`text-[9px] mb-1.5 font-medium ${isToday ? 'text-rose-500' : 'text-slate-400'}`}>
                   {date.slice(5)}
                 </div>
-                <div className={`h-8 rounded-lg flex flex-col items-center justify-center text-[8px] ${
+                <div className={`h-10 rounded-lg flex flex-col items-center justify-center text-[8px] ${
                   count > 0
                     ? 'bg-rose-100 text-rose-500'
                     : 'bg-slate-50 text-slate-300'
                 }`}>
                   {count > 0 ? (
                     <>
-                      <div className="font-bold leading-none">{count}</div>
+                      <div className="font-bold leading-none text-[11px]">{count}</div>
                       <div className="text-[7px] mt-0.5 leading-none">
                         {userCount > 0 && `我${userCount}`}
                         {userCount > 0 && charCount > 0 && '·'}

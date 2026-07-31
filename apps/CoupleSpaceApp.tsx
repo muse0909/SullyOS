@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { CoupleSpace, CharacterProfile, DEFAULT_COUPLE_TASKS } from '../types';
+import { DB } from '../utils/db';
 import {
   getAllSpaces,
   getSpace,
@@ -84,7 +85,7 @@ const CoupleSpaceApp: React.FC = () => {
   };
 
   // 提交邀请
-  const handleConfirmInvite = () => {
+  const handleConfirmInvite = async () => {
     if (!inviteSelectedCharId) {
       addToast({ type: 'error', message: '请选一个 ta' });
       return;
@@ -92,13 +93,36 @@ const CoupleSpaceApp: React.FC = () => {
     const char = characters.find(c => c.id === inviteSelectedCharId);
     if (!char) return;
 
-    initSpace({
+    const space = initSpace({
       profileId: 'default',
       charId: char.id,
       charName: char.name,
       profileName: '我',
       annivDate: inviteAnnivDate,
     });
+
+    // 暮色 2026-07-31 反馈：邀请没发，角色不知道空间存在
+    // 修法：开通时给角色发 type='couple_space_invite' 的系统消息
+    //   - role: 'system' 让 MessageItem 走系统消息渲染
+    //   - metadata.annivDate 渲染成"在 XXXX · Day 1"
+    //   - metadata.pairId 关联情侣空间数据
+    //   - content 进 LLM context（useChatAI 把 system 消息转 user 角色 + [系统消息] 前缀），AI 角色感知开通
+    try {
+      await DB.saveMessage({
+        charId: char.id,
+        role: 'system',
+        type: 'couple_space_invite',
+        content: `暮色为你开通了情侣空间。从 ${inviteAnnivDate} 开始你们要一起打卡、留悄悄话、记重要时刻。`,
+        metadata: {
+          source: 'couple_space_invite',
+          pairId: space.pairId,
+          annivDate: inviteAnnivDate,
+        },
+      });
+    } catch (e) {
+      console.error('[coupleSpace] 发送邀请消息失败', e);
+      addToast({ type: 'error', message: '邀请消息发送失败，但空间已开通' });
+    }
 
     setShowInviteModal(false);
     setActiveCharId(char.id);

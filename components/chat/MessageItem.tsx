@@ -369,6 +369,33 @@ const MessageItem = React.memo(({
 
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
+        // 暮色 2026-07-31：情侣空间邀请消息 — 渲染成马卡龙粉渐变卡片
+        if (m.type === 'couple_space_invite') {
+            return (
+                <div className={`flex items-center justify-center w-full my-4 px-4 ${selectionMode ? 'pl-12' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="bg-gradient-to-br from-rose-100 to-pink-100 rounded-3xl p-5 max-w-[300px] w-full border border-rose-200/60 shadow-sm" {...interactionProps}>
+                        <div className="text-center">
+                            <div className="text-3xl mb-2">💕</div>
+                            <div className="text-sm font-bold text-rose-600 mb-1">情侣空间已开通</div>
+                            <div className="text-[10px] text-rose-400 mb-3 tracking-wide">
+                                {m.metadata?.annivDate ? `在 ${m.metadata.annivDate} · Day 1` : '从今天开始'}
+                            </div>
+                            <div className="text-[11px] text-slate-500 leading-relaxed">
+                                {m.content}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         const isCallSummary = m.metadata?.source === 'call-end-popup';
 
         // Guidebook end card — rendered as pretty card, not ugly system pill

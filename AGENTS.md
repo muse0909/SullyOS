@@ -283,6 +283,8 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-07-31 | 情侣空间接受/拒绝 UI 反馈 + 邀请卡状态视觉区分 | [`changelogs/2026-07-31-couple-space-accept-feedback.md`](./changelogs/2026-07-31-couple-space-accept-feedback.md) |
 | 2026-07-31 | 紧急修复：聊天页 TDZ 崩溃（coupleSpaceInviteResolved useEffect 位置错） | [`changelogs/2026-07-31-chat-tdz-after-couple-space.md`](./changelogs/2026-07-31-chat-tdz-after-couple-space.md) |
 | 2026-08-01 | 情侣空间 AI 真决策（LLM 完整请求体）+ 状态胶囊带名字 | [`changelogs/2026-08-01-couple-space-ai-decision-v2.md`](./changelogs/2026-08-01-couple-space-ai-decision-v2.md) |
+| 2026-08-01 | 情侣空间第一阶段 3 模块补完：时间线 + 悄悄话 + AI 主动打卡 | [`changelogs/2026-08-01-couple-space-3tabs.md`](./changelogs/2026-08-01-couple-space-3tabs.md) |
+| 2026-08-01 | 情侣空间 handoff — 下一个窗口接力指南 | [`changelogs/2026-08-01-couple-space-handoff.md`](./changelogs/2026-08-01-couple-space-handoff.md) |
 | 2026-07-31 | 情侣空间（CoupleSpace）— 阶段 1：基础设施 + 最小骨架（3 模块开发中） | [`changelogs/2026-07-31-couple-space-stage1.md`](./changelogs/2026-07-31-couple-space-stage1.md) |
 | 2026-07-31 | 聊天页 null 消息渲染守卫（MessageItem m.role 兜底） | [`changelogs/2026-07-31-chat-null-msg-guard.md`](./changelogs/2026-07-31-chat-null-msg-guard.md) |
 | 2026-07-31 | ChatSettingsDrawer 漏 destructure perCharApiProtocol — 聊天设置崩 | [`changelogs/2026-07-31-chatsettings-destructure-fix.md`](./changelogs/2026-07-31-chatsettings-destructure-fix.md) |

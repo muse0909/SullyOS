@@ -1675,6 +1675,155 @@ export const DB = {
       });
   },
 
+  // ============ 暮色 2026-07-31：彼方（VRWorldApp）缺失的 DB 方法 ============
+  // 暮色反馈彼方 app 一进就卡"载入彼方…"——根因是 schema 创了 vr_novels / vr_settings / api_call_log 三个 store，
+  // 但对应的 get/save/delete 方法从来没写。VRWorldApp 调 DB.getVRNovels() / DB.getVRCardsByCharId() 抛 TypeError，
+  // reloadAll await Promise.all 抛错 → setLoading(false) 永远不跑 → 永远卡 loading。
+  // API 配置页同样：getVRApi() → DB.getVRApiConfig() 抛错 → vrApi 永远 null → UI 一直"未配置"。
+
+  /** 彼方书架：拉所有 vr_novels，按 updatedAt desc。 */
+  getVRNovels: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_novels')) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction('vr_novels', 'readonly');
+          const request = transaction.objectStore('vr_novels').getAll();
+          request.onsuccess = () => {
+              const all = (request.result || []) as any[];
+              all.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+              resolve(all);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  /** 彼方书架：删一条 vr_novel。 */
+  deleteVRNovel: async (id: string): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_novels')) return;
+      const transaction = db.transaction('vr_novels', 'readwrite');
+      transaction.objectStore('vr_novels').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  /**
+   * 彼方动态：按 charId 拉该角色所有 type='vr_card' 的 messages。
+   * 用 schema 里的 charId_type 复合索引（v62 加的），不在全表扫。
+   * 不过 getAllFromIndex 配合 keyPath 范围比较复杂，直接用 charId 索引拿全 charId 的消息
+   * 然后在内存里 filter type='vr_card'——vr_card 数量级不大，性能 OK。
+   */
+  getVRCardsByCharId: async (charId: string): Promise<any[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+          const store = transaction.objectStore(STORE_MESSAGES);
+          const index = store.index('charId');
+          const request = index.getAll(IDBKeyRange.only(charId));
+          request.onsuccess = () => {
+              const all = (request.result || []) as any[];
+              resolve(all.filter(m => m && m.type === 'vr_card'));
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  /** 彼方独立 API 配置：vr_settings 里用固定 id 'vr_api_config' 存 APIConfig。 */
+  getVRApiConfig: async (): Promise<any | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_settings')) return null;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction('vr_settings', 'readonly');
+          const request = transaction.objectStore('vr_settings').get('vr_api_config');
+          request.onsuccess = () => {
+              const row = request.result as any | undefined;
+              if (!row) { resolve(null); return; }
+              // 行结构: { id: 'vr_api_config', cfg: APIConfig } ——拆出 cfg
+              resolve(row.cfg ?? null);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  /** 彼方独立 API 配置：null = 跟随聊天默认。 */
+  saveVRApiConfig: async (cfg: any | null): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_settings')) return;
+      const transaction = db.transaction('vr_settings', 'readwrite');
+      const store = transaction.objectStore('vr_settings');
+      if (cfg) {
+          store.put({ id: 'vr_api_config', cfg });
+      } else {
+          store.delete('vr_api_config');
+      }
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  /** 彼方 API 调用记录：api_call_log 全量，按 ts desc。 */
+  getVRApiLog: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('api_call_log')) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction('api_call_log', 'readonly');
+          const request = transaction.objectStore('api_call_log').getAll();
+          request.onsuccess = () => {
+              const all = (request.result || []) as any[];
+              all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+              resolve(all);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  /** 彼方 API 调用记录：整体替换（vrApi.ts migrateOnce 用）。 */
+  setVRApiLog: async (log: any[]): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('api_call_log')) return;
+      const transaction = db.transaction('api_call_log', 'readwrite');
+      const store = transaction.objectStore('api_call_log');
+      store.clear();
+      for (const entry of log) {
+          // VRApiCall 没 id，存的时候包一层 id
+          store.put({ ...entry, id: entry.id || `vrapi-${entry.ts}-${Math.random().toString(36).slice(2, 8)}` });
+      }
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  /** 彼方 API 调用记录：追加一条（runSession.ts 每次调用后写）。 */
+  appendVRApiLog: async (entry: any): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('api_call_log')) return;
+      const transaction = db.transaction('api_call_log', 'readwrite');
+      const store = transaction.objectStore('api_call_log');
+      const id = `vrapi-${entry.ts}-${Math.random().toString(36).slice(2, 8)}`;
+      store.put({ ...entry, id });
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  /** 彼方 API 调用记录：清空。 */
+  clearVRApiLog: async (): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('api_call_log')) return;
+      const transaction = db.transaction('api_call_log', 'readwrite');
+      transaction.objectStore('api_call_log').clear();
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+  // ============ 彼方缺失方法 end ============
+
   exportFullData: async (): Promise<Partial<FullBackupData>> => {
       const db = await openDB();
       

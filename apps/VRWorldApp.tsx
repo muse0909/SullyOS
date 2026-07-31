@@ -183,8 +183,15 @@ const VRWorldApp: React.FC = () => {
 
     const reloadAll = useCallback(async () => {
         setLoading(true);
-        await Promise.all([loadNovels(), loadFeed()]);
-        setLoading(false);
+        try {
+            // 暮色 2026-07-31：try/finally 兜底——DB 方法抛错时也要 setLoading(false)，
+            // 否则永远卡"载入彼方…"
+            await Promise.all([loadNovels(), loadFeed()]);
+        } catch (err) {
+            console.error('[VRWorldApp] reloadAll failed:', err);
+        } finally {
+            setLoading(false);
+        }
     }, [loadNovels, loadFeed]);
 
     useEffect(() => { void reloadAll(); void refreshPoBadge(); }, [reloadAll, refreshPoBadge]);

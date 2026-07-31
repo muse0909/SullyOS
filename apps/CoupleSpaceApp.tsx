@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision, jumpToChat } = useOS();
+  const { closeApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision, requestCoupleSpaceInviteFromChar, jumpToChat } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');
@@ -305,6 +305,26 @@ const CoupleSpaceApp: React.FC = () => {
                 <Plus size={20} weight="bold" />
               </div>
               <div className="text-sm font-medium">邀请 ta 开通情侣空间</div>
+            </div>
+          </button>
+
+          {/* 暮色 2026-07-31：让 ta 邀请我（角色主动发邀请） */}
+          <button
+            onClick={async () => {
+              const charId = activeCharacterId;
+              if (!charId) {
+                addToast({ type: 'error', message: '先去聊天里选个角色' });
+                return;
+              }
+              const char = characters.find(c => c.id === charId);
+              if (!char) return;
+              addToast({ type: 'info', message: `${char.name} 正在准备邀请...` });
+              await requestCoupleSpaceInviteFromChar(charId);
+            }}
+            className="w-full mt-3 bg-white/60 rounded-2xl p-3 border border-rose-100/40 active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center justify-center gap-2 text-slate-500">
+              <div className="text-[10px]">让 ta 邀请我</div>
             </div>
           </button>
         </div>

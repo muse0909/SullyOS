@@ -161,6 +161,9 @@ interface OSContextType {
   activeCharacterId: string;
   addCharacter: () => void;
   updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
+  // 暮色 2026-07-31：情侣空间全局 action（MessageItem 卡片能调，不依赖 CoupleSpaceApp 挂载）
+  coupleSpaceAccept: (charId: string) => Promise<void>;
+  coupleSpaceDecline: (charId: string) => Promise<void>;
   /** 便捷：单独更新角色的 API 配置（暮色 2026-07-24 角色独立 API） */
   updateCharApiConfig: (id: string, apiConfig: CharacterProfile['apiConfig']) => Promise<void>;
   deleteCharacter: (id: string) => void;
@@ -1936,6 +1939,134 @@ if (!isVisible || !isChattingWithThisChar) {
     return updateCharacter(id, { apiConfig } as any);
   };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
+
+  // 暮色 2026-07-31：情侣空间全局 action
+  //   之前 window 全局方案：CoupleSpaceApp 没挂载时 window.__coupleSpaceAccept 不存在
+  //   修法：挂到 OSContext，永远可用
+  const coupleSpaceAccept = async (charId: string) => {
+    const { acceptInvite } = await import('../utils/coupleSpaceStorage');
+    const space = acceptInvite('default', charId);
+    if (!space) return;
+    try {
+      await DB.saveMessage({
+        charId,
+        role: 'system',
+        type: 'couple_space_event',
+        content: '情侣空间已开通 💕',
+        metadata: {
+          source: 'couple_space_opened',
+          pairId: space.pairId,
+          annivDate: space.annivDate,
+        },
+      });
+    } catch (e) {
+      console.error('[coupleSpace] 发送开通消息失败', e);
+    }
+    setActiveApp(AppID.CoupleSpace);
+  };
+
+  const coupleSpaceDecline = async (charId: string) => {
+    const { declineInvite } = await import('../utils/coupleSpaceStorage');
+    const space = declineInvite('default', charId);
+    if (!space) return;
+    try {
+      await DB.saveMessage({
+        charId,
+        role: 'system',
+        type: 'couple_space_event',
+        content: '情侣空间邀请已拒绝',
+        metadata: { source: 'couple_space_declined', pairId: space.pairId },
+      });
+    } catch (e) {
+      console.error('[coupleSpace] 发送拒绝消息失败', e);
+    }
+  };
+
+  // 暮色 2026-07-31 选 B 完整 AI 决策：调 LLM 让角色决定接受/拒绝
+  //   用现有 apiConfig（用户配的对话 API）
+  //   失败/超时 → 默认接受（让暮色能进空间，不卡流程）
+  const requestCoupleSpaceDecision = async (charId: string) => {
+    const { getSpace } = await import('../utils/coupleSpaceStorage');
+    const space = getSpace('default', charId);
+    if (!space || space.status !== 'pending') return;
+
+    const char = characters.find(c => c.id === charId);
+    if (!char) return;
+
+    let decision: 'accept' | 'decline' = 'accept';
+    let note = '';
+    try {
+      // 暮色 2026-07-24 角色独立 API：角色可能有自己的 apiConfig
+      const charCfg = char.apiConfig;
+      const cfg = charCfg?.baseUrl && charCfg?.apiKey ? charCfg : apiConfig;
+      if (!cfg?.baseUrl || !cfg?.apiKey) {
+        decision = 'accept';
+        note = '';
+      } else {
+        const systemPrompt = `你是 ${char.name}。用户（暮色）向你发出情侣空间邀请，关系从 ${space.annivDate} 开始。\n请你以 ${char.name} 的性格和你们的关系为基础，决定是接受还是拒绝。\n只输出 JSON：{"decision": "accept" 或 "decline", "note": "你的内心独白（一两句话）"}`;
+        // 暮色 2026-07-27：关梯子空回/慢，加 60s 超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: cfg.model || 'gpt-3.5-turbo',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: '请回应这个邀请。只输出 JSON。' },
+            ],
+            max_tokens: 200,
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`LLM ${res.status}`);
+        const data = await res.json();
+        const text = data?.choices?.[0]?.message?.content || '{}';
+        // 从文本里抽 JSON（兼容不严格 JSON 输出）
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+        decision = parsed.decision === 'decline' ? 'decline' : 'accept';
+        note = parsed.note || '';
+      }
+    } catch (e) {
+      console.error('[coupleSpace] AI 决策失败（超时/API 错/解析错），默认接受', e);
+      decision = 'accept';
+      note = '';
+    }
+
+    if (decision === 'accept') {
+      await coupleSpaceAccept(charId);
+      try {
+        await DB.saveMessage({
+          charId,
+          role: 'assistant',
+          type: 'text',
+          content: note || '我愿意和你一起开始这段情侣空间 💕',
+          metadata: { source: 'couple_space_decision_accept' },
+        });
+      } catch (e) {
+        console.error('[coupleSpace] 发送 AI 接受消息失败', e);
+      }
+    } else {
+      await coupleSpaceDecline(charId);
+      try {
+        await DB.saveMessage({
+          charId,
+          role: 'assistant',
+          type: 'text',
+          content: note || '我想再想想...',
+          metadata: { source: 'couple_space_decision_decline' },
+        });
+      } catch (e) {
+        console.error('[coupleSpace] 发送 AI 拒绝消息失败', e);
+      }
+    }
+  };
   
   // Group Methods
   const createGroup = async (name: string, members: string[]) => {
@@ -3195,6 +3326,9 @@ if (!isVisible || !isChattingWithThisChar) {
     activeCharacterId,
     addCharacter,
     updateCharacter,
+    // 暮色 2026-07-31：情侣空间全局 action，MessageItem 卡片能调（不依赖 CoupleSpaceApp 挂载）
+    coupleSpaceAccept,
+    coupleSpaceDecline,
     updateCharApiConfig,
     deleteCharacter,
     setActiveCharacterId,

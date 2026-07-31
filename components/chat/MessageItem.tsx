@@ -6,6 +6,7 @@ import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
 import { createPortal } from 'react-dom';
+import { useOS } from '../../context/OSContext';
 
 
 // --- Forward Card with expand/collapse ---
@@ -246,6 +247,10 @@ const MessageItem = React.memo(({
     onMcdSendCart,
     onMcdCandidate,
 }: MessageItemProps) => {
+    // 暮色 2026-07-31：情侣空间邀请卡片"接受/拒绝"按钮调 OSContext 全局方法
+    //   之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
+    const { coupleSpaceAccept, coupleSpaceDecline } = useOS();
+
     // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
     // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
     const isUser = (m as any)?.role === 'user';
@@ -400,7 +405,7 @@ const MessageItem = React.memo(({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            (window as any).__coupleSpaceDecline?.(charId);
+                                            coupleSpaceDecline(charId);
                                         }}
                                         className="flex-1 py-2 bg-white text-slate-500 text-xs font-bold rounded-full border border-slate-200 active:scale-95 transition-transform"
                                     >
@@ -409,7 +414,7 @@ const MessageItem = React.memo(({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            (window as any).__coupleSpaceAccept?.(charId);
+                                            coupleSpaceAccept(charId);
                                         }}
                                         className="flex-1 py-2 bg-rose-400 text-white text-xs font-bold rounded-full active:scale-95 transition-transform"
                                     >

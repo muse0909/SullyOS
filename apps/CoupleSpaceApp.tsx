@@ -48,7 +48,7 @@ type Tab = 'checkin' | 'timeline' | 'whisper';
 const todayStr = () => new Date().toISOString().split('T')[0];
 
 const CoupleSpaceApp: React.FC = () => {
-  const { closeApp, characters, activeCharacterId, addToast } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, coupleSpaceAccept, coupleSpaceDecline, requestCoupleSpaceDecision } = useOS();
   const [view, setView] = useState<View>('gate');
   const [activeCharId, setActiveCharId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('checkin');
@@ -91,17 +91,9 @@ const CoupleSpaceApp: React.FC = () => {
     }
   }, [activeCharacterId]);
 
-  // 暮色 2026-07-31：把"接受/拒绝"挂到 window 全局，MessageItem 卡片能调
-  //   AI 自动决策下阶段做，暮色手动接受是兜底
-  //   不用 OSContext 改接口（避免改全局），用 window 全局最轻量
-  useEffect(() => {
-    (window as any).__coupleSpaceAccept = handleUserAccept;
-    (window as any).__coupleSpaceDecline = handleUserDecline;
-    return () => {
-      delete (window as any).__coupleSpaceAccept;
-      delete (window as any).__coupleSpaceDecline;
-    };
-  }, []);
+  // 暮色 2026-07-31：window 全局方案废——CoupleSpaceApp 没挂载时 window.__coupleSpaceAccept 是 undefined
+  //   修法：handleUserAccept / handleUserDecline 直接用 OSContext 的 coupleSpaceAccept / coupleSpaceDecline
+  //   useEffect 删掉（不再需要挂 window）
 
   // 打开邀请弹窗（重置默认值）
   const openInviteModal = () => {
@@ -157,9 +149,7 @@ const CoupleSpaceApp: React.FC = () => {
 
   // 提交邀请
   // 暮色 2026-07-31 反馈"前面咱们说的你不记得了吗"——补完整 miya 流程
-  // 完整版（B）：markPending + 发邀请消息 + 跳聊天 + AI 决策
-  // 这个 turn 做核心（markPending + 发消息 + 跳聊天），AI 决策下个阶段做
-  // 暮色手动接受兜底：邀请卡片有"接受"按钮（避免 AI 决策失败时卡住）
+  // 完整版 B：markPending + 发邀请消息 + 跳聊天 + AI 决策（让江澈用 LLM 决定接受/拒绝）
   const handleConfirmInvite = async () => {
     if (!inviteSelectedCharId) {
       addToast({ type: 'error', message: '请选一个 ta' });
@@ -171,7 +161,7 @@ const CoupleSpaceApp: React.FC = () => {
     // 1. 把旧 pending 邀请标 expired
     expireOldPendingInvites('default', char.id);
 
-    // 2. 标 pending 状态（不直接开通！）
+    // 2. 标 pending 状态
     const space = markPending({
       profileId: 'default',
       charId: char.id,
@@ -205,58 +195,33 @@ const CoupleSpaceApp: React.FC = () => {
     reload();
     addToast({ type: 'info', message: `邀请已发送给 ${char.name}，等 ta 回应...` });
 
-    // 4. 跳转到角色的聊天（让暮色看邀请卡片 + 手动接受/拒绝）
-    //   AI 自动决策下个阶段做（让江澈用 LLM 主动回应邀请）
-    setTimeout(() => {
-      // 关闭情侣空间 app + 打开聊天
-      // 通过 storage 让 Chat 知道有 pending 邀请要展示
-      // 简化：直接打开 Chat 页面（暮色能滚到最新看到邀请）
-      openApp(AppID.Chat);
-    }, 600);
+    // 4. 跳转到角色的聊天
+    setTimeout(() => openApp(AppID.Chat), 600);
+
+    // 5. 触发 AI 决策（异步，不等返回）
+    //   暮色 2026-07-31 选 B 完整版：让江澈用 LLM 决定接受/拒绝
+    //   失败/超时 → 默认接受（不会卡流程）
+    requestCoupleSpaceDecision(char.id).catch(e => {
+      console.error('[coupleSpace] AI 决策失败', e);
+    });
   };
 
   // 暮色手动接受邀请（卡片上"接受"按钮 onClick）
+  // 暮色 2026-07-31 反馈：之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
+  //   改用 OSContext.coupleSpaceAccept（永远可用）
   const handleUserAccept = async (charId: string) => {
-    const space = acceptInvite('default', charId);
-    if (!space) return;
-    const char = characters.find(c => c.id === charId);
-    try {
-      await DB.saveMessage({
-        charId,
-        role: 'system',
-        type: 'couple_space_event',
-        content: '情侣空间已开通 💕',
-        metadata: {
-          source: 'couple_space_opened',
-          pairId: space.pairId,
-          annivDate: space.annivDate,
-        },
-      });
-    } catch (e) {
-      console.error('[coupleSpace] 发送开通消息失败', e);
-    }
+    await coupleSpaceAccept(charId);
     setActiveCharId(charId);
     setView('space');
     reload();
+    const char = characters.find(c => c.id === charId);
     addToast({ type: 'success', message: `和 ${char?.name || 'TA'} 的情侣空间已开通` });
   };
 
-  // 暮色手动拒绝邀请（卡片上"拒绝"按钮 onClick）
+  // 暮色手动拒绝邀请
   const handleUserDecline = async (charId: string) => {
-    const space = declineInvite('default', charId);
-    if (!space) return;
+    await coupleSpaceDecline(charId);
     const char = characters.find(c => c.id === charId);
-    try {
-      await DB.saveMessage({
-        charId,
-        role: 'system',
-        type: 'couple_space_event',
-        content: '情侣空间邀请已拒绝',
-        metadata: { source: 'couple_space_declined', pairId: space.pairId },
-      });
-    } catch (e) {
-      console.error('[coupleSpace] 发送拒绝消息失败', e);
-    }
     addToast({ type: 'info', message: `已拒绝 ${char?.name || 'TA'} 的情侣空间邀请` });
   };
 

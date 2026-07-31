@@ -60,6 +60,9 @@ const CoupleSpaceApp: React.FC = () => {
   const [inviteSelectedCharId, setInviteSelectedCharId] = useState<string>('');
   const [inviteAnnivDate, setInviteAnnivDate] = useState<string>(todayStr());
 
+  // 暮色 2026-07-31 反馈"让 ta 邀请我没有选择角色功能" — 加选角色弹窗
+  const [showCharSelectForInviteModal, setShowCharSelectForInviteModal] = useState(false);
+
   // 暮色 2026-07-31 反馈"没有关掉情侣空间的设置"
   //   设置弹窗：改关系开始日 + 解除情侣空间
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -116,7 +119,7 @@ const CoupleSpaceApp: React.FC = () => {
     setAnnivDate('default', activeSpace.charId, editableAnnivDate);
     setShowSettingsModal(false);
     reload();
-    addToast({ type: 'success', message: '关系开始日已更新' });
+    addToast('关系开始日已更新', 'success');
   };
 
   // 解除情侣空间（删除数据 + 推消息 + 跳回 gate）
@@ -144,7 +147,7 @@ const CoupleSpaceApp: React.FC = () => {
     setView('gate');
     setActiveCharId('');
     reload();
-    addToast({ type: 'info', message: `已解除和 ${char?.name || 'TA'} 的情侣空间` });
+    addToast(`已解除和 ${char?.name || 'TA'} 的情侣空间`, 'info');
   };
 
   // 提交邀请
@@ -152,7 +155,7 @@ const CoupleSpaceApp: React.FC = () => {
   // 完整版 B：markPending + 发邀请消息 + 跳聊天 + AI 决策（让江澈用 LLM 决定接受/拒绝）
   const handleConfirmInvite = async () => {
     if (!inviteSelectedCharId) {
-      addToast({ type: 'error', message: '请选一个 ta' });
+      addToast('请选一个 ta', 'error');
       return;
     }
     const char = characters.find(c => c.id === inviteSelectedCharId);
@@ -186,14 +189,14 @@ const CoupleSpaceApp: React.FC = () => {
       });
     } catch (e) {
       console.error('[coupleSpace] 发送邀请消息失败', e);
-      addToast({ type: 'error', message: '邀请消息发送失败，请重试' });
+      addToast('邀请消息发送失败，请重试', 'error');
       return;
     }
 
     setShowInviteModal(false);
     setActiveCharId(char.id);
     reload();
-    addToast({ type: 'info', message: `邀请已发送给 ${char.name}，等 ta 回应...` });
+    addToast(`邀请已发送给 ${char.name}，等 ta 回应...`, 'info');
 
     // 4. 跳转到角色的私聊（用 jumpToChat 真正跳到江澈的 chat，不是联系人列表）
     //   暮色 2026-07-31 反馈"跳的是联系人页，不是聊天页"——之前用 openApp(AppID.Chat) 错
@@ -218,14 +221,14 @@ const CoupleSpaceApp: React.FC = () => {
     setView('space');
     reload();
     const char = characters.find(c => c.id === charId);
-    addToast({ type: 'success', message: `和 ${char?.name || 'TA'} 的情侣空间已开通` });
+    addToast(`和 ${char?.name || 'TA'} 的情侣空间已开通`, 'success');
   };
 
   // 暮色手动拒绝邀请
   const handleUserDecline = async (charId: string) => {
     await coupleSpaceDecline(charId);
     const char = characters.find(c => c.id === charId);
-    addToast({ type: 'info', message: `已拒绝 ${char?.name || 'TA'} 的情侣空间邀请` });
+    addToast(`已拒绝 ${char?.name || 'TA'} 的情侣空间邀请`, 'info');
   };
 
   // ──────────────────────────────────────────
@@ -310,16 +313,12 @@ const CoupleSpaceApp: React.FC = () => {
 
           {/* 暮色 2026-07-31：让 ta 邀请我（角色主动发邀请） */}
           <button
-            onClick={async () => {
-              const charId = activeCharacterId;
-              if (!charId) {
-                addToast({ type: 'error', message: '先去聊天里选个角色' });
+            onClick={() => {
+              if (characters.length === 0) {
+                addToast('还没有角色，先去聊天里加一个', 'error');
                 return;
               }
-              const char = characters.find(c => c.id === charId);
-              if (!char) return;
-              addToast({ type: 'info', message: `${char.name} 正在准备邀请...` });
-              await requestCoupleSpaceInviteFromChar(charId);
+              setShowCharSelectForInviteModal(true);
             }}
             className="w-full mt-3 bg-white/60 rounded-2xl p-3 border border-rose-100/40 active:scale-[0.98] transition-transform"
           >
@@ -340,6 +339,20 @@ const CoupleSpaceApp: React.FC = () => {
           setSelectedCharId={setInviteSelectedCharId}
           annivDate={inviteAnnivDate}
           setAnnivDate={setInviteAnnivDate}
+        />
+
+        {/* 暮色 2026-07-31：选角色弹窗（让 ta 邀请我） */}
+        <CharSelectForInviteModal
+          isOpen={showCharSelectForInviteModal}
+          onClose={() => setShowCharSelectForInviteModal(false)}
+          characters={characters}
+          onConfirm={async (charId) => {
+            setShowCharSelectForInviteModal(false);
+            const char = characters.find(c => c.id === charId);
+            if (!char) return;
+            addToast(`${char.name} 正在准备邀请...`, 'info');
+            await requestCoupleSpaceInviteFromChar(charId);
+          }}
         />
       </div>
     );
@@ -566,6 +579,85 @@ const InviteModal: React.FC<{
   );
 };
 
+// 暮色 2026-07-31 反馈"让 ta 邀请我没有选择角色功能"——加一个只选角色的弹窗
+// 区别于 InviteModal：不要日期（关系开始日用今天），不要状态过滤
+// （即使已开通也允许重新发邀请——resetToPending 会把状态重置为 pending）
+const CharSelectForInviteModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  characters: CharacterProfile[];
+  onConfirm: (charId: string) => void;
+}> = ({ isOpen, onClose, characters, onConfirm }) => {
+  const [selectedCharId, setSelectedCharId] = useState<string>('');
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="让 ta 邀请我"
+      footer={
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-slate-100 text-slate-500 font-bold rounded-full active:scale-95 transition-transform"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => selectedCharId && onConfirm(selectedCharId)}
+            disabled={!selectedCharId}
+            className="flex-1 py-2.5 bg-rose-400 text-white font-bold rounded-full active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            让 ta 邀请
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <div className="text-xs text-slate-500 mb-2 font-medium">选择 ta</div>
+          <div className="text-[10px] text-slate-400 mb-2 leading-relaxed">
+            选一个角色，ta 会主动发邀请卡片给你
+          </div>
+          {characters.length === 0 ? (
+            <div className="text-xs text-slate-400 text-center py-6">
+              还没有角色，先去聊天里加一个
+            </div>
+          ) : (
+            <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
+              {characters.map(char => (
+                <button
+                  key={char.id}
+                  onClick={() => setSelectedCharId(char.id)}
+                  className={`w-full flex items-center gap-3 p-2.5 rounded-2xl transition-all ${
+                    selectedCharId === char.id
+                      ? 'bg-rose-50 border border-rose-200'
+                      : 'bg-slate-50 border border-transparent active:scale-[0.98]'
+                  }`}
+                >
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-rose-200 to-pink-200 flex items-center justify-center overflow-hidden shrink-0">
+                    {char.avatar ? (
+                      <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <HeartIcon size={16} weight="fill" className="text-rose-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="text-sm font-medium text-slate-800">{char.name}</div>
+                  </div>
+                  {selectedCharId === char.id && (
+                    <CheckIcon size={16} weight="bold" className="text-rose-500" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // ──────────────────────────────────────────
 // 打卡 Tab（阶段 2：完整实现）
 // ──────────────────────────────────────────
@@ -605,9 +697,9 @@ const CheckinTab: React.FC<{
     });
     if (result) {
       onUpdate();
-      addToast({ type: 'success', message: `已打卡「${task.name}」` });
+      addToast(`已打卡「${task.name}」`, 'success');
     } else {
-      addToast({ type: 'error', message: '打卡失败' });
+      addToast('打卡失败', 'error');
     }
   };
 

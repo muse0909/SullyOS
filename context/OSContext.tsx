@@ -2091,20 +2091,24 @@ if (!isVisible || !isChattingWithThisChar) {
   //   暮色在 CoupleSpaceApp 点"让 ta 邀请我" → 调 LLM 让角色以自己身份写邀请文案
   //   → 推 type='couple_space_invite' role='assistant' status='pending' 的消息到聊天
   //   暮色在聊天看卡片 + 接受/拒绝（点接受/拒绝触发 coupleSpaceAccept / Decline）
+  //   暮色 2026-07-31 反馈"已经开通的没重置" — 用 resetToPending 强制重置（让邀请卡显示）
   const requestCoupleSpaceInviteFromChar = async (charId: string) => {
-    const { markPending } = await import('../utils/coupleSpaceStorage');
+    const { markPending, resetToPending } = await import('../utils/coupleSpaceStorage');
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
-    // 1. 标 pending
+    // 1. 标 pending（已开通过的话用 resetToPending 强制重置）
     const annivDate = new Date().toISOString().split('T')[0];
-    const space = markPending({
+    let space = markPending({
       profileId: 'default',
       charId,
       charName: char.name,
       profileName: '我',
       annivDate,
     });
+    if (space.status !== 'pending') {
+      space = resetToPending('default', charId) || space;
+    }
 
     // 2. 调 LLM 生成邀请文案（用 50 条上下文 + 角色独立 API）
     let inviteText = `${char.name}想和暮色开通情侣空间（从 ${annivDate} 开始）。点下方"接受"开通，或"拒绝"放弃。`;

@@ -1697,6 +1697,21 @@ export const DB = {
       });
   },
 
+  /** 彼方书架：存/更新一条 vr_novel。novel.id 存在则覆盖（put），不存在则新建。 */
+  saveVRNovel: async (novel: any): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_novels')) {
+          console.warn('[DB] vr_novels store missing, cannot save');
+          return;
+      }
+      const transaction = db.transaction('vr_novels', 'readwrite');
+      transaction.objectStore('vr_novels').put(novel);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
   /** 彼方书架：删一条 vr_novel。 */
   deleteVRNovel: async (id: string): Promise<void> => {
       const db = await openDB();

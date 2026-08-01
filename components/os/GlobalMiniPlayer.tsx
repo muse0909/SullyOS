@@ -68,6 +68,7 @@ const GlobalMiniPlayer: React.FC = () => {
   // 拖动 pointer 事件 — 折叠态和展开态共用
   // 重要：点 button 时不能初始化 dragState（否则松手触发 endDrag 把按钮"吃掉"），
   // 用 closest('button') 把整个 button 子树排除掉
+  // 边界用 window.innerWidth/Height（不用 parent.getBoundingClientRect —— 后者在某些嵌套 absolute 容器里可能拿到非 viewport 尺寸）
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest('button')) {
@@ -76,9 +77,6 @@ const GlobalMiniPlayer: React.FC = () => {
     }
     const el = wrapRef.current;
     if (!el) return;
-    const parent = el.parentElement as HTMLElement | null;
-    if (!parent) return;
-    const parentRect = parent.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
 
     dragState.current = {
@@ -86,8 +84,8 @@ const GlobalMiniPlayer: React.FC = () => {
       startY: e.clientY,
       offX: e.clientX - rect.left,
       offY: e.clientY - rect.top,
-      parentW: parentRect.width,
-      parentH: parentRect.height,
+      parentW: window.innerWidth,
+      parentH: window.innerHeight,
       moved: false,
       pointerId: e.pointerId,
     };
@@ -108,7 +106,7 @@ const GlobalMiniPlayer: React.FC = () => {
     try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
   }, [expanded]);
 
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const ds = dragState.current;
     const el = wrapRef.current;
     if (!ds || !el) return;
@@ -123,17 +121,18 @@ const GlobalMiniPlayer: React.FC = () => {
     }
     if (!ds.moved) return;
 
-    const parent = el.parentElement as HTMLElement | null;
-    if (!parent) return;
-    const parentRect = parent.getBoundingClientRect();
-    let x = e.clientX - parentRect.left - ds.offX;
-    let y = e.clientY - parentRect.top - ds.offY;
+    // 用 viewport 坐标（不用 parent），更稳
+    let x = e.clientX - ds.offX;
+    let y = e.clientY - ds.offY;
 
     // 限制范围：折叠态用 BUBBLE_SIZE，展开态用 EXPANDED_W/H
     const w = expanded ? EXPANDED_W : BUBBLE_SIZE;
     const h = expanded ? EXPANDED_H : BUBBLE_SIZE;
-    x = Math.max(EDGE_PAD, Math.min(ds.parentW - w - EDGE_PAD, x));
-    y = Math.max(EDGE_PAD, Math.min(ds.parentH - h - EDGE_PAD, y));
+    // 实时用 window 尺寸（ds.parentW 是按下时存的，可能不准确）
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    x = Math.max(EDGE_PAD, Math.min(vw - w - EDGE_PAD, x));
+    y = Math.max(EDGE_PAD, Math.min(vh - h - EDGE_PAD, y));
     setPos({ x, y });
   }, [expanded]);
 

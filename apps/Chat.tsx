@@ -21,6 +21,7 @@ import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
+import { useMusic } from '../context/MusicContext';
 import { useCloudMessages } from '../hooks/useCloudSync';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -446,6 +447,59 @@ const Chat: React.FC = () => {
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
     });
+
+    // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
+    // 暮色 2026-08-01：原 prompt 注入"你们正在一起听" 但 LLM 不主动提（用户问"怎么不提"）。
+    //   修：用户开一起听时，主动推一条 system 消息 + 触发 triggerAI，
+    //   LLM 看到 system 通知 + 当前歌曲上下文，自然生成一条回应。
+    //   切歌/关闭一起听时不触发（只对"新开启"触发一次）。
+    const { listeningTogetherWith, current: musicCurrent } = useMusic();
+    const prevTogetherRef = useRef<Set<string>>(new Set());
+    const lastTriggeredSongIdRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (!char?.id) return;
+        const prev = prevTogetherRef.current;
+        const cur = new Set(listeningTogetherWith);
+        // 检查"当前 chat 的 char"是否在这次新增里（之前不在，现在在）
+        const isNewlyAdded = cur.has(char.id) && !prev.has(char.id);
+        // 还要换歌了也算"新开启"——切歌时 listeningTogetherWith 会被清空（MusicContext.tsx:515），
+        //   如果新歌用户再次开一起听（listeningTogetherWith 包含 char.id 且跟 prev 不同），也会触发
+        if (isNewlyAdded) {
+            const songName = musicCurrent?.name;
+            const artists = musicCurrent?.artists;
+            const sysMsg = songName
+                ? `[系统: 暮色 刚刚邀请你一起听《${songName}》${artists ? ` — ${artists}` : ''}，可以自然地回应一下，聊聊你听到这首歌的感触；不一定要长篇大论，也可以只说一两句。]`
+                : `[系统: 暮色 邀请你一起听歌，但当前没有正在播放的歌曲。可以自然地回应一下。]`;
+            // 推一条 system 消息到 messages + DB
+            const sysMsgObj: Message = {
+                id: `sys-listen-${Date.now()}`,
+                charId: char.id,
+                role: 'system',
+                type: 'text',
+                content: sysMsg,
+                timestamp: Date.now(),
+            };
+            setMessages(prevMsgs => [...prevMsgs, sysMsgObj]);
+            DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'text',
+                content: sysMsg,
+            } as any).catch(() => { /* ignore */ });
+            // 触发 AI 主动回应（基于现有 messages + 新加的 system 消息）
+            // 等 100ms 让 setMessages + DB.saveMessage 完成，再调 triggerAI
+            setTimeout(() => {
+                // 拿最新的 messages（含新推的 system）传给 triggerAI
+                setMessages(currMsgs => {
+                    triggerAI(currMsgs);
+                    return currMsgs;
+                });
+            }, 100);
+            lastTriggeredSongIdRef.current = musicCurrent?.id ?? null;
+            addToast(`已通知 ${char.name} 一起听`, 'info');
+        }
+        prevTogetherRef.current = cur;
+    }, [listeningTogetherWith, char?.id, musicCurrent?.id, triggerAI, addToast, musicCurrent?.name, musicCurrent?.artists, setMessages]);
 
     // ─── 云端同步：收到云端拉取到的新消息 → 注入 setMessages ────────────
     // 多端互通的"另一台设备"：它们发的消息会通过云端拉到这里，按 clientId 去重

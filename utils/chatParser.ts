@@ -148,6 +148,15 @@ export const ChatParser = {
                             playSongAndJoinHandled.add(charId);
                             musicHooks.joinListeningTogether(charId);
                         }
+                        // 暮色 2026-08-02 00:25 江澈转达：先推提示再推卡片（视觉顺序）
+                        //   type 改 'music_invite' → LLM 走 [一起听邀请] 前缀，主动引用
+                        //   这样 LLM 下次轮到自己时知道"已播放《xxx》— singer"，会自然提（诉求 3）
+                        await DB.saveMessage({
+                            charId,
+                            role: 'system',
+                            type: 'music_invite',
+                            content: `${charName} 给你放了《${playedSnap.name}》— ${playedSnap.artists}${verb === 'play_song_and_join' ? '，加入了"一起听"' : ''}`,
+                        });
                         await DB.saveMessage({
                             charId,
                             role: 'assistant',
@@ -158,17 +167,6 @@ export const ChatParser = {
                                 song: playedSnap,
                             },
                         });
-                        // 暮色 2026-08-01 C.2：推一条 system 消息到聊天流（除了 music_card 之外）。
-                        //   用途：用户能看到一个明显的"AI 主动放歌"事件（不只是 music_card 卡片），
-                        //   也让 LLM 下次轮到自己时能从历史里感知到这件事发生过。
-                        //   type='text' 默认走 [系统状态] 前缀，按 7-31 偏好 LLM 不要主动引用
-                        //   "AI 行为通知"（避免污染上下文），但消息本身留在聊天流里供用户看。
-                        await DB.saveMessage({
-                            charId,
-                            role: 'system',
-                            type: 'text',
-                            content: `${charName} 给你放了《${playedSnap.name}》— ${playedSnap.artists}${verb === 'play_song_and_join' ? '，加入了"一起听"' : ''}`,
-                        });
                         addToast(
                             verb === 'play_song_and_join'
                                 ? `${charName} 给你放了《${playedSnap.name}》，正在一起听`
@@ -176,8 +174,16 @@ export const ChatParser = {
                             'info'
                         );
                     } else {
-                        // 搜不到 / 用户关了 AI 主动放歌 → 静默丢弃 token，不污染 chat
-                        addToast(`${charName} 想放一首歌，但没找到`, 'info');
+                        // 暮色 2026-08-02 00:25 江澈转达诉求 1：失败也要有回执
+                        //   之前是静默返回 null（addToast 弹个提示就完事），LLM 完全不知道失败
+                        //   改成推 system 消息（type='music_invite'）→ LLM 主动引用 → 下一轮自然告诉暮色"没找到"
+                        await DB.saveMessage({
+                            charId,
+                            role: 'system',
+                            type: 'music_invite',
+                            content: `${charName} 想给暮色放《${songName}》，但没找到合适的版本（搜索无结果 / 触发了每日 3 次上限 / 开关被关闭）。`,
+                        });
+                        addToast(`${charName} 想放《${songName}》但没找到`, 'info');
                     }
                 }
                 content = content.replace(musicMatch[0], '').trim();

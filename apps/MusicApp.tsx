@@ -883,6 +883,32 @@ const MusicApp: React.FC = () => {
                 />
               </button>
             </div>
+            {/* 暮色 2026-08-02 00:25 江澈转达诉求 7：测试期间显示当日每 char 已用次数
+                读 userProfile.musicAiAutoPlayCount[today][char.id] */}
+            {userProfile.musicAiAutoPlayEnabled !== false && (
+              <div
+                className="text-[9px] mt-1.5 pl-0.5 flex items-center gap-1.5"
+                style={{ color: C.faint }}
+              >
+                <span>测试期间显示 ·</span>
+                {characters.slice(0, 6).map(c => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const used = (userProfile.musicAiAutoPlayCount?.[today]?.[c.id]) || 0;
+                  return (
+                    <span
+                      key={c.id}
+                      style={{
+                        color: used >= 3 ? '#bcb8cc' : C.muted,
+                        textDecoration: used >= 3 ? 'line-through' : 'none',
+                      }}
+                    >
+                      {c.name} {used}/3
+                    </span>
+                  );
+                })}
+                <span style={{ color: C.faint }}>(每日 3 次)</span>
+              </div>
+            )}
           </div>
           <div className="space-y-3 pt-1">
             <button

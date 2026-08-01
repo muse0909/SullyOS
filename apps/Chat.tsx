@@ -496,6 +496,11 @@ const Chat: React.FC = () => {
             //   但仍触发 triggerAI，让 LLM 看到 listeningTogetherWith 变化后自然回应
             if (playSongAndJoinHandled.has(char.id)) {
                 playSongAndJoinHandled.delete(char.id);  // 清掉，下次 user 自己开一起听能正常推
+                // 暮色 2026-08-02 00:25：play_song_and_join 跳过 music_invite 推消息时
+                //   必须把 charId add 到 notifiedListenTogether，否则下次 Chat 重挂载
+                //   useRef(prevTogetherRef) 重置成空 Set → 误判"新开启" → 重复推 music_invite
+                //   这就是暮色"我没操作邀请却出现那条提示"的根因
+                notifiedListenTogether.add(char.id);
                 // 仍触发 triggerAI（不依赖 music_invite 消息，LLM 看到状态变化自然生成回应）
                 if (!isTyping) {
                     setTimeout(() => {

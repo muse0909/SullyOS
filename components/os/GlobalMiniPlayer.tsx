@@ -57,7 +57,6 @@ const GlobalMiniPlayer: React.FC = () => {
     moved: boolean;
     pointerId: number | null;
   } | null>(null);
-  const longPressTimer = useRef<number | null>(null);
 
   // 持久化位置
   useEffect(() => {
@@ -76,10 +75,11 @@ const GlobalMiniPlayer: React.FC = () => {
   //      永远 early return → dragState 永远不初始化。
   //      修：折叠态（!expanded）下整个 button 就是要拖动/点击的目标，无嵌套 button，
   //      跳过 closest 检查，直接 init dragState。
-  //   2) 折叠态长按跳音乐 app 不行（`window.location.hash = '#music'` 在 React Router 下不稳）。
-  //      改：短按封面 = openApp('music') 进音乐 app 播放页（替换之前的"短按展开"）；
-  //      长按 = setExpanded(true) 展开（替换之前的"长按跳音乐 app"）；
-  //      展开态进入后，展开态本身点空白仍是 openApp('music')，符合暮色预期。
+  //   2) 折叠态短按展开成完整控制条，点展开态的封面 = 进音乐 app 播放页（暮色 8-1 21:36 反馈）。
+  //      之前我误读成"点封面进音乐 app"——暮色明确说"点小圆球 → 展开 → 点封面 → 进音乐 app"。
+  //      修：折叠态短按 = setExpanded(true) 展开；长按 = 删（之前 hash 跳转不稳）；
+  //      展开态封面外包 button + onClick=openApp('music') + onPointerDown=stopPropagation
+  //      （让封面 button 不被 dragState 吞，按钮 onClick 自己处理跳转）。
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     // 展开态：排除 button 子树（按钮是给 onClick 处理的，不该被 dragState 吞掉）
@@ -101,18 +101,8 @@ const GlobalMiniPlayer: React.FC = () => {
       pointerId: e.pointerId,
     };
 
-    // 折叠态长按 = 展开（替换之前"长按跳音乐 app"的 hash 跳转，那个在 React Router 下不稳）
-    if (!expanded) {
-      if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
-      longPressTimer.current = window.setTimeout(() => {
-        if (dragState.current && !dragState.current.moved) {
-          // 长按 = 展开
-          try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-          setExpanded(true);
-          dragState.current = null;
-        }
-      }, 500);
-    }
+    // 折叠态不再做长按（之前长按跳音乐 app 暮色反馈不行；hash 跳转在 React Router 下不稳）
+    // 短按 = 展开，拖动 = 移位
 
     try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
   }, [expanded]);
@@ -125,10 +115,6 @@ const GlobalMiniPlayer: React.FC = () => {
     const dy = e.clientY - ds.startY;
     if (!ds.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
       ds.moved = true;
-      if (longPressTimer.current) {
-        window.clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
-      }
     }
     if (!ds.moved) return;
 
@@ -149,24 +135,20 @@ const GlobalMiniPlayer: React.FC = () => {
 
   const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const ds = dragState.current;
-    if (longPressTimer.current) {
-      window.clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
     if (ds && !ds.moved) {
       // 没移动 = 点击
       if (!expanded) {
-        // 折叠态：点击封面 = 进音乐 app 播放页（暮色 8-1 反馈要的行为）
-        // 展开态：点击 button 子树已经在 onPointerDown early return，不会到这里；
-        //        点击空白处（div 本体）= 进音乐 app 播放页（保持原行为）
-        openApp(AppID.Music);
+        // 折叠态：点击 = 展开成完整控制条（暮色 8-1 21:36 明确要的）
+        setExpanded(true);
       } else {
+        // 展开态：点空白 = 折叠成小球
+        // 点 button（封面/播放/暂停/上下首/折叠）已在 onPointerDown early return，不会到这里
         setExpanded(false);
       }
     }
     dragState.current = null;
     try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-  }, [expanded, openApp]);
+  }, [expanded]);
 
   if (!current) return null;
   if (activeApp === AppID.Music) return null;
@@ -256,16 +238,25 @@ const GlobalMiniPlayer: React.FC = () => {
           boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
           cursor: 'grab',
         }}
-        aria-label="音乐播放器（点击跳音乐 app，拖动移位）"
-        title="点击跳音乐 · 拖动移位"
+        aria-label="音乐播放器（点封面跳音乐 app，拖动移位）"
+        title="点封面跳音乐 · 拖动移位"
       >
-        {/* 封面 */}
-        <img
-          src={current.albumPic}
-          alt=""
-          className="w-9 h-9 rounded-lg object-cover shrink-0 pointer-events-none"
+        {/* 封面 — 外包 button 让点击 = 进音乐 app 播放页（暮色 8-1 21:36 反馈） */}
+        <button
+          onPointerDown={(e) => e.stopPropagation()}  // 不让 drag 吞掉封面点击
+          onClick={(e) => { e.stopPropagation(); openApp(AppID.Music); }}
+          className="shrink-0 rounded-lg overflow-hidden active:scale-95 transition-transform"
           style={{ border: '1px solid rgba(255,255,255,0.2)' }}
-        />
+          aria-label="进入音乐 app 播放页"
+          title="进入音乐 app 播放页"
+        >
+          <img
+            src={current.albumPic}
+            alt=""
+            className="w-9 h-9 object-cover block"
+            draggable={false}
+          />
+        </button>
 
         {/* 文字 */}
         <div className="flex-1 min-w-0 text-left pointer-events-none">

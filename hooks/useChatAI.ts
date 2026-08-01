@@ -11,7 +11,7 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { getBuffColor } from '../utils/buffColor';
-import { useMusic } from '../context/MusicContext';
+import { useMusic, toHttps } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
@@ -3787,6 +3787,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         await DB.saveCharacter({ ...targetChar, musicProfile: updatedProfile });
                         return { playlistTitle: pl.title, created };
                     } catch {
+                        return null;
+                    }
+                },
+                // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join token）
+                // 流程：搜歌 → 替换当前播放队列为这 1 首 → 自动播放
+                // 限制：用户关掉 AI 主动放歌 / 每日每 char 次数上限（暂未做）
+                playSongFromChar: async (cid: string, songName: string) => {
+                    try {
+                        if (!songName?.trim()) return null;
+                        const r = await musicApi.search(music.cfg, songName.trim(), 0);
+                        const first = r?.result?.songs?.[0];
+                        if (!first) return null;
+                        // 搜到的歌没 picUrl/albumPic 时给个空串，前端会有兜底
+                        const song: any = {
+                            id: first.id,
+                            name: first.name,
+                            artists: (first.ar || first.artists || []).map((a: any) => a.name).join(' / '),
+                            album: first.al?.name || first.album?.name || '',
+                            albumPic: toHttps(first.al?.picUrl || first.album?.picUrl || ''),
+                            duration: (first.dt || first.duration || 0) / 1000,
+                            fee: first.fee ?? 0,
+                        };
+                        // 切到这首（替换队列，不动当前一起听名单）
+                        await music.playSong(song, { alsoSetQueue: true, replaceQueue: [song], startIdx: 0 });
+                        return {
+                            songId: song.id,
+                            name: song.name,
+                            artists: song.artists,
+                            album: song.album,
+                            albumPic: song.albumPic,
+                            duration: song.duration,
+                            fee: song.fee,
+                        };
+                    } catch (e) {
+                        console.warn('[playSongFromChar] failed:', e);
                         return null;
                     }
                 },

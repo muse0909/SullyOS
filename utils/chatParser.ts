@@ -40,6 +40,12 @@ export interface MusicActionHooks {
         song: CharPlaylistSong,
         target?: AddSongTarget,
     ) => Promise<{ playlistTitle: string; created: boolean } | null>;
+    /**
+     * 暮色 2026-08-01：LLM 主动给用户放歌（play_song token）。
+     * 接收歌名 → 搜歌 + 播放 → 推 system 消息到 chat 流。
+     * 返回 { songName, artists, songId } —— 失败返回 null（歌搜不到 / 用户关掉 AI 主动放歌 等）。
+     */
+    playSongFromChar: (charId: string, songName: string) => Promise<MusicActionSnapshot | null>;
 }
 
 export const ChatParser = {
@@ -74,21 +80,27 @@ export const ChatParser = {
         //   [[MUSIC_ACTION:add_new|新歌单标题|可选描述]]        → 新建歌单
         //   [[MUSIC_ACTION:join_and_add(|...)]]              → 同 add 一套
         //   [[MUSIC_ACTION:join_and_add_new|新歌单标题|描述]]  → 同 add_new
+        // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join）：
+        //   [[MUSIC_ACTION:play_song|歌名]]                    → 主动搜歌 + 播放
+        //   [[MUSIC_ACTION:play_song_and_join|歌名]]            → 搜歌 + 播放 + 加 char 进一起听名单
         // 用 | 分隔参数，避免和 : 冲突（标题里很容易出现 :)
-        const MUSIC_TAG_RE = /\[\[MUSIC_ACTION:(join|add|add_new|join_and_add|join_and_add_new)(?:\|([^\]]*))?\]\]/;
-        const MUSIC_TAG_GLOBAL_RE = /\[\[MUSIC_ACTION:(?:join|add|add_new|join_and_add|join_and_add_new)(?:\|[^\]]*)?\]\]/g;
+        const MUSIC_TAG_RE = /\[\[MUSIC_ACTION:(join|add|add_new|join_and_add|join_and_add_new|play_song|play_song_and_join)(?:\|([^\]]*))?\]\]/;
+        const MUSIC_TAG_GLOBAL_RE = /\[\[MUSIC_ACTION:(?:join|add|add_new|join_and_add|join_and_add_new|play_song|play_song_and_join)(?:\|[^\]]*)?\]\]/g;
         const musicMatch = content.match(MUSIC_TAG_RE);
         if (musicMatch && musicHooks) {
-            const verb = musicMatch[1] as 'join' | 'add' | 'add_new' | 'join_and_add' | 'join_and_add_new';
+            const verb = musicMatch[1] as 'join' | 'add' | 'add_new' | 'join_and_add' | 'join_and_add_new' | 'play_song' | 'play_song_and_join';
             const argsRaw = (musicMatch[2] || '').trim();
             const args = argsRaw ? argsRaw.split('|').map(s => s.trim()).filter(Boolean) : [];
-            // 卡片元数据里只用 join / add / join_and_add 三种意图，把 _new 折叠回 add 系
-            const intent: 'join' | 'add' | 'join_and_add' =
+            const isPlaySong = verb === 'play_song' || verb === 'play_song_and_join';
+            // 卡片元数据里只用 join / add / join_and_add / play_song / play_song_and_join 五种意图，把 _new 折叠回 add 系
+            const intent: 'join' | 'add' | 'join_and_add' | 'play_song' | 'play_song_and_join' =
                 verb === 'join' ? 'join'
                 : (verb === 'add' || verb === 'add_new') ? 'add'
+                : verb === 'play_song' ? 'play_song'
+                : verb === 'play_song_and_join' ? 'play_song_and_join'
                 : 'join_and_add';
             const wantsJoin = verb === 'join' || verb === 'join_and_add' || verb === 'join_and_add_new';
-            const wantsAdd = verb !== 'join';
+            const wantsAdd = verb !== 'join' && !isPlaySong;
 
             let target: AddSongTarget | undefined;
             if (wantsAdd) {
@@ -100,6 +112,43 @@ export const ChatParser = {
                 }
             }
 
+            // 路径 A：play_song / play_song_and_join → LLM 主动放歌（不走 user 当前在听的歌）
+            if (isPlaySong) {
+                const songName = args[0];
+                if (songName && musicHooks.playSongFromChar) {
+                    const playedSnap = await musicHooks.playSongFromChar(charId, songName);
+                    if (playedSnap) {
+                        // 自动 join（仅 play_song_and_join 走）
+                        if (verb === 'play_song_and_join') {
+                            musicHooks.joinListeningTogether(charId);
+                        }
+                        await DB.saveMessage({
+                            charId,
+                            role: 'assistant',
+                            type: 'music_card',
+                            content: '[音乐卡片]',
+                            metadata: {
+                                intent,
+                                song: playedSnap,
+                            },
+                        });
+                        addToast(
+                            verb === 'play_song_and_join'
+                                ? `${charName} 给你放了《${playedSnap.name}》，正在一起听`
+                                : `${charName} 给你放了《${playedSnap.name}》`,
+                            'info'
+                        );
+                    } else {
+                        // 搜不到 / 用户关了 AI 主动放歌 → 静默丢弃 token，不污染 chat
+                        addToast(`${charName} 想放一首歌，但没找到`, 'info');
+                    }
+                }
+                content = content.replace(musicMatch[0], '').trim();
+                content = content.replace(MUSIC_TAG_GLOBAL_RE, '').trim();
+                // play_song 分支不 return —— 继续走后续 ADD_EVENT / SCHEDULE / RECALL 清理
+            }
+
+            // 路径 B：传统 join / add —— 依赖 user 当前在听的歌
             const snap = musicHooks.getListeningSnapshot();
             if (snap) {
                 let addedToPlaylistTitle: string | undefined;

@@ -24,7 +24,7 @@ type View = 'search' | 'settings' | 'player' | 'profile' | 'visit_char' | 'liste
 
 // ========================= 主组件 =========================
 const MusicApp: React.FC = () => {
-  const { closeApp, addToast, characters, userProfile, setUserProfile } = useOS();
+  const { closeApp, addToast, characters, userProfile, updateUserProfile } = useOS();
   const {
     cfg, setCfg,
     current, playing, progress, duration, loadingSong,
@@ -793,7 +793,7 @@ const MusicApp: React.FC = () => {
               <button
                 onClick={() => {
                   const next = !userProfile.miniPlayerHidden;
-                  setUserProfile({ miniPlayerHidden: next });
+                  updateUserProfile({ miniPlayerHidden: next });
                   addToast(next ? '已隐藏迷你播放器' : '已显示迷你播放器', 'info');
                 }}
                 className="shrink-0 w-12 h-6 rounded-full relative transition-colors"

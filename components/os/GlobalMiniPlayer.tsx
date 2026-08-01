@@ -38,7 +38,7 @@ const readPos = (): Pos => {
 };
 
 const GlobalMiniPlayer: React.FC = () => {
-  const { activeApp, userProfile, setUserProfile } = useOS();
+  const { activeApp, userProfile, updateUserProfile } = useOS();
   const { current, playing, togglePlay, nextSong, prevSong, progress, duration } = useMusic();
 
   const [expanded, setExpanded] = useState(false);
@@ -46,8 +46,8 @@ const GlobalMiniPlayer: React.FC = () => {
 
   const hidden = !!userProfile.miniPlayerHidden;
   const setHidden = useCallback((v: boolean) => {
-    setUserProfile({ miniPlayerHidden: v });
-  }, [setUserProfile]);
+    updateUserProfile({ miniPlayerHidden: v });
+  }, [updateUserProfile]);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const dragState = useRef<{
@@ -66,7 +66,14 @@ const GlobalMiniPlayer: React.FC = () => {
   }, [pos]);
 
   // 拖动 pointer 事件 — 折叠态和展开态共用
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+  // 重要：点 button 时不能初始化 dragState（否则松手触发 endDrag 把按钮"吃掉"），
+  // 用 closest('button') 把整个 button 子树排除掉
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) {
+      // 点在按钮上 → 不进拖动状态，让 button onClick 自己处理
+      return;
+    }
     const el = wrapRef.current;
     if (!el) return;
     const parent = el.parentElement as HTMLElement | null;
@@ -130,19 +137,18 @@ const GlobalMiniPlayer: React.FC = () => {
     setPos({ x, y });
   }, [expanded]);
 
-  const endDrag = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+  const endDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const ds = dragState.current;
     if (longPressTimer.current) {
       window.clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
     if (ds && !ds.moved) {
-      // 算作点击：折叠 → 展开；展开 → 跳到音乐 app
-      if (expanded) {
-        // 展开态：点击卡片本身跳到音乐 app（按钮通过 stopPropagation 屏蔽这个）
-        window.location.hash = '#music';
-      } else {
+      // 算作点击：折叠 → 展开；展开 → 折叠（不跳音乐 app，避免点空白处误跳）
+      if (!expanded) {
         setExpanded(true);
+      } else {
+        setExpanded(false);
       }
     }
     dragState.current = null;

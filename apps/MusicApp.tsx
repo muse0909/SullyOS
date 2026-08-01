@@ -36,6 +36,7 @@ const MusicApp: React.FC = () => {
     addLocalSong, removeLocalSong, localAlbumSongs,
     playMode, setPlayMode,
     regeneratingId, regeneratingStatus,
+    queue,  // 暮色 2026-08-02 00:05：MusicApp 漏解构 queue（播放页"队列 · N 首"按钮 + 标题用到了）
   } = useMusic();
   const isCurrentRegenerating = !!current && current.id === regeneratingId;
   // 把对轴入口和单曲循环按钮移到 SubActions 里，避免散乱

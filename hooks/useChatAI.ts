@@ -999,10 +999,21 @@ export const useChatAI = ({
                 cleanedApiMessages = cleanedApiMessages.map((m: any) => {
                     if (m.role !== 'system') return m;
                     const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                    // 暮色 2026-07-31：只对情侣空间事件用 [情侣空间事件] 前缀（让 AI 主动引用），
+                    // 暮色 2026-07-31：只对"用户行为触发"的事件用专属前缀（让 AI 主动引用），
                     //   其他技术状态消息用 [系统状态] 前缀（AI 不要主动回应"连接中断"这类）
-                    const isCoupleSpace = m.type === 'couple_space_invite' || m.type === 'couple_space_event';
-                    const prefix = isCoupleSpace ? '[情侣空间事件]' : '[系统状态]';
+                    // 暮色 2026-08-01：一起听邀请也是用户行为触发的，跟情侣空间事件同等对待
+                    const isUserAction =
+                        m.type === 'couple_space_invite'
+                        || m.type === 'couple_space_event'
+                        || m.type === 'music_invite';
+                    let prefix: string;
+                    if (m.type === 'couple_space_invite' || m.type === 'couple_space_event') {
+                        prefix = '[情侣空间事件]';
+                    } else if (m.type === 'music_invite') {
+                        prefix = '[一起听邀请]';
+                    } else {
+                        prefix = '[系统状态]';
+                    }
                     return { role: 'user', content: `${prefix} ${text}` };
                 });
             }

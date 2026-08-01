@@ -66,13 +66,19 @@ const GlobalMiniPlayer: React.FC = () => {
   }, [pos]);
 
   // 拖动 pointer 事件 — 折叠态和展开态共用
-  // 重要：点 button 时不能初始化 dragState（否则松手触发 endDrag 把按钮"吃掉"），
-  // 用 closest('button') 把整个 button 子树排除掉
+  // 重要：展开态点 button 时不能初始化 dragState（否则松手触发 endDrag 把按钮"吃掉"），
+  // 用 closest('button') 把展开态的整个 button 子树排除掉
   // 边界用 window.innerWidth/Height（不用 parent.getBoundingClientRect —— 后者在某些嵌套 absolute 容器里可能拿到非 viewport 尺寸）
+  //
+  // 暮色 2026-08-01 反馈：折叠态（button 自己收 onPointerDown）卡死中间位置不能拖。
+  //   根因：onPointerDown 绑在 button 上时，target.closest('button') 永远命中 button 自己 →
+  //   永远 early return → dragState 永远不初始化 → 短按展开、拖动、长按全失效。
+  //   修复：折叠态（!expanded）下整个 button 就是要拖动/点击的目标，无嵌套 button，
+  //   跳过 closest 检查，直接 init dragState；endDrag 根据 moved 决定展开 vs 移位 vs 长按。
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
-    if (target.closest('button')) {
-      // 点在按钮上 → 不进拖动状态，让 button onClick 自己处理
+    // 展开态：排除 button 子树（按钮是给 onClick 处理的，不该被 dragState 吞掉）
+    if (expanded && target.closest('button')) {
       return;
     }
     const el = wrapRef.current;

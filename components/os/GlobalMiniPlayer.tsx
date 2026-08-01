@@ -15,10 +15,11 @@
  * 现在 ChatMusicPlayer 已删除）。
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, SkipForward, SkipBack, CaretDown, List, X, Trash } from '@phosphor-icons/react';
+import { Play, Pause, SkipForward, SkipBack, CaretDown, List } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
 import { AppID } from '../../types';
+import QueuePanel from '../../apps/music/QueuePanel';
 
 const BUBBLE_SIZE = 40;             // 折叠态小圆球直径
 const EXPANDED_W = 260;              // 展开态宽度
@@ -41,7 +42,7 @@ const readPos = (): Pos => {
 
 const GlobalMiniPlayer: React.FC = () => {
   const { activeApp, userProfile, updateUserProfile, openApp } = useOS();
-  const { current, playing, togglePlay, nextSong, prevSong, progress, duration, queue, idx, jumpToQueueIndex, removeFromQueue } = useMusic();
+  const { current, playing, togglePlay, nextSong, prevSong, progress, duration, queue } = useMusic();
 
   const [expanded, setExpanded] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
@@ -322,110 +323,8 @@ const GlobalMiniPlayer: React.FC = () => {
           style={{ width: `${pct}%` }} />
       </div>
 
-      {/* 暮色 2026-08-01：播放队列浮层 — 弹半屏显示 queue 列表
-          点歌名跳播，点 × 删除单首。暮色要求跟项目色调统一（暗紫主题），
-          不用绿色 / 不用粉色。 */}
-      {showQueue && (
-        <div
-          className="fixed inset-0 z-[60] flex items-end justify-center animate-fade-in"
-          onClick={() => setShowQueue(false)}
-        >
-          <div className="absolute inset-0 bg-black/50" />
-          <div
-            className="relative w-full max-w-md max-h-[70vh] flex flex-col rounded-t-3xl overflow-hidden animate-slide-up"
-            style={{ background: 'rgba(20, 24, 35, 0.92)', backdropFilter: 'blur(20px)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* header */}
-            <div className="flex items-center justify-between px-4 h-12 shrink-0"
-              style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-              <div className="flex items-center gap-2 text-white">
-                <List size={16} weight="bold" />
-                <span className="text-[12px] tracking-wider" style={{ fontWeight: 600 }}>
-                  播放队列 · {queue.length} 首
-                </span>
-              </div>
-              <button
-                onClick={() => setShowQueue(false)}
-                className="p-1.5 rounded-full text-white/70 active:scale-95"
-                aria-label="关闭队列"
-              >
-                <X size={16} weight="bold" />
-              </button>
-            </div>
-
-            {/* list */}
-            <div className="flex-1 overflow-y-auto pb-3 shizuku-scrollbar">
-              {queue.length === 0 ? (
-                <div className="text-center py-12 text-[11px] text-white/40">
-                  队列为空
-                </div>
-              ) : (
-                queue.map((s, i) => {
-                  const isCurrent = i === idx;
-                  return (
-                    <div
-                      key={`${s.id}-${i}`}
-                      className="flex items-center gap-2.5 px-3 py-2 mx-2 my-0.5 rounded-xl active:scale-[0.99] transition-transform"
-                      style={{
-                        background: isCurrent ? 'rgba(180, 160, 220, 0.18)' : 'transparent',
-                      }}
-                    >
-                      {/* 序号 / 当前播放标志 */}
-                      <div
-                        className="shrink-0 w-6 h-6 flex items-center justify-center text-[10px] font-mono rounded-full"
-                        style={{
-                          color: isCurrent ? '#b3a8ce' : 'rgba(255,255,255,0.4)',
-                          background: isCurrent ? 'rgba(180, 160, 220, 0.2)' : 'transparent',
-                        }}
-                      >
-                        {isCurrent ? '♪' : i + 1}
-                      </div>
-
-                      {/* 封面 */}
-                      <img
-                        src={s.albumPic}
-                        alt=""
-                        className="shrink-0 w-9 h-9 rounded object-cover"
-                        draggable={false}
-                      />
-
-                      {/* 歌名 / 艺人 — 点跳播 */}
-                      <button
-                        onClick={() => {
-                          jumpToQueueIndex(i);
-                          setShowQueue(false);
-                        }}
-                        className="flex-1 min-w-0 text-left"
-                      >
-                        <div
-                          className="text-[11px] truncate"
-                          style={{
-                            color: isCurrent ? '#b3a8ce' : '#fff',
-                            fontWeight: isCurrent ? 600 : 500,
-                          }}
-                        >
-                          {s.name}
-                        </div>
-                        <div className="text-[9px] text-white/50 truncate">{s.artists}</div>
-                      </button>
-
-                      {/* 删除按钮 */}
-                      <button
-                        onClick={() => removeFromQueue(s.id)}
-                        className="shrink-0 p-1.5 rounded-full text-white/50 active:scale-95 hover:text-white/80"
-                        aria-label={`从队列删除 ${s.name}`}
-                      >
-                        <Trash size={12} weight="regular" />
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 暮色 2026-08-01 22:40：播放队列浮层（共享 QueuePanel 组件） */}
+      <QueuePanel open={showQueue} onClose={() => setShowQueue(false)} />
     </div>
   );
 };

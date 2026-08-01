@@ -3,6 +3,28 @@ import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong } from '../types';
 
+/**
+ * 暮色 2026-08-01 22:40：play_song_and_join 触发的标记
+ *
+ * 当 chatParser 路径 A 处理 `[[MUSIC_ACTION:play_song_and_join|歌名]]` 时：
+ * 1) 推 system 消息 "江澈给你放了《xxx》，加入了"一起听""（用户看到的）
+ * 2) 推 music_card（可点的播放入口）
+ * 3) addListeningPartner → listeningTogetherWith 变 → Chat.tsx useEffect 触发
+ * 4) Chat.tsx useEffect 看到 notifiedListenTogether 没有 char.id → 推 music_invite system 消息
+ *    **冗余**：用户已经看到 play_song_and_join 推的"加入了"一起听""提示，
+ *    不需要再听"暮色邀请你一起听"那条
+ *
+ * 修法：chatParser play_song_and_join 路径**早于** addListeningPartner 把 charId
+ * add 到 playSongAndJoinHandled；Chat.tsx useEffect 推 music_invite 前检查这个 Set，
+ * 有就跳过（被 play_song_and_join 接管了）。
+ *
+ * 时序关键：addListeningPartner 调 setListeningTogetherWith 触发 React flush，
+ * Chat.tsx useEffect 在 flush 时跑 —— 此时 Set 必须已有 charId 才能跳过。
+ *
+ * Module-level（不是 Context）：跨组件共享，SPA 单用户安全。
+ */
+export const playSongAndJoinHandled = new Set<string>();
+
 export interface MusicActionSnapshot {
     songId: number;
     name: string;
@@ -120,6 +142,10 @@ export const ChatParser = {
                     if (playedSnap) {
                         // 自动 join（仅 play_song_and_join 走）
                         if (verb === 'play_song_and_join') {
+                            // 暮色 2026-08-01 22:40：play_song_and_join 接管一起听通知
+                            //   在 joinListeningTogether 之前 mark（早于 setState 触发 React flush）
+                            //   让 Chat.tsx useEffect 跳过重复推 music_invite 消息
+                            playSongAndJoinHandled.add(charId);
                             musicHooks.joinListeningTogether(charId);
                         }
                         await DB.saveMessage({

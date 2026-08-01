@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOS } from '../context/OSContext';
 import { useMusic, musicApi, normalizeCookie, toHttps, Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
-import { Gear, User as UserIcon, Crosshair, Play as PlayIcon, Pause as PauseIcon } from '@phosphor-icons/react';
+import { Gear, User as UserIcon, Crosshair, Play as PlayIcon, Pause as PauseIcon, List } from '@phosphor-icons/react';
 import {
   C, Sparkle, CrossStar, MizuHeader, SearchBar, SongRow, MiniPlayer,
   VinylDisc, GlassProgress, PlayControls, BokehBg,
@@ -11,6 +11,7 @@ import {
 } from './music/MusicUI';
 import NeteaseProfilePage from './music/NeteaseProfilePage';
 import CharVisitPage from './music/CharVisitPage';
+import QueuePanel from './music/QueuePanel';
 
 // ------------------------- 工具 -------------------------
 const fmtTime = (s: number) => {
@@ -96,6 +97,8 @@ const MusicApp: React.FC = () => {
   const [view, setView] = useState<View>('search');
   // ── 手动对轴 modal state ──
   const [showLyricSync, setShowLyricSync] = useState(false);
+  // 暮色 2026-08-01 22:40：音乐 app 内部的播放队列浮层开关
+  const [showQueue, setShowQueue] = useState(false);
   const [syncDraft, setSyncDraft] = useState<number[]>([]);
   const [visitCharId, setVisitCharId] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -731,6 +734,23 @@ const MusicApp: React.FC = () => {
             <PlayControls playing={playing} loading={loadingSong} onPrev={prevSong} onToggle={togglePlay} onNext={nextSong} />
           </div>
 
+          {/* 暮色 2026-08-01 22:40：播放队列入口（音乐 app 内部"≡ 队列"）— 弹 QueuePanel */}
+          <button
+            onClick={() => setShowQueue(true)}
+            className="shrink-0 mx-auto mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] active:scale-95 transition-transform"
+            style={{
+              background: 'rgba(255,255,255,0.6)',
+              color: C.primary,
+              border: `1px solid ${C.faint}50`,
+              boxShadow: `0 1px 6px ${C.glow}20`,
+            }}
+            aria-label="查看播放队列"
+            title={`播放队列（${queue.length} 首）`}
+          >
+            <List size={11} weight="bold" />
+            队列 · {queue.length} 首
+          </button>
+
           <div className="shrink-0 mt-3 w-full">
             <SubActions
               liked={liked}
@@ -1361,6 +1381,9 @@ const MusicApp: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 暮色 2026-08-01 22:40：播放队列浮层（与 GlobalMiniPlayer 共用 QueuePanel） */}
+      <QueuePanel open={showQueue} onClose={() => setShowQueue(false)} title="当前播放 · 队列" />
     </div>
   );
 };

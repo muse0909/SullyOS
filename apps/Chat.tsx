@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { playSongAndJoinHandled } from '../utils/chatParser';
 
 /**
  * Module-level 一起听通知去重集合
@@ -488,9 +489,24 @@ const Chat: React.FC = () => {
         const wasInPrev = prev.has(char.id);
         const isRemoved = wasInPrev && !cur.has(char.id);
         if (isNewlyAdded) {
-            // 只在"真新开启"时推消息 + 触发 AI
-            // (Chat mount 时如果已经在 together 状态且已通知过 → notifiedSet 命中 → 跳过)
-            if (!notifiedListenTogether.has(char.id)) {
+            // 暮色 2026-08-01 22:40：play_song_and_join 触发的接管
+            //   chatParser 路径 A 在调 joinListeningTogether **之前** add 到 Set
+            //   （见 chatParser.ts:121-124），Chat.tsx useEffect 此时会看到这个标记 → 跳过推 music_invite
+            //   用户已经看到 play_song_and_join 推的"加入了"一起听""提示，不需要再来一条
+            //   但仍触发 triggerAI，让 LLM 看到 listeningTogetherWith 变化后自然回应
+            if (playSongAndJoinHandled.has(char.id)) {
+                playSongAndJoinHandled.delete(char.id);  // 清掉，下次 user 自己开一起听能正常推
+                // 仍触发 triggerAI（不依赖 music_invite 消息，LLM 看到状态变化自然生成回应）
+                if (!isTyping) {
+                    setTimeout(() => {
+                        setMessages(currMsgs => {
+                            triggerAI(currMsgs);
+                            return currMsgs;
+                        });
+                    }, 100);
+                }
+            } else if (!notifiedListenTogether.has(char.id)) {
+                // 普通路径：user 自己开一起听（手动） → 推 music_invite + triggerAI
                 notifiedListenTogether.add(char.id);
                 const songName = musicCurrent?.name;
                 const artists = musicCurrent?.artists;

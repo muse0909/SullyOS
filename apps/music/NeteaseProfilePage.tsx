@@ -308,75 +308,26 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
     await refreshProfile();
   }, [setCfg, refreshProfile]);
 
-  // 未登录 → 默认展示「一起写的歌」本地专辑 + 网易云登录入口；
-  // 没本地专辑 → 直接进登录面板（保持原来体验）。
-  // ⚠️ 所有 hooks 必须在这个 early-return **之前** 声明完。
-  if (!cfg.cookie || !profile) {
-    if (localAlbumSongs.length === 0 || showNeteaseLogin) {
-      return (
-        <NeteaseLoginPanel
-          onBack={localAlbumSongs.length > 0 ? () => setShowNeteaseLogin(false) : onBack}
-          onLoggedIn={async (cookie) => {
-            setCfg({ ...cfgRef.current, cookie });
-            await new Promise(r => setTimeout(r, 300));
-            await refreshProfile();
-            toastRef.current('登录成功', 'success');
-            setShowNeteaseLogin(false);
-          }}
-        />
-      );
-    }
-    // 有本地专辑 → 简洁单页：仅 album + 一个登录入口卡
+  // ⚠️ 不再 early-return 跳登录面板 — 登录墙已拆掉。
+  // 未登录时：显示一个"未登录"提示卡 + 登录入口按钮（用户点才打开登录面板）
+  // 已登录时：显示完整 user 卡 / 统计 / 签到 / 推荐 / FM / 歌单 / 拜访
+  // 拜访 + 本地专辑 → 不论登录都显示（不依赖 cookie）
+
+  const isLoggedIn = !!(cfg.cookie && profile);
+
+  // 未登录时打开的登录面板（modal 风格，全屏覆盖，不开新 view）
+  if (showNeteaseLogin) {
     return (
-      <div className="flex flex-col h-full relative"
-        style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
-        <BokehBg />
-        <MizuHeader title="My Cloud" onBack={onBack} />
-        <div className="relative z-10 flex-1 overflow-y-auto pb-24 px-3 pt-3 shizuku-scrollbar">
-          {/* 本地专辑卡 */}
-          <LocalAlbumCard
-            songs={localAlbumSongs}
-            expanded={localAlbumExpanded}
-            setExpanded={setLocalAlbumExpanded}
-            currentId={current?.id ?? null}
-            playing={playing}
-            onPlay={(s, idx) => playSong(s, { alsoSetQueue: true, replaceQueue: localAlbumSongs, startIdx: idx })}
-            onRemove={removeLocalSong}
-          />
-          {/* 登录入口卡 */}
-          <button
-            onClick={() => setShowNeteaseLogin(true)}
-            className="mt-3 w-full rounded-2xl shizuku-glass p-4 flex items-center gap-3 transition-all active:scale-[0.99]"
-          >
-            <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: `linear-gradient(135deg, ${C.faint}40, ${C.muted}30)`, border: `1px solid ${C.faint}40` }}>
-              <UserIcon size={18} color={C.muted} weight="duotone" />
-            </div>
-            <div className="flex-1 text-left">
-              <div className="text-sm" style={{ color: C.text }}>登录网易云</div>
-              <div className="text-[10.5px]" style={{ color: C.muted }}>解锁海量曲库 · 自己的歌单 · 一起听</div>
-            </div>
-            <span className="text-[12px]" style={{ color: C.accent }}>→</span>
-          </button>
-        </div>
-        {current && (
-          <MiniPlayer
-            name={current.name}
-            artists={current.artists}
-            albumPic={current.albumPic}
-            playing={playing}
-            onTap={onOpenPlayer}
-            onPrev={prevSong}
-            onToggle={togglePlay}
-            onNext={nextSong}
-            userAvatar={userProfile?.avatar}
-            userName={userProfile?.name}
-            companions={companions}
-            onKickCompanion={removeListeningPartner}
-            regenStatus={current.id === regeneratingId ? regeneratingStatus : undefined}
-          />
-        )}
-      </div>
+      <NeteaseLoginPanel
+        onBack={() => setShowNeteaseLogin(false)}
+        onLoggedIn={async (cookie) => {
+          setCfg({ ...cfgRef.current, cookie });
+          await new Promise(r => setTimeout(r, 300));
+          await refreshProfile();
+          toastRef.current('登录成功', 'success');
+          setShowNeteaseLogin(false);
+        }}
+      />
     );
   }
 
@@ -414,48 +365,49 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
       />
 
       <div className="flex-1 overflow-y-auto relative z-10 shizuku-scrollbar pb-20">
-        {/* Banner 头图 */}
+        {/* Banner 头图 — 未登录时降级显示渐变 */}
         <div className="relative h-32 overflow-hidden">
-          {profile.backgroundUrl ? (
-            <img src={profile.backgroundUrl} className="absolute inset-0 w-full h-full object-cover" alt="" />
+          {(isLoggedIn && profile?.backgroundUrl) ? (
+            <img src={profile!.backgroundUrl} className="absolute inset-0 w-full h-full object-cover" alt="" />
           ) : (
             <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${C.accent}40, ${C.sakura}40, ${C.lavender}40)` }} />
           )}
           <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, transparent 0%, ${C.bg}CC 100%)` }} />
         </div>
 
-        {/* 用户卡 */}
-        <div className="-mt-12 mx-4 rounded-3xl p-4 shizuku-glass-strong relative z-10"
-          style={{ boxShadow: `0 10px 40px ${C.glow}15` }}>
-          <div className="flex items-center gap-3">
-            <div className="relative shrink-0">
-              <img
-                src={profile.avatarUrl || 'https://p1.music.126.net/y19E5SadGUmSR8SZxkrNtw==/109951163965029180.jpg'}
-                alt=""
-                className="w-16 h-16 rounded-2xl object-cover"
-                style={{ border: `2px solid ${C.glow}60`, boxShadow: `0 4px 20px ${C.glow}30` }}
-              />
-              <div className="absolute -bottom-1 -right-1">
-                <Sparkle size={10} color={C.sakura} delay={0.3} />
+        {/* 用户卡 — 已登录显示完整 / 未登录显示「未登录」入口卡 */}
+        {isLoggedIn ? (
+          <div className="-mt-12 mx-4 rounded-3xl p-4 shizuku-glass-strong relative z-10"
+            style={{ boxShadow: `0 10px 40px ${C.glow}15` }}>
+            <div className="flex items-center gap-3">
+              <div className="relative shrink-0">
+                <img
+                  src={profile!.avatarUrl || 'https://p1.music.126.net/y19E5SadGUmSR8SZxkrNtw==/109951163965029180.jpg'}
+                  alt=""
+                  className="w-16 h-16 rounded-2xl object-cover"
+                  style={{ border: `2px solid ${C.glow}60`, boxShadow: `0 4px 20px ${C.glow}30` }}
+                />
+                <div className="absolute -bottom-1 -right-1">
+                  <Sparkle size={10} color={C.sakura} delay={0.3} />
+                </div>
               </div>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-base font-semibold truncate" style={{ color: C.text, fontFamily: `'Noto Serif', serif` }}>
-                {profile.nickname}
+              <div className="flex-1 min-w-0">
+                <div className="text-base font-semibold truncate" style={{ color: C.text, fontFamily: `'Noto Serif', serif` }}>
+                  {profile!.nickname}
+                </div>
+                <div className="text-[10px] mt-0.5 truncate" style={{ color: C.muted }}>
+                  {profile!.signature || '—'}
+                </div>
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <span className="text-[9px] px-2 py-0.5 rounded-full text-white font-medium"
+                    style={{ background: `linear-gradient(135deg, ${C.vip}, #e0b88a)`, letterSpacing: '0.05em' }}>
+                    {vipLabel}
+                  </span>
+                  <span className="text-[9px] px-2 py-0.5 rounded-full" style={{ color: C.muted, border: `1px solid ${C.faint}40` }}>
+                    UID · {profile!.userId}
+                  </span>
+                </div>
               </div>
-              <div className="text-[10px] mt-0.5 truncate" style={{ color: C.muted }}>
-                {profile.signature || '—'}
-              </div>
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <span className="text-[9px] px-2 py-0.5 rounded-full text-white font-medium"
-                  style={{ background: `linear-gradient(135deg, ${C.vip}, #e0b88a)`, letterSpacing: '0.05em' }}>
-                  {vipLabel}
-                </span>
-                <span className="text-[9px] px-2 py-0.5 rounded-full" style={{ color: C.muted, border: `1px solid ${C.faint}40` }}>
-                  UID · {profile.userId}
-                </span>
-              </div>
-            </div>
           </div>
 
           {/* 统计行 */}
@@ -528,6 +480,37 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
             退出登录
           </button>
         </div>
+        ) : (
+          /* 未登录卡 — 不再自动弹扫码面板，改为 profile 页内嵌一个入口卡 */
+          <div className="-mt-12 mx-4 rounded-3xl p-4 shizuku-glass-strong relative z-10"
+            style={{ boxShadow: `0 10px 40px ${C.glow}15` }}>
+            <div className="flex items-center gap-3">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
+                style={{ background: `linear-gradient(135deg, ${C.faint}40, ${C.muted}30)`, border: `1.5px solid ${C.faint}40` }}>
+                <UserIcon size={28} color={C.muted} weight="duotone" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold" style={{ color: C.text, fontFamily: `'Noto Serif', serif` }}>
+                  未登录
+                </div>
+                <div className="text-[10px] mt-0.5" style={{ color: C.muted }}>
+                  登录后可解锁歌单 / 签到 / VIP 音质
+                </div>
+                <button
+                  onClick={() => setShowNeteaseLogin(true)}
+                  className="mt-1.5 inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] transition-all active:scale-95"
+                  style={{
+                    background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                    color: 'white',
+                    boxShadow: `0 2px 8px ${C.glow}30`,
+                  }}
+                >
+                  登录网易云 →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 拜访 · 其他人的音乐角落 */}
         {onVisitChar && characters.length > 0 && (
@@ -596,7 +579,8 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           </div>
         )}
 
-        {/* Tabs */}
+        {/* Tabs — 仅已登录才显示（未登录时歌单/最近/云盘都是空的） */}
+        {isLoggedIn && (<>
         <div className="mx-4 mt-5 flex items-center gap-1 shizuku-glass rounded-full p-1">
           {([
             { k: 'playlist', label: '歌单' },
@@ -736,6 +720,37 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
                 </div>
               </button>
             ))}
+          </div>
+        )}
+        </>)}
+        {/* 未登录时：显示本地专辑 + 一段提示，不显示空 tabs */}
+        {!isLoggedIn && (
+          <div className="px-3 mt-4 space-y-3">
+            {localAlbumSongs.length > 0 && (
+              <LocalAlbumCard
+                songs={localAlbumSongs}
+                expanded={localAlbumExpanded}
+                setExpanded={setLocalAlbumExpanded}
+                currentId={current?.id ?? null}
+                playing={playing}
+                onPlay={(s, idx) => playSong(s, { alsoSetQueue: true, replaceQueue: localAlbumSongs, startIdx: idx })}
+                onRemove={removeLocalSong}
+              />
+            )}
+            <div className="rounded-2xl p-3 shizuku-glass text-center" style={{ border: `1px solid ${C.faint}30` }}>
+              <div className="text-[11px]" style={{ color: C.muted }}>登录后可查看自己的歌单 / 最近 / 云盘</div>
+              <button
+                onClick={() => setShowNeteaseLogin(true)}
+                className="mt-2 inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] transition-all active:scale-95"
+                style={{
+                  background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                  color: 'white',
+                  boxShadow: `0 2px 8px ${C.glow}30`,
+                }}
+              >
+                登录网易云 →
+              </button>
+            </div>
           </div>
         )}
       </div>

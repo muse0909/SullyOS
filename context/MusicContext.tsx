@@ -236,6 +236,22 @@ export const musicApi = {
   toplist(cfg: MusicCfg) {
     return musicApi.call(cfg, '/toplist', {});
   },
+  /**
+   * 首页"快速发现" — 网易云推荐歌单
+   * 公开接口，不需登录。worker 白名单已放行 /personalized。
+   * 返回 result[]: [{id, name, picUrl, playCount, trackCount, copywriter, ...}]
+   */
+  personalized(cfg: MusicCfg, limit = 30) {
+    return musicApi.call(cfg, '/personalized', { limit });
+  },
+  /**
+   * 首页"热门搜索词" — 网易云热搜榜
+   * 公开接口，不需登录。worker 白名单已放行 /search/hot。
+   * 返回 result.hots[]: [{first: 词, second: 1, third, iconType}, ...]
+   */
+  searchHot(cfg: MusicCfg) {
+    return musicApi.call(cfg, '/search/hot', {});
+  },
   loginQrKey(cfg: MusicCfg) {
     return musicApi.call(cfg, '/login/qr/key', {});
   },

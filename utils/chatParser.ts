@@ -3,6 +3,28 @@ import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong } from '../types';
 
+/**
+ * 暮色 2026-08-01 22:40：play_song_and_join 触发的标记
+ *
+ * 当 chatParser 路径 A 处理 `[[MUSIC_ACTION:play_song_and_join|歌名]]` 时：
+ * 1) 推 system 消息 "江澈给你放了《xxx》，加入了"一起听""（用户看到的）
+ * 2) 推 music_card（可点的播放入口）
+ * 3) addListeningPartner → listeningTogetherWith 变 → Chat.tsx useEffect 触发
+ * 4) Chat.tsx useEffect 看到 notifiedListenTogether 没有 char.id → 推 music_invite system 消息
+ *    **冗余**：用户已经看到 play_song_and_join 推的"加入了"一起听""提示，
+ *    不需要再听"暮色邀请你一起听"那条
+ *
+ * 修法：chatParser play_song_and_join 路径**早于** addListeningPartner 把 charId
+ * add 到 playSongAndJoinHandled；Chat.tsx useEffect 推 music_invite 前检查这个 Set，
+ * 有就跳过（被 play_song_and_join 接管了）。
+ *
+ * 时序关键：addListeningPartner 调 setListeningTogetherWith 触发 React flush，
+ * Chat.tsx useEffect 在 flush 时跑 —— 此时 Set 必须已有 charId 才能跳过。
+ *
+ * Module-level（不是 Context）：跨组件共享，SPA 单用户安全。
+ */
+export const playSongAndJoinHandled = new Set<string>();
+
 export interface MusicActionSnapshot {
     songId: number;
     name: string;
@@ -40,6 +62,12 @@ export interface MusicActionHooks {
         song: CharPlaylistSong,
         target?: AddSongTarget,
     ) => Promise<{ playlistTitle: string; created: boolean } | null>;
+    /**
+     * 暮色 2026-08-01：LLM 主动给用户放歌（play_song token）。
+     * 接收歌名 → 搜歌 + 播放 → 推 system 消息到 chat 流。
+     * 返回 { songName, artists, songId } —— 失败返回 null（歌搜不到 / 用户关掉 AI 主动放歌 等）。
+     */
+    playSongFromChar: (charId: string, songName: string) => Promise<MusicActionSnapshot | null>;
 }
 
 export const ChatParser = {
@@ -74,21 +102,27 @@ export const ChatParser = {
         //   [[MUSIC_ACTION:add_new|新歌单标题|可选描述]]        → 新建歌单
         //   [[MUSIC_ACTION:join_and_add(|...)]]              → 同 add 一套
         //   [[MUSIC_ACTION:join_and_add_new|新歌单标题|描述]]  → 同 add_new
+        // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join）：
+        //   [[MUSIC_ACTION:play_song|歌名]]                    → 主动搜歌 + 播放
+        //   [[MUSIC_ACTION:play_song_and_join|歌名]]            → 搜歌 + 播放 + 加 char 进一起听名单
         // 用 | 分隔参数，避免和 : 冲突（标题里很容易出现 :)
-        const MUSIC_TAG_RE = /\[\[MUSIC_ACTION:(join|add|add_new|join_and_add|join_and_add_new)(?:\|([^\]]*))?\]\]/;
-        const MUSIC_TAG_GLOBAL_RE = /\[\[MUSIC_ACTION:(?:join|add|add_new|join_and_add|join_and_add_new)(?:\|[^\]]*)?\]\]/g;
+        const MUSIC_TAG_RE = /\[\[MUSIC_ACTION:(join|add|add_new|join_and_add|join_and_add_new|play_song|play_song_and_join)(?:\|([^\]]*))?\]\]/;
+        const MUSIC_TAG_GLOBAL_RE = /\[\[MUSIC_ACTION:(?:join|add|add_new|join_and_add|join_and_add_new|play_song|play_song_and_join)(?:\|[^\]]*)?\]\]/g;
         const musicMatch = content.match(MUSIC_TAG_RE);
         if (musicMatch && musicHooks) {
-            const verb = musicMatch[1] as 'join' | 'add' | 'add_new' | 'join_and_add' | 'join_and_add_new';
+            const verb = musicMatch[1] as 'join' | 'add' | 'add_new' | 'join_and_add' | 'join_and_add_new' | 'play_song' | 'play_song_and_join';
             const argsRaw = (musicMatch[2] || '').trim();
             const args = argsRaw ? argsRaw.split('|').map(s => s.trim()).filter(Boolean) : [];
-            // 卡片元数据里只用 join / add / join_and_add 三种意图，把 _new 折叠回 add 系
-            const intent: 'join' | 'add' | 'join_and_add' =
+            const isPlaySong = verb === 'play_song' || verb === 'play_song_and_join';
+            // 卡片元数据里只用 join / add / join_and_add / play_song / play_song_and_join 五种意图，把 _new 折叠回 add 系
+            const intent: 'join' | 'add' | 'join_and_add' | 'play_song' | 'play_song_and_join' =
                 verb === 'join' ? 'join'
                 : (verb === 'add' || verb === 'add_new') ? 'add'
+                : verb === 'play_song' ? 'play_song'
+                : verb === 'play_song_and_join' ? 'play_song_and_join'
                 : 'join_and_add';
             const wantsJoin = verb === 'join' || verb === 'join_and_add' || verb === 'join_and_add_new';
-            const wantsAdd = verb !== 'join';
+            const wantsAdd = verb !== 'join' && !isPlaySong;
 
             let target: AddSongTarget | undefined;
             if (wantsAdd) {
@@ -100,6 +134,64 @@ export const ChatParser = {
                 }
             }
 
+            // 路径 A：play_song / play_song_and_join → LLM 主动放歌（不走 user 当前在听的歌）
+            if (isPlaySong) {
+                const songName = args[0];
+                if (songName && musicHooks.playSongFromChar) {
+                    const playedSnap = await musicHooks.playSongFromChar(charId, songName);
+                    if (playedSnap) {
+                        // 自动 join（仅 play_song_and_join 走）
+                        if (verb === 'play_song_and_join') {
+                            // 暮色 2026-08-01 22:40：play_song_and_join 接管一起听通知
+                            //   在 joinListeningTogether 之前 mark（早于 setState 触发 React flush）
+                            //   让 Chat.tsx useEffect 跳过重复推 music_invite 消息
+                            playSongAndJoinHandled.add(charId);
+                            musicHooks.joinListeningTogether(charId);
+                        }
+                        // 暮色 2026-08-02 00:25 江澈转达：先推提示再推卡片（视觉顺序）
+                        //   type 改 'music_invite' → LLM 走 [一起听邀请] 前缀，主动引用
+                        //   这样 LLM 下次轮到自己时知道"已播放《xxx》— singer"，会自然提（诉求 3）
+                        await DB.saveMessage({
+                            charId,
+                            role: 'system',
+                            type: 'music_invite',
+                            content: `${charName} 给你放了《${playedSnap.name}》— ${playedSnap.artists}${verb === 'play_song_and_join' ? '，加入了"一起听"' : ''}`,
+                        });
+                        await DB.saveMessage({
+                            charId,
+                            role: 'assistant',
+                            type: 'music_card',
+                            content: '[音乐卡片]',
+                            metadata: {
+                                intent,
+                                song: playedSnap,
+                            },
+                        });
+                        addToast(
+                            verb === 'play_song_and_join'
+                                ? `${charName} 给你放了《${playedSnap.name}》，正在一起听`
+                                : `${charName} 给你放了《${playedSnap.name}》`,
+                            'info'
+                        );
+                    } else {
+                        // 暮色 2026-08-02 00:25 江澈转达诉求 1：失败也要有回执
+                        //   之前是静默返回 null（addToast 弹个提示就完事），LLM 完全不知道失败
+                        //   改成推 system 消息（type='music_invite'）→ LLM 主动引用 → 下一轮自然告诉暮色"没找到"
+                        await DB.saveMessage({
+                            charId,
+                            role: 'system',
+                            type: 'music_invite',
+                            content: `${charName} 想给暮色放《${songName}》，但没找到合适的版本（搜索无结果 / 触发了每日 3 次上限 / 开关被关闭）。`,
+                        });
+                        addToast(`${charName} 想放《${songName}》但没找到`, 'info');
+                    }
+                }
+                content = content.replace(musicMatch[0], '').trim();
+                content = content.replace(MUSIC_TAG_GLOBAL_RE, '').trim();
+                // play_song 分支不 return —— 继续走后续 ADD_EVENT / SCHEDULE / RECALL 清理
+            }
+
+            // 路径 B：传统 join / add —— 依赖 user 当前在听的歌
             const snap = musicHooks.getListeningSnapshot();
             if (snap) {
                 let addedToPlaylistTitle: string | undefined;

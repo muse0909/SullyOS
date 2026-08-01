@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -11,7 +11,7 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { getBuffColor } from '../utils/buffColor';
-import { useMusic } from '../context/MusicContext';
+import { useMusic, toHttps, musicApi } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
@@ -538,6 +538,8 @@ interface UseChatAIProps {
     // 暮色 2026-07-15：图床失败时调用，Chat.tsx 在 ChatInputArea 上方显示小提示条
     // （之前用 addToast 'bell' 在顶部弹窗，暮色不喜欢，改成聊天框位置的小提示）
     onImageBedWarning?: (msg: string) => void;
+    // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数（每次成功放歌 +1）
+    updateUserProfile?: (updates: Partial<UserProfile>) => void;
 }
 
 export const useChatAI = ({
@@ -555,6 +557,8 @@ export const useChatAI = ({
     updateCharacter,
     mcdMiniAppRef,
     onImageBedWarning,
+    // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数
+    updateUserProfile,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -999,11 +1003,34 @@ export const useChatAI = ({
                 cleanedApiMessages = cleanedApiMessages.map((m: any) => {
                     if (m.role !== 'system') return m;
                     const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                    // 暮色 2026-07-31：只对情侣空间事件用 [情侣空间事件] 前缀（让 AI 主动引用），
+                    // 暮色 2026-07-31：只对"用户行为触发"的事件用专属前缀（让 AI 主动引用），
                     //   其他技术状态消息用 [系统状态] 前缀（AI 不要主动回应"连接中断"这类）
-                    const isCoupleSpace = m.type === 'couple_space_invite' || m.type === 'couple_space_event';
-                    const prefix = isCoupleSpace ? '[情侣空间事件]' : '[系统状态]';
-                    return { role: 'user', content: `${prefix} ${text}` };
+                    // 暮色 2026-08-01：一起听邀请也是用户行为触发的，跟情侣空间事件同等对待
+                    let prefix: string;
+                    let llmText = text;
+                    if (m.type === 'couple_space_invite' || m.type === 'couple_space_event') {
+                        prefix = '[情侣空间事件]';
+                    } else if (m.type === 'music_invite') {
+                        prefix = '[一起听邀请]';
+                        // 暮色 2026-08-02 00:25 江澈转达诉求 4：邀请事件提示词要"自然聊天消息"
+                        // 暮色 2026-08-02 00:25 江澈转达诉求 6：技术测试和真实邀请分开
+                        //   - 正常邀请：只给情感回应（聊歌 / 聊感觉）
+                        //   - 用户问"收到没有 / 有没有生效"：允许技术回执
+                        // 失败回执也走这个分支（type='music_invite'），所以 llmText 要兼容：
+                        //   - 成功消息（"江澈给你放了《xxx》—yy，加入了"一起听""）→ 自然回应
+                        //   - 失败消息（"江澈想放《xxx》但没找到"）→ 告诉暮色"没找到"+"换一首"
+                        // 内容里有"但没找到"是失败消息，其它是成功/邀请消息
+                        if (text.includes('但没找到')) {
+                            // 失败回执
+                            llmText = `${text}\n（提示：用户可能还在等结果；自然地告诉暮色没找到，提议换一首或者别的方式，不要长篇大论。）`;
+                        } else {
+                            // 成功 / 邀请消息
+                            llmText = `${text}\n（提示：把它当作暮色发来的一条自然聊天消息，直接回应歌曲带来的感觉、此刻想到的事，或者你想对她说的话。不要汇报"已收到邀请""提示已出现""功能生效"，不要解释触发机制，也不必强行引用歌词。只有暮色明确询问测试结果时，才简短说明功能状态。重点是像两个人真的在一起听，不是完成回复任务。）`;
+                        }
+                    } else {
+                        prefix = '[系统状态]';
+                    }
+                    return { role: 'user', content: `${prefix} ${llmText}` };
                 });
             }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
@@ -3787,6 +3814,84 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         await DB.saveCharacter({ ...targetChar, musicProfile: updatedProfile });
                         return { playlistTitle: pl.title, created };
                     } catch {
+                        return null;
+                    }
+                },
+                // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join token）
+                // 流程：搜歌 → 替换当前播放队列为这 1 首 → 自动播放
+                // 限制：
+                //   1) userProfile.musicAiAutoPlayEnabled === false → 静默拒绝（fallback "歌搜不到"）
+                //   2) 每日每 char 次数上限（默认 3 次/天，按本地日期）→ 静默拒绝
+                //   3) 成功放歌 → +1 计数（持久化到 userProfile.musicAiAutoPlayCount）
+                //   暮色 2026-08-02 00:25 江澈转达诉求 2：搜不到精确匹配时回灌"未找到《歌名》"到上下文
+                //   排序策略（暮色建议）：精确歌名匹配 + 按 pop（热度）降序 + fee 升序（免费优先）
+                //   不用硬编码原唱白名单，维护成本高；用 pop 排序时，原唱（热度高）自然排前
+                playSongFromChar: async (cid: string, songName: string) => {
+                    try {
+                        if (!songName?.trim()) return null;
+                        // —— 检查 1：用户总开关 ——
+                        if (userProfile.musicAiAutoPlayEnabled === false) {
+                            return null;  // 静默拒绝，跟"歌搜不到"一样
+                        }
+                        // —— 检查 2：每日每 char 次数上限 ——
+                        const today = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+                        const counts = userProfile.musicAiAutoPlayCount || {};
+                        const todayCounts = counts[today] || {};
+                        const used = todayCounts[cid] || 0;
+                        if (used >= MUSIC_AI_AUTOPLAY_DAILY_LIMIT) {
+                            return null;  // 静默拒绝
+                        }
+                        // —— 搜歌 ——
+                        const r = await musicApi.search(music.cfg, songName.trim(), 0);
+                        const allSongs: any[] = r?.result?.songs || [];
+                        if (allSongs.length === 0) return null;
+                        // 精确匹配辅助：去除括号/方括号内容、括号、空格、大小写差异
+                        //   例："偏爱" 匹配 "偏爱（0.8x）" → 不算精确（但 "偏爱" 也匹配 "偏爱"）
+                        //   例："偏爱" 不匹配 "偏爱（翻唱）"（去除括号后是 "偏爱"，会匹配）
+                        //   简化策略：去掉所有括号内容（"（...）"/"（...）"/"[...]"）后做精确比较
+                        const norm = (s: string) =>
+                            (s || '').toLowerCase().replace(/[（(\[【].*?[）)\]】]/g, '').replace(/\s+/g, '').trim();
+                        const target = norm(songName);
+                        const exact = allSongs.filter(s => norm(s.name) === target);
+                        const pool = exact.length > 0 ? exact : allSongs;
+                        // 排序：pop 降序；pop 相同时 fee 升序（免费优先）
+                        pool.sort((a, b) => {
+                            const pa = a.pop || 0;
+                            const pb = b.pop || 0;
+                            if (pb !== pa) return pb - pa;
+                            return (a.fee || 0) - (b.fee || 0);
+                        });
+                        const first = pool[0];
+                        if (!first) return null;
+                        // 搜到的歌没 picUrl/albumPic 时给个空串，前端会有兜底
+                        const song: any = {
+                            id: first.id,
+                            name: first.name,
+                            artists: (first.ar || first.artists || []).map((a: any) => a.name).join(' / '),
+                            album: first.al?.name || first.album?.name || '',
+                            albumPic: toHttps(first.al?.picUrl || first.album?.picUrl || ''),
+                            duration: (first.dt || first.duration || 0) / 1000,
+                            fee: first.fee ?? 0,
+                        };
+                        // 切到这首（替换队列，不动当前一起听名单）
+                        await music.playSong(song, { alsoSetQueue: true, replaceQueue: [song], startIdx: 0 });
+                        // —— +1 计数（持久化）—— 失败不消耗次数（已对：+1 只在成功路径）
+                        if (updateUserProfile) {
+                            const nextToday = { ...todayCounts, [cid]: used + 1 };
+                            const nextCounts = { ...counts, [today]: nextToday };
+                            updateUserProfile({ musicAiAutoPlayCount: nextCounts });
+                        }
+                        return {
+                            songId: song.id,
+                            name: song.name,
+                            artists: song.artists,
+                            album: song.album,
+                            albumPic: song.albumPic,
+                            duration: song.duration,
+                            fee: song.fee,
+                        };
+                    } catch (e) {
+                        console.warn('[playSongFromChar] failed:', e);
                         return null;
                     }
                 },

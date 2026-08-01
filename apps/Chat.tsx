@@ -3,6 +3,20 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { playSongAndJoinHandled } from '../utils/chatParser';
+
+/**
+ * Module-level 一起听通知去重集合
+ *
+ * 暮色 2026-08-01：Chat 组件 unmount/remount 时 useRef 会重置成空 Set，
+ * 导致从其他页面（音乐 App）切回 Chat 时被误判为"新开启" → 重复推 system 消息。
+ *
+ * 用 module-level Set 跨 mount 持久：每个 charId 只通知一次，
+ * 直到用户主动从一起听名单移除（removeListeningPartner）才清掉，下次再开重新触发。
+ * MusicContext 的切歌 / 暂停 / 播放错误会自动清空 listeningTogetherWith，
+ * 跟这里的 notifiedSet 配合可以做到"切歌再开同一首也能重新通知"。
+ */
+const notifiedListenTogether = new Set<string>();
 import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
@@ -21,6 +35,7 @@ import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
+import { useMusic } from '../context/MusicContext';
 import { useCloudMessages } from '../hooks/useCloudSync';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -37,7 +52,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -445,7 +460,103 @@ const Chat: React.FC = () => {
         mcdMiniAppRef,
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
+        updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
     });
+
+    // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
+    // 暮色 2026-08-01 反馈四轮：
+    //   1) 开启一起听后 LLM 不主动提一起听 → 原因是 system msg type='text' 被 useChatAI
+    //      归类为"系统状态"（[系统状态] 前缀），按 7-31 偏好，AI 不要主动引用技术状态。
+    //      修：新增 type='music_invite'，跟 couple_space_event 同等对待（用 [一起听邀请] 前缀，
+    //      AI 主动引用）。type 定义见 types.ts:1749；useChatAI.ts:1004 处理。
+    //   2) Chat mount 时 prevTogetherRef 是空 Set → 误判为"新开启" → 重复推 system 消息。
+    //      修：用 module-level notifiedSet 记录"已经通知过的 charId"，跨 mount 持久。
+    //   3) Chat mount 时如果 LLM 正在打字，再触发 triggerAI 容易冲突。
+    //      修：isTyping 时跳过 trigger，但仍然推 system 消息（让 LLM 下次轮到自己时能看到）。
+    //   4) system msg content 不要带"可以自然地回应一下..."这种 LLM 提示词。
+    //      修：Message.content 只写"暮色 刚刚邀请你一起听《XX》— YY"这种事实（用户看到）；
+    //      LLM 看到的"可以自然地回应一下..."在 useChatAI.ts:1000-1014 拼接进 user 消息。
+    //   切歌/关闭一起听时清空 notifiedSet（用户重新开一起听时再触发）。
+    const { listeningTogetherWith, current: musicCurrent } = useMusic();
+    const prevTogetherRef = useRef<Set<string>>(new Set());
+    useEffect(() => {
+        if (!char?.id) return;
+        const prev = prevTogetherRef.current;
+        const cur = new Set(listeningTogetherWith);
+        // 检查"当前 chat 的 char"是否在这次新增里（之前不在，现在在）
+        const isNewlyAdded = cur.has(char.id) && !prev.has(char.id);
+        // 检测"被移除"：清掉 notifiedSet，下次再开一起听能重新触发
+        const wasInPrev = prev.has(char.id);
+        const isRemoved = wasInPrev && !cur.has(char.id);
+        if (isNewlyAdded) {
+            // 暮色 2026-08-01 22:40：play_song_and_join 触发的接管
+            //   chatParser 路径 A 在调 joinListeningTogether **之前** add 到 Set
+            //   （见 chatParser.ts:121-124），Chat.tsx useEffect 此时会看到这个标记 → 跳过推 music_invite
+            //   用户已经看到 play_song_and_join 推的"加入了"一起听""提示，不需要再来一条
+            //   但仍触发 triggerAI，让 LLM 看到 listeningTogetherWith 变化后自然回应
+            if (playSongAndJoinHandled.has(char.id)) {
+                playSongAndJoinHandled.delete(char.id);  // 清掉，下次 user 自己开一起听能正常推
+                // 暮色 2026-08-02 00:25：play_song_and_join 跳过 music_invite 推消息时
+                //   必须把 charId add 到 notifiedListenTogether，否则下次 Chat 重挂载
+                //   useRef(prevTogetherRef) 重置成空 Set → 误判"新开启" → 重复推 music_invite
+                //   这就是暮色"我没操作邀请却出现那条提示"的根因
+                notifiedListenTogether.add(char.id);
+                // 仍触发 triggerAI（不依赖 music_invite 消息，LLM 看到状态变化自然生成回应）
+                if (!isTyping) {
+                    setTimeout(() => {
+                        setMessages(currMsgs => {
+                            triggerAI(currMsgs);
+                            return currMsgs;
+                        });
+                    }, 100);
+                }
+            } else if (!notifiedListenTogether.has(char.id)) {
+                // 普通路径：user 自己开一起听（手动） → 推 music_invite + triggerAI
+                notifiedListenTogether.add(char.id);
+                const songName = musicCurrent?.name;
+                const artists = musicCurrent?.artists;
+                // Message.content 只写事实（用户在聊天流看到的就是这个短版）
+                // LLM 看到的"可以自然地回应一下..."提示词在 useChatAI.ts 拼接
+                const sysMsg = songName
+                    ? `暮色 刚刚邀请你一起听《${songName}》${artists ? ` — ${artists}` : ''}`
+                    : `暮色 邀请你一起听歌，但当前没有正在播放的歌曲`;
+                // 推一条 system 消息到 messages + DB
+                const sysMsgObj: Message = {
+                    id: `sys-listen-${Date.now()}`,
+                    charId: char.id,
+                    role: 'system',
+                    type: 'music_invite',  // ← 关键：让 useChatAI 走 [一起听邀请] 分支
+                    content: sysMsg,
+                    timestamp: Date.now(),
+                };
+                setMessages(prevMsgs => [...prevMsgs, sysMsgObj]);
+                DB.saveMessage({
+                    charId: char.id,
+                    role: 'system',
+                    type: 'music_invite',
+                    content: sysMsg,
+                } as any).catch(() => { /* ignore */ });
+                // 触发 AI 主动回应（基于现有 messages + 新加的 system 消息）
+                // isTyping 时跳过 trigger（避免冲突），但消息已经进流，LLM 下次会看到
+                if (!isTyping) {
+                    setTimeout(() => {
+                        // 拿最新的 messages（含新推的 system）传给 triggerAI
+                        setMessages(currMsgs => {
+                            triggerAI(currMsgs);
+                            return currMsgs;
+                        });
+                    }, 100);
+                    addToast(`已通知 ${char.name} 一起听`, 'info');
+                } else {
+                    addToast(`已记录一起听邀请（等 ${char.name} 回完）`, 'info');
+                }
+            }
+        } else if (isRemoved) {
+            // 用户把 char 从一起听名单里移除了，下次再开可以重新触发
+            notifiedListenTogether.delete(char.id);
+        }
+        prevTogetherRef.current = cur;
+    }, [listeningTogetherWith, char?.id, musicCurrent?.id, triggerAI, addToast, musicCurrent?.name, musicCurrent?.artists, setMessages, isTyping]);
 
     // ─── 云端同步：收到云端拉取到的新消息 → 注入 setMessages ────────────
     // 多端互通的"另一台设备"：它们发的消息会通过云端拉到这里，按 clientId 去重

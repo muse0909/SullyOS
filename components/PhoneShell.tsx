@@ -496,8 +496,10 @@ const PhoneShell: React.FC = () => {
             </button>
           )}
 
-          {/* Overlays: Global Mini Player (when music is playing in background) */}
-          {activeApp !== AppID.Chat && activeApp !== AppID.GroupChat && <GlobalMiniPlayer />}
+          {/* Overlays: Global Mini Player (when music is playing in background)
+              暮色 2026-08-01：chat / groupChat 也显示 — 之前排除是为了让位给 ChatMusicPlayer，
+              现在 ChatMusicPlayer 已删，GlobalMiniPlayer 接管（折叠态是小圆球，展开态是底部条，都可拖动）。 */}
+          {activeApp !== AppID.Launcher && activeApp !== AppID.Music && activeApp !== AppID.Call && <GlobalMiniPlayer />}
     <ApiQuickFloat />
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">

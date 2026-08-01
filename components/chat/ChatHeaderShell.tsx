@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft, GearSix, Star } from '@phosphor-icons/react';
-import ChatMusicPlayer from './ChatMusicPlayer';
+// 2026-08-01：删掉 ChatMusicPlayer — 改用 GlobalMiniPlayer 接管（可拖动 + 统一体验）
 import { ApiPreset, CharacterBuff, CharacterProfile } from '../../types';
 import { getBuffColor, darkenHex, lightenHex } from '../../utils/buffColor';
 
@@ -364,7 +364,6 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </div>
 
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                        <ChatMusicPlayer />
                         {onOpenDiscover && (
                             <button
                                 onClick={onOpenDiscover}
@@ -399,7 +398,6 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </div>
 
                     <div className="relative ml-auto flex items-center gap-1">
-                        <ChatMusicPlayer />
                         {onOpenDiscover && (
                             <button
                                 onClick={onOpenDiscover}

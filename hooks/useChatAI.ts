@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -538,6 +538,8 @@ interface UseChatAIProps {
     // 暮色 2026-07-15：图床失败时调用，Chat.tsx 在 ChatInputArea 上方显示小提示条
     // （之前用 addToast 'bell' 在顶部弹窗，暮色不喜欢，改成聊天框位置的小提示）
     onImageBedWarning?: (msg: string) => void;
+    // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数（每次成功放歌 +1）
+    updateUserProfile?: (updates: Partial<UserProfile>) => void;
 }
 
 export const useChatAI = ({
@@ -555,6 +557,8 @@ export const useChatAI = ({
     updateCharacter,
     mcdMiniAppRef,
     onImageBedWarning,
+    // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数
+    updateUserProfile,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -1002,19 +1006,19 @@ export const useChatAI = ({
                     // 暮色 2026-07-31：只对"用户行为触发"的事件用专属前缀（让 AI 主动引用），
                     //   其他技术状态消息用 [系统状态] 前缀（AI 不要主动回应"连接中断"这类）
                     // 暮色 2026-08-01：一起听邀请也是用户行为触发的，跟情侣空间事件同等对待
-                    const isUserAction =
-                        m.type === 'couple_space_invite'
-                        || m.type === 'couple_space_event'
-                        || m.type === 'music_invite';
                     let prefix: string;
+                    let llmText = text;
                     if (m.type === 'couple_space_invite' || m.type === 'couple_space_event') {
                         prefix = '[情侣空间事件]';
                     } else if (m.type === 'music_invite') {
                         prefix = '[一起听邀请]';
+                        // 暮色 2026-08-01 反馈：聊天页提醒里不要写"可以自然回应..."这种提示词。
+                        // 修：Message.content 只写事实（用户看到），LLM 看到的完整版在这里拼接。
+                        llmText = `${text}\n（提示：可以自然地回应一下，聊聊你听到这首歌的感触、或者当下对 ta 的感觉；不一定要长篇大论，一两句也行，但别忽略这条邀请。）`;
                     } else {
                         prefix = '[系统状态]';
                     }
-                    return { role: 'user', content: `${prefix} ${text}` };
+                    return { role: 'user', content: `${prefix} ${llmText}` };
                 });
             }
             // Claude 协议：system 在顶层（Anthropic 协议标准）
@@ -3803,10 +3807,26 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 },
                 // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join token）
                 // 流程：搜歌 → 替换当前播放队列为这 1 首 → 自动播放
-                // 限制：用户关掉 AI 主动放歌 / 每日每 char 次数上限（暂未做）
+                // 限制：
+                //   1) userProfile.musicAiAutoPlayEnabled === false → 静默拒绝（fallback "歌搜不到"）
+                //   2) 每日每 char 次数上限（默认 3 次/天，按本地日期）→ 静默拒绝
+                //   3) 成功放歌 → +1 计数（持久化到 userProfile.musicAiAutoPlayCount）
                 playSongFromChar: async (cid: string, songName: string) => {
                     try {
                         if (!songName?.trim()) return null;
+                        // —— 检查 1：用户总开关 ——
+                        if (userProfile.musicAiAutoPlayEnabled === false) {
+                            return null;  // 静默拒绝，跟"歌搜不到"一样
+                        }
+                        // —— 检查 2：每日每 char 次数上限 ——
+                        const today = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+                        const counts = userProfile.musicAiAutoPlayCount || {};
+                        const todayCounts = counts[today] || {};
+                        const used = todayCounts[cid] || 0;
+                        if (used >= MUSIC_AI_AUTOPLAY_DAILY_LIMIT) {
+                            return null;  // 静默拒绝
+                        }
+                        // —— 搜歌 ——
                         const r = await musicApi.search(music.cfg, songName.trim(), 0);
                         const first = r?.result?.songs?.[0];
                         if (!first) return null;
@@ -3822,6 +3842,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         };
                         // 切到这首（替换队列，不动当前一起听名单）
                         await music.playSong(song, { alsoSetQueue: true, replaceQueue: [song], startIdx: 0 });
+                        // —— +1 计数（持久化）——
+                        if (updateUserProfile) {
+                            const nextToday = { ...todayCounts, [cid]: used + 1 };
+                            const nextCounts = { ...counts, [today]: nextToday };
+                            updateUserProfile({ musicAiAutoPlayCount: nextCounts });
+                        }
                         return {
                             songId: song.id,
                             name: song.name,

@@ -809,6 +809,38 @@ const MusicApp: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* 暮色 2026-08-01：AI 主动放歌开关 — 关掉后 LLM 输出的 play_song / play_song_and_join
+              token 会被静默拒绝（跟"歌搜不到"一样的 fallback）。每日每个角色最多 3 次。 */}
+          <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
+                  <Sparkle size={6} color={C.glow} delay={0.7} /> 允许 AI 主动放歌
+                </div>
+                <div className="text-[9px] mt-1 italic" style={{ color: C.faint }}>
+                  关闭后角色不能主动给你换歌（每日每角色最多 3 次）
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const next = !(userProfile.musicAiAutoPlayEnabled !== false);  // 默认 true
+                  updateUserProfile({ musicAiAutoPlayEnabled: next });
+                  addToast(next ? '已允许 AI 主动放歌' : '已禁止 AI 主动放歌', 'info');
+                }}
+                className="shrink-0 w-12 h-6 rounded-full relative transition-colors"
+                style={{
+                  background: userProfile.musicAiAutoPlayEnabled === false ? C.faint + '40' : `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                }}
+                aria-label={userProfile.musicAiAutoPlayEnabled === false ? '允许 AI 主动放歌' : '禁止 AI 主动放歌'}
+              >
+                <div
+                  className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all"
+                  style={{ left: userProfile.musicAiAutoPlayEnabled === false ? '2px' : '26px' }}
+                />
+              </button>
+            </div>
+          </div>
           <div className="space-y-3 pt-1">
             <button
               onClick={async () => {

@@ -1284,7 +1284,25 @@ export interface UserProfile {
      * 在音乐 app 设置页有 toggle。
      */
     miniPlayerHidden?: boolean;
+    /**
+     * AI 主动放歌功能总开关
+     * 暮色 2026-08-01：LLM 用 play_song / play_song_and_join token 时会触发放歌。
+     *   默认 true（开）。关掉后 LLM 仍然能看到 prompt 说明，但 playSongFromChar 会被拦截，
+     *   搜不到 / 静默丢弃（跟"歌搜不到"一样的 fallback）。
+     *   在音乐 app 设置页有 toggle。
+     */
+    musicAiAutoPlayEnabled?: boolean;
+    /**
+     * AI 主动放歌的每日每 char 次数上限计数
+     * 暮色 2026-08-01：默认每天每个 char 最多 3 次，超过后 playSongFromChar 静默丢弃
+     *   （让 LLM 当成"歌搜不到"处理）。每天 0 点重置（按本地日期）。
+     *   格式：{ [YYYY-MM-DD]: { [charId]: count } }
+     */
+    musicAiAutoPlayCount?: Record<string, Record<string, number>>;
 }
+
+/** AI 主动放歌每日每 char 默认上限 */
+export const MUSIC_AI_AUTOPLAY_DAILY_LIMIT = 3;
 
 export interface Toast {
     id: string;

@@ -38,7 +38,7 @@ const readPos = (): Pos => {
 };
 
 const GlobalMiniPlayer: React.FC = () => {
-  const { activeApp, userProfile, updateUserProfile } = useOS();
+  const { activeApp, userProfile, updateUserProfile, openApp } = useOS();
   const { current, playing, togglePlay, nextSong, prevSong, progress, duration } = useMusic();
 
   const [expanded, setExpanded] = useState(false);
@@ -70,11 +70,16 @@ const GlobalMiniPlayer: React.FC = () => {
   // 用 closest('button') 把展开态的整个 button 子树排除掉
   // 边界用 window.innerWidth/Height（不用 parent.getBoundingClientRect —— 后者在某些嵌套 absolute 容器里可能拿到非 viewport 尺寸）
   //
-  // 暮色 2026-08-01 反馈：折叠态（button 自己收 onPointerDown）卡死中间位置不能拖。
-  //   根因：onPointerDown 绑在 button 上时，target.closest('button') 永远命中 button 自己 →
-  //   永远 early return → dragState 永远不初始化 → 短按展开、拖动、长按全失效。
-  //   修复：折叠态（!expanded）下整个 button 就是要拖动/点击的目标，无嵌套 button，
-  //   跳过 closest 检查，直接 init dragState；endDrag 根据 moved 决定展开 vs 移位 vs 长按。
+  // 暮色 2026-08-01 反馈：
+  //   1) 折叠态（button 自己收 onPointerDown）卡死中间位置不能拖。
+  //      根因：onPointerDown 绑在 button 上时，target.closest('button') 永远命中 button 自己 →
+  //      永远 early return → dragState 永远不初始化。
+  //      修：折叠态（!expanded）下整个 button 就是要拖动/点击的目标，无嵌套 button，
+  //      跳过 closest 检查，直接 init dragState。
+  //   2) 折叠态长按跳音乐 app 不行（`window.location.hash = '#music'` 在 React Router 下不稳）。
+  //      改：短按封面 = openApp('music') 进音乐 app 播放页（替换之前的"短按展开"）；
+  //      长按 = setExpanded(true) 展开（替换之前的"长按跳音乐 app"）；
+  //      展开态进入后，展开态本身点空白仍是 openApp('music')，符合暮色预期。
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     // 展开态：排除 button 子树（按钮是给 onClick 处理的，不该被 dragState 吞掉）
@@ -96,14 +101,14 @@ const GlobalMiniPlayer: React.FC = () => {
       pointerId: e.pointerId,
     };
 
-    // 长按直接进音乐 app（只在小圆球/折叠态生效，展开态长按不响应）
+    // 折叠态长按 = 展开（替换之前"长按跳音乐 app"的 hash 跳转，那个在 React Router 下不稳）
     if (!expanded) {
       if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
       longPressTimer.current = window.setTimeout(() => {
         if (dragState.current && !dragState.current.moved) {
-          // 长按 = 跳到音乐 app
+          // 长按 = 展开
           try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-          window.location.hash = '#music'; // 简单跳转；正经方式用 openApp
+          setExpanded(true);
           dragState.current = null;
         }
       }, 500);
@@ -149,16 +154,19 @@ const GlobalMiniPlayer: React.FC = () => {
       longPressTimer.current = null;
     }
     if (ds && !ds.moved) {
-      // 算作点击：折叠 → 展开；展开 → 折叠（不跳音乐 app，避免点空白处误跳）
+      // 没移动 = 点击
       if (!expanded) {
-        setExpanded(true);
+        // 折叠态：点击封面 = 进音乐 app 播放页（暮色 8-1 反馈要的行为）
+        // 展开态：点击 button 子树已经在 onPointerDown early return，不会到这里；
+        //        点击空白处（div 本体）= 进音乐 app 播放页（保持原行为）
+        openApp(AppID.Music);
       } else {
         setExpanded(false);
       }
     }
     dragState.current = null;
     try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-  }, [expanded]);
+  }, [expanded, openApp]);
 
   if (!current) return null;
   if (activeApp === AppID.Music) return null;

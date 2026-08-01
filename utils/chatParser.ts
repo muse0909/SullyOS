@@ -132,6 +132,17 @@ export const ChatParser = {
                                 song: playedSnap,
                             },
                         });
+                        // 暮色 2026-08-01 C.2：推一条 system 消息到聊天流（除了 music_card 之外）。
+                        //   用途：用户能看到一个明显的"AI 主动放歌"事件（不只是 music_card 卡片），
+                        //   也让 LLM 下次轮到自己时能从历史里感知到这件事发生过。
+                        //   type='text' 默认走 [系统状态] 前缀，按 7-31 偏好 LLM 不要主动引用
+                        //   "AI 行为通知"（避免污染上下文），但消息本身留在聊天流里供用户看。
+                        await DB.saveMessage({
+                            charId,
+                            role: 'system',
+                            type: 'text',
+                            content: `${charName} 给你放了《${playedSnap.name}》— ${playedSnap.artists}${verb === 'play_song_and_join' ? '，加入了"一起听"' : ''}`,
+                        });
                         addToast(
                             verb === 'play_song_and_join'
                                 ? `${charName} 给你放了《${playedSnap.name}》，正在一起听`

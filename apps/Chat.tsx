@@ -459,18 +459,22 @@ const Chat: React.FC = () => {
         mcdMiniAppRef,
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
+        updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
     });
 
     // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
-    // 暮色 2026-08-01 反馈三轮：
+    // 暮色 2026-08-01 反馈四轮：
     //   1) 开启一起听后 LLM 不主动提一起听 → 原因是 system msg type='text' 被 useChatAI
     //      归类为"系统状态"（[系统状态] 前缀），按 7-31 偏好，AI 不要主动引用技术状态。
-    //   修：新增 type='music_invite'，跟 couple_space_event 同等对待（用 [一起听邀请] 前缀，
+    //      修：新增 type='music_invite'，跟 couple_space_event 同等对待（用 [一起听邀请] 前缀，
     //      AI 主动引用）。type 定义见 types.ts:1749；useChatAI.ts:1004 处理。
     //   2) Chat mount 时 prevTogetherRef 是空 Set → 误判为"新开启" → 重复推 system 消息。
-    //   修：用 module-level notifiedSet 记录"已经通知过的 charId"，跨 mount 持久。
+    //      修：用 module-level notifiedSet 记录"已经通知过的 charId"，跨 mount 持久。
     //   3) Chat mount 时如果 LLM 正在打字，再触发 triggerAI 容易冲突。
-    //   修：isTyping 时跳过 trigger，但仍然推 system 消息（让 LLM 下次轮到自己时能看到）。
+    //      修：isTyping 时跳过 trigger，但仍然推 system 消息（让 LLM 下次轮到自己时能看到）。
+    //   4) system msg content 不要带"可以自然地回应一下..."这种 LLM 提示词。
+    //      修：Message.content 只写"暮色 刚刚邀请你一起听《XX》— YY"这种事实（用户看到）；
+    //      LLM 看到的"可以自然地回应一下..."在 useChatAI.ts:1000-1014 拼接进 user 消息。
     //   切歌/关闭一起听时清空 notifiedSet（用户重新开一起听时再触发）。
     const { listeningTogetherWith, current: musicCurrent } = useMusic();
     const prevTogetherRef = useRef<Set<string>>(new Set());
@@ -490,10 +494,11 @@ const Chat: React.FC = () => {
                 notifiedListenTogether.add(char.id);
                 const songName = musicCurrent?.name;
                 const artists = musicCurrent?.artists;
-                // content 不带 [系统: ...] 前缀 — useChatAI 会按 type 加 [一起听邀请] 前缀
+                // Message.content 只写事实（用户在聊天流看到的就是这个短版）
+                // LLM 看到的"可以自然地回应一下..."提示词在 useChatAI.ts 拼接
                 const sysMsg = songName
-                    ? `暮色 刚刚邀请你一起听《${songName}》${artists ? ` — ${artists}` : ''}。可以自然地回应一下，聊聊你听到这首歌的感触、或者当下对 ta 的感觉；不一定要长篇大论，一两句也行，但**别忽略这条邀请**。`
-                    : `暮色 邀请你一起听歌，但当前没有正在播放的歌曲。可以自然地回应一下。`;
+                    ? `暮色 刚刚邀请你一起听《${songName}》${artists ? ` — ${artists}` : ''}`
+                    : `暮色 邀请你一起听歌，但当前没有正在播放的歌曲`;
                 // 推一条 system 消息到 messages + DB
                 const sysMsgObj: Message = {
                     id: `sys-listen-${Date.now()}`,

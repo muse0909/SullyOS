@@ -11,7 +11,7 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { getBuffColor } from '../utils/buffColor';
-import { useMusic, toHttps } from '../context/MusicContext';
+import { useMusic, toHttps, musicApi } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';

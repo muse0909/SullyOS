@@ -457,7 +457,29 @@ const MusicApp: React.FC = () => {
               style={{ color: C.primary, fontFamily: `'Georgia', 'Noto Serif SC', serif`, fontWeight: 600 }}>
               {discoverDetail.name}
             </div>
-            <div className="w-12" />
+            {/* 暮色 2026-08-01：歌单 / 榜单详情页加"播放全部"按钮 — 暗紫主题色，不另起绿色。
+                点了把 discoverDetailSongs 全部塞进 queue 从第一首开始播，替换当前队列。 */}
+            <button
+              onClick={() => {
+                if (discoverDetailSongs.length === 0) return;
+                const first = discoverDetailSongs[0];
+                playSong(first, { alsoSetQueue: true, replaceQueue: discoverDetailSongs, startIdx: 0 });
+                addToast(`已加入 ${discoverDetailSongs.length} 首到播放列表`, 'success');
+              }}
+              disabled={discoverDetailSongs.length === 0}
+              className="flex items-center gap-1 text-[10px] px-2.5 py-1.5 rounded-full shrink-0 active:scale-95 transition-transform"
+              style={{
+                background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                color: '#fff',
+                opacity: discoverDetailSongs.length === 0 ? 0.4 : 1,
+                boxShadow: `0 2px 8px ${C.glow}30`,
+              }}
+              aria-label="播放全部歌曲"
+              title={`播放全部 ${discoverDetailSongs.length} 首`}
+            >
+              <PlayIcon size={9} weight="fill" />
+              播放全部
+            </button>
           </div>
           <div className="flex-1 overflow-y-auto pb-24 relative z-10 shizuku-scrollbar">
             {discoverDetailLoading && (

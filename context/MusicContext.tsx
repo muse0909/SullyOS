@@ -282,6 +282,10 @@ interface MusicContextType {
   // 播放队列 / 当前曲
   queue: Song[];
   setQueue: (next: Song[]) => void;
+  /** 暮色 2026-08-01：删除 queue 中指定 songId，自动调整 idx */
+  removeFromQueue: (songId: number) => void;
+  /** 暮色 2026-08-01：跳到 queue[idx]（让 audio 从头播那首） */
+  jumpToQueueIndex: (targetIdx: number) => void;
   idx: number;
   current: Song | null;
 
@@ -385,6 +389,33 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setQueue = useCallback((next: Song[]) => {
     setQueueState(next);
   }, []);
+
+  // 暮色 2026-08-01：队列管理 — 删除单首 / 跳到指定 idx
+  // 删除 queue 中某首时，自动调整 idx（保持当前播放的歌不变，或清空 current）
+  const removeFromQueue = useCallback((songId: number) => {
+    setQueueState(q => {
+      const removeIdx = q.findIndex(s => s.id === songId);
+      if (removeIdx < 0) return q;
+      const next = q.filter(s => s.id !== songId);
+      // 调整 idx：删的 idx < 当前 idx → idx-1；删当前 idx → idx 不变（指向下一首）；删 > 当前 idx → 不变
+      if (removeIdx < idx) {
+        setIdx(idx - 1);
+      } else if (removeIdx === idx) {
+        // 当前歌被删了，idx 指向原来位置（现在是 next 歌），除非是最后一首
+        if (idx >= next.length) {
+          setIdx(next.length - 1);
+        }
+        // audio 会因为 current 变化自然停掉（current 重新计算自 queue[idx]）
+      }
+      return next;
+    });
+  }, [idx]);
+
+  // 跳到 queue[idx]：调 audio.play() 让它从头播那首
+  const jumpToQueueIndex = useCallback((targetIdx: number) => {
+    if (targetIdx < 0 || targetIdx >= queue.length) return;
+    setIdx(targetIdx);
+  }, [queue.length]);
 
   // 队列持久化
   useEffect(() => { saveState(queue, idx); }, [queue, idx]);
@@ -782,7 +813,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const value: MusicContextType = {
     cfg, setCfg,
-    queue, setQueue, idx, current,
+    queue, setQueue, removeFromQueue, jumpToQueueIndex, idx, current,
     playing, progress, duration, loadingSong,
     lyric, tlyric, activeLyricIdx,
     profile, refreshProfile,

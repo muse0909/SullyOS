@@ -176,7 +176,7 @@ const MusicApp: React.FC = () => {
       }
       if (tlRes.status === 'fulfilled') {
         const arr = (tlRes.value?.list || []).slice(0, 4).map((t: any) => ({
-          id: t.id, name: t.name || '', cover: toHttps(t.cover || ''),
+          id: t.id, name: t.name || '', cover: toHttps(t.coverImgUrl || ''),
         }));
         setDiscoverToplists(arr);
       }
@@ -359,7 +359,7 @@ const MusicApp: React.FC = () => {
               </section>
             )}
 
-            {/* 推荐歌单 — 横向滚动 */}
+            {/* 推荐歌单 — 3 列图标网格（不放横滑了，暮色嫌占地方） */}
             {discoverPls.length > 0 && (
               <section>
                 <div className="flex items-center gap-1.5 mb-2 px-1">
@@ -368,22 +368,22 @@ const MusicApp: React.FC = () => {
                     快速发现
                   </span>
                 </div>
-                <div className="flex gap-2.5 overflow-x-auto pb-2 -mx-3 px-3 shizuku-scrollbar">
-                  {discoverPls.map(pl => (
+                <div className="grid grid-cols-3 gap-2.5">
+                  {discoverPls.slice(0, 12).map(pl => (
                     <button
                       key={pl.id}
                       onClick={() => openDiscoverDetail('playlist', pl.id, pl.name)}
-                      className="shrink-0 w-32 text-left transition-all active:scale-95"
+                      className="text-left transition-all active:scale-95"
                     >
-                      <div className="relative w-32 h-32 rounded-xl overflow-hidden"
-                        style={{ boxShadow: `0 3px 12px ${C.glow}20` }}>
+                      <div className="relative w-full aspect-square rounded-xl overflow-hidden"
+                        style={{ boxShadow: `0 2px 10px ${C.glow}20`, background: `${C.faint}18` }}>
                         <img src={pl.picUrl} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-1 text-[8px] text-white"
+                        <div className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[8px] text-white text-right"
                           style={{ background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.55))' }}>
                           ♪ {pl.trackCount}
                         </div>
                       </div>
-                      <div className="text-[10.5px] mt-1.5 line-clamp-2" style={{ color: C.text, lineHeight: 1.3 }}>
+                      <div className="text-[10px] mt-1.5 line-clamp-2 leading-tight" style={{ color: C.text }}>
                         {pl.name}
                       </div>
                     </button>
@@ -519,7 +519,35 @@ const MusicApp: React.FC = () => {
   };
 
   const renderPlayer = () => {
-    if (!current) return null;
+    if (!current) {
+      // 未在播放 → 给个"去搜索找首歌"的占位（之前直接 return null 会让 tab 1 进来看不到东西）
+      return (
+        <div className="flex flex-col h-full relative"
+          style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 60%, ${C.bgDeep} 100%)` }}>
+          <BokehBg />
+          <MizuHeader title="Now Playing" />
+          <div className="flex-1 flex flex-col items-center justify-center px-6 relative z-10">
+            <div className="relative w-32 h-32 rounded-full flex items-center justify-center"
+              style={{ background: `linear-gradient(135deg, ${C.faint}30, ${C.muted}25)`, border: `2px dashed ${C.faint}60` }}>
+              <PlayIcon size={36} weight="duotone" color={C.muted} />
+            </div>
+            <div className="text-[12px] mt-5" style={{ color: C.muted }}>未在播放</div>
+            <div className="text-[10px] mt-1.5" style={{ color: C.faint }}>去「搜索」找首歌吧</div>
+            <button
+              onClick={() => setView('search')}
+              className="mt-5 px-5 py-2 rounded-full text-[11px] transition-all active:scale-95"
+              style={{
+                background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                color: 'white',
+                boxShadow: `0 3px 12px ${C.glow}30`,
+              }}
+            >
+              去找首歌 →
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col h-full relative"
         style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 60%, ${C.bgDeep} 100%)` }}>
@@ -997,16 +1025,18 @@ const MusicApp: React.FC = () => {
   );
 
   // ════════════════ 底部 tab bar ════════════════
-  // 4 个 tab：首页(=search view) / 搜索(=search view) / 一起听 / 我的
-  // 首页和搜索暂时共用 search view，未来可拆
-  const isTabActive = (tab: 'home' | 'search' | 'listen' | 'profile') => {
-    if (tab === 'home' || tab === 'search') return view === 'search';
+  // 4 个 tab：播放(player view) / 搜索 / 一起听 / 我的
+  // 暮色：tab 1 改成"播放"进 player view；"搜索" tab 顶部承载发现区（推荐+榜单+热搜）
+  const isTabActive = (tab: 'player' | 'search' | 'listen' | 'profile') => {
+    if (tab === 'player') return view === 'player';
+    if (tab === 'search') return view === 'search';
     if (tab === 'listen') return view === 'listen';
     if (tab === 'profile') return view === 'profile';
     return false;
   };
-  const goTab = (tab: 'home' | 'search' | 'listen' | 'profile') => {
-    if (tab === 'home' || tab === 'search') setView('search');
+  const goTab = (tab: 'player' | 'search' | 'listen' | 'profile') => {
+    if (tab === 'player') setView('player');
+    else if (tab === 'search') setView('search');
     else if (tab === 'listen') setView('listen');
     else if (tab === 'profile') setView('profile');
   };
@@ -1198,13 +1228,13 @@ const MusicApp: React.FC = () => {
         />
       )}
 
-      {/* 底部 tab bar — 跨所有主视图持久显示（player/visit_char/settings 隐藏） */}
-      {(view === 'search' || view === 'listen' || view === 'profile') && (
+      {/* 底部 tab bar — 4 个主视图都显示（player/visit_char/settings 隐藏） */}
+      {(view === 'player' || view === 'search' || view === 'listen' || view === 'profile') && (
         <div className="absolute bottom-0 left-0 right-0 z-30 pointer-events-none">
           <div className="pointer-events-auto mx-2 mb-2 rounded-3xl shizuku-glass-strong flex items-stretch"
             style={{ border: `1px solid ${C.faint}30`, boxShadow: `0 -4px 20px ${C.glow}10` }}>
             {([
-              { key: 'home' as const, label: '首页', icon: 'home' },
+              { key: 'player' as const, label: '播放', icon: 'player' },
               { key: 'search' as const, label: '搜索', icon: 'search' },
               { key: 'listen' as const, label: '一起听', icon: 'listen' },
               { key: 'profile' as const, label: '我的', icon: 'profile' },
@@ -1216,9 +1246,9 @@ const MusicApp: React.FC = () => {
                   onClick={() => goTab(t.key)}
                   className="flex-1 py-2 flex flex-col items-center gap-0.5 transition-all active:scale-95"
                 >
-                  {t.icon === 'home' && (
+                  {t.icon === 'player' && (
                     <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? C.primary : C.muted}>
-                      <path d="M12 3 2 12h3v8h5v-6h4v6h5v-8h3L12 3z" />
+                      <path d="M8 5v14l11-7L8 5z" />
                     </svg>
                   )}
                   {t.icon === 'search' && (

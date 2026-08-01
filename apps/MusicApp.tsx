@@ -24,14 +24,14 @@ type View = 'search' | 'settings' | 'player' | 'profile' | 'visit_char' | 'liste
 
 // ========================= 主组件 =========================
 const MusicApp: React.FC = () => {
-  const { closeApp, addToast, characters, userProfile } = useOS();
+  const { closeApp, addToast, characters, userProfile, setUserProfile } = useOS();
   const {
     cfg, setCfg,
     current, playing, progress, duration, loadingSong,
     lyric, tlyric, activeLyricIdx,
     profile, playSong, togglePlay, nextSong, prevSong, seek,
     liked, toggleLike, setToastHandler,
-    listeningTogetherWith, removeListeningPartner,
+    listeningTogetherWith, addListeningPartner, removeListeningPartner,
     addLocalSong, removeLocalSong, localAlbumSongs,
     playMode, setPlayMode,
     regeneratingId, regeneratingStatus,
@@ -778,6 +778,37 @@ const MusicApp: React.FC = () => {
             </div>
             <div className="text-[9px] mt-1.5 italic" style={{ color: C.faint }}>lossless / hires 需要黑胶 SVIP</div>
           </div>
+
+          {/* 暮色 2026-08-01：隐藏悬浮迷你播放器开关 — 控制 GlobalMiniPlayer 是否显示 */}
+          <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
+                  <Sparkle size={6} color={C.glow} delay={0.5} /> 隐藏悬浮迷你播放器
+                </div>
+                <div className="text-[9px] mt-1 italic" style={{ color: C.faint }}>
+                  关闭后其他页面不再显示小圆球 / 展开条
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const next = !userProfile.miniPlayerHidden;
+                  setUserProfile({ miniPlayerHidden: next });
+                  addToast(next ? '已隐藏迷你播放器' : '已显示迷你播放器', 'info');
+                }}
+                className="shrink-0 w-12 h-6 rounded-full relative transition-colors"
+                style={{
+                  background: userProfile.miniPlayerHidden ? C.faint + '40' : `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                }}
+                aria-label={userProfile.miniPlayerHidden ? '显示迷你播放器' : '隐藏迷你播放器'}
+              >
+                <div
+                  className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all"
+                  style={{ left: userProfile.miniPlayerHidden ? '2px' : '26px' }}
+                />
+              </button>
+            </div>
+          </div>
           <div className="space-y-3 pt-1">
             <button
               onClick={async () => {
@@ -927,6 +958,37 @@ const MusicApp: React.FC = () => {
           </button>
         </section>
 
+        {/* 当前一起听状态摘要 — 放在 03 拜访上面，不被 tab bar 挡 */}
+        {listeningTogetherWith.length > 0 && current && (
+          <section className="rounded-2xl p-3 shizuku-glass" style={{ border: `1px solid ${C.sakura}40` }}>
+            <div className="text-[10px] tracking-wider mb-1.5" style={{ color: C.sakura, fontWeight: 600 }}>
+              一起听中
+            </div>
+            <div className="flex items-center gap-2">
+              <img src={userProfile?.avatar || ''} alt="" className="w-7 h-7 rounded-full object-cover border" style={{ borderColor: C.glow + '60' }} onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
+              <div className="text-[11px]" style={{ color: C.muted }}>你</div>
+              <div className="text-[11px]" style={{ color: C.sakura }}>×</div>
+              <div className="flex -space-x-2">
+                {listeningTogetherWith.slice(0, 5).map(id => {
+                  const ch = characters.find(c => c.id === id);
+                  if (!ch) return null;
+                  const av = ch.avatar || '';
+                  const isImg = av.startsWith('data:') || av.startsWith('http');
+                  return isImg ? (
+                    <img key={id} src={av} alt="" className="w-7 h-7 rounded-full object-cover border-2" style={{ borderColor: C.bg }} />
+                  ) : (
+                    <div key={id} className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] border-2"
+                      style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, borderColor: C.bg }}>
+                      {av || ch.name.slice(0, 1)}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] flex-1 truncate" style={{ color: C.muted }}>在听《{current.name}》</div>
+            </div>
+          </section>
+        )}
+
         {/* 拜访 · 高级版一起听 */}
         {onVisitCharAvailable && (
           <section>
@@ -968,37 +1030,6 @@ const MusicApp: React.FC = () => {
                   </button>
                 );
               })}
-            </div>
-          </section>
-        )}
-
-        {/* 当前一起听状态摘要 */}
-        {listeningTogetherWith.length > 0 && current && (
-          <section className="rounded-2xl p-3 shizuku-glass" style={{ border: `1px solid ${C.sakura}40` }}>
-            <div className="text-[10px] tracking-wider mb-1.5" style={{ color: C.sakura, fontWeight: 600 }}>
-              一起听中
-            </div>
-            <div className="flex items-center gap-2">
-              <img src={userProfile?.avatar || ''} alt="" className="w-7 h-7 rounded-full object-cover border" style={{ borderColor: C.glow + '60' }} onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
-              <div className="text-[11px]" style={{ color: C.muted }}>你</div>
-              <div className="text-[11px]" style={{ color: C.sakura }}>×</div>
-              <div className="flex -space-x-2">
-                {listeningTogetherWith.slice(0, 5).map(id => {
-                  const ch = characters.find(c => c.id === id);
-                  if (!ch) return null;
-                  const av = ch.avatar || '';
-                  const isImg = av.startsWith('data:') || av.startsWith('http');
-                  return isImg ? (
-                    <img key={id} src={av} alt="" className="w-7 h-7 rounded-full object-cover border-2" style={{ borderColor: C.bg }} />
-                  ) : (
-                    <div key={id} className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] border-2"
-                      style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, borderColor: C.bg }}>
-                      {av || ch.name.slice(0, 1)}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="text-[10px] flex-1 truncate" style={{ color: C.muted }}>在听《{current.name}》</div>
             </div>
           </section>
         )}

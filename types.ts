@@ -1278,6 +1278,12 @@ export interface UserProfile {
     name: string;
     avatar: string;
     bio: string;
+    /**
+     * 全局"是否隐藏悬浮迷你播放器"开关
+     * 暮色 2026-08-01：以前是 sessionStorage 临时隐藏（切歌会复活），现在改成持久设置。
+     * 在音乐 app 设置页有 toggle。
+     */
+    miniPlayerHidden?: boolean;
 }
 
 export interface Toast {

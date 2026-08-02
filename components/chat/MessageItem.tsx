@@ -737,8 +737,8 @@ const MessageItem = React.memo(({
                                 : isLastInGroup;
                             if (!showAiTs || showTimestamp === 'never') return null;
                             return (
-                                <div className="mt-1 flex items-center gap-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
-                                    <span className="w-1 h-1 rounded-full bg-slate-400 shrink-0" />
+                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底（圆点+胶囊太撑）
+                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>
                             );
@@ -790,8 +790,8 @@ const MessageItem = React.memo(({
                             if (!isLastInGroup) return null;
                             if (showTimestamp === 'never') return null;
                             return (
-                                <div className="mt-1 flex items-center gap-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
-                                    <span className="w-1 h-1 rounded-full bg-slate-400 shrink-0" />
+                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底
+                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>
                             );

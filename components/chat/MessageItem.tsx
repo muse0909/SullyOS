@@ -708,8 +708,29 @@ const MessageItem = React.memo(({
 
                 {/* Avatar - Absolute Positioned */}
                 {!isUser && (
-                        <div className={`absolute top-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
+                        <div className={`absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
+                        {/*
+                          暮色 2026-08-02 选 A 方案：主动消息时间戳挪到头像正下方
+                          - 头像 div 改成 flex column，时间戳跟在头像后面
+                          - 跟头像绑死，气泡长度/位置变化不影响
+                          - 颜色 slate-500/85 深灰（去掉 7-27 v2 的紫色小圆点/浅紫胶囊）
+                          - 按轮显示：老数据（无 proactiveRoundStart）每条显示；新数据只轮首显示
+                          - 普通 user/AI 对话时间戳保留在 bubble 下方（isLastInGroup 行为）
+                        */}
+                        {(() => {
+                            const meta: any = m.metadata || {};
+                            const isNewProactiveFormat = 'proactiveRoundStart' in meta;
+                            const proactiveShowTs = meta.isProactive && (
+                                isNewProactiveFormat ? !!meta.proactiveRoundStart : true
+                            );
+                            if (!proactiveShowTs || showTimestamp === 'never') return null;
+                            return (
+                                <div className="mt-1 text-[9px] font-medium text-slate-500/85 whitespace-nowrap leading-none">
+                                    {formatTime(m.timestamp)}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 
@@ -724,32 +745,29 @@ const MessageItem = React.memo(({
                         - 点击展开 → 完整内容显示在下方浅色块里
                         - 只在 metadata.thought 存在时渲染（主动消息响应时由 OSContext 写入）
                         - 只在轮首（proactiveRoundStart）显示：一轮主动消息只显示一个思维链
+                        - 兼容老数据：没 proactiveRoundStart 标记的历史主动消息（c613e54 之前）每条都显示
                     */}
-                    {!isUser && m.metadata?.thought && m.metadata?.proactiveRoundStart && (
-                        <ThoughtFold thought={m.metadata.thought} />
-                    )}
+                    {(() => {
+                        const meta: any = m.metadata || {};
+                        const isNewFormat = 'proactiveRoundStart' in meta;
+                        const showThought = meta.thought && (
+                            isNewFormat ? !!meta.proactiveRoundStart : true
+                        );
+                        if (!(!isUser && showThought)) return null;
+                        return <ThoughtFold thought={meta.thought} />;
+                    })()}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
                     {(() => {
                         /*
                           暮色 2026-08-02：时间戳显示规则
-                          - 颜色：深灰（slate-500/85），去掉 7-27 v2 加的紫色小圆点/浅紫胶囊
-                          - 主动消息 vs 回复消息：不合并（保持 7-27 v2 calcBreaks 规则）
-                          - 主动消息内部：只显示轮首（proactiveRoundStart）—— 一轮一个时间戳
-                          - 兼容老数据：没 proactiveRoundStart 标记的历史主动消息，按 7-23/7-27 行为（每条都显示）
-                            判断方法：'proactiveRoundStart' in metadata 区分新老格式
-                          - user/AI 正常对话：保持 isLastInGroup 行为（不变）
+                          - 主动消息：时间戳已经挪到头像正下方（上方 commonLayout 头像 div 里），这里不重复
+                          - 普通 user/AI 对话：保持 isLastInGroup 行为，时间戳在 bubble 下方
                         */
-                        const meta: any = m.metadata || {};
-                        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
-                        const proactiveShowTs = meta.isProactive && (
-                            isNewProactiveFormat
-                                ? !!meta.proactiveRoundStart
-                                : true
-                        );
-                        const shouldShow = (isLastInGroup && !meta.isProactive) || proactiveShowTs;
-                        if (!shouldShow || showTimestamp === 'never') return null;
+                        if (m.metadata?.isProactive) return null;  // 主动消息时间戳已在头像下
+                        if (!isLastInGroup) return null;
+                        if (showTimestamp === 'never') return null;
                         return (
                             <div className={`text-[9px] px-1 mt-1 font-medium text-slate-500/85 ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
                                 {formatTime(m.timestamp)}

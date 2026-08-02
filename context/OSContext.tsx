@@ -1469,7 +1469,7 @@ if (!isVisible || !isChattingWithThisChar) {
               const recentChatContext = recentMsgs
                   .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
                   .filter(m => ChatParser.hasDisplayContent(m.content || ''))
-                  .slice(-8)
+                  .slice(-50)  // 暮色 2026-08-02：8 → 50（让 AI 看到更多上下文，思考更准）
                   .map(m => {
                       const speaker = m.role === 'user' ? userName : char.name;
                       const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();

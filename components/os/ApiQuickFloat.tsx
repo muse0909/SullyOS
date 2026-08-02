@@ -184,6 +184,10 @@ const ApiQuickFloat: React.FC = () => {
     availableModels,
     setAvailableModels,
     apiPresets,
+    // 暮色 2026-08-02 19:00 修：之前 handleSavePreset 调 addApiPreset(name, ...) 但 useOS 没解构 addApiPreset，
+    //   TS 不严格检查 free variable，Vite build 通过，运行时 ReferenceError "addApiPreset is not defined"。
+    //   修：从 useOS 解构 addApiPreset 出来。
+    addApiPreset,
     removeApiPreset,
     addToast,
     isLocked,

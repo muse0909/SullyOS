@@ -291,6 +291,17 @@ const MessageItem = React.memo(({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isFirstInGroup;
+    // 暮色 2026-08-02：主动消息新数据只轮首画头像（避免一轮多个气泡多头像看着像多条消息）
+    //   主动消息新数据：m.metadata?.proactiveRoundStart === true 才画
+    //   主动消息老数据（没 proactiveRoundStart 标记）：按 shouldShowAvatar 行为（保留 7-23 行为）
+    //   普通消息：按 shouldShowAvatar
+    const effectiveShowAvatar = (() => {
+        const meta: any = m.metadata || {};
+        const isProactive = meta.isProactive;
+        const isNewProactiveFormat = isProactive && 'proactiveRoundStart' in meta;
+        if (isProactive && isNewProactiveFormat) return !!meta.proactiveRoundStart;
+        return shouldShowAvatar;
+    })();
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
@@ -707,26 +718,27 @@ const MessageItem = React.memo(({
                 )}
 
                 {/* Avatar - Absolute Positioned */}
-                {!isUser && (
+                {!isUser && effectiveShowAvatar && (
                         <div className={`absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
                         {/*
-                          暮色 2026-08-02 选 A 方案：主动消息时间戳挪到头像正下方
-                          - 头像 div 改成 flex column，时间戳跟在头像后面
-                          - 跟头像绑死，气泡长度/位置变化不影响
-                          - 颜色 slate-500/85 深灰（去掉 7-27 v2 的紫色小圆点/浅紫胶囊）
-                          - 按轮显示：老数据（无 proactiveRoundStart）每条显示；新数据只轮首显示
-                          - 普通 user/AI 对话时间戳保留在 bubble 下方（isLastInGroup 行为）
+                          暮色 2026-08-02：时间戳挪到头像正下方（A 方案），所有消息都用
+                          - 样式：圆点 + 胶囊 + slate 深灰（恢复 7-27 v2 圆点胶囊样式但换深灰）
+                          - 主动消息新数据：只在 proactiveRoundStart=true 时画（轮首唯一）
+                          - 主动消息老数据：每条都画（保留 7-23 行为，避免老数据头像消失）
+                          - 普通 AI 消息：isLastInGroup 时画
                         */}
                         {(() => {
                             const meta: any = m.metadata || {};
-                            const isNewProactiveFormat = 'proactiveRoundStart' in meta;
-                            const proactiveShowTs = meta.isProactive && (
-                                isNewProactiveFormat ? !!meta.proactiveRoundStart : true
-                            );
-                            if (!proactiveShowTs || showTimestamp === 'never') return null;
+                            const isProactive = meta.isProactive;
+                            const isNewFormat = isProactive && 'proactiveRoundStart' in meta;
+                            const showAiTs = isProactive
+                                ? (isNewFormat ? !!meta.proactiveRoundStart : true)
+                                : isLastInGroup;
+                            if (!showAiTs || showTimestamp === 'never') return null;
                             return (
-                                <div className="mt-1 text-[9px] font-medium text-slate-500/85 whitespace-nowrap leading-none">
+                                <div className="mt-1 flex items-center gap-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                    <span className="w-1 h-1 rounded-full bg-slate-400 shrink-0" />
                                     {formatTime(m.timestamp)}
                                 </div>
                             );
@@ -759,27 +771,31 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
-                    {(() => {
-                        /*
-                          暮色 2026-08-02：时间戳显示规则
-                          - 主动消息：时间戳已经挪到头像正下方（上方 commonLayout 头像 div 里），这里不重复
-                          - 普通 user/AI 对话：保持 isLastInGroup 行为，时间戳在 bubble 下方
-                        */
-                        if (m.metadata?.isProactive) return null;  // 主动消息时间戳已在头像下
-                        if (!isLastInGroup) return null;
-                        if (showTimestamp === 'never') return null;
-                        return (
-                            <div className={`text-[9px] px-1 mt-1 font-medium text-slate-500/85 ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
-                                {formatTime(m.timestamp)}
-                            </div>
-                        );
-                    })()}
+                    {/*
+                      暮色 2026-08-02：时间戳已挪到头像正下方（commonLayout 头像 div 里）
+                      主动消息 + 普通 AI 消息都在那里画，这里不再重复
+                    */}
                 </div>
 
                                 {/* User Avatar - Absolute Positioned */}
-                {isUser && (
-                    <div className="absolute right-3 top-0 z-0">
+                {isUser && effectiveShowAvatar && (
+                    <div className={`absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
+                        {/*
+                          暮色 2026-08-02：用户消息时间戳也挪到头像下（统一）
+                          - isLastInGroup 行为（30 分钟 group 最后一个）
+                          - 样式跟 AI 头像下时间戳一致
+                        */}
+                        {(() => {
+                            if (!isLastInGroup) return null;
+                            if (showTimestamp === 'never') return null;
+                            return (
+                                <div className="mt-1 flex items-center gap-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                    <span className="w-1 h-1 rounded-full bg-slate-400 shrink-0" />
+                                    {formatTime(m.timestamp)}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 

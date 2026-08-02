@@ -2339,30 +2339,29 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 content: `${char.name} 想给暮色放《${songName || '???'}》，但没找到合适的版本（${reason}）`,
             });
             addToast(`${char.name} 想放《${songName || '歌名缺失'}》但没找到`, 'info');
+
+            // 暮色 2026-08-03：放歌失败时仍调一次主 API 让大语言模型知道结果并自然道歉
+            // 成功路径已不调 followup（toast + 系统消息 + music_card 三件套已足够，省 5-7w token）
+            const followMessages = [
+                ...fullMessages,
+                {
+                    role: 'tool',
+                    tool_call_id: playSongCall.id,
+                    content: `放歌失败：${playSongError || '未知错误'}`,
+                },
+            ];
+            const followBody = { ...baseReqBody, messages: followMessages };
+            // 删掉 tools 避免无限循环（大语言模型下一轮不应该再调 play_song）
+            delete followBody.tools;
+            delete followBody.tool_choice;
+
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(followBody),
+            });
+            updateTokenUsage(data, historyMsgCount, 'play-song-followup');
         }
-
-        // 跟生图一样：再调一次大语言模型让大语言模型知道工具结果（OpenAI 协议用 role='tool' 回传）
-        const followMessages = [
-            ...fullMessages,
-            {
-                role: 'tool',
-                tool_call_id: playSongCall.id,
-                content: playSongSnap
-                    ? `成功放歌《${playSongSnap.name}》— ${playSongSnap.artists}${join ? '，已加入一起听' : ''}`
-                    : `放歌失败：${playSongError || '未知错误'}`,
-            },
-        ];
-        const followBody = { ...baseReqBody, messages: followMessages };
-        // 删掉 tools 避免无限循环（大语言模型下一轮不应该再调 play_song）
-        delete followBody.tools;
-        delete followBody.tool_choice;
-
-        data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(followBody),
-        });
-        updateTokenUsage(data, historyMsgCount, 'play-song-followup');
     }
 }
 

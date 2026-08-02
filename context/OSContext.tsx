@@ -1936,8 +1936,16 @@ if (!isVisible || !isChattingWithThisChar) {
   };
 
   // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
-  // 各角色自身的 enabled 标志保持不变。同时把同一份值写到全局 lightLLM，
-  // 让记忆宫殿轻量 LLM 与情绪 API 保持一致（两者本来就指向同一个副 API 概念）。
+  // 各角色自身的 enabled 标志保持不变。
+  // 暮色 2026-08-02 19:00 修：之前这个函数"顺便"把同一份值写到全局 lightLLM——这是 bug 根因。
+  //   handleSaveLightApi 流程：
+  //     1) updateMemoryPalaceConfig({ lightLLM: 完整 api，含 protocol='gemini' })  → lightLLM 写入 protocol='gemini'
+  //     2) syncEmotionApiToAllCharacters({ baseUrl, apiKey, model })             → 内部 setMemoryPalaceConfig
+  //        用 { ...memoryPalaceConfig.lightLLM, baseUrl, apiKey, model } 重建 lightLLM
+  //        ⚠️ memoryPalaceConfig 是闭包捕获的旧值（React 18 setState 异步 flush）→ lightLLM 用旧 protocol='openai'
+  //        → 之前存的 'gemini' 被覆盖回 'openai' → useEffect 同步 → setLightProtocol('openai') 跳回
+  //   修：syncEmotionApiToAllCharacters **只更新 emotionConfig.api**，**不**碰 lightLLM。
+  //      lightLLM 由 updateMemoryPalaceConfig 单独管（handleSaveLightApi 已经在调了）。
   const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
     setCharacters(prev => {
       const updated = prev.map(c => {
@@ -1952,20 +1960,7 @@ if (!isVisible || !isChattingWithThisChar) {
       });
       return updated;
     });
-    if (api && api.baseUrl) {
-      const newConfig: MemoryPalaceGlobalConfig = {
-        embedding: { ...memoryPalaceConfig.embedding },
-        // 暮色 2026-08-02 19:00 修：之前 lightLLM 只用 3 字段（baseUrl/apiKey/model），
-        //   丢 protocol / claude* / gemini* 字段。后果：handleSaveLightApi 调
-        //   syncEmotionApiToAllCharacters 时覆盖 lightLLM → 之前存的 'gemini' 协议变成 undefined →
-        //   useEffect 同步 syncedProtocol = memoryPalaceConfig.lightLLM.protocol || 'openai' → 跳回 'openai'。
-        //   修：先 spread 旧 lightLLM（保留所有字段）再覆盖 3 个字段。
-        lightLLM: { ...memoryPalaceConfig.lightLLM, baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
-        rerank: { ...memoryPalaceConfig.rerank },
-      };
-      setMemoryPalaceConfig(newConfig);
-      localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
-    }
+    // 注意：这里**不**再更新 lightLLM。lightLLM 由 updateMemoryPalaceConfig 单独管理。
   };
   const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
     const newConfig = { ...remoteVectorConfig, ...updates };

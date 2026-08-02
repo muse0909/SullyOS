@@ -1955,7 +1955,12 @@ if (!isVisible || !isChattingWithThisChar) {
     if (api && api.baseUrl) {
       const newConfig: MemoryPalaceGlobalConfig = {
         embedding: { ...memoryPalaceConfig.embedding },
-        lightLLM: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
+        // 暮色 2026-08-02 19:00 修：之前 lightLLM 只用 3 字段（baseUrl/apiKey/model），
+        //   丢 protocol / claude* / gemini* 字段。后果：handleSaveLightApi 调
+        //   syncEmotionApiToAllCharacters 时覆盖 lightLLM → 之前存的 'gemini' 协议变成 undefined →
+        //   useEffect 同步 syncedProtocol = memoryPalaceConfig.lightLLM.protocol || 'openai' → 跳回 'openai'。
+        //   修：先 spread 旧 lightLLM（保留所有字段）再覆盖 3 个字段。
+        lightLLM: { ...memoryPalaceConfig.lightLLM, baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
         rerank: { ...memoryPalaceConfig.rerank },
       };
       setMemoryPalaceConfig(newConfig);

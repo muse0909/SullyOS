@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'reac
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
-import { ChatParser } from '../utils/chatParser';
+import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';

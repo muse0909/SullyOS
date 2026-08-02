@@ -307,12 +307,6 @@ const MessageItem = React.memo(({
         if (isNewProactiveFormat) return !!meta.proactiveRoundStart;
         return isFirstInGroup;  // 老数据：按 group 算首（不按 every_message）
     })();
-    // 暮色 2026-08-02 22:29 调试：8 个气泡都画了头像 + 时间戳，加 console 看实际 metadata
-    //   让暮色下次触发主动消息时查 console，确认是 1 次触发拆 8 个还是 8 次独立触发
-    if (m.metadata?.isProactive) {
-        const meta: any = m.metadata || {};
-        console.log(`[DEBUG/proactive-msg] ts=${m.timestamp} roundStart=${meta.proactiveRoundStart} thought=${!!meta.thought} isFirstInGroup=${isFirstInGroup} isLastInGroup=${isLastInGroup} effectiveShowAvatar=${effectiveShowAvatar} content=${(m.content || '').slice(0, 30)}`);
-    }
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 

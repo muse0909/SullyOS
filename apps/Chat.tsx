@@ -478,7 +478,12 @@ const Chat: React.FC = () => {
     //      LLM 看到的"可以自然地回应一下..."在 useChatAI.ts:1000-1014 拼接进 user 消息。
     //   切歌/关闭一起听时清空 notifiedSet（用户重新开一起听时再触发）。
     const { listeningTogetherWith, current: musicCurrent } = useMusic();
-    const prevTogetherRef = useRef<Set<string>>(new Set());
+    // 暮色 2026-08-02 16:32：组件挂载时把"上一个值"初始化成当前 listeningTogetherWith，
+    //   避免把"已经在听"误判成"新加" → 不会重复推"暮色 刚刚邀请你一起听"提醒
+    //   根因：useRef 每次挂载都重置成空集合，但 listeningTogetherWith 已经有角色 id，
+    //   第一次跑副作用钩子时空 prev + 有 cur → 误判 isNewlyAdded = true → 推提醒
+    //   之前靠模块级 notifiedListenTogether 兜底，但浏览器刷新后模块级集合也丢了
+    const prevTogetherRef = useRef<Set<string>>(new Set(listeningTogetherWith));
     useEffect(() => {
         if (!char?.id) return;
         const prev = prevTogetherRef.current;

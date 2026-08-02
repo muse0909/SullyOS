@@ -723,30 +723,39 @@ const MessageItem = React.memo(({
                         - 浅灰小字"💭 思维链 ›"，不斜体
                         - 点击展开 → 完整内容显示在下方浅色块里
                         - 只在 metadata.thought 存在时渲染（主动消息响应时由 OSContext 写入）
-                        - 不限于主动消息：所有有 thought 的 AI 消息都显示
+                        - 只在轮首（proactiveRoundStart）显示：一轮主动消息只显示一个思维链
                     */}
-                    {!isUser && m.metadata?.thought && (
+                    {!isUser && m.metadata?.thought && m.metadata?.proactiveRoundStart && (
                         <ThoughtFold thought={m.metadata.thought} />
                     )}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
-                    {(isLastInGroup || m.metadata?.isProactive) && showTimestamp !== 'never' && (
-                        <div className={`text-[9px] px-1 mt-1 font-medium flex items-center gap-1 ${
-                            // 暮色 2026-07-27 v2：主动消息时间戳加视觉标记，跟普通时间戳区分
-                            // 根因：formatTime 只显示 HH:MM，秒级看不出来
-                            //   AI 正常 22:00:00 + proactive 22:00:30 文本都是 "22:00"——
-                            //   看着像合并。加紫色小圆点 + 略深色背景，秒级看不出来也能认出"这是主动"
-                            m.metadata?.isProactive
-                                ? 'text-violet-500/85 bg-violet-50/70 rounded-full px-2'
-                                : 'text-slate-400/80'
-                        } ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
-                            {m.metadata?.isProactive && (
-                                <span className="w-1 h-1 rounded-full bg-violet-400 shrink-0" />
-                            )}
-                            {formatTime(m.timestamp)}
-                        </div>
-                    )}
+                    {(() => {
+                        /*
+                          暮色 2026-08-02：时间戳显示规则
+                          - 颜色：深灰（slate-500/85），去掉 7-27 v2 加的紫色小圆点/浅紫胶囊
+                          - 主动消息 vs 回复消息：不合并（保持 7-27 v2 calcBreaks 规则）
+                          - 主动消息内部：只显示轮首（proactiveRoundStart）—— 一轮一个时间戳
+                          - 兼容老数据：没 proactiveRoundStart 标记的历史主动消息，按 7-23/7-27 行为（每条都显示）
+                            判断方法：'proactiveRoundStart' in metadata 区分新老格式
+                          - user/AI 正常对话：保持 isLastInGroup 行为（不变）
+                        */
+                        const meta: any = m.metadata || {};
+                        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
+                        const proactiveShowTs = meta.isProactive && (
+                            isNewProactiveFormat
+                                ? !!meta.proactiveRoundStart
+                                : true
+                        );
+                        const shouldShow = (isLastInGroup && !meta.isProactive) || proactiveShowTs;
+                        if (!shouldShow || showTimestamp === 'never') return null;
+                        return (
+                            <div className={`text-[9px] px-1 mt-1 font-medium text-slate-500/85 ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
+                                {formatTime(m.timestamp)}
+                            </div>
+                        );
+                    })()}
                 </div>
 
                                 {/* User Avatar - Absolute Positioned */}

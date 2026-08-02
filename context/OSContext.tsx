@@ -1621,6 +1621,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   const savedPreviewChunks: string[] = [];
                   const baseTimestamp = Date.now();
                   let offset = 0;
+                  // 暮色 2026-08-02：proactiveRoundStart 标记"轮首"
+                  //   一轮主动消息只显示一个时间戳、一个思维链
+                  //   之前 7-23/7-27 改的"每条独立时间戳"被暮色否定，这次反过来：按轮算
+                  //   7-27 v2 的"proactive 永远独立 group"保持不动（主动消息和正常回复不合并）
+                  let isFirstChunk = true;
 
                   for (const part of responseParts) {
                       if (part.type === 'emoji') {
@@ -1632,7 +1637,11 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'emoji',
                                   content: foundEmoji.url,
                                   timestamp: baseTimestamp + offset,
-                                  metadata: { isProactive: true },
+                                  metadata: {
+                                      isProactive: true,
+                                      // 轮首标记
+                                      ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                  },
                               });
                           } else {
                               const fallbackText = `发送了表情包：${part.content}`;
@@ -1642,10 +1651,16 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'text',
                                   content: fallbackText,
                                   timestamp: baseTimestamp + offset,
-                                  metadata: { isProactive: true },
+                                  metadata: {
+                                      isProactive: true,
+                                      // 轮首标记 + thought（只挂到轮首）
+                                      ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                      ...(isFirstChunk && thoughtContent ? { thought: thoughtContent } : {}),
+                                  },
                               });
                               savedPreviewChunks.push(fallbackText);
                           }
+                          isFirstChunk = false;
                           offset += 1;
                           continue;
                       }
@@ -1663,12 +1678,14 @@ if (!isVisible || !isChattingWithThisChar) {
                               timestamp: baseTimestamp + offset,
                               metadata: {
                                   isProactive: true,
-                                  // 暮色 2026-08-02：把思维链挂到 metadata.thought
-                                  //   显示方式待暮色定（见 memory 中本轮的方案对比）
-                                  ...(thoughtContent ? { thought: thoughtContent } : {}),
+                                  // 暮色 2026-08-02：thought 只挂到轮首（一轮只显示一个思维链）
+                                  //   proactiveRoundStart 同时作为时间戳/思维链的显示开关
+                                  ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                  ...(isFirstChunk && thoughtContent ? { thought: thoughtContent } : {}),
                               },
                           });
                           savedPreviewChunks.push(chunk);
+                          isFirstChunk = false;
                           offset += 1;
                       }
                   }

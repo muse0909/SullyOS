@@ -291,16 +291,21 @@ const MessageItem = React.memo(({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isFirstInGroup;
-    // 暮色 2026-08-02：主动消息新数据只轮首画头像（避免一轮多个气泡多头像看着像多条消息）
-    //   主动消息新数据：m.metadata?.proactiveRoundStart === true 才画
-    //   主动消息老数据（没 proactiveRoundStart 标记）：按 shouldShowAvatar 行为（保留 7-23 行为）
-    //   普通消息：按 shouldShowAvatar
+    // 暮色 2026-08-02 21:48：统一"按轮"画头像逻辑
+    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
+    //   之前 7-23/7-27 主动消息每条都画头像时间戳的"7-23 行为"——暮色不要
+    //
+    //   规则：
+    //   - 主动消息新数据（c613e54 之后）：m.metadata?.proactiveRoundStart === true 才画（轮首唯一）
+    //   - 主动消息老数据（c613e54 之前，没 proactiveRoundStart 标记）：按 isFirstInGroup 画（按 group 算首）
+    //   - 普通消息：按 shouldShowAvatar（every_message || isFirstInGroup）
     const effectiveShowAvatar = (() => {
         const meta: any = m.metadata || {};
         const isProactive = meta.isProactive;
-        const isNewProactiveFormat = isProactive && 'proactiveRoundStart' in meta;
-        if (isProactive && isNewProactiveFormat) return !!meta.proactiveRoundStart;
-        return shouldShowAvatar;
+        if (!isProactive) return shouldShowAvatar;
+        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
+        if (isNewProactiveFormat) return !!meta.proactiveRoundStart;
+        return isFirstInGroup;  // 老数据：按 group 算首（不按 every_message）
     })();
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
@@ -731,9 +736,12 @@ const MessageItem = React.memo(({
                         {(() => {
                             const meta: any = m.metadata || {};
                             const isProactive = meta.isProactive;
-                            const isNewFormat = isProactive && 'proactiveRoundStart' in meta;
+                            // 暮色 2026-08-02 21:48：统一"按轮"画时间戳
+                            //   主动消息新数据：proactiveRoundStart=true 才画（轮首）
+                            //   主动消息老数据：按 isLastInGroup（不每条画）
+                            //   普通 AI 消息：isLastInGroup
                             const showAiTs = isProactive
-                                ? (isNewFormat ? !!meta.proactiveRoundStart : true)
+                                ? ('proactiveRoundStart' in meta ? !!meta.proactiveRoundStart : isLastInGroup)
                                 : isLastInGroup;
                             if (!showAiTs || showTimestamp === 'never') return null;
                             return (

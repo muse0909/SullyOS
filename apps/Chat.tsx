@@ -3024,25 +3024,37 @@ if (keepN > 0) {
                     if (!m) return null;
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    // 暮色 2026-07-27 v2：proactive 永远独立 group（不光是 proactive 之间）
-                    //   暮色反馈"主动消息和正常聊天回复的最后一条消息合并成一个时间戳"——
-                    //   根因是 calcBreaks v1 只把 proactive↔proactive 设成永远独立，
-                    //   assistant 正常回复跟 assistant proactive 仍按 1 分钟规则（同分钟<1分钟→合并）
-                    //   + formatTime 只显示 HH:MM，秒级看不出来
-                    //   改：proactive 跟任何消息 0 分钟 gap 永远独立（视觉上错开）
-                    //   formatTime 不动（暮色日常聊天节奏不变）
-                    //   配套：MessageItem.tsx 时间戳加视觉标记
+                    // 暮色 2026-08-02 21:48：calcBreaks 改成"每轮一个 group"逻辑
+                    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
+                    //   暮色反馈之前 7-23/7-27 改的方向不对——盯在 30 分钟 group 上，
+                    //   实际要的是 role 切换 = 轮边界（不是 30 分钟）
+                    //
+                    //   新规则：
+                    //   - 主动消息 vs 正常消息：永远独立 group（保持 7-27 v2，不让主动消息并入正常聊天）
+                    //   - 主动消息内部：cur 是新轮首（proactiveRoundStart=true）→ 自己开始新 group
+                    //     否则同 group（接续上一轮）。老数据没 proactiveRoundStart 标记 → fallback 同 group
+                    //     （老数据 4 个气泡会变成 1 头像 + 1 时间戳，暮色要的"按轮"行为）
+                    //   - 普通 user/AI 对话：role 切换 = 轮边界
+                    //     user 1 + AI 1 = 2 轮（各 1 个时间戳）
+                    //     user 5 + AI 1 = 2 轮
+                    //     5 轮 user/AI 交替 = 10 个时间戳（没合并）
+                    //     30 分钟规则：同 role 内超过 30 分钟也算轮边界（避免"聊一整晚"合并成 1 轮）
                     const USER_CHAT_GAP_MS = 30 * 60 * 1000;
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
                         if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
-                        if (neighbor.role !== cur.role) return true;
-                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
+                        if (neighbor.role !== cur.role) return true;  // role 切换 = 轮边界
                         const curProactive = !!cur.metadata?.isProactive;
                         const neighborProactive = !!neighbor.metadata?.isProactive;
-                        // 任何一边是主动消息：永远独立 group（哪怕 0 秒）
-                        if (curProactive || neighborProactive) return true;
-                        // 普通 user/AI 对话：30 分钟规则（不变）
+                        // 主动消息 vs 正常消息：永远独立 group
+                        if (curProactive !== neighborProactive) return true;
+                        // 主动消息内部：cur 是新轮首 → 自己开始新 group；否则同 group
+                        if (curProactive && neighborProactive) {
+                            if (cur.metadata?.proactiveRoundStart === true) return true;
+                            return false;
+                        }
+                        // 普通 user/AI 对话：30 分钟规则（避免长时间对话合并成 1 轮）
+                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
                         return gap > USER_CHAT_GAP_MS;
                     };
                     const breaksWithPrevious = calcBreaks(m, prevMessage);

@@ -1502,7 +1502,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   '【发之前——思维链（可选）】',
                   '如果你脑子里有想说的——思考、疑惑、情绪、闪过的念头、任何东西——可以在消息开头用 [[THOUGHT: ...]] 写出来。',
                   '不限制内容，不限制字数，一句话也行一长段也行，想到什么就写什么。',
-                  '不想写就跳过，AI 真实的内心状态比完美的输出更重要。',
+                  '不想写就跳过，你真实的内心状态比完美的输出更重要。',
                   '这串标签和里面的内容会被处理掉。',
                   '',
                   recentChatContext ? `【最近聊天（8 条）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
@@ -1698,6 +1698,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   window.dispatchEvent(new CustomEvent('proactive-message-sent', {
                       detail: { charId, charName: char.name, body: preview }
                   }));
+              } else {
+                  // 暮色 2026-08-02 23:49：AI 返回空字符串（主动选择不发）
+                  //   之前是静默——聊天流里看不到任何东西
+                  //   现在弹一个"提醒"toast——类似连接失败的视觉，但语义是"AI 这次没说话"
+                  addToast(`${char.name} 这次没想好说什么`, 'bell');
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);

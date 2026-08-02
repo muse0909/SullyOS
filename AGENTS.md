@@ -288,6 +288,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-08-01 | 音乐第 7 轮：musicApi import 漏修 + 歌单播放全部按钮 + 播放队列 UI 浮层 | [`changelogs/2026-08-01-music-round6-bugfix-queue-playall.md`](./changelogs/2026-08-01-music-round6-bugfix-queue-playall.md) |
 | 2026-08-01 | 音乐第 8 轮：播放队列 createPortal + 居中卡片浅色样式 + 播放页同步 + play_song_and_join 跳过 music_invite 推消息 | [`changelogs/2026-08-01-music-round7-queue-playall-bugs.md`](./changelogs/2026-08-01-music-round7-queue-playall-bugs.md) |
 | 2026-08-02 | 音乐窗口交接 — 8-1~8-2 music 工作归档 + play_song function tool 注册接力 | [`changelogs/2026-08-02-music-window-handoff.md`](./changelogs/2026-08-02-music-window-handoff.md) |
+| 2026-08-02 | 音乐第 10 轮：play_song 注册成真正的功能工具 + 修聊天挂载时一起听误推提醒 | [`changelogs/2026-08-02-play-song-function-tool.md`](./changelogs/2026-08-02-play-song-function-tool.md) |
 | 2026-08-02 | 音乐第 9 轮：一起听 5 改（卡片顺序 + 失败回执 + 误触发 + 搜索排序 pop + prompt 自然化 + 今日已用 X/3） | [`changelogs/2026-08-02-music-round9-invite-fixes.md`](./changelogs/2026-08-02-music-round9-invite-fixes.md) |
 | 2026-08-01 | 情侣空间 AI 真决策（LLM 完整请求体）+ 状态胶囊带名字 | [`changelogs/2026-08-01-couple-space-ai-decision-v2.md`](./changelogs/2026-08-01-couple-space-ai-decision-v2.md) |
 | 2026-08-01 | 情侣空间第一阶段 3 模块补完：时间线 + 悄悄话 + AI 主动打卡 | [`changelogs/2026-08-01-couple-space-3tabs.md`](./changelogs/2026-08-01-couple-space-3tabs.md) |

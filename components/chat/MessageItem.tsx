@@ -10,6 +10,35 @@ import { useOS } from '../../context/OSContext';
 import { Heart as HeartIcon } from '@phosphor-icons/react';
 
 
+// --- 主动消息思维链折叠显示 ---
+// 暮色 2026-08-02：浅灰小字"💭 思维链 ›"，不斜体，展开后下方挂浅色块显示完整内容
+// 只在 metadata.thought 存在时渲染（OSContext.tsx runProactive 写入）
+// 注意：不要在这加 italic —— 暮色明确说"不用斜体"
+const ThoughtFold: React.FC<{ thought: string }> = ({ thought }) => {
+    const [open, setOpen] = useState(false);
+    if (!thought) return null;
+    return (
+        <div className="mb-1.5">
+            <button
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setOpen(o => !o); }}
+                className="text-[11px] text-slate-400 hover:text-slate-600 active:opacity-70 flex items-center gap-1 select-none transition-colors"
+            >
+                <span>💭</span>
+                <span>思维链</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}>
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+                </svg>
+            </button>
+            {open && (
+                <div className="mt-1.5 px-3 py-2 rounded-xl bg-slate-100/80 border border-slate-200/60 text-[12px] text-slate-600 leading-relaxed whitespace-pre-wrap break-words">
+                    {thought}
+                </div>
+            )}
+        </div>
+    );
+};
+
+
 // --- Forward Card with expand/collapse ---
 const ForwardCard: React.FC<{
     forwardData: any;
@@ -683,13 +712,22 @@ const MessageItem = React.memo(({
                         {renderAvatar(charAvatar)}
                     </div>
                 )}
-                
-                {/* 
-                    UPDATED: Limit bubble max-width to 72% for better spacing. 
+
+                {/*
+                    UPDATED: Limit bubble max-width to 72% for better spacing.
                     Added min-w-0 to prevent flexbox overflow issues.
                     Added explicit margins to clear absolute avatars.
                 */}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
+                    {/* 暮色 2026-08-02：主动消息思维链折叠显示
+                        - 浅灰小字"💭 思维链 ›"，不斜体
+                        - 点击展开 → 完整内容显示在下方浅色块里
+                        - 只在 metadata.thought 存在时渲染（主动消息响应时由 OSContext 写入）
+                        - 不限于主动消息：所有有 thought 的 AI 消息都显示
+                    */}
+                    {!isUser && m.metadata?.thought && (
+                        <ThoughtFold thought={m.metadata.thought} />
+                    )}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>

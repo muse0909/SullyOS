@@ -309,7 +309,7 @@ const MessageItem = React.memo(({
     })();
     // 暮色 2026-08-02 22:29 调试：8 个气泡都画了头像 + 时间戳，加 console 看实际 metadata
     //   让暮色下次触发主动消息时查 console，确认是 1 次触发拆 8 个还是 8 次独立触发
-    if (isProactive) {
+    if (m.metadata?.isProactive) {
         const meta: any = m.metadata || {};
         console.log(`[DEBUG/proactive-msg] ts=${m.timestamp} roundStart=${meta.proactiveRoundStart} thought=${!!meta.thought} isFirstInGroup=${isFirstInGroup} isLastInGroup=${isLastInGroup} effectiveShowAvatar=${effectiveShowAvatar} content=${(m.content || '').slice(0, 30)}`);
     }

@@ -2492,22 +2492,40 @@ export default function MemoryPalaceApp() {
                                                 // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
                                                 // 暮色 2026-08-02 18:10 修：原代码 OpenAI 协议分支什么都没做，
                                                 //   导致点了 OpenAI 预设没反应。补上 setLightUrl/Key/Model。
-                                                switchLightProtocol(proto);
+                                                // 暮色 2026-08-02 18:29 修：原代码只设了 local* state（lightGeminiKey 等），
+                                                //   但 input 显示的是 lightKey。setLightKey 没更新 → 看起来"API key 没存进去"。
+                                                //   而且 active 判断 lightKey === activeKey 永远不匹配 → 预设不显示绿色✅。
+                                                //   修：所有 3 套字段（baseUrl/claudeBaseUrl/geminiBaseUrl）都填到 light* state + local* state。
+                                                const _presetBaseUrl = p.config.baseUrl || '';
+                                                const _presetApiKey = p.config.apiKey || '';
+                                                const _presetModel = p.config.model || '';
+                                                const _presetClaudeUrl = (p.config as any).claudeBaseUrl || p.config.baseUrl || '';
+                                                const _presetClaudeKey = (p.config as any).claudeApiKey || p.config.apiKey || '';
+                                                const _presetClaudeModel = (p.config as any).claudeModel || p.config.model || '';
+                                                const _presetGeminiUrl = (p.config as any).geminiBaseUrl || p.config.baseUrl || '';
+                                                const _presetGeminiKey = (p.config as any).geminiApiKey || p.config.apiKey || '';
+                                                const _presetGeminiModel = (p.config as any).geminiModel || p.config.model || '';
+                                                setLightProtocol(proto);
+                                                // 同步 3 套 local* state（切回那个 tab 时不丢）
+                                                setLightClaudeUrl(_presetClaudeUrl);
+                                                setLightClaudeKey(_presetClaudeKey);
+                                                setLightClaudeModel(_presetClaudeModel);
+                                                setLightGeminiUrl(_presetGeminiUrl);
+                                                setLightGeminiKey(_presetGeminiKey);
+                                                setLightGeminiModel(_presetGeminiModel);
+                                                // 当前协议的字段填到 light* state（input 显示这个）
                                                 if (proto === 'claude') {
-                                                    setLightClaudeUrl((p.config as any).claudeBaseUrl || p.config.baseUrl || '');
-                                                    setLightClaudeKey((p.config as any).claudeApiKey || p.config.apiKey || '');
-                                                    setLightClaudeModel((p.config as any).claudeModel || p.config.model || '');
+                                                    setLightUrl(_presetClaudeUrl);
+                                                    setLightKey(_presetClaudeKey);
+                                                    setLightModel(_presetClaudeModel);
                                                 } else if (proto === 'gemini') {
-                                                    setLightGeminiUrl((p.config as any).geminiBaseUrl || p.config.baseUrl || '');
-                                                    setLightGeminiKey((p.config as any).geminiApiKey || p.config.apiKey || '');
-                                                    setLightGeminiModel((p.config as any).geminiModel || p.config.model || '');
+                                                    setLightUrl(_presetGeminiUrl);
+                                                    setLightKey(_presetGeminiKey);
+                                                    setLightModel(_presetGeminiModel);
                                                 } else {
-                                                    // proto === 'openai'：直接填到 lightUrl/Key/Model
-                                                    // switchLightProtocol('openai') 已经从 memoryPalaceConfig 读了，
-                                                    //   但这里要覆盖为预设的值（不然点了没反应）
-                                                    setLightUrl(p.config.baseUrl || '');
-                                                    setLightKey(p.config.apiKey || '');
-                                                    setLightModel(p.config.model || '');
+                                                    setLightUrl(_presetBaseUrl);
+                                                    setLightKey(_presetApiKey);
+                                                    setLightModel(_presetModel);
                                                 }
                                                 setLightTestResult(null);
                                             }}

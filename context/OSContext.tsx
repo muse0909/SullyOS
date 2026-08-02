@@ -1556,11 +1556,17 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
+              // 暮色 2026-08-02：max_tokens 500 → 2000
+              //   旧 500 是 7-17 配 4 断点 prompt cache 定的
+              //   7-27 删"一两句话就好"硬限制后没同步调，prompt 允许 AI 写多点
+              //   AI 真的在 [[THOUGHT: ...]] 里写了不少（截图里 "11 个小时了，她还是没回。外面体感温度..."）
+              //   → 思维链 + 正文一起被 500 卡掉，正文被截断
+              //   → 2000 给足空间，prompt 保持原样（不强制两段、不限定字数）
               reqBody = {
                   model: api.model,
                   messages: fullMessages,
                   temperature: 0.8,
-                  max_tokens: 500,
+                  max_tokens: 2000,
               };
 
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
@@ -1596,6 +1602,16 @@ if (!isVisible || !isChattingWithThisChar) {
               aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
               aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
+
+              // 暮色 2026-08-02：先提取 [[THOUGHT: ...]] 思维链存到 metadata.thought
+              //   之前 sanitize 之后 THOUGHT 标签被 chatParser.sanitize 直接 strip 掉（line 316）
+              //   现在先提取再 sanitize：metadata.thought 存原文，content 保持干净
+              //   暮色想看思维链——前端 MessageItem 渲染时读 metadata.thought
+              let thoughtContent = '';
+              const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+              if (thoughtMatch) {
+                  thoughtContent = thoughtMatch[1].trim();
+              }
 
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
@@ -1645,7 +1661,12 @@ if (!isVisible || !isChattingWithThisChar) {
                               type: 'text',
                               content: chunk,
                               timestamp: baseTimestamp + offset,
-                              metadata: { isProactive: true },
+                              metadata: {
+                                  isProactive: true,
+                                  // 暮色 2026-08-02：把思维链挂到 metadata.thought
+                                  //   显示方式待暮色定（见 memory 中本轮的方案对比）
+                                  ...(thoughtContent ? { thought: thoughtContent } : {}),
+                              },
                           });
                           savedPreviewChunks.push(chunk);
                           offset += 1;
@@ -1947,7 +1968,33 @@ if (!isVisible || !isChattingWithThisChar) {
     localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
   };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
-  const addApiPreset = (name: string, config: APIConfig, kind?: ApiPreset['kind']) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config, ...(kind ? { kind } : {}) }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  // 暮色 2026-08-02 18:50 修：之前 addApiPreset 第二参数强制 config: APIConfig（必需 baseUrl/apiKey/model），
+  //   但 image / vision 目标传的 config 只有 image* / vision* 字段（没 baseUrl/apiKey/model），
+  //   TS 类型不匹配 + `as any` 绕过——运行时 React 18 可能在 functional update 里抛错被吞掉，
+  //   表现为 toast 弹了（addApiPreset 调用成功）但预设不显示。
+  //   修：config 改 any（接受任意形状）+ 显式 push kind 字段（不再用 spread）+ 加 try/catch + console.log 验证。
+  const addApiPreset = (name: string, config: any, kind?: ApiPreset['kind']) => {
+    setApiPresets(prev => {
+      const newPreset: ApiPreset = {
+        id: Date.now().toString(),
+        name,
+        config,
+        // 暮色 2026-08-02 18:50 修：原代码 `...(kind ? { kind } : {})` 用 ES6 spread 条件展开，
+        //   但 kind 字段是 optional——如果 spread 失败，preset.kind 可能是 undefined，
+        //   4 个 tab 的 useMemo filter（kind === 'main' 等）会全部不匹配 → 预设不显示。
+        //   修：显式 push kind（不是 undefined 时）。
+        ...(kind ? { kind } : {}),
+      };
+      const next = [...prev, newPreset];
+      try {
+        localStorage.setItem('os_api_presets', JSON.stringify(next));
+      } catch (e) {
+        console.error('[addApiPreset] localStorage 写失败:', e);
+      }
+      console.log('[addApiPreset] push:', newPreset.name, 'kind:', newPreset.kind, 'list count:', next.length);
+      return next;
+    });
+  };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
   const addCharacter = async () => {

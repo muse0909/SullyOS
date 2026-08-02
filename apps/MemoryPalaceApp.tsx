@@ -652,20 +652,37 @@ export default function MemoryPalaceApp() {
         setEmbKey(memoryPalaceConfig.embedding.apiKey || '');
         setEmbModel(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
         setEmbDimensions(memoryPalaceConfig.embedding.dimensions || 1024);
-        setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
-        setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
-        setLightModel(memoryPalaceConfig.lightLLM.model || '');
         // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model 同步
-        setLightProtocol(((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'claude' | 'gemini') || 'openai');
-        setLightClaudeUrl((memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
-        setLightClaudeKey((memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
-        setLightClaudeModel((memoryPalaceConfig.lightLLM as any).claudeModel || '');
+        // 暮色 2026-08-02 18:10 修：原来永远读 baseUrl 字段，gemini/claude 协议下保存后
+        //   input 永远显示 baseUrl（旧值，京东云）= "跳回京东云"。
+        //   修：按当前 lightProtocol 读对应字段（baseUrl / claudeBaseUrl / geminiBaseUrl）
+        //   这样 gemini 协议下保存 → geminiBaseUrl 更新 → useEffect 读 geminiBaseUrl → input 显示新值
+        const syncedProtocol: 'openai' | 'claude' | 'gemini' = ((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'claude' | 'gemini') || 'openai';
+        setLightProtocol(syncedProtocol);
+        const _llm = memoryPalaceConfig.lightLLM as any;
+        if (syncedProtocol === 'openai') {
+            setLightUrl(_llm.baseUrl || '');
+            setLightKey(_llm.apiKey || '');
+            setLightModel(_llm.model || '');
+        } else if (syncedProtocol === 'claude') {
+            setLightUrl(_llm.claudeBaseUrl || '');
+            setLightKey(_llm.claudeApiKey || '');
+            setLightModel(_llm.claudeModel || '');
+        } else {
+            setLightUrl(_llm.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+            setLightKey(_llm.geminiApiKey || '');
+            setLightModel(_llm.geminiModel || 'gemini-2.0-flash');
+        }
+        // 其他协议的字段也要同步（切回那个 tab 时不丢）
+        setLightClaudeUrl(_llm.claudeBaseUrl || '');
+        setLightClaudeKey(_llm.claudeApiKey || '');
+        setLightClaudeModel(_llm.claudeModel || '');
         setLightGeminiUrl(
-            (memoryPalaceConfig.lightLLM as any).geminiBaseUrl
+            _llm.geminiBaseUrl
             || 'https://generativelanguage.googleapis.com/v1beta'
         );
-        setLightGeminiKey((memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
-        setLightGeminiModel((memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash');
+        setLightGeminiKey(_llm.geminiApiKey || '');
+        setLightGeminiModel(_llm.geminiModel || 'gemini-2.0-flash');
         setRrEnabled(!!memoryPalaceConfig.rerank?.enabled);
         setRrUrl(memoryPalaceConfig.rerank?.baseUrl || '');
         setRrKey(memoryPalaceConfig.rerank?.apiKey || '');
@@ -1055,10 +1072,15 @@ export default function MemoryPalaceApp() {
 
     const handleSaveLightApi = () => {
         // 暮色 2026-07-27：3 tab 协议 + 同时存 3 套（切回 tab 不丢之前的值）
+        // 暮色 2026-08-02 18:10 修：原代码 baseUrl/apiKey/model 字段在 lightProtocol !== 'openai' 时
+        //   保留旧值（用 memoryPalaceConfig.lightLLM.baseUrl || ''），导致 useEffect 同步时
+        //   永远读 baseUrl 字段 → input 显示旧值（京东云）= "跳回京东云"。
+        //   修：baseUrl/apiKey/model 字段始终用 lightUrl/Key/Model 存（不分协议），
+        //   切回任何协议 useEffect 都能读到最新值
         const api: any = {
-            baseUrl: lightProtocol === 'openai' ? lightUrl.trim() : (memoryPalaceConfig.lightLLM.baseUrl || ''),
-            apiKey: lightProtocol === 'openai' ? lightKey.trim() : (memoryPalaceConfig.lightLLM.apiKey || ''),
-            model: lightProtocol === 'openai' ? lightModel.trim() : (memoryPalaceConfig.lightLLM.model || ''),
+            baseUrl: lightUrl.trim(),
+            apiKey: lightKey.trim(),
+            model: lightModel.trim(),
             protocol: lightProtocol,
             claudeBaseUrl: lightProtocol === 'claude' ? lightUrl.trim() : lightClaudeUrl,
             claudeApiKey: lightProtocol === 'claude' ? lightKey.trim() : lightClaudeKey,
@@ -2468,15 +2490,42 @@ export default function MemoryPalaceApp() {
                                             key={p.id}
                                             onClick={() => {
                                                 // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
-                                                switchLightProtocol(proto);
+                                                // 暮色 2026-08-02 18:10 修：原代码 OpenAI 协议分支什么都没做，
+                                                //   导致点了 OpenAI 预设没反应。补上 setLightUrl/Key/Model。
+                                                // 暮色 2026-08-02 18:29 修：原代码只设了 local* state（lightGeminiKey 等），
+                                                //   但 input 显示的是 lightKey。setLightKey 没更新 → 看起来"API key 没存进去"。
+                                                //   而且 active 判断 lightKey === activeKey 永远不匹配 → 预设不显示绿色✅。
+                                                //   修：所有 3 套字段（baseUrl/claudeBaseUrl/geminiBaseUrl）都填到 light* state + local* state。
+                                                const _presetBaseUrl = p.config.baseUrl || '';
+                                                const _presetApiKey = p.config.apiKey || '';
+                                                const _presetModel = p.config.model || '';
+                                                const _presetClaudeUrl = (p.config as any).claudeBaseUrl || p.config.baseUrl || '';
+                                                const _presetClaudeKey = (p.config as any).claudeApiKey || p.config.apiKey || '';
+                                                const _presetClaudeModel = (p.config as any).claudeModel || p.config.model || '';
+                                                const _presetGeminiUrl = (p.config as any).geminiBaseUrl || p.config.baseUrl || '';
+                                                const _presetGeminiKey = (p.config as any).geminiApiKey || p.config.apiKey || '';
+                                                const _presetGeminiModel = (p.config as any).geminiModel || p.config.model || '';
+                                                setLightProtocol(proto);
+                                                // 同步 3 套 local* state（切回那个 tab 时不丢）
+                                                setLightClaudeUrl(_presetClaudeUrl);
+                                                setLightClaudeKey(_presetClaudeKey);
+                                                setLightClaudeModel(_presetClaudeModel);
+                                                setLightGeminiUrl(_presetGeminiUrl);
+                                                setLightGeminiKey(_presetGeminiKey);
+                                                setLightGeminiModel(_presetGeminiModel);
+                                                // 当前协议的字段填到 light* state（input 显示这个）
                                                 if (proto === 'claude') {
-                                                    setLightClaudeUrl((p.config as any).claudeBaseUrl || p.config.baseUrl || '');
-                                                    setLightClaudeKey((p.config as any).claudeApiKey || p.config.apiKey || '');
-                                                    setLightClaudeModel((p.config as any).claudeModel || p.config.model || '');
+                                                    setLightUrl(_presetClaudeUrl);
+                                                    setLightKey(_presetClaudeKey);
+                                                    setLightModel(_presetClaudeModel);
                                                 } else if (proto === 'gemini') {
-                                                    setLightGeminiUrl((p.config as any).geminiBaseUrl || p.config.baseUrl || '');
-                                                    setLightGeminiKey((p.config as any).geminiApiKey || p.config.apiKey || '');
-                                                    setLightGeminiModel((p.config as any).geminiModel || p.config.model || '');
+                                                    setLightUrl(_presetGeminiUrl);
+                                                    setLightKey(_presetGeminiKey);
+                                                    setLightModel(_presetGeminiModel);
+                                                } else {
+                                                    setLightUrl(_presetBaseUrl);
+                                                    setLightKey(_presetApiKey);
+                                                    setLightModel(_presetModel);
                                                 }
                                                 setLightTestResult(null);
                                             }}

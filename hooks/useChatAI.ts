@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'reac
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
-import { ChatParser } from '../utils/chatParser';
+import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
@@ -64,6 +64,34 @@ const IMAGE_GENERATION_TOOL = {
         },
       },
       required: ['prompt'],
+    },
+  },
+};
+
+// —— 放歌工具定义（暮色 2026-08-02 16:32 推进 handoff #1）——
+// 把 play_song 注册成真正的功能工具，让大语言模型在工具列表里能看到"放歌"动作
+// 之前 8-2 凌晨 02:07 Sully 那段话"放歌不在我列表里" = 大语言模型视角"我做不到"
+// 修法：从结构上让大语言模型能调，不是靠提示词哄
+// 跟 generate_image 一样：用户不主动说、对话里聊到歌 / 气氛适合 / 用户提到想听什么时再用
+// 不抢戏、不每轮必调、拿不准就不调
+const PLAY_SONG_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'play_song',
+    description: '主动给用户放一首歌。Use this ONLY when one of these is true: (1) the user is currently listening to a song and you want to react to it / respond with a song that matches the moment; (2) you are already "listening together" with the user and want to change the song; (3) the conversation naturally surfaces a song (the user mentioned a song name, the mood calls for music, or the user said "play a song" / "放首歌"); (4) the user explicitly asks you to play a song. Provide the song name (in Chinese or English) and an optional join flag. Do NOT use this for casual chat decoration, adding "musical flair" to normal conversation, or when no song context exists. When in doubt, do not call. If you previously tried to play a song and got a "not found" reply, do not retry the same name.',
+    parameters: {
+      type: 'object',
+      properties: {
+        songName: {
+          type: 'string',
+          description: 'The song name to search and play. Can be Chinese or English. Be specific — include the artist name if you know it (e.g. "关不上的窗 周传雄") for more accurate results.',
+        },
+        join: {
+          type: 'boolean',
+          description: 'Whether to also enter "listening together" mode (both you and the user hear the same song). Default false. Set true only when the moment calls for shared listening — not for every song.',
+        },
+      },
+      required: ['songName'],
     },
   },
 };
@@ -563,6 +591,80 @@ export const useChatAI = ({
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
     const music = useMusic();
+
+    // 暮色 2026-08-02 16:32：playSongFromChar 提到 useChatAI 顶层（handoff #1 功能工具注册）
+    // 之前定义在 ChatParser 调用处的对象字面量里，作用域只在那一段
+    // 现在提到顶层，让功能工具处理代码（主 API 循环里）也能直接调
+    // 业务逻辑跟原来 100% 一致：检查总开关 + 每日次数上限 + 搜歌（精确匹配 + pop 降序 + fee 升序）+ 播放 + +1 计数
+    const playSongFromChar = async (cid: string, songName: string) => {
+        try {
+            if (!songName?.trim()) return null;
+            // —— 检查 1：用户总开关 ——
+            if (userProfile.musicAiAutoPlayEnabled === false) {
+                return null;  // 静默拒绝，跟"歌搜不到"一样
+            }
+            // —— 检查 2：每日每 char 次数上限 ——
+            const today = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
+            const counts = userProfile.musicAiAutoPlayCount || {};
+            const todayCounts = counts[today] || {};
+            const used = todayCounts[cid] || 0;
+            if (used >= MUSIC_AI_AUTOPLAY_DAILY_LIMIT) {
+                return null;  // 静默拒绝
+            }
+            // —— 搜歌 ——
+            const r = await musicApi.search(music.cfg, songName.trim(), 0);
+            const allSongs: any[] = r?.result?.songs || [];
+            if (allSongs.length === 0) return null;
+            // 精确匹配辅助：去除括号/方括号内容、括号、空格、大小写差异
+            //   例："偏爱" 匹配 "偏爱（0.8x）" → 不算精确（但 "偏爱" 也匹配 "偏爱"）
+            //   例："偏爱" 不匹配 "偏爱（翻唱）"（去除括号后是 "偏爱"，会匹配）
+            //   简化策略：去掉所有括号内容（"（...）"/"（...）"/"[...]"）后做精确比较
+            const norm = (s: string) =>
+                (s || '').toLowerCase().replace(/[（(\[【].*?[）)\]】]/g, '').replace(/\s+/g, '').trim();
+            const target = norm(songName);
+            const exact = allSongs.filter(s => norm(s.name) === target);
+            const pool = exact.length > 0 ? exact : allSongs;
+            // 排序：pop 降序；pop 相同时 fee 升序（免费优先）
+            pool.sort((a, b) => {
+                const pa = a.pop || 0;
+                const pb = b.pop || 0;
+                if (pb !== pa) return pb - pa;
+                return (a.fee || 0) - (b.fee || 0);
+            });
+            const first = pool[0];
+            if (!first) return null;
+            // 搜到的歌没 picUrl/albumPic 时给个空串，前端会有兜底
+            const song: any = {
+                id: first.id,
+                name: first.name,
+                artists: (first.ar || first.artists || []).map((a: any) => a.name).join(' / '),
+                album: first.al?.name || first.album?.name || '',
+                albumPic: toHttps(first.al?.picUrl || first.album?.picUrl || ''),
+                duration: (first.dt || first.duration || 0) / 1000,
+                fee: first.fee ?? 0,
+            };
+            // 切到这首（替换队列，不动当前一起听名单）
+            await music.playSong(song, { alsoSetQueue: true, replaceQueue: [song], startIdx: 0 });
+            // —— +1 计数（持久化）—— 失败不消耗次数（已对：+1 只在成功路径）
+            if (updateUserProfile) {
+                const nextToday = { ...todayCounts, [cid]: used + 1 };
+                const nextCounts = { ...counts, [today]: nextToday };
+                updateUserProfile({ musicAiAutoPlayCount: nextCounts });
+            }
+            return {
+                songId: song.id,
+                name: song.name,
+                artists: song.artists,
+                album: song.album,
+                albumPic: song.albumPic,
+                duration: song.duration,
+                fee: song.fee,
+            };
+        } catch (e) {
+            console.warn('[playSongFromChar] failed:', e);
+            return null;
+        }
+    };
 
     const [isTyping, setIsTyping] = useState(false);
     const [recallStatus, setRecallStatus] = useState<string>('');
@@ -1658,6 +1760,12 @@ if (!useClaudeProtocol && mcdMiniOpen) {
 if (!useClaudeProtocol && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
+// 暮色 2026-08-02 16:32：play_song 功能工具注册（handoff #1）
+// 跟生图工具一样：不在 Claude 协议下（Claude 协议不支持 tool_use）
+// musicApi 不依赖任何配置（直接调网易云 API），所以不判断"音乐 API 是否配了"——始终注册
+if (!useClaudeProtocol) {
+    toolsList.push(PLAY_SONG_TOOL);
+}
 if (toolsList.length > 0) {
     baseReqBody.tools = toolsList;
     baseReqBody.tool_choice = 'auto';
@@ -2152,6 +2260,109 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
             updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
         }
+    }
+
+    // 3.6 放歌工具 play_song 处理（暮色 2026-08-02 16:32 推进 handoff #1）
+    // 跟生图工具同一层级：拿到工具调用后立即执行，处理结果后再调一次大语言模型
+    // 业务流程：调用顶层 playSongFromChar 搜歌+播放（复用现有所有检查）→ 推系统消息 + 音乐卡片
+    // 跟标记路径的差别：标记路径是大语言模型输出文本，chatParser 解析后处理；这里是工具调用，结果直接回传给大语言模型下一轮
+    // 两条路径并存：功能工具优先（结构上大语言模型能调），标记作 fallback（Claude 协议 / 功能工具调用失败）
+    const playSongCall = toolCalls.find((tc: any) => (tc.function?.name || tc.name || '').trim() === 'play_song');
+
+    if (playSongCall) {
+        let songName = '';
+        let join = false;
+        let playSongSnap: any = null;
+        let playSongError = '';
+
+        try {
+            const args = parseToolArguments(playSongCall);
+            songName = (args.songName || '').trim();
+            join = !!args.join;
+        } catch (e) {
+            console.warn('🎵 [PlaySong] 参数解析失败:', e);
+            playSongError = '放歌参数解析失败';
+        }
+
+        if (songName && !playSongError) {
+            console.log('🎵 [PlaySong] AI 触发放歌:', { songName, join });
+            try {
+                playSongSnap = await playSongFromChar(char.id, songName);
+            } catch (e: any) {
+                playSongError = e?.message || String(e);
+                console.warn('🎵 [PlaySong] 放歌失败:', playSongError);
+            }
+        } else if (!playSongError) {
+            playSongError = 'AI 没有提供有效的歌名';
+        }
+
+        if (playSongSnap) {
+            // 成功路径
+            // 1) 如果是 play_song_and_join（join=true）→ 标记接管一起听通知 + 加入一起听
+            //    playSongAndJoinHandled.add 早于 joinListeningTogether（早于 setState 触发 React flush）
+            if (join) {
+                playSongAndJoinHandled.add(char.id);
+                music.addListeningPartner(char.id);
+            }
+            // 2) 推系统消息 type='music_invite'（大语言模型走 [一起听邀请] 分支主动引用）
+            const verb = join ? 'play_song_and_join' : 'play_song';
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'music_invite',
+                content: `${char.name} 给你放了《${playSongSnap.name}》— ${playSongSnap.artists}${join ? '，加入了"一起听"' : ''}`,
+            });
+            // 3) 推音乐卡片
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'assistant',
+                type: 'music_card',
+                content: '[音乐卡片]',
+                metadata: {
+                    intent: verb,
+                    song: playSongSnap,
+                },
+            });
+            addToast(
+                join
+                    ? `${char.name} 给你放了《${playSongSnap.name}》，正在一起听`
+                    : `${char.name} 给你放了《${playSongSnap.name}》`,
+                'info'
+            );
+        } else {
+            // 失败路径
+            const reason = playSongError || '搜不到合适的版本';
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'music_invite',
+                content: `${char.name} 想给暮色放《${songName || '???'}》，但没找到合适的版本（${reason}）`,
+            });
+            addToast(`${char.name} 想放《${songName || '歌名缺失'}》但没找到`, 'info');
+        }
+
+        // 跟生图一样：再调一次大语言模型让大语言模型知道工具结果（OpenAI 协议用 role='tool' 回传）
+        const followMessages = [
+            ...fullMessages,
+            {
+                role: 'tool',
+                tool_call_id: playSongCall.id,
+                content: playSongSnap
+                    ? `成功放歌《${playSongSnap.name}》— ${playSongSnap.artists}${join ? '，已加入一起听' : ''}`
+                    : `放歌失败：${playSongError || '未知错误'}`,
+            },
+        ];
+        const followBody = { ...baseReqBody, messages: followMessages };
+        // 删掉 tools 避免无限循环（大语言模型下一轮不应该再调 play_song）
+        delete followBody.tools;
+        delete followBody.tool_choice;
+
+        data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(followBody),
+        });
+        updateTokenUsage(data, historyMsgCount, 'play-song-followup');
     }
 }
 
@@ -3818,83 +4029,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     }
                 },
                 // 暮色 2026-08-01：LLM 主动给用户放歌（play_song / play_song_and_join token）
-                // 流程：搜歌 → 替换当前播放队列为这 1 首 → 自动播放
-                // 限制：
-                //   1) userProfile.musicAiAutoPlayEnabled === false → 静默拒绝（fallback "歌搜不到"）
-                //   2) 每日每 char 次数上限（默认 3 次/天，按本地日期）→ 静默拒绝
-                //   3) 成功放歌 → +1 计数（持久化到 userProfile.musicAiAutoPlayCount）
-                //   暮色 2026-08-02 00:25 江澈转达诉求 2：搜不到精确匹配时回灌"未找到《歌名》"到上下文
-                //   排序策略（暮色建议）：精确歌名匹配 + 按 pop（热度）降序 + fee 升序（免费优先）
-                //   不用硬编码原唱白名单，维护成本高；用 pop 排序时，原唱（热度高）自然排前
-                playSongFromChar: async (cid: string, songName: string) => {
-                    try {
-                        if (!songName?.trim()) return null;
-                        // —— 检查 1：用户总开关 ——
-                        if (userProfile.musicAiAutoPlayEnabled === false) {
-                            return null;  // 静默拒绝，跟"歌搜不到"一样
-                        }
-                        // —— 检查 2：每日每 char 次数上限 ——
-                        const today = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD
-                        const counts = userProfile.musicAiAutoPlayCount || {};
-                        const todayCounts = counts[today] || {};
-                        const used = todayCounts[cid] || 0;
-                        if (used >= MUSIC_AI_AUTOPLAY_DAILY_LIMIT) {
-                            return null;  // 静默拒绝
-                        }
-                        // —— 搜歌 ——
-                        const r = await musicApi.search(music.cfg, songName.trim(), 0);
-                        const allSongs: any[] = r?.result?.songs || [];
-                        if (allSongs.length === 0) return null;
-                        // 精确匹配辅助：去除括号/方括号内容、括号、空格、大小写差异
-                        //   例："偏爱" 匹配 "偏爱（0.8x）" → 不算精确（但 "偏爱" 也匹配 "偏爱"）
-                        //   例："偏爱" 不匹配 "偏爱（翻唱）"（去除括号后是 "偏爱"，会匹配）
-                        //   简化策略：去掉所有括号内容（"（...）"/"（...）"/"[...]"）后做精确比较
-                        const norm = (s: string) =>
-                            (s || '').toLowerCase().replace(/[（(\[【].*?[）)\]】]/g, '').replace(/\s+/g, '').trim();
-                        const target = norm(songName);
-                        const exact = allSongs.filter(s => norm(s.name) === target);
-                        const pool = exact.length > 0 ? exact : allSongs;
-                        // 排序：pop 降序；pop 相同时 fee 升序（免费优先）
-                        pool.sort((a, b) => {
-                            const pa = a.pop || 0;
-                            const pb = b.pop || 0;
-                            if (pb !== pa) return pb - pa;
-                            return (a.fee || 0) - (b.fee || 0);
-                        });
-                        const first = pool[0];
-                        if (!first) return null;
-                        // 搜到的歌没 picUrl/albumPic 时给个空串，前端会有兜底
-                        const song: any = {
-                            id: first.id,
-                            name: first.name,
-                            artists: (first.ar || first.artists || []).map((a: any) => a.name).join(' / '),
-                            album: first.al?.name || first.album?.name || '',
-                            albumPic: toHttps(first.al?.picUrl || first.album?.picUrl || ''),
-                            duration: (first.dt || first.duration || 0) / 1000,
-                            fee: first.fee ?? 0,
-                        };
-                        // 切到这首（替换队列，不动当前一起听名单）
-                        await music.playSong(song, { alsoSetQueue: true, replaceQueue: [song], startIdx: 0 });
-                        // —— +1 计数（持久化）—— 失败不消耗次数（已对：+1 只在成功路径）
-                        if (updateUserProfile) {
-                            const nextToday = { ...todayCounts, [cid]: used + 1 };
-                            const nextCounts = { ...counts, [today]: nextToday };
-                            updateUserProfile({ musicAiAutoPlayCount: nextCounts });
-                        }
-                        return {
-                            songId: song.id,
-                            name: song.name,
-                            artists: song.artists,
-                            album: song.album,
-                            albumPic: song.albumPic,
-                            duration: song.duration,
-                            fee: song.fee,
-                        };
-                    } catch (e) {
-                        console.warn('[playSongFromChar] failed:', e);
-                        return null;
-                    }
-                },
+                // 暮色 2026-08-02 16:32：playSongFromChar 提到 useChatAI 顶层（handoff #1）
+                //   让功能工具处理代码（主 API 循环里）也能直接调
+                //   业务逻辑跟原来 100% 一致：检查总开关 + 每日次数上限 + 搜歌（精确匹配 + pop 降序 + fee 升序）+ 播放 + +1 计数
+                playSongFromChar,
             });
 
             // 6.5 HTML 卡片：把 [html]...[/html] 块抽出来落库为 html_card 消息，

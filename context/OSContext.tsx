@@ -1469,7 +1469,7 @@ if (!isVisible || !isChattingWithThisChar) {
               const recentChatContext = recentMsgs
                   .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
                   .filter(m => ChatParser.hasDisplayContent(m.content || ''))
-                  .slice(-8)
+                  .slice(-50)  // 暮色 2026-08-02：8 → 50（让 AI 看到更多上下文，思考更准）
                   .map(m => {
                       const speaker = m.role === 'user' ? userName : char.name;
                       const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();
@@ -1499,10 +1499,11 @@ if (!isVisible || !isChattingWithThisChar) {
                       ? `- ${userName}挺久没找你了，可以提一嘴（想念、好奇在干嘛、小小抱怨），但不要把整条消息都拿来"算账"`
                       : `- 别把"用户没找我"当主题——你是因为有话想说，不是因为闲`,
                   '',
-                  '【发之前——思维链】',
-                  '如果你想先整理一下思路，可以在消息开头用 [[THOUGHT: 你在想什么、为什么想发、想表达什么]] 写一句心里话，',
-                  '这串文字用户看不到，会被自动清掉，但能让你的发言更连贯、更像你自己。',
-                  '不强制——简单一条消息可以跳过；想认真说点什么时再用。',
+                  '【发之前——思维链（可选）】',
+                  '如果你脑子里有想说的——思考、疑惑、情绪、闪过的念头、任何东西——可以在消息开头用 [[THOUGHT: ...]] 写出来。',
+                  '不限制内容，不限制字数，一句话也行一长段也行，想到什么就写什么。',
+                  '不想写就跳过，你真实的内心状态比完美的输出更重要。',
+                  '这串标签和里面的内容会被处理掉。',
                   '',
                   recentChatContext ? `【最近聊天（8 条）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
                   '',
@@ -1556,11 +1557,17 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
+              // 暮色 2026-08-02：max_tokens 500 → 2000
+              //   旧 500 是 7-17 配 4 断点 prompt cache 定的
+              //   7-27 删"一两句话就好"硬限制后没同步调，prompt 允许 AI 写多点
+              //   AI 真的在 [[THOUGHT: ...]] 里写了不少（截图里 "11 个小时了，她还是没回。外面体感温度..."）
+              //   → 思维链 + 正文一起被 500 卡掉，正文被截断
+              //   → 2000 给足空间，prompt 保持原样（不强制两段、不限定字数）
               reqBody = {
                   model: api.model,
                   messages: fullMessages,
                   temperature: 0.8,
-                  max_tokens: 500,
+                  max_tokens: 2000,
               };
 
               // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
@@ -1597,6 +1604,16 @@ if (!isVisible || !isChattingWithThisChar) {
               aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
 
+              // 暮色 2026-08-02：先提取 [[THOUGHT: ...]] 思维链存到 metadata.thought
+              //   之前 sanitize 之后 THOUGHT 标签被 chatParser.sanitize 直接 strip 掉（line 316）
+              //   现在先提取再 sanitize：metadata.thought 存原文，content 保持干净
+              //   暮色想看思维链——前端 MessageItem 渲染时读 metadata.thought
+              let thoughtContent = '';
+              const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+              if (thoughtMatch) {
+                  thoughtContent = thoughtMatch[1].trim();
+              }
+
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
 
@@ -1605,6 +1622,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   const savedPreviewChunks: string[] = [];
                   const baseTimestamp = Date.now();
                   let offset = 0;
+                  // 暮色 2026-08-02：proactiveRoundStart 标记"轮首"
+                  //   一轮主动消息只显示一个时间戳、一个思维链
+                  //   之前 7-23/7-27 改的"每条独立时间戳"被暮色否定，这次反过来：按轮算
+                  //   7-27 v2 的"proactive 永远独立 group"保持不动（主动消息和正常回复不合并）
+                  let isFirstChunk = true;
 
                   for (const part of responseParts) {
                       if (part.type === 'emoji') {
@@ -1616,7 +1638,11 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'emoji',
                                   content: foundEmoji.url,
                                   timestamp: baseTimestamp + offset,
-                                  metadata: { isProactive: true },
+                                  metadata: {
+                                      isProactive: true,
+                                      // 轮首标记
+                                      ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                  },
                               });
                           } else {
                               const fallbackText = `发送了表情包：${part.content}`;
@@ -1626,10 +1652,16 @@ if (!isVisible || !isChattingWithThisChar) {
                                   type: 'text',
                                   content: fallbackText,
                                   timestamp: baseTimestamp + offset,
-                                  metadata: { isProactive: true },
+                                  metadata: {
+                                      isProactive: true,
+                                      // 轮首标记 + thought（只挂到轮首）
+                                      ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                      ...(isFirstChunk && thoughtContent ? { thought: thoughtContent } : {}),
+                                  },
                               });
                               savedPreviewChunks.push(fallbackText);
                           }
+                          isFirstChunk = false;
                           offset += 1;
                           continue;
                       }
@@ -1645,9 +1677,16 @@ if (!isVisible || !isChattingWithThisChar) {
                               type: 'text',
                               content: chunk,
                               timestamp: baseTimestamp + offset,
-                              metadata: { isProactive: true },
+                              metadata: {
+                                  isProactive: true,
+                                  // 暮色 2026-08-02：thought 只挂到轮首（一轮只显示一个思维链）
+                                  //   proactiveRoundStart 同时作为时间戳/思维链的显示开关
+                                  ...(isFirstChunk ? { proactiveRoundStart: true } : {}),
+                                  ...(isFirstChunk && thoughtContent ? { thought: thoughtContent } : {}),
+                              },
                           });
                           savedPreviewChunks.push(chunk);
+                          isFirstChunk = false;
                           offset += 1;
                       }
                   }
@@ -1659,6 +1698,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   window.dispatchEvent(new CustomEvent('proactive-message-sent', {
                       detail: { charId, charName: char.name, body: preview }
                   }));
+              } else {
+                  // 暮色 2026-08-02 23:49：AI 返回空字符串（主动选择不发）
+                  //   之前是静默——聊天流里看不到任何东西
+                  //   现在弹一个"提醒"toast——类似连接失败的视觉，但语义是"AI 这次没说话"
+                  addToast(`${char.name} 这次没想好说什么`, 'bell');
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
@@ -1915,8 +1959,16 @@ if (!isVisible || !isChattingWithThisChar) {
   };
 
   // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
-  // 各角色自身的 enabled 标志保持不变。同时把同一份值写到全局 lightLLM，
-  // 让记忆宫殿轻量 LLM 与情绪 API 保持一致（两者本来就指向同一个副 API 概念）。
+  // 各角色自身的 enabled 标志保持不变。
+  // 暮色 2026-08-02 19:00 修：之前这个函数"顺便"把同一份值写到全局 lightLLM——这是 bug 根因。
+  //   handleSaveLightApi 流程：
+  //     1) updateMemoryPalaceConfig({ lightLLM: 完整 api，含 protocol='gemini' })  → lightLLM 写入 protocol='gemini'
+  //     2) syncEmotionApiToAllCharacters({ baseUrl, apiKey, model })             → 内部 setMemoryPalaceConfig
+  //        用 { ...memoryPalaceConfig.lightLLM, baseUrl, apiKey, model } 重建 lightLLM
+  //        ⚠️ memoryPalaceConfig 是闭包捕获的旧值（React 18 setState 异步 flush）→ lightLLM 用旧 protocol='openai'
+  //        → 之前存的 'gemini' 被覆盖回 'openai' → useEffect 同步 → setLightProtocol('openai') 跳回
+  //   修：syncEmotionApiToAllCharacters **只更新 emotionConfig.api**，**不**碰 lightLLM。
+  //      lightLLM 由 updateMemoryPalaceConfig 单独管（handleSaveLightApi 已经在调了）。
   const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
     setCharacters(prev => {
       const updated = prev.map(c => {
@@ -1931,15 +1983,7 @@ if (!isVisible || !isChattingWithThisChar) {
       });
       return updated;
     });
-    if (api && api.baseUrl) {
-      const newConfig: MemoryPalaceGlobalConfig = {
-        embedding: { ...memoryPalaceConfig.embedding },
-        lightLLM: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
-        rerank: { ...memoryPalaceConfig.rerank },
-      };
-      setMemoryPalaceConfig(newConfig);
-      localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
-    }
+    // 注意：这里**不**再更新 lightLLM。lightLLM 由 updateMemoryPalaceConfig 单独管理。
   };
   const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
     const newConfig = { ...remoteVectorConfig, ...updates };
@@ -1947,7 +1991,33 @@ if (!isVisible || !isChattingWithThisChar) {
     localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
   };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
-  const addApiPreset = (name: string, config: APIConfig, kind?: ApiPreset['kind']) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config, ...(kind ? { kind } : {}) }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  // 暮色 2026-08-02 18:50 修：之前 addApiPreset 第二参数强制 config: APIConfig（必需 baseUrl/apiKey/model），
+  //   但 image / vision 目标传的 config 只有 image* / vision* 字段（没 baseUrl/apiKey/model），
+  //   TS 类型不匹配 + `as any` 绕过——运行时 React 18 可能在 functional update 里抛错被吞掉，
+  //   表现为 toast 弹了（addApiPreset 调用成功）但预设不显示。
+  //   修：config 改 any（接受任意形状）+ 显式 push kind 字段（不再用 spread）+ 加 try/catch + console.log 验证。
+  const addApiPreset = (name: string, config: any, kind?: ApiPreset['kind']) => {
+    setApiPresets(prev => {
+      const newPreset: ApiPreset = {
+        id: Date.now().toString(),
+        name,
+        config,
+        // 暮色 2026-08-02 18:50 修：原代码 `...(kind ? { kind } : {})` 用 ES6 spread 条件展开，
+        //   但 kind 字段是 optional——如果 spread 失败，preset.kind 可能是 undefined，
+        //   4 个 tab 的 useMemo filter（kind === 'main' 等）会全部不匹配 → 预设不显示。
+        //   修：显式 push kind（不是 undefined 时）。
+        ...(kind ? { kind } : {}),
+      };
+      const next = [...prev, newPreset];
+      try {
+        localStorage.setItem('os_api_presets', JSON.stringify(next));
+      } catch (e) {
+        console.error('[addApiPreset] localStorage 写失败:', e);
+      }
+      console.log('[addApiPreset] push:', newPreset.name, 'kind:', newPreset.kind, 'list count:', next.length);
+      return next;
+    });
+  };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
   const addCharacter = async () => {

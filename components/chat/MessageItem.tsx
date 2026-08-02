@@ -10,6 +10,35 @@ import { useOS } from '../../context/OSContext';
 import { Heart as HeartIcon } from '@phosphor-icons/react';
 
 
+// --- 主动消息思维链折叠显示 ---
+// 暮色 2026-08-02：浅灰小字"💭 思维链 ›"，不斜体，展开后下方挂浅色块显示完整内容
+// 只在 metadata.thought 存在时渲染（OSContext.tsx runProactive 写入）
+// 注意：不要在这加 italic —— 暮色明确说"不用斜体"
+const ThoughtFold: React.FC<{ thought: string }> = ({ thought }) => {
+    const [open, setOpen] = useState(false);
+    if (!thought) return null;
+    return (
+        <div className="mb-1.5">
+            <button
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setOpen(o => !o); }}
+                className="text-[11px] text-slate-400 hover:text-slate-600 active:opacity-70 flex items-center gap-1 select-none transition-colors"
+            >
+                <span>💭</span>
+                <span>思维链</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}>
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+                </svg>
+            </button>
+            {open && (
+                <div className="mt-1.5 px-3 py-2 rounded-xl bg-slate-100/80 border border-slate-200/60 text-[12px] text-slate-600 leading-relaxed whitespace-pre-wrap break-words">
+                    {thought}
+                </div>
+            )}
+        </div>
+    );
+};
+
+
 // --- Forward Card with expand/collapse ---
 const ForwardCard: React.FC<{
     forwardData: any;
@@ -262,6 +291,22 @@ const MessageItem = React.memo(({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isFirstInGroup;
+    // 暮色 2026-08-02 21:48：统一"按轮"画头像逻辑
+    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
+    //   之前 7-23/7-27 主动消息每条都画头像时间戳的"7-23 行为"——暮色不要
+    //
+    //   规则：
+    //   - 主动消息新数据（c613e54 之后）：m.metadata?.proactiveRoundStart === true 才画（轮首唯一）
+    //   - 主动消息老数据（c613e54 之前，没 proactiveRoundStart 标记）：按 isFirstInGroup 画（按 group 算首）
+    //   - 普通消息：按 shouldShowAvatar（every_message || isFirstInGroup）
+    const effectiveShowAvatar = (() => {
+        const meta: any = m.metadata || {};
+        const isProactive = meta.isProactive;
+        if (!isProactive) return shouldShowAvatar;
+        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
+        if (isNewProactiveFormat) return !!meta.proactiveRoundStart;
+        return isFirstInGroup;  // 老数据：按 group 算首（不按 every_message）
+    })();
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
@@ -678,43 +723,87 @@ const MessageItem = React.memo(({
                 )}
 
                 {/* Avatar - Absolute Positioned */}
-                {!isUser && (
-                        <div className={`absolute top-0 z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
+                {!isUser && effectiveShowAvatar && (
+                        <div className={`absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
+                        {/*
+                          暮色 2026-08-02：时间戳挪到头像正下方（A 方案），所有消息都用
+                          - 样式：圆点 + 胶囊 + slate 深灰（恢复 7-27 v2 圆点胶囊样式但换深灰）
+                          - 主动消息新数据：只在 proactiveRoundStart=true 时画（轮首唯一）
+                          - 主动消息老数据：每条都画（保留 7-23 行为，避免老数据头像消失）
+                          - 普通 AI 消息：isLastInGroup 时画
+                        */}
+                        {(() => {
+                            const meta: any = m.metadata || {};
+                            const isProactive = meta.isProactive;
+                            // 暮色 2026-08-02 21:48：统一"按轮"画时间戳
+                            //   主动消息新数据：proactiveRoundStart=true 才画（轮首）
+                            //   主动消息老数据：按 isLastInGroup（不每条画）
+                            //   普通 AI 消息：isLastInGroup
+                            const showAiTs = isProactive
+                                ? ('proactiveRoundStart' in meta ? !!meta.proactiveRoundStart : isLastInGroup)
+                                : isLastInGroup;
+                            if (!showAiTs || showTimestamp === 'never') return null;
+                            return (
+                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底（圆点+胶囊太撑）
+                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                    {formatTime(m.timestamp)}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
-                
-                {/* 
-                    UPDATED: Limit bubble max-width to 72% for better spacing. 
+
+                {/*
+                    UPDATED: Limit bubble max-width to 72% for better spacing.
                     Added min-w-0 to prevent flexbox overflow issues.
                     Added explicit margins to clear absolute avatars.
                 */}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
+                    {/* 暮色 2026-08-02：主动消息思维链折叠显示
+                        - 浅灰小字"💭 思维链 ›"，不斜体
+                        - 点击展开 → 完整内容显示在下方浅色块里
+                        - 只在 metadata.thought 存在时渲染（主动消息响应时由 OSContext 写入）
+                        - 只在轮首（proactiveRoundStart）显示：一轮主动消息只显示一个思维链
+                        - 兼容老数据：没 proactiveRoundStart 标记的历史主动消息（c613e54 之前）每条都显示
+                    */}
+                    {(() => {
+                        const meta: any = m.metadata || {};
+                        const isNewFormat = 'proactiveRoundStart' in meta;
+                        const showThought = meta.thought && (
+                            isNewFormat ? !!meta.proactiveRoundStart : true
+                        );
+                        if (!(!isUser && showThought)) return null;
+                        return <ThoughtFold thought={meta.thought} />;
+                    })()}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
-                    {(isLastInGroup || m.metadata?.isProactive) && showTimestamp !== 'never' && (
-                        <div className={`text-[9px] px-1 mt-1 font-medium flex items-center gap-1 ${
-                            // 暮色 2026-07-27 v2：主动消息时间戳加视觉标记，跟普通时间戳区分
-                            // 根因：formatTime 只显示 HH:MM，秒级看不出来
-                            //   AI 正常 22:00:00 + proactive 22:00:30 文本都是 "22:00"——
-                            //   看着像合并。加紫色小圆点 + 略深色背景，秒级看不出来也能认出"这是主动"
-                            m.metadata?.isProactive
-                                ? 'text-violet-500/85 bg-violet-50/70 rounded-full px-2'
-                                : 'text-slate-400/80'
-                        } ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>
-                            {m.metadata?.isProactive && (
-                                <span className="w-1 h-1 rounded-full bg-violet-400 shrink-0" />
-                            )}
-                            {formatTime(m.timestamp)}
-                        </div>
-                    )}
+                    {/*
+                      暮色 2026-08-02：时间戳已挪到头像正下方（commonLayout 头像 div 里）
+                      主动消息 + 普通 AI 消息都在那里画，这里不再重复
+                    */}
                 </div>
 
                                 {/* User Avatar - Absolute Positioned */}
-                {isUser && (
-                    <div className="absolute right-3 top-0 z-0">
+                {isUser && effectiveShowAvatar && (
+                    <div className={`absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
+                        {/*
+                          暮色 2026-08-02：用户消息时间戳也挪到头像下（统一）
+                          - isLastInGroup 行为（30 分钟 group 最后一个）
+                          - 样式跟 AI 头像下时间戳一致
+                        */}
+                        {(() => {
+                            if (!isLastInGroup) return null;
+                            if (showTimestamp === 'never') return null;
+                            return (
+                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底
+                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                    {formatTime(m.timestamp)}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
 

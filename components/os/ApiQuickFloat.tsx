@@ -184,6 +184,10 @@ const ApiQuickFloat: React.FC = () => {
     availableModels,
     setAvailableModels,
     apiPresets,
+    // 暮色 2026-08-02 19:00 修：之前 handleSavePreset 调 addApiPreset(name, ...) 但 useOS 没解构 addApiPreset，
+    //   TS 不严格检查 free variable，Vite build 通过，运行时 ReferenceError "addApiPreset is not defined"。
+    //   修：从 useOS 解构 addApiPreset 出来。
+    addApiPreset,
     removeApiPreset,
     addToast,
     isLocked,
@@ -699,6 +703,11 @@ const ApiQuickFloat: React.FC = () => {
   const handleSavePreset = (target: 'main' | 'image' | 'vision' | 'lightLLM', defaultName: string) => {
     const name = window.prompt('预设名称', defaultName)?.trim();
     if (!name) return;
+    // 暮色 2026-08-02 18:50 修：跟记忆宫殿 app 同款 bug。
+    // 之前 baseUrl/imageBaseUrl/visionBaseUrl/baseUrl 字段在协议不是 openai 时保留旧值（apiConfig 的旧值），
+    //   导致预设的 baseUrl 字段跟当前协议的 URL 不同步，isPresetActive 永远不匹配，预设看上去"没生效"。
+    //   修：baseUrl/imageBaseUrl/visionBaseUrl 字段始终用 localUrl/localImageUrl/localVisionUrl/localLightUrl（不分协议），
+    //   其他协议字段保留 local*Url / local*ClaudeUrl / local*GeminiUrl（切回那个 tab 不丢）。
     if (target === 'main') {
       addApiPreset(name, {
         baseUrl: localUrl.trim(),

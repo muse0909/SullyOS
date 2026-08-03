@@ -1439,7 +1439,12 @@ if (!isVisible || !isChattingWithThisChar) {
           //   之前挪里在 try 里，400 错误时 catch 里 JSON.stringify(reqBody) 报 ReferenceError
           //   → localStorage 写不进去 + 推系统消息也炸了 → 聊天里看不到错误详情
           const apiProtocol = (api as any).protocol ?? 'openai';
+          // 暮色 2026-08-03 23:35：reqBody + systemPrompt 都挪到 try 块外
+          //   之前 systemPrompt 在 try 块内 const 声明，catch 块（line 1727）里 systemPrompt.length 抛 ReferenceError
+          //   → 诊断 log 写入炸了 → 推系统消息进聊天也走不到 → 暮色看到的是 console 一片红但 UI 啥都没说
+          //   reqBody 早就这么干了，这里补 systemPrompt 同款
           let reqBody: any = null;
+          let systemPrompt: string = '';
 
           try {
               // 1. Calculate time gap
@@ -1549,7 +1554,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.realtimeText,
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
-              const systemPrompt = systemPromptParts.join('\n\n');
+              systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
@@ -1591,7 +1596,7 @@ if (!isVisible || !isChattingWithThisChar) {
                       protocol: apiProtocol,
                       model: api.model,
                       msgCount: reqBody.messages?.length || 0,
-                      systemChars: typeof systemPrompt === 'string' ? systemPrompt.length : 0,
+                      systemChars: systemPrompt.length,
                       totalBodyChars: JSON.stringify(reqBody).length,
                   };
                   localStorage.setItem('sullyos:proactiveLastReq', JSON.stringify(logEntry, null, 2));
@@ -1724,7 +1729,7 @@ if (!isVisible || !isChattingWithThisChar) {
                       protocol: apiProtocol,
                       model: api.model,
                       msgCount: reqBody?.messages?.length || 0,
-                      systemChars: systemPrompt.length,  // 现在 systemPrompt 是 string 了，能拿到长度
+                      systemChars: systemPrompt.length,  // 暮色 2026-08-03：挪到 try 块外声明的 let，catch 也能拿到
                       totalBodyChars,
                       firstMsgRole: reqBody?.messages?.[0]?.role,
                       lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,

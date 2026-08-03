@@ -14,7 +14,17 @@ interface DateSettingsProps {
 }
 
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
-    const { updateCharacter, addToast, customThemes } = useOS();
+    const {
+        updateCharacter,
+        addToast,
+        customThemes,
+        // 暮色 2026-08-04：见面 app 输入框上方的快捷键（全局共用，所有角色共享一套）
+        dateQuickPhrases,
+        addDateQuickPhrase,
+        updateDateQuickPhrase,
+        deleteDateQuickPhrase,
+        toggleDateQuickPhrase,
+    } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const defaultBubbleOpacity = char.dateDefaultBubbleOpacity ?? 0.15;
     const defaultBubbleFontSize = char.dateDefaultBubbleFontSize ?? 14;
@@ -32,6 +42,45 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const [tempSpriteConfig, setTempSpriteConfig] = useState<SpriteConfig>(DEFAULT_SPRITE_CONFIG);
     const [newEmotionName, setNewEmotionName] = useState<string>('');
     const [settingsTab, setSettingsTab] = useState<'visual' | 'longform'>('longform');
+
+    // 暮色 2026-08-04：快捷键管理（新建/编辑弹窗）
+    //   - 复用同一个 modal，根据 mode 切换 title 和 action
+    //   - 修改通过 OSContext 函数直接同步到 localStorage（不依赖"保存当前布置"按钮）
+    const [phraseModalOpen, setPhraseModalOpen] = useState(false);
+    const [phraseModalMode, setPhraseModalMode] = useState<'create' | 'edit'>('create');
+    const [editingPhraseId, setEditingPhraseId] = useState<string | null>(null);
+    const [phraseFormDisplay, setPhraseFormDisplay] = useState('');
+    const [phraseFormContent, setPhraseFormContent] = useState('');
+
+    const openCreatePhrase = () => {
+        setPhraseFormDisplay('');
+        setPhraseFormContent('');
+        setEditingPhraseId(null);
+        setPhraseModalMode('create');
+        setPhraseModalOpen(true);
+    };
+    const openEditPhrase = (id: string) => {
+        const p = dateQuickPhrases.find(x => x.id === id);
+        if (!p) return;
+        setPhraseFormDisplay(p.display);
+        setPhraseFormContent(p.content);
+        setEditingPhraseId(id);
+        setPhraseModalMode('edit');
+        setPhraseModalOpen(true);
+    };
+    const submitPhrase = () => {
+        const content = phraseFormContent.trim();
+        if (!content) { addToast('填充内容不能为空', 'error'); return; }
+        const display = phraseFormDisplay.trim() || content.slice(0, 2);
+        if (phraseModalMode === 'create') {
+            addDateQuickPhrase(display, content);
+            addToast('快捷键已添加', 'success');
+        } else if (editingPhraseId) {
+            updateDateQuickPhrase(editingPhraseId, { display, content });
+            addToast('已保存', 'success');
+        }
+        setPhraseModalOpen(false);
+    };
 
     // Skin system state
     const [newSkinName, setNewSkinName] = useState('');
@@ -521,6 +570,68 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
 
 {/* ===== 长文模式主题 ===== */}
 <div className="space-y-4">
+  {/* 暮色 2026-08-04：快捷键管理（全局共用）— 见面 app 输入框上方的快捷短语/标点按钮 */}
+  <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <div className="flex items-center justify-between">
+      <div>
+        <h3 className="text-sm font-bold text-slate-700">快捷键</h3>
+        <p className="text-xs text-slate-400 mt-1">在输入框上方一排小按钮，点击自动插入文字（标点 / 常用短语 / 长指令）。</p>
+      </div>
+      <button
+        onClick={openCreatePhrase}
+        className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary border border-primary/20 active:scale-95 transition-all shrink-0"
+      >
+        + 新建
+      </button>
+    </div>
+    {/* 提示：第一个"全屏输入"是系统固定的，不在列表里 */}
+    <div className="mt-2 text-[10px] text-slate-400">第一个按钮（展开全屏输入）是固定的，其余都是你自己加的。</div>
+    {/* 列表 */}
+    <div className="mt-3 space-y-2">
+      {dateQuickPhrases.length === 0 && (
+        <div className="text-xs text-slate-400 italic py-3 text-center">还没有快捷键，点右上"+ 新建"加一个</div>
+      )}
+      {dateQuickPhrases.map(p => (
+        <div key={p.id} className={`flex items-center gap-2 p-2.5 rounded-2xl border ${p.enabled ? 'bg-slate-50 border-slate-100' : 'bg-slate-50/50 border-slate-100 opacity-60'}`}>
+          {/* 显示图标 */}
+          <div className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center text-base shrink-0">
+            {p.display}
+          </div>
+          {/* 内容预览（首行截断） */}
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-slate-700 truncate">{p.content.split('\n')[0]}</div>
+            {p.content.includes('\n') && <div className="text-[10px] text-slate-400 mt-0.5">多行内容</div>}
+          </div>
+          {/* 开关 */}
+          <button
+            onClick={() => toggleDateQuickPhrase(p.id)}
+            className={`w-10 h-6 rounded-full transition-colors relative shrink-0 ${p.enabled ? 'bg-primary' : 'bg-slate-200'}`}
+            aria-pressed={p.enabled}
+            aria-label={p.enabled ? '关闭' : '开启'}
+          >
+            <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${p.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`}></div>
+          </button>
+          {/* 编辑 */}
+          <button
+            onClick={() => openEditPhrase(p.id)}
+            className="p-1.5 text-slate-400 hover:text-primary transition-colors shrink-0"
+            aria-label="编辑"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" /></svg>
+          </button>
+          {/* 删除 */}
+          <button
+            onClick={() => { if (confirm(`确定删除"${p.display}"？`)) { deleteDateQuickPhrase(p.id); addToast('已删除', 'success'); } }}
+            className="p-1.5 text-slate-300 hover:text-red-500 transition-colors shrink-0"
+            aria-label="删除"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+          </button>
+        </div>
+      ))}
+    </div>
+  </section>
+
   <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
     <div className="text-sm font-bold text-slate-700">长文模式主题</div>
     <p className="text-xs text-slate-400 mt-1">在长文模式下选择展示风格，适配小说与气泡阅读。</p>
@@ -700,6 +811,64 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         <div className="p-4 border-t border-slate-100 flex gap-2">
                             <button onClick={() => setShowUrlModal(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold text-sm rounded-xl">取消</button>
                             <button onClick={handleUrlSubmit} disabled={!skinUrlInput.trim() || !skinUrlEmotionKey} className="flex-1 py-2.5 bg-primary text-white font-bold text-sm rounded-xl disabled:opacity-40 active:scale-95 transition-all">确认添加</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 暮色 2026-08-04：快捷键新建/编辑弹窗（复用，根据 mode 切换） */}
+            {phraseModalOpen && (
+                <div className="fixed inset-0 z-[300] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setPhraseModalOpen(false)}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b border-slate-100">
+                            <h3 className="font-bold text-slate-700 text-sm">{phraseModalMode === 'create' ? '新建快捷键' : '编辑快捷键'}</h3>
+                            <p className="text-[11px] text-slate-400 mt-1">显示默认跟内容一样，可单独改成 emoji。</p>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <div>
+                                <label className="text-[11px] text-slate-500 font-bold mb-1 block">
+                                    显示 <span className="text-red-500">*</span>
+                                    <span className="text-slate-400 font-normal ml-1">（emoji / 短文字，键盘栏显示这个）</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={phraseFormDisplay}
+                                    onChange={e => setPhraseFormDisplay(e.target.value)}
+                                    maxLength={4}
+                                    placeholder="如 ⭐ / , / 哈 / 续"
+                                    className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30 text-center text-lg"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[11px] text-slate-500 font-bold mb-1 block">
+                                    填充内容 <span className="text-red-500">*</span>
+                                    <span className="text-slate-400 font-normal ml-1">（点击后插入到输入框，支持多行）</span>
+                                </label>
+                                <textarea
+                                    value={phraseFormContent}
+                                    onChange={e => setPhraseFormContent(e.target.value)}
+                                    rows={4}
+                                    placeholder="如 你今天怎么样？&#10;或：[指令] 请用 <emotion> 标签..."
+                                    className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30 resize-none leading-relaxed"
+                                />
+                            </div>
+                            {/* 预览 */}
+                            {(phraseFormDisplay || phraseFormContent) && (
+                                <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2">
+                                    <div className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center text-base shrink-0">
+                                        {phraseFormDisplay || phraseFormContent.slice(0, 2) || '?'}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">预览</div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 border-t border-slate-100 flex gap-2">
+                            <button onClick={() => setPhraseModalOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold text-sm rounded-xl">取消</button>
+                            <button
+                                onClick={submitPhrase}
+                                disabled={!phraseFormContent.trim()}
+                                className="flex-1 py-2.5 bg-primary text-white font-bold text-sm rounded-xl disabled:opacity-40 active:scale-95 transition-all"
+                            >保存</button>
                         </div>
                     </div>
                 </div>

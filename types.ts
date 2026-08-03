@@ -135,6 +135,18 @@ export interface VirtualTime {
 
 export type MinimaxRegion = 'domestic' | 'overseas';
 
+// 暮色 2026-08-04：见面 app 输入框上方的快捷键
+//   - 全局共用（所有角色共享一套），存在 localStorage 'os_date_quick_phrases'
+//   - display：显示用的字符（emoji 或文字），默认跟 content 一样，可单独改
+//   - content：点击图标后插入到输入框的文字（支持多行）
+//   - enabled：是否在快捷键栏显示（关闭就不显示但不删除）
+export interface DateQuickPhrase {
+  id: string;
+  display: string;     // 显示在按钮上的字符（emoji / 短文字），默认 = content
+  content: string;     // 插入到输入框的文字，支持换行
+  enabled: boolean;    // 是否在快捷键栏显示
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;

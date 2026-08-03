@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, DateQuickPhrase } from '../types';
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -229,6 +229,13 @@ interface OSContextType {
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
   removeCustomTheme: (id: string) => void;
+
+  // 暮色 2026-08-04：见面 app 输入框上方的快捷键（全局共用）
+  dateQuickPhrases: DateQuickPhrase[];
+  addDateQuickPhrase: (display: string, content: string) => void;
+  updateDateQuickPhrase: (id: string, updates: Partial<DateQuickPhrase>) => void;
+  deleteDateQuickPhrase: (id: string) => void;
+  toggleDateQuickPhrase: (id: string) => void;
 
   // Appearance Presets
   appearancePresets: AppearancePreset[];
@@ -622,6 +629,54 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
+  // 暮色 2026-08-04：见面 app 输入框上方的快捷键（全局共用，所有角色共享一套）
+  //   - 存 localStorage 'os_date_quick_phrases'
+  //   - 第一个固定"全屏输入"按钮由 DateSession 特殊处理，不进这个数组
+  const [dateQuickPhrases, setDateQuickPhrasesState] = useState<DateQuickPhrase[]>(() => {
+    try {
+      const s = localStorage.getItem('os_date_quick_phrases');
+      if (!s) return [];
+      const parsed = JSON.parse(s);
+      return Array.isArray(parsed) ? parsed.filter(p => p && p.id && p.content) : [];
+    } catch { return []; }
+  });
+  // 同步到 localStorage（任何 add/update/delete/toggle 都过这个 set 函数）
+  const setDateQuickPhrases = (next: DateQuickPhrase[]) => {
+    setDateQuickPhrasesState(next);
+    try { localStorage.setItem('os_date_quick_phrases', JSON.stringify(next)); } catch {}
+    // 跨组件同步（DateApp / DateSettings 可能同时挂载）
+    window.dispatchEvent(new CustomEvent('os_date_quick_phrases_changed', { detail: next }));
+  };
+  // 订阅 storage / 自定义事件，让 DateApp 也能实时同步 DateSettings 的修改
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'os_date_quick_phrases' && e.newValue) {
+        try { setDateQuickPhrasesState(JSON.parse(e.newValue)); } catch {}
+      }
+    };
+    const onCustom = (e: any) => {
+      if (Array.isArray(e.detail)) setDateQuickPhrasesState(e.detail);
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('os_date_quick_phrases_changed', onCustom);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('os_date_quick_phrases_changed', onCustom);
+    };
+  }, []);
+  const addDateQuickPhrase = (display: string, content: string) => {
+    const id = `qp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setDateQuickPhrases([...dateQuickPhrases, { id, display: display || content.slice(0, 2), content, enabled: true }]);
+  };
+  const updateDateQuickPhrase = (id: string, updates: Partial<DateQuickPhrase>) => {
+    setDateQuickPhrases(dateQuickPhrases.map(p => p.id === id ? { ...p, ...updates } : p));
+  };
+  const deleteDateQuickPhrase = (id: string) => {
+    setDateQuickPhrases(dateQuickPhrases.filter(p => p.id !== id));
+  };
+  const toggleDateQuickPhrase = (id: string) => {
+    setDateQuickPhrases(dateQuickPhrases.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p));
+  };
   const [toasts, setToasts] = useState<Toast[]>([]);
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
@@ -3645,6 +3700,11 @@ if (!isVisible || !isChattingWithThisChar) {
     addToast,
     customIcons,
     setCustomIcon,
+    dateQuickPhrases,
+    addDateQuickPhrase,
+    updateDateQuickPhrase,
+    deleteDateQuickPhrase,
+    toggleDateQuickPhrase,
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,

@@ -6,7 +6,6 @@ import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
 import FullScreenEditor from '../common/FullScreenEditor';
-import { CornersOut } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -103,7 +102,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes, dateQuickPhrases } = useOS();
     
     // Core VN State
     // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
@@ -1107,6 +1106,38 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* ===== 底部输入区 + Plus菜单 ===== */}
             <div className="absolute bottom-0 left-0 right-0 z-30" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} onClick={e => e.stopPropagation()}>
 
+              {/* 暮色 2026-08-04：快捷键栏（输入框上方）
+                  - 第一个固定是「全屏输入」按钮（点击打开 FullScreenEditor）
+                  - 后面是用户自定义的快捷键（从 OSContext 拿 dateQuickPhrases）
+                  - 横向滚，超出宽度可滑动
+                  - 关闭的快捷键（enabled=false）不显示 */}
+              {(dateQuickPhrases.some(p => p.enabled) || true) && (
+                <div className="px-4 pb-2">
+                  <div className="flex gap-2 overflow-x-auto no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
+                    {/* 第一个固定：全屏输入 */}
+                    <button
+                      onClick={openFullInput}
+                      className="shrink-0 h-8 px-3 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-transform"
+                      title="全屏输入"
+                    >
+                      <CornersOut className="w-3 h-3" weight="bold" />
+                      <span>全屏</span>
+                    </button>
+                    {/* 自定义快捷键 */}
+                    {dateQuickPhrases.filter(p => p.enabled).map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => setInput(prev => prev ? prev + (prev.endsWith('\n') || prev === '' ? '' : '\n') + p.content : p.content)}
+                        className="shrink-0 h-8 px-3 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-[11px] font-bold active:scale-95 transition-transform min-w-[2rem]"
+                        title={p.content}
+                      >
+                        {p.display}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {showPlusMenu && (
                 <div className="px-4 pb-2 flex flex-col gap-2 w-full max-w-full overflow-hidden">
                   {showVoiceLangPicker && (
@@ -1137,36 +1168,37 @@ const DateSession: React.FC<DateSessionProps> = ({
                       ))}
                     </div>
                   ) : (
-                    <div className="flex gap-2 justify-center flex-wrap">
+                    // 暮色 2026-08-04：4 个按钮一排 4 列均分（之前 flex-wrap 导致 4 个变 3+1）
+                    <div className="grid grid-cols-4 gap-2 px-1">
                       {canReroll && !isTyping && (
                         <button onClick={() => { handleRerollClick(); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center justify-center gap-1 px-1 py-2.5 bg-violet-300/70 backdrop-blur-md rounded-2xl text-white text-[11px] font-bold active:scale-95 shadow min-w-0">
                           重新生成
                         </button>
                       )}
                       <button onClick={() => setShowModeSwitch(true)}
-                        className="flex flex-col items-center gap-1 px-5 py-2.5 bg-blue-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                        className="flex flex-col items-center justify-center gap-1 px-1 py-2.5 bg-blue-300/70 backdrop-blur-md rounded-2xl text-white text-[11px] font-bold active:scale-95 shadow min-w-0">
                         模式切换
                       </button>
                       <button onClick={() => setShowVoiceLangPicker(p => !p)}
-                        className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-emerald-300/70 text-white border border-white/20'}`}>
+                        className={`flex flex-col items-center justify-center gap-1 px-1 py-2.5 rounded-2xl text-[11px] font-bold active:scale-95 shadow backdrop-blur-md min-w-0 ${voiceEnabled ? 'bg-emerald-300/70 text-white' : 'bg-emerald-300/70 text-white border border-white/20'}`}>
                         语音设置
                       </button>
                       {viewMode === 'novel' && (
                         <button onClick={() => { updateCharacter(char.id, { dateLightReading: !char.dateLightReading }); addToast(char.dateLightReading ? '已切换暗色' : '已切换亮色', 'info'); }}
-                          className={`flex flex-col items-center gap-1 px-5 py-2.5 rounded-2xl text-xs font-bold active:scale-95 shadow backdrop-blur-md ${char.dateLightReading ? 'bg-amber-200/70 text-amber-800' : 'bg-slate-500/60 text-white'}`}>
+                          className={`flex flex-col items-center justify-center gap-1 px-1 py-2.5 rounded-2xl text-[11px] font-bold active:scale-95 shadow backdrop-blur-md min-w-0 ${char.dateLightReading ? 'bg-amber-200/70 text-amber-800' : 'bg-slate-500/60 text-white'}`}>
                           {char.dateLightReading ? '亮色模式' : '暗色模式'}
                         </button>
                       )}
                       {viewMode === 'gal' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center justify-center gap-1 px-1 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-[11px] font-bold active:scale-95 shadow min-w-0">
                           主题设置
                         </button>
                       )}
                       {viewMode === 'longform' && (
                         <button onClick={() => { setShowSettings(true); setShowPlusMenu(false); }}
-                          className="flex flex-col items-center gap-1 px-5 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-xs font-bold active:scale-95 shadow">
+                          className="flex flex-col items-center justify-center gap-1 px-1 py-2.5 bg-pink-300/70 backdrop-blur-md rounded-2xl text-white text-[11px] font-bold active:scale-95 shadow min-w-0">
                           主题设置
                         </button>
                       )}
@@ -1186,14 +1218,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={`w-4 h-4 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
-                  </button>
-                  <button
-                    onClick={openFullInput}
-                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 shrink-0 bg-white/15 text-white/70 hover:bg-white/25"
-                    title="全屏输入"
-                    aria-label="全屏输入"
-                  >
-                    <CornersOut className="w-4 h-4" weight="bold" />
                   </button>
                   <textarea
                     ref={inputRef}

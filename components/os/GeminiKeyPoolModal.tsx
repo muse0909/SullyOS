@@ -77,6 +77,29 @@ const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
     setNewKey('');
   };
 
+  // 暮色 2026-08-04：paste 自动加 + 多 key 粘贴（一次粘多个 key，每行一个，自动拆）
+  //   之前用户必须点 + 或按回车，paste 后没触发 → 新 key 一直只在输入框里，保存时被丢
+  const handleAddBulk = (raw: string) => {
+    // 按行拆 + 去 trim + 去空 + 去重
+    const candidates = raw
+      .split(/[\n\r]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (candidates.length === 0) return;
+    setLocalKeys(prev => {
+      const seen = new Set(prev);
+      const additions: string[] = [];
+      for (const c of candidates) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          additions.push(c);
+        }
+      }
+      return [...prev, ...additions];
+    });
+    setNewKey('');
+  };
+
   const handleDelete = (idx: number) => {
     setLocalKeys(prev => prev.filter((_, i) => i !== idx));
   };
@@ -87,7 +110,26 @@ const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
   };
 
   const handleSave = () => {
-    onSave(localKeys.filter(k => k && k.trim()));
+    // 暮色 2026-08-04：保存兜底——如果 newKey 里有值但没点 + 没回车，自动加进去
+    //   避免"键在输入框里但没进列表 → 保存时被丢"
+    const finalKeys = newKey.trim()
+      ? (() => {
+          const candidates = newKey
+            .split(/[\n\r]+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+          const seen = new Set(localKeys);
+          const merged = [...localKeys];
+          for (const c of candidates) {
+            if (!seen.has(c)) {
+              seen.add(c);
+              merged.push(c);
+            }
+          }
+          return merged;
+        })()
+      : localKeys;
+    onSave(finalKeys.filter(k => k && k.trim()));
     onClose();
   };
 
@@ -191,23 +233,32 @@ const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
             type="text"
             value={newKey}
             onChange={(e) => setNewKey(e.target.value)}
+            onPaste={(e) => {
+              // 暮色 2026-08-04：粘贴自动加（多行粘贴按行拆成多个 key）
+              //   之前：paste 后必须再点 + 或按回车，用户容易漏
+              //   现在：paste 完直接加进列表，输入框清空
+              e.preventDefault();
+              const pasted = e.clipboardData.getData('text') || '';
+              handleAddBulk(pasted);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 handleAdd();
               }
             }}
-            placeholder="输入新 key（Google AI Studio）"
+            placeholder="粘贴或输入新 key（一次可粘多行）"
             className="flex-1 bg-white border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono focus:border-sky-300 focus:bg-white transition-all"
           />
           <button
             onClick={handleAdd}
             disabled={!newKey.trim()}
-            className={`px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all ${
+            className={`min-w-[44px] py-2 px-3 rounded-xl text-sm font-bold active:scale-95 transition-all ${
               newKey.trim()
                 ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
                 : 'bg-slate-100 text-slate-400'
             }`}
+            title="添加（也支持粘贴）"
           >
             +
           </button>

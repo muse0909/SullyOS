@@ -365,9 +365,11 @@ const DateApp: React.FC = () => {
 2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
 
 ### 推理语言（暮色 2026-08-03）
-- 如果你启用了思维链 / 推理过程，**推理 / 思考内容必须用中文输出**（用户在 SullyOS 见面 app 里看思维链，英文看不懂）
-- 即使内容引用英文术语 / 代码片段，**思考和解释也用中文**
-- 最终回复（带 [emotion] 标签的部分）保持中文对话风格
+- **如果模型启用了思维链 / extended thinking / reasoning**：思考过程必须 **100% 用中文**。
+- **禁止**在 thinking 中夹杂任何英文（包括 'the'、'is'、'and'、'user'、'I'、'would'、'should' 这些常见词），除非是官方专有名词（API、React、TypeScript 这种保留英文）。
+- 思考时**先在脑内默念一句**"用中文"，再开始正式推理。
+- 即使涉及代码、英文术语 / 引用片段，**思考和解释也用中文**（如"用户输入了'你好'，我需要……"而不是 "User said 'hi', I need to..."）。
+- **最终回复**（带 [emotion] 标签的部分）保持中文对话风格。
 `;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -451,8 +453,10 @@ const DateApp: React.FC = () => {
 用细微的肢体语言暗示情绪，不要直接说"开心""紧张"。
 
 ### 推理语言（暮色 2026-08-03）
-- 如果你启用了思维链 / 推理过程，**推理 / 思考内容必须用中文输出**（用户在 SullyOS 见面 app 里看思维链，英文看不懂）
-- 即使内容引用英文术语 / 代码片段，**思考和解释也用中文**
+- **如果模型启用了思维链 / extended thinking / reasoning**：思考过程必须 **100% 用中文**。
+- **禁止**在 thinking 中夹杂任何英文（包括 'the'、'is'、'and'、'user'、'I'、'would'、'should' 这些常见词），除非是官方专有名词（API、React、TypeScript 这种保留英文）。
+- 思考时**先在脑内默念一句**"用中文"，再开始正式推理。
+- 即使涉及代码、英文术语 / 引用片段，**思考和解释也用中文**（如"用户输入了'你好'，我需要……"而不是 "User said 'hi', I need to..."）。
 `;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {

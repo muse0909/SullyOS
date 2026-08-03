@@ -735,7 +735,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 onClick={(e) => { e.stopPropagation(); setShowPlusMenu(false); setShowModeSwitch(false); setShowInputBox(true); }}
               >
                 <div className={`relative z-10 ${longformTheme === 'half-novel' ? 'max-w-2xl mx-auto space-y-3' : 'space-y-4'}`}>
-                  {sessionMessages.map((msg) => {
+                  {sessionMessages.map((msg, idx) => {
                     const content = cleanTextForDisplay(msg.content || '');
                     if (!content) return null;
                     const isUser = msg.role === 'user';
@@ -751,7 +751,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                       WebkitBackdropFilter: 'blur(12px)',
                       fontSize: `${defaultBubbleFontSize}px`,
                     };
-                    
+
                     // 获取气泡预设样式（如果已选择）- AI和用户都获取
                     let bubblePresetStyle: any = null;
                     if (char.dateLongformBubblePresetId && customThemes) {
@@ -760,7 +760,32 @@ const DateSession: React.FC<DateSessionProps> = ({
                         bubblePresetStyle = isUser ? (preset.user || preset.ai || {}) : (preset.ai || {});
                       }
                     }
-                    
+
+                    // 暮色 2026-08-03：思维链折叠块嵌进**最后一条** AI 消息气泡的内部顶部
+                    //   - 只最后一条带 thinking（currentThinking 是 state，新一轮开始就清空）
+                    //   - 位置在气泡 div 内、content 之前
+                    //   - 样式：白/灰文字，无 emoji（参考用户截图风格）
+                    const isLastMessage = idx === sessionMessages.length - 1;
+                    const showThinkingInBubble = !isUser && isLastMessage && currentThinking && (char.dateShowThinking ?? true);
+                    const thinkingToggleNode = showThinkingInBubble ? (
+                        <div className="mb-2 animate-fade-in">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setThinkingExpanded(v => !v); }}
+                                className="flex items-center gap-1 text-[10px] text-white/55 hover:text-white/80 transition-colors"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                                </svg>
+                                <span>思考 1 次{thinkingExpanded ? '' : ` · ${currentThinking.length} 字`}</span>
+                            </button>
+                            {thinkingExpanded && (
+                                <div className="mt-1.5 pl-3 border-l border-white/20 text-[11px] text-white/65 leading-relaxed whitespace-pre-wrap animate-slide-down max-h-48 overflow-y-auto no-scrollbar">
+                                    {currentThinking}
+                                </div>
+                            )}
+                        </div>
+                    ) : null;
+
                     if (useBubble) {
                       // long-bubble: 头像顶部 + 消息内容
                       return (
@@ -801,6 +826,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 } : {})
                               }}
                             >
+                              {thinkingToggleNode}
                               {content}
                             </div>
                           </div>
@@ -814,7 +840,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         </div>
                       );
                     }
-                    
+
                     // half-novel: 半屏小说风格 - 半透明气泡叠在背景上（也支持预设切换）
                     return (
                       <div
@@ -850,30 +876,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                             } : {})
                           }}
                         >
+                          {thinkingToggleNode}
                           {content}
                         </div>
                       </div>
                     );
                   })}
-                  {/* 原生思维链折叠气泡（暮色 2026-08-03）— 位于历史消息之后、AI 加载之前 */}
-                  {currentThinking && (char.dateShowThinking ?? true) && (
-                    <div className="mb-3 animate-fade-in">
-                      <button
-                        onClick={() => setThinkingExpanded(v => !v)}
-                        className="flex items-center gap-1.5 text-[10px] text-amber-200/80 hover:text-amber-100 transition-colors px-1 py-0.5 rounded-lg hover:bg-white/5"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                        </svg>
-                        <span>🤔 推理过程 {thinkingExpanded ? '' : `(${currentThinking.length}字)`}</span>
-                      </button>
-                      {thinkingExpanded && (
-                        <div className="mt-1 ml-4 pl-3 border-l-2 border-amber-300/40 bg-amber-500/5 rounded-r-lg p-2 text-[11px] text-white/70 leading-relaxed whitespace-pre-wrap animate-slide-down">
-                          {currentThinking}
-                        </div>
-                      )}
-                    </div>
-                  )}
                   {isTyping && (
                     <div className={`flex gap-2 mb-4 ${longformTheme === 'half-novel' ? '' : ''}`}>
                       {longformTheme === 'long-bubble' && (

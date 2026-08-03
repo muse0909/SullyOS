@@ -6,7 +6,7 @@
 //   - 重置：dead 状态可以手动点 ↻ 改回 active
 //   - 底部：保存（写回 apiConfig）+ 取消
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Modal from './Modal';
 import {
   getGeminiKeyStatuses,
@@ -45,8 +45,15 @@ const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
   const [statusTick, setStatusTick] = useState(0);
 
   // 打开时同步外部 keys → localKeys
+  // 暮色 2026-08-04 修：之前用 [isOpen, keys] 依赖，keys 每次都是新数组引用（extractGeminiKeys .map().filter()）
+  //   导致父组件任何 re-render 都会触发 useEffect → setLocalKeys(keys) → 暮色粘贴的 key 被重置回 1 个
+  //   改用 ref 跟踪上次同步的"内容字符串"，只在真变了才同步
+  const syncedKeysRef = useRef<string>('');
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    const joined = keys.join('\n');
+    if (syncedKeysRef.current !== joined) {
+      syncedKeysRef.current = joined;
       setLocalKeys(keys);
       setNewKey('');
     }

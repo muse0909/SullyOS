@@ -1288,6 +1288,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                     ref={inputRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    // 暮色 2026-08-04 反馈：电脑（macOS）点不出快捷键栏
+                    //   长文容器 onClick 是点对话区才触发 setShowInputBox(true)
+                    //   鼠标点 textarea 时容器 onClick 不冒泡，showInputBox 一直是 false
+                    //   修复：textarea onFocus 直接设 showInputBox=true（手机用 onClick / 电脑用 onFocus 都覆盖）
+                    onFocus={() => setShowInputBox(true)}
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}

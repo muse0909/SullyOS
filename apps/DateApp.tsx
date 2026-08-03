@@ -295,25 +295,25 @@ const DateApp: React.FC = () => {
     }, [memoryPalaceConfig, apiConfig, userProfile?.name, updateCharacter, addToast]);
 
     // --- Session API Logic ---
-    const handleSendMessage = async (text: string): Promise<string> => {
+    const handleSendMessage = async (text: string): Promise<{ content: string; thinking?: string }> => {
         if (!char) throw new Error("No char");
-        
+
         // 1. Save User Msg
         await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
-        
+
         // 2. Prepare Context
         // Re-fetch messages. Since we saved the opening in handleEnterSession,
         // 'allMsgs' will now correctly contain: [History..., Opening, UserMsg]
         const allMsgs = await DB.getMessagesByCharId(char.id, true);
-        
+
         // Update local state for display
         const dateFiltered = allMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp);
         setDateMessages(dateFiltered);
 
         const limit = char.contextLimit || 500;
-        
+
         // Construct History for AI
-        // We exclude the very last message (UserMsg we just sent) from history array 
+        // We exclude the very last message (UserMsg we just sent) from history array
         // because we'll pass it as the explicit user prompt "content".
         // BUT, we must ensure the Opening (Assistant) is included in history.
         const historyMsgs = allMsgs.slice(-limit, -1).map(m => {
@@ -408,6 +408,107 @@ const DateApp: React.FC = () => {
         setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
 
         // Memory Palace 后台流程（不阻塞返回，与聊天侧一致）
+        runMemoryPalacePostHook(char);
+
+        return { content, thinking };
+    };
+
+    // 暮色 2026-08-03 v2：重发最后一条 user 消息
+    //   - 不重复入库（user 消息已经在库里了 — handleSendMessage 是"先入库再发请求"架构）
+    //   - 跟 handleReroll 一个套路：重发请求但不写新 user 消息
+    //   - 触发条件（由 DateSession 检测）：库里最后一条 date 消息是 user 消息
+    //   - 行为：复用 handleSendMessage 的"准备 context + fetch + save AI 响应"逻辑，跳过"save user"步骤
+    const handleResendLastUserMessage = async (): Promise<{ content: string; thinking?: string }> => {
+        if (!char) throw new Error("No char");
+
+        // 1. 拿到库里的 user 消息
+        const allMsgs = await DB.getMessagesByCharId(char.id, true);
+        const dateMsgs = allMsgs.filter(m => m.metadata?.source === 'date').sort((a, b) => a.timestamp - b.timestamp);
+        if (dateMsgs.length === 0) throw new Error("No messages to resend");
+        const lastUserMsg = dateMsgs[dateMsgs.length - 1];
+        if (lastUserMsg.role !== 'user') throw new Error("Last message is not a user message — nothing to resend");
+        const text = lastUserMsg.content;
+
+        // 2. 准备 Context（跟 handleSendMessage 一致，但 user 消息**已经**在 allMsgs 里，所以 history slice 时直接排除最后一条即可）
+        const limit = char.contextLimit || 500;
+        const historyMsgs = allMsgs.slice(-limit, -1).map(m => {
+            const timeAxis = `[${new Date(m.timestamp).toLocaleString('zh-CN')}]`;
+            const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
+            return {
+                role: m.role,
+                content: m.type === 'image' ? `${timeAxis} ${source} [User sent an image]` : `${timeAxis} ${source} ${m.content}`
+            };
+        });
+
+        await injectMemoryPalace(char, allMsgs);
+        let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
+        const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
+        const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
+
+        // 跟 handleSendMessage 的 system prompt 保持一致（包含"推理语言"段）
+        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
+你正在与用户进行**面对面**的互动。这不是聊天，是一场真实的见面。
+
+### 核心规则：一行一念 (One Line per Beat)
+前端解析器基于**换行符**来分割气泡。
+1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
+2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**不要整段只用一个情绪，要逐行根据语境切换。** 仅限使用以下情绪: ${dateEmotionsR.join(', ')}。不要使用任何不在此列表中的标签。
+3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
+
+### ⭐ 动作与叙述行的写法
+你不是在列清单，你是在写一个正在发生的场景。每一行动作/叙述都应该让人感受到**此时此刻的空气**。
+
+❌ **不要这样写**（只用一个情绪 + 干巴巴的动作罗列）：
+[normal] 把手放下，看向你。
+走到你身边，坐下来。
+拿起杯子，喝了一口水。
+
+✅ **要这样写**（每行标注情绪 + 有呼吸感的叙述）：
+[normal] 指尖从发梢滑落，垂在身侧。视线转过来的时候并不急，像是刚好、又像是故意。
+[shy] "……你一直在看我吗？"
+[happy] 嘴角的弧度藏不住，像是被戳中了什么小心思。
+[normal] 脚步踩在木地板上的声音很轻。在你旁边坐下来，衣料带过一缕还没散尽的冷风。
+
+### 场景上下文
+1. **Location**: 你们现在**面对面**。
+2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
+
+### 推理语言（暮色 2026-08-03）
+- **如果模型启用了思维链 / extended thinking / reasoning**：思考过程必须 **100% 用中文**。
+- **禁止**在 thinking 中夹杂任何英文（包括 'the'、'is'、'and'、'user'、'I'、'would'、'should' 这些常见词），除非是官方专有名词（API、React、TypeScript 这种保留英文）。
+- 思考时**先在脑内默念一句**"用中文"，再开始正式推理。
+- 即使涉及代码、英文术语 / 引用片段，**思考和解释也用中文**（如"用户输入了'你好'，我需要……"而不是 "User said 'hi', I need to..."）。
+- **最终回复**（带 [emotion] 标签的部分）保持中文对话风格。
+`;
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    ...historyMsgs,
+                    { role: 'user', content: `${text}\n\n(System Note: 重发请求。严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写出场景的呼吸感，不要罗列动作。)` }
+                ],
+                temperature: apiConfig.temperature ?? 0.85,
+                stream: apiConfig.stream ?? false,
+            })
+        });
+
+        if (!response.ok) throw new Error('API Error');
+        const data = await safeResponseJson(response);
+        const content = extractContent(data);
+        const thinking = extractThinking(data);
+
+        // 保存 AI 响应（跟 handleSendMessage 一样）
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
+
+        // Refresh local state
+        const freshMsgs = await DB.getMessagesByCharId(char.id, true);
+        setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+
+        // Memory Palace 后台流程
         runMemoryPalacePostHook(char);
 
         return { content, thinking };
@@ -778,6 +879,7 @@ const DateApp: React.FC = () => {
                     initialState={char.savedDateState}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
+                    onResendLastUserMessage={handleResendLastUserMessage}
                     onExit={onExitSession}
                     onEditMessage={(msg) => { setEditTargetMsg(msg); setEditContent(msg.content); setIsEditModalOpen(true); }}
                     onDeleteMessage={handleDeleteMessage}

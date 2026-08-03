@@ -80,6 +80,7 @@ interface DateSessionProps {
     initialState?: DateState; // Resume state
     onSendMessage: (text: string) => Promise<{ content: string; thinking?: string }>; // Returns AI content + 可选原生思维链
     onReroll: () => Promise<{ content: string; thinking?: string }>;
+    onResendLastUserMessage: () => Promise<{ content: string; thinking?: string }>; // 暮色 2026-08-03 v2：重发最后一条 user 消息（不重复入库）
     onExit: (currentState: DateState) => void;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
@@ -87,14 +88,15 @@ interface DateSessionProps {
     onSettings: () => void;
 }
 
-const DateSession: React.FC<DateSessionProps> = ({ 
-    char, 
+const DateSession: React.FC<DateSessionProps> = ({
+    char,
     userProfile,
-    messages, 
-    peekStatus, 
+    messages,
+    peekStatus,
     initialState,
-    onSendMessage, 
-    onReroll, 
+    onSendMessage,
+    onReroll,
+    onResendLastUserMessage,
     onExit,
     onEditMessage,
     onDeleteMessage,
@@ -359,6 +361,16 @@ const DateSession: React.FC<DateSessionProps> = ({
         return messages;
     }, [messages]);
 
+    // 暮色 2026-08-03 v2：检测"库里最后一条 user 消息还没收到 AI 回复"
+    //   用于"点发送但输入框空"时走"重发最后一条"路径（不重复入库）
+    //   判断用 messages（全部 date 消息），不用 sessionMessages（被 opening 切过的）
+    const hasPendingUserMessage = React.useMemo(() => {
+        if (isTyping) return false;
+        if (messages.length === 0) return false;
+        const last = messages[messages.length - 1];
+        return last.role === 'user' && last.metadata?.source === 'date';
+    }, [messages, isTyping]);
+
     // Initialization
     useEffect(() => {
         if (initialState) {
@@ -501,10 +513,15 @@ const DateSession: React.FC<DateSessionProps> = ({
     const handleSend = async () => {
         if (isTyping) return;
         const trimmed = input.trim();
-        // 空内容：不发请求，直接触发重 roll（如果有可重 roll 的消息）
+        // 空内容分支（暮色 2026-08-03 v2）：
+        //   - canReroll：走重 roll（之前的逻辑）
+        //   - hasPendingUserMessage：库里最后一条 user 消息还没收到 AI 回复 → 走重发（不重复入库）
+        //   - 其他：什么都不做
         if (!trimmed) {
             if (canReroll) {
                 await handleRerollClick();
+            } else if (hasPendingUserMessage) {
+                await handleResend();
             }
             return;
         }
@@ -534,11 +551,43 @@ const DateSession: React.FC<DateSessionProps> = ({
                 processNextDialogue(items[0], items.slice(1));
             }
         } catch (e: any) {
-            // 暮色 2026-08-03 反馈：API 失败后输入框是空的，用户没法直接重发
-            //   之前 setInput('') 把输入清掉，catch 时没回填
-            //   修复：把上次发的文本（trimmed）回填到输入框，让用户直接按发送就能重试
-            setInput(trimmed);
+            // 暮色 2026-08-03 v2：失败时**不**回填输入框
+            //   之前 v1 的 setInput(trimmed) 会让用户再点发送 → 库里就多一条重复
+            //   改为：失败时只显示 "(连接中断)"，让发送键在"有未回复 user 消息"时可点
+            //   用户点发送会走 handleResend 路径（不重复入库，直接重发请求）
             setCurrentText("(连接中断)");
+            setShowInputBox(true);
+        } finally {
+            setIsTyping(false);
+        }
+    };
+
+    // 暮色 2026-08-03 v2：重发最后一条 user 消息
+    //   - 不重复入库（用户消息已经在库里了）
+    //   - 跟 handleReroll 一个套路：重发请求但不写新消息
+    //   - 触发条件：库里最后一条 date 消息是 user 消息（且没收到对应 AI 响应）
+    const handleResend = async () => {
+        if (isTyping) return;
+        setIsTyping(true);
+        setShowPlusMenu(false);
+        setCurrentThinking(''); // 重发也清上一轮 thinking
+        try {
+            const result = await onResendLastUserMessage();
+            const showThinking = char.dateShowThinking ?? true;
+            if (showThinking && result.thinking) {
+                setCurrentThinking(result.thinking);
+                setThinkingExpanded(false);
+            } else {
+                setCurrentThinking('');
+            }
+            const items = parseDialogue(result.content, 'normal');
+            setDialogueBatch(items);
+            setDialogueQueue(items);
+            if (items.length > 0) {
+                processNextDialogue(items[0], items.slice(1));
+            }
+        } catch (e: any) {
+            setCurrentText("(重发也失败)");
             setShowInputBox(true);
         } finally {
             setIsTyping(false);
@@ -1158,7 +1207,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                   />
                   <button
                     onClick={handleSend}
-                    disabled={(!input.trim() && !canReroll) || isTyping}
+                    disabled={(!input.trim() && !canReroll && !hasPendingUserMessage) || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">

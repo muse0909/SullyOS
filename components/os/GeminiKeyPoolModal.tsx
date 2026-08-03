@@ -26,6 +26,10 @@ interface GeminiKeyPoolModalProps {
   onSave: (keys: string[]) => void;
 }
 
+// 暮色 2026-08-04：弹窗 z-index = 120，盖过 ApiQuickFloat 面板（z-[110]）
+//   之前用默认 z-[100] 弹窗被浮窗面板盖住 → 暮色反馈"点着没反应"
+const MODAL_Z_INDEX = 120;
+
 const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
   isOpen,
   onClose,
@@ -92,6 +96,7 @@ const GeminiKeyPoolModal: React.FC<GeminiKeyPoolModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={`Gemini 密钥池 · ${channelLabel}`}
+      zIndex={MODAL_Z_INDEX}
       footer={
         <>
           <button

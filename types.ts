@@ -140,11 +140,13 @@ export type MinimaxRegion = 'domestic' | 'overseas';
 //   - display：显示用的字符（emoji 或文字），默认跟 content 一样，可单独改
 //   - content：点击图标后插入到输入框的文字（支持多行）
 //   - enabled：是否在快捷键栏显示（关闭就不显示但不删除）
+//   - cursorPos: 插入位置 — 'last'（末尾，默认）/'cursor'（光标处；当前实现是末尾，'cursor' 留作扩展）
 export interface DateQuickPhrase {
   id: string;
   display: string;     // 显示在按钮上的字符（emoji / 短文字），默认 = content
   content: string;     // 插入到输入框的文字，支持换行
   enabled: boolean;    // 是否在快捷键栏显示
+  cursorPos?: 'last' | 'cursor';  // 插入位置（默认 'last'，参考 iOS 截图）
 }
 
 export interface APIConfig {

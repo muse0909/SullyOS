@@ -1073,6 +1073,7 @@ export interface CharacterProfile {
   dateLongformBubblePresetId?: string;
   dateDefaultBubbleOpacity?: number;
   dateDefaultBubbleFontSize?: number;
+  dateShowThinking?: boolean;   // 在 AI 回复上方显示折叠的原生思维链（reasoning_content），默认 true
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)

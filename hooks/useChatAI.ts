@@ -2339,30 +2339,38 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 content: `${char.name} 想给暮色放《${songName || '???'}》，但没找到合适的版本（${reason}）`,
             });
             addToast(`${char.name} 想放《${songName || '歌名缺失'}》但没找到`, 'info');
+
+            // 暮色 2026-08-03：放歌失败时仍调一次主 API 让大语言模型知道结果并自然道歉
+            // 成功路径已不调 followup（toast + 系统消息 + music_card 三件套已足够，省 5-7w token）
+            // 暮色 2026-08-03 01:10 反馈：失败时 LLM 会撒谎说"放好了"——只发 tool 消息不够
+            // 修法：跟生图失败同款，再追加一条 system 消息明确指令"不要声称已放歌成功"
+            // 保留 tool 消息是 OpenAI 协议要求（不回传 tool_call_id LLM 会困惑可能再调一次）
+            const failReason = playSongError || '未知原因';
+            const followMessages = [
+                ...fullMessages,
+                {
+                    role: 'tool',
+                    tool_call_id: playSongCall.id,
+                    content: `放歌失败：${playSongError || '未知错误'}`,
+                },
+                {
+                    role: 'system',
+                    content: `请你不要声称已经放歌成功。
+请自然地告诉用户：${failReason}导致没有播放成功，问问用户要不要换首歌名或歌手名重试，或者自然的回应即可。`
+                },
+            ];
+            const followBody = { ...baseReqBody, messages: followMessages };
+            // 删掉 tools 避免无限循环（大语言模型下一轮不应该再调 play_song）
+            delete followBody.tools;
+            delete followBody.tool_choice;
+
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(followBody),
+            });
+            updateTokenUsage(data, historyMsgCount, 'play-song-followup');
         }
-
-        // 跟生图一样：再调一次大语言模型让大语言模型知道工具结果（OpenAI 协议用 role='tool' 回传）
-        const followMessages = [
-            ...fullMessages,
-            {
-                role: 'tool',
-                tool_call_id: playSongCall.id,
-                content: playSongSnap
-                    ? `成功放歌《${playSongSnap.name}》— ${playSongSnap.artists}${join ? '，已加入一起听' : ''}`
-                    : `放歌失败：${playSongError || '未知错误'}`,
-            },
-        ];
-        const followBody = { ...baseReqBody, messages: followMessages };
-        // 删掉 tools 避免无限循环（大语言模型下一轮不应该再调 play_song）
-        delete followBody.tools;
-        delete followBody.tool_choice;
-
-        data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(followBody),
-        });
-        updateTokenUsage(data, historyMsgCount, 'play-song-followup');
     }
 }
 

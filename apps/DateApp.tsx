@@ -383,8 +383,16 @@ const DateApp: React.FC = () => {
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
         const content = data.choices[0].message.content;
+        // 暮色 2026-08-03：原生思维链（DeepSeek-R1 / GLM-4.5 / QwQ / Qwen3 思维链模式等）
+        //   OpenAI 协议兼容接口把 reasoning 放在 message.reasoning_content 字段；
+        //   不存数据库（只是 UI 折叠展示），回话结构稳定后下次重 roll 不会重看一遍旧的。
+        const thinking: string | undefined = (() => {
+            const raw = data.choices[0].message?.reasoning_content;
+            if (typeof raw === 'string' && raw.trim()) return raw.trim();
+            return undefined;
+        })();
 
-        // 3. Save AI Response
+        // 3. Save AI Response（thinking 不入库 — 跟聊天侧的 useChatAI 行为对齐）
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
 
         // Refresh local state
@@ -394,7 +402,7 @@ const DateApp: React.FC = () => {
         // Memory Palace 后台流程（不阻塞返回，与聊天侧一致）
         runMemoryPalacePostHook(char);
 
-        return content;
+        return { content, thinking };
     };
 
     const handleReroll = async (): Promise<string> => {
@@ -456,6 +464,12 @@ const DateApp: React.FC = () => {
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
         const content = data.choices[0].message.content;
+        // 跟 handleSendMessage 一致：提取原生思维链（不存 DB）
+        const thinking: string | undefined = (() => {
+            const raw = data.choices[0].message?.reasoning_content;
+            if (typeof raw === 'string' && raw.trim()) return raw.trim();
+            return undefined;
+        })();
 
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
 
@@ -466,7 +480,7 @@ const DateApp: React.FC = () => {
         // Memory Palace 后台流程（Reroll 也算一轮新输出）
         runMemoryPalacePostHook(char);
 
-        return content;
+        return { content, thinking };
     };
 
     // --- Editing & Deletion ---

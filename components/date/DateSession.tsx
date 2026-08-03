@@ -6,7 +6,7 @@ import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
 import FullScreenEditor from '../common/FullScreenEditor';
-import { CornersOut } from '@phosphor-icons/react';
+import { CornersOut, Gear, Trash, PencilSimple } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -103,7 +103,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes, dateQuickPhrases } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter, customThemes,
+        dateQuickPhrases, addDateQuickPhrase, updateDateQuickPhrase, deleteDateQuickPhrase, toggleDateQuickPhrase,
+    } = useOS();
     
     // Core VN State
     // 三模式: gal=视觉GalGame / novel=小说阅读 / longform=长文模式
@@ -159,6 +161,58 @@ const DateSession: React.FC<DateSessionProps> = ({
         setInput(text);
         setShowFullInput(false);
         setTimeout(() => handleSend(), 0);
+    };
+
+    // 暮色 2026-08-04：快捷键管理 state（齿轮按钮触发的弹窗）
+    //   - phraseModalOpen：是否显示弹窗
+    //   - phraseModalMode：新建 / 编辑
+    //   - editingPhraseId：编辑哪条
+    //   - phraseFormDisplay / phraseFormContent / phraseFormCursorPos：表单字段
+    //   - deleteTargetId：删除确认弹窗的目标（暮色不喜欢 window.confirm 大弹窗）
+    const [phraseModalOpen, setPhraseModalOpen] = useState(false);
+    const [phraseModalMode, setPhraseModalMode] = useState<'create' | 'edit'>('create');
+    const [editingPhraseId, setEditingPhraseId] = useState<string | null>(null);
+    const [phraseFormDisplay, setPhraseFormDisplay] = useState('');
+    const [phraseFormContent, setPhraseFormContent] = useState('');
+    const [phraseFormCursorPos, setPhraseFormCursorPos] = useState<'last' | 'cursor'>('last');
+    const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+    // 暮色 v2 反馈：新建/编辑弹窗独立 state（不和"快捷键设置列表"共用一个 — 否则两个 modal 同时显示）
+    const [phraseFormModalOpen, setPhraseFormModalOpen] = useState(false);
+
+    const openCreatePhrase = () => {
+        setPhraseFormDisplay('');
+        setPhraseFormContent('');
+        setPhraseFormCursorPos('last');
+        setEditingPhraseId(null);
+        setPhraseModalMode('create');
+        setPhraseFormModalOpen(true);
+    };
+    const openEditPhrase = (id: string) => {
+        const p = dateQuickPhrases.find(x => x.id === id);
+        if (!p) return;
+        setPhraseFormDisplay(p.display);
+        setPhraseFormContent(p.content);
+        setPhraseFormCursorPos(p.cursorPos || 'last');
+        setEditingPhraseId(id);
+        setPhraseModalMode('edit');
+        // 编辑时直接弹新建/编辑 modal，关闭设置列表 modal
+        setPhraseFormModalOpen(true);
+        setPhraseModalOpen(false);
+    };
+    const submitPhrase = () => {
+        const content = phraseFormContent.trim();
+        if (!content) { addToast('填充内容不能为空', 'error'); return; }
+        const display = phraseFormDisplay.trim() || content.slice(0, 2);
+        if (phraseModalMode === 'create') {
+            addDateQuickPhrase(display, content, phraseFormCursorPos);
+            addToast('快捷键已添加', 'success');
+        } else if (editingPhraseId) {
+            updateDateQuickPhrase(editingPhraseId, { display, content, cursorPos: phraseFormCursorPos });
+            addToast('已保存', 'success');
+        }
+        setPhraseFormModalOpen(false);
+        // 新建/编辑关闭后，重新打开设置列表（让用户继续看列表）
+        setPhraseModalOpen(true);
     };
 
     // --- 暮色 2026-08-03：输入框自动撑高（参考 ChatInputArea 实现，1 行 → 最多 5 行 / 88px） ---
@@ -1108,28 +1162,38 @@ const DateSession: React.FC<DateSessionProps> = ({
             <div className="absolute bottom-0 left-0 right-0 z-30" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }} onClick={e => e.stopPropagation()}>
 
               {/* 暮色 2026-08-04：快捷键栏（输入框上方）
-                  - 第一个固定是「全屏输入」按钮（点击打开 FullScreenEditor）
-                  - 后面是用户自定义的快捷键（从 OSContext 拿 dateQuickPhrases）
-                  - 横向滚，超出宽度可滑动
-                  - 关闭的快捷键（enabled=false）不显示 */}
-              {(dateQuickPhrases.some(p => p.enabled) || true) && (
+                  - 暮色 v2 反馈：胶囊小一点、只输入框聚焦时显示
+                  - 第 1 个：齿轮按钮（点开弹快捷键设置 modal）
+                  - 第 2 个：全屏输入按钮（无文字、只图标，暮色要求）
+                  - 后面：用户自定义快捷键（按 enabled 过滤）
+                  - 横向滚，超出宽度可滑动 */}
+              {showInputBox && (
                 <div className="px-4 pb-2">
-                  <div className="flex gap-2 overflow-x-auto no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
-                    {/* 第一个固定：全屏输入 */}
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
+                    {/* 暮色 v2：第 1 个改齿轮（点开弹快捷键设置 modal） */}
+                    <button
+                      onClick={() => setPhraseModalOpen(true)}
+                      className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-transform"
+                      title="快捷键设置"
+                      aria-label="快捷键设置"
+                    >
+                      <Gear className="w-3.5 h-3.5" weight="bold" />
+                    </button>
+                    {/* 暮色 v2：第 2 个全屏输入（无文字、只图标，胶囊小一点） */}
                     <button
                       onClick={openFullInput}
-                      className="shrink-0 h-8 px-3 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-[11px] font-bold flex items-center gap-1 active:scale-95 transition-transform"
+                      className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-transform"
                       title="全屏输入"
+                      aria-label="全屏输入"
                     >
-                      <CornersOut className="w-3 h-3" weight="bold" />
-                      <span>全屏</span>
+                      <CornersOut className="w-3.5 h-3.5" weight="bold" />
                     </button>
                     {/* 自定义快捷键 */}
                     {dateQuickPhrases.filter(p => p.enabled).map(p => (
                       <button
                         key={p.id}
                         onClick={() => setInput(prev => prev ? prev + (prev.endsWith('\n') || prev === '' ? '' : '\n') + p.content : p.content)}
-                        className="shrink-0 h-8 px-3 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-[11px] font-bold active:scale-95 transition-transform min-w-[2rem]"
+                        className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
                         title={p.content}
                       >
                         {p.display}
@@ -1289,6 +1353,176 @@ const DateSession: React.FC<DateSessionProps> = ({
                 onSend={sendFromFullInput}
                 placeholder="输入对话..."
             />
+
+            {/* 暮色 2026-08-04：快捷键设置 modal（齿轮按钮触发）
+                - 包含：列表 + 开关 + 编辑/删除 + 新建
+                - 嵌套在 z-30 容器里，传 zIndex=120 盖过宿主面板（参考 Modal.tsx:17-21 注释） */}
+            <Modal
+                isOpen={phraseModalOpen}
+                onClose={() => setPhraseModalOpen(false)}
+                title="快捷键"
+                zIndex={120}
+                footer={
+                    <div className="flex gap-3 w-full">
+                        <button
+                            onClick={() => setPhraseModalOpen(false)}
+                            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >关闭</button>
+                        <button
+                            onClick={openCreatePhrase}
+                            className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-transform"
+                        >+ 新建</button>
+                    </div>
+                }
+            >
+                <div className="space-y-3">
+                    {dateQuickPhrases.length === 0 && (
+                        <div className="text-xs text-slate-400 italic py-4 text-center">还没有快捷键，点下方"+ 新建"加一个</div>
+                    )}
+                    {dateQuickPhrases.map(p => (
+                        <div key={p.id} className={`flex items-center gap-2 p-2.5 rounded-2xl border ${p.enabled ? 'bg-slate-50 border-slate-100' : 'bg-slate-50/50 border-slate-100 opacity-60'}`}>
+                            <div className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center text-base shrink-0">
+                                {p.display}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-xs text-slate-700 truncate">{p.content.split('\n')[0]}</div>
+                                {p.content.includes('\n') && <div className="text-[10px] text-slate-400 mt-0.5">多行内容</div>}
+                            </div>
+                            <button
+                                onClick={() => toggleDateQuickPhrase(p.id)}
+                                className={`w-10 h-6 rounded-full transition-colors relative shrink-0 ${p.enabled ? 'bg-primary' : 'bg-slate-200'}`}
+                                aria-pressed={p.enabled}
+                                aria-label={p.enabled ? '关闭' : '开启'}
+                            >
+                                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${p.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`}></div>
+                            </button>
+                            <button
+                                onClick={() => openEditPhrase(p.id)}
+                                className="p-1.5 text-slate-400 hover:text-primary transition-colors shrink-0"
+                                aria-label="编辑"
+                            >
+                                <PencilSimple className="w-4 h-4" weight="bold" />
+                            </button>
+                            <button
+                                onClick={() => setDeleteTargetId(p.id)}
+                                className="p-1.5 text-slate-300 hover:text-red-500 transition-colors shrink-0"
+                                aria-label="删除"
+                            >
+                                <Trash className="w-4 h-4" weight="bold" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            </Modal>
+
+            {/* 暮色 2026-08-04：删除确认 modal（暮色 v2 反馈：不要 window.confirm 那种大原生弹窗） */}
+            <Modal
+                isOpen={!!deleteTargetId}
+                onClose={() => setDeleteTargetId(null)}
+                title="删除快捷键"
+                zIndex={130}
+                footer={
+                    <div className="flex gap-3 w-full">
+                        <button
+                            onClick={() => setDeleteTargetId(null)}
+                            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >取消</button>
+                        <button
+                            onClick={() => {
+                                const t = dateQuickPhrases.find(x => x.id === deleteTargetId);
+                                if (deleteTargetId) {
+                                    deleteDateQuickPhrase(deleteTargetId);
+                                    addToast(`"${t?.display || '已删除'}" 已删除`, 'success');
+                                    setDeleteTargetId(null);
+                                }
+                            }}
+                            className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 active:scale-95 transition-transform"
+                        >删除</button>
+                    </div>
+                }
+            >
+                <p className="text-center text-slate-600 text-sm py-2 leading-relaxed">
+                    确定删除「{dateQuickPhrases.find(x => x.id === deleteTargetId)?.display || '此快捷键'}」吗？
+                </p>
+            </Modal>
+
+            {/* 暮色 2026-08-04：新建/编辑快捷键 modal（暮色 v2 反馈：加"光标位置"段） */}
+            <Modal
+                isOpen={phraseFormModalOpen}
+                onClose={() => setPhraseFormModalOpen(false)}
+                title={phraseModalMode === 'create' ? '新建快捷键' : '编辑快捷键'}
+                zIndex={140}
+                footer={
+                    <div className="flex gap-3 w-full">
+                        <button
+                            onClick={() => {
+                                setPhraseFormModalOpen(false);
+                                // 取消编辑时回到设置列表
+                                setPhraseModalOpen(true);
+                            }}
+                            className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >取消</button>
+                        <button
+                            onClick={submitPhrase}
+                            disabled={!phraseFormContent.trim()}
+                            className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 disabled:opacity-40 active:scale-95 transition-transform"
+                        >保存</button>
+                    </div>
+                }
+            >
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-bold mb-1 block">
+                            显示 <span className="text-red-500">*</span>
+                            <span className="text-slate-400 font-normal ml-1">（emoji / 短文字，键盘栏显示这个）</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={phraseFormDisplay}
+                            onChange={e => setPhraseFormDisplay(e.target.value)}
+                            maxLength={4}
+                            placeholder="如 ⭐ / , / 哈 / 续"
+                            className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30 text-center text-lg"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-bold mb-1 block">
+                            填充内容 <span className="text-red-500">*</span>
+                            <span className="text-slate-400 font-normal ml-1">（点击后插入到输入框，支持多行）</span>
+                        </label>
+                        <textarea
+                            value={phraseFormContent}
+                            onChange={e => setPhraseFormContent(e.target.value)}
+                            rows={4}
+                            placeholder="如 你今天怎么样？&#10;或：[指令] 请用 <emotion> 标签..."
+                            className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30 resize-none leading-relaxed"
+                        />
+                    </div>
+                    {/* 暮色 2026-08-04 v2：光标位置段（参考 iOS 新建快捷键截图） */}
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-bold mb-2 block">光标位置</label>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setPhraseFormCursorPos('last')}
+                                className={`flex-1 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${phraseFormCursorPos === 'last' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                            >最后</button>
+                            <button
+                                onClick={() => setPhraseFormCursorPos('cursor')}
+                                className={`flex-1 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${phraseFormCursorPos === 'cursor' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                            >光标处</button>
+                        </div>
+                    </div>
+                    {/* 预览 */}
+                    {(phraseFormDisplay || phraseFormContent) && (
+                        <div className="bg-slate-50 rounded-xl p-2.5 flex items-center gap-2">
+                            <div className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center text-base shrink-0">
+                                {phraseFormDisplay || phraseFormContent.slice(0, 2) || '?'}
+                            </div>
+                            <div className="text-[10px] text-slate-400">预览</div>
+                        </div>
+                    )}
+                </div>
+            </Modal>
         </div>
     );
 };

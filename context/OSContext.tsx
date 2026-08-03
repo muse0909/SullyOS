@@ -664,9 +664,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.removeEventListener('os_date_quick_phrases_changed', onCustom);
     };
   }, []);
-  const addDateQuickPhrase = (display: string, content: string) => {
+  const addDateQuickPhrase = (display: string, content: string, cursorPos: 'last' | 'cursor' = 'last') => {
     const id = `qp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    setDateQuickPhrases([...dateQuickPhrases, { id, display: display || content.slice(0, 2), content, enabled: true }]);
+    setDateQuickPhrases([...dateQuickPhrases, { id, display: display || content.slice(0, 2), content, enabled: true, cursorPos }]);
   };
   const updateDateQuickPhrase = (id: string, updates: Partial<DateQuickPhrase>) => {
     setDateQuickPhrases(dateQuickPhrases.map(p => p.id === id ? { ...p, ...updates } : p));

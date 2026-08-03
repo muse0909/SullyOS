@@ -534,6 +534,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                 processNextDialogue(items[0], items.slice(1));
             }
         } catch (e: any) {
+            // 暮色 2026-08-03 反馈：API 失败后输入框是空的，用户没法直接重发
+            //   之前 setInput('') 把输入清掉，catch 时没回填
+            //   修复：把上次发的文本（trimmed）回填到输入框，让用户直接按发送就能重试
+            setInput(trimmed);
             setCurrentText("(连接中断)");
             setShowInputBox(true);
         } finally {

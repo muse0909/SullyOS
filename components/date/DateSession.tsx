@@ -6,6 +6,7 @@ import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
 import FullScreenEditor from '../common/FullScreenEditor';
+import { CornersOut } from '@phosphor-icons/react';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {

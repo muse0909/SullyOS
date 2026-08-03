@@ -331,11 +331,30 @@ const ApiQuickFloat: React.FC = () => {
   const [cloudRestoring, setCloudRestoring] = useState(false);
 
   useEffect(() => {
-    setLocalUrl(apiConfig.baseUrl);
-    setLocalKey(apiConfig.apiKey);
-    setLocalModel(apiConfig.model);
-    // 暮色 2026-07-17 → 2026-07-27：API 协议同步（3 tab 切换，Settings 改了这里也要跟着变）
+    // 暮色 2026-08-04 修：之前用 apiConfig.baseUrl/apiKey/model 同步 localUrl/Key/Model
+    //   永远是 OpenAI 协议的字段，导致 deps 里 Gemini 字段变（比如 key 池保存改了 geminiApiKey）
+    //   触发 useEffect 重跑时，把 localUrl 跳回 OpenAI 的 → "选了 Gemini 协议但 URL 是 OpenAI 的"
+    //   改用 syncedProtocol 选字段：
     const syncedProtocol: 'openai' | 'claude' | 'gemini' = apiConfig.protocol === 'claude' || apiConfig.protocol === 'gemini' ? apiConfig.protocol : 'openai';
+    const syncedBaseUrl = syncedProtocol === 'gemini'
+        ? (apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta')
+        : syncedProtocol === 'claude'
+            ? (apiConfig.claudeBaseUrl || '')
+            : (apiConfig.baseUrl || '');
+    const syncedApiKey = syncedProtocol === 'gemini'
+        ? (apiConfig.geminiApiKey || '')
+        : syncedProtocol === 'claude'
+            ? (apiConfig.claudeApiKey || '')
+            : (apiConfig.apiKey || '');
+    const syncedModel = syncedProtocol === 'gemini'
+        ? (apiConfig.geminiModel || 'gemini-2.0-flash')
+        : syncedProtocol === 'claude'
+            ? (apiConfig.claudeModel || '')
+            : (apiConfig.model || '');
+    setLocalUrl(syncedBaseUrl);
+    setLocalKey(syncedApiKey);
+    setLocalModel(syncedModel);
+    // 暮色 2026-07-17 → 2026-07-27：API 协议同步（3 tab 切换，Settings 改了这里也要跟着变）
     setLocalProtocol(syncedProtocol);
     setLocalClaudeUrl(apiConfig.claudeBaseUrl || '');
     setLocalClaudeKey(apiConfig.claudeApiKey || '');

@@ -201,6 +201,10 @@ export interface APIConfig {
   geminiBaseUrl?: string;
   geminiApiKey?: string;
   geminiModel?: string;
+  // 暮色 2026-08-04：Gemini 直连 key 池（多 key 轮询 + 健康状态）
+  //   - 读时优先用 geminiApiKeys（数组），兼容老数据用 geminiApiKey（单字符串）
+  //   - 老 key 会自动包成 1 元素数组
+  geminiApiKeys?: string[];
   // 暮色 2026-07-27：识图三平台独立配置
   //   - 跟主 API 同样的三协议 + 独立 URL/Key/Model
   //   - visionBaseUrl/visionApiKey/visionModel 默认 OpenAI 协议
@@ -213,6 +217,8 @@ export interface APIConfig {
   visionGeminiBaseUrl?: string;
   visionGeminiApiKey?: string;
   visionGeminiModel?: string;
+  // 暮色 2026-08-04：识图 Gemini 直连 key 池
+  visionGeminiApiKeys?: string[];
   // 暮色 2026-07-27 晚：删 imageGemini* 字段（生图只走 OpenAI 兼容，暮色原话"生图不用"）
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;

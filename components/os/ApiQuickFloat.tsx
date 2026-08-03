@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { ArrowsClockwise, Brain, CaretRight, CloudArrowDown, CloudArrowUp, Eye, EyeSlash, Gear, ImageSquare, WifiHigh, X } from '@phosphor-icons/react';
+import { ArrowsClockwise, Brain, CaretRight, CloudArrowDown, CloudArrowUp, Eye, EyeSlash, Gear, ImageSquare, Key, WifiHigh, X } from '@phosphor-icons/react';
 import { safeResponseJson } from '../../utils/safeApi';
 import { AppID } from '../../types';
 import type { ApiPreset, CloudBackupFile } from '../../types';
+import GeminiKeyPoolModal from './GeminiKeyPoolModal';
+import { extractGeminiKeys } from '../../utils/geminiKeyPool';
 
 const POS_KEY = 'sullyos_api_quickfloat_pos_v1';
 const BALL_SIZE = 40;
@@ -228,6 +230,9 @@ const ApiQuickFloat: React.FC = () => {
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef({ sx: 0, sy: 0, bx: 0, by: 0, moved: false });
   const [showPanel, setShowPanel] = useState(false);
+  // 暮色 2026-08-04：Gemini 直连 key 池弹窗
+  const [showMainGeminiPool, setShowMainGeminiPool] = useState(false);
+  const [showVisionGeminiPool, setShowVisionGeminiPool] = useState(false);
 
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -1318,6 +1323,18 @@ const ApiQuickFloat: React.FC = () => {
                     visible={showMainKey}
                     onToggle={() => setShowMainKey((value) => !value)}
                   />
+                  {localProtocol === 'gemini' && (
+                    <div className="-mt-1 pl-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowMainGeminiPool(true)}
+                        className="text-[10px] text-sky-500 font-bold flex items-center gap-1 active:scale-95 transition-transform hover:text-sky-600"
+                      >
+                        <Key size={11} weight="bold" />
+                        密钥池（{extractGeminiKeys(apiConfig, 'geminiApiKey', 'geminiApiKeys').length}）
+                      </button>
+                    </div>
+                  )}
 
                   <div>
                     <div className="flex justify-between items-center mb-1.5 pl-1">
@@ -1675,6 +1692,18 @@ const ApiQuickFloat: React.FC = () => {
                     visible={showVisionKey}
                     onToggle={() => setShowVisionKey((value) => !value)}
                   />
+                  {localVisionProtocol === 'gemini' && (
+                    <div className="-mt-1 pl-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowVisionGeminiPool(true)}
+                        className="text-[10px] text-sky-500 font-bold flex items-center gap-1 active:scale-95 transition-transform hover:text-sky-600"
+                      >
+                        <Key size={11} weight="bold" />
+                        密钥池（{extractGeminiKeys(apiConfig, 'visionGeminiApiKey', 'visionGeminiApiKeys').length}）
+                      </button>
+                    </div>
+                  )}
 
                   <div>
                     <div className="flex justify-between items-center mb-1.5 pl-1">
@@ -1850,6 +1879,42 @@ const ApiQuickFloat: React.FC = () => {
           </div>
         </div>
       ) : null}
+
+      {/* 暮色 2026-08-04：Gemini 直连密钥池弹窗（主 API / 识图） */}
+      <GeminiKeyPoolModal
+        isOpen={showMainGeminiPool}
+        onClose={() => setShowMainGeminiPool(false)}
+        channel="main"
+        channelLabel="主 API"
+        keys={extractGeminiKeys(apiConfig, 'geminiApiKey', 'geminiApiKeys')}
+        onSave={(newKeys) => {
+            // 写到 apiConfig.geminiApiKeys 数组字段
+            //   兼容老字段：同时把 keys[0] 写到 geminiApiKey（保持单 key 字段可用）
+            updateApiConfig({
+                ...apiConfig,
+                geminiApiKeys: newKeys,
+                // 老字段保留：只把第一个写回，避免覆盖老逻辑
+                geminiApiKey: newKeys[0] || '',
+            } as any);
+            // 同步 localKey（输入框显示第一个 key）
+            if (newKeys.length > 0) setLocalKey(newKeys[0]);
+        }}
+      />
+      <GeminiKeyPoolModal
+        isOpen={showVisionGeminiPool}
+        onClose={() => setShowVisionGeminiPool(false)}
+        channel="vision"
+        channelLabel="识图"
+        keys={extractGeminiKeys(apiConfig, 'visionGeminiApiKey', 'visionGeminiApiKeys')}
+        onSave={(newKeys) => {
+            updateApiConfig({
+                ...apiConfig,
+                visionGeminiApiKeys: newKeys,
+                visionGeminiApiKey: newKeys[0] || '',
+            } as any);
+            if (newKeys.length > 0) setLocalVisionKey(newKeys[0]);
+        }}
+      />
     </>
   );
 };

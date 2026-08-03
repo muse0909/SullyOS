@@ -7,7 +7,7 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
-import { safeResponseJson } from '../utils/safeApi';
+import { safeResponseJson, extractContent, extractThinking } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
@@ -363,6 +363,11 @@ const DateApp: React.FC = () => {
 ### 场景上下文
 1. **Location**: 你们现在**面对面**。
 2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
+
+### 推理语言（暮色 2026-08-03）
+- 如果你启用了思维链 / 推理过程，**推理 / 思考内容必须用中文输出**（用户在 SullyOS 见面 app 里看思维链，英文看不懂）
+- 即使内容引用英文术语 / 代码片段，**思考和解释也用中文**
+- 最终回复（带 [emotion] 标签的部分）保持中文对话风格
 `;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -382,15 +387,16 @@ const DateApp: React.FC = () => {
 
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
-        const content = data.choices[0].message.content;
+        // 用 extractContent 而不是直接读 message.content：
+        //   即享「兼容思维链」开时会把 reasoning_content 转成 content 里的 <think> 块
+        //   跟聊天侧 useChatAI 的 normalizeAiContent 行为一致，必须 strip 掉
+        //   否则原始的 <think>...</think> 标签会渲染给用户看
+        const content = extractContent(data);
         // 暮色 2026-08-03：原生思维链（DeepSeek-R1 / GLM-4.5 / QwQ / Qwen3 思维链模式等）
-        //   OpenAI 协议兼容接口把 reasoning 放在 message.reasoning_content 字段；
+        //   走 safeApi.ts 的 extractThinking 兜底多字段（reasoning_content / reasoning /
+        //   顶层 reasoning_content / content 里的 <think> 块）
         //   不存数据库（只是 UI 折叠展示），回话结构稳定后下次重 roll 不会重看一遍旧的。
-        const thinking: string | undefined = (() => {
-            const raw = data.choices[0].message?.reasoning_content;
-            if (typeof raw === 'string' && raw.trim()) return raw.trim();
-            return undefined;
-        })();
+        const thinking = extractThinking(data);
 
         // 3. Save AI Response（thinking 不入库 — 跟聊天侧的 useChatAI 行为对齐）
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
@@ -443,6 +449,10 @@ const DateApp: React.FC = () => {
 ### ⭐ 动作与叙述行的写法
 不要罗列动作。写出感官细节、停顿和呼吸感，让每一行都像电影镜头——有画面、有空气、有温度。
 用细微的肢体语言暗示情绪，不要直接说"开心""紧张"。
+
+### 推理语言（暮色 2026-08-03）
+- 如果你启用了思维链 / 推理过程，**推理 / 思考内容必须用中文输出**（用户在 SullyOS 见面 app 里看思维链，英文看不懂）
+- 即使内容引用英文术语 / 代码片段，**思考和解释也用中文**
 `;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -463,13 +473,11 @@ const DateApp: React.FC = () => {
 
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
-        const content = data.choices[0].message.content;
-        // 跟 handleSendMessage 一致：提取原生思维链（不存 DB）
-        const thinking: string | undefined = (() => {
-            const raw = data.choices[0].message?.reasoning_content;
-            if (typeof raw === 'string' && raw.trim()) return raw.trim();
-            return undefined;
-        })();
+        // 跟 handleSendMessage 一致：用 extractContent 走 strip 逻辑，
+        //   避免即享的 <think> 块混在 content 里渲染给用户
+        const content = extractContent(data);
+        // 跟 handleSendMessage 一致：走 extractThinking 兜底多字段
+        const thinking = extractThinking(data);
 
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
 

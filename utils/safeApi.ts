@@ -365,6 +365,15 @@ function anthropicResponseToOpenAI(anth: any): any {
         .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
         .map((b: any) => b.text)
         .join('');
+    // 暮色 2026-08-03：Anthropic extended thinking（Claude 4.5+ / Claude with thinking）
+    //   思维链在 content[].type === 'thinking' 块里，文本在 thinking 字段（不是 text）
+    //   合成到 OpenAI 标准的 reasoning_content 字段，下游（DateApp / useChatAI 等）
+    //   读 reasoning_content 就够了，不用管协议分支
+    const thinking = contentBlocks
+        .filter((b: any) => b && b.type === 'thinking')
+        .map((b: any) => typeof b.thinking === 'string' ? b.thinking : (typeof b.text === 'string' ? b.text : ''))
+        .filter((s: string) => s.length > 0)
+        .join('\n');
 
     // stop_reason 兼容映射
     let finishReason: string = anth.stop_reason || 'stop';
@@ -379,7 +388,12 @@ function anthropicResponseToOpenAI(anth: any): any {
         model: anth.model || 'claude',
         choices: [{
             index: 0,
-            message: { role: 'assistant', content: text },
+            message: {
+                role: 'assistant',
+                content: text,
+                // 思维链：只在有内容时挂上，避免无 thinking 模型时返回空字段污染下游判断
+                ...(thinking ? { reasoning_content: thinking } : {}),
+            },
             finish_reason: finishReason,
         }],
         usage: anth.usage || undefined,
@@ -404,6 +418,43 @@ export function extractContent(data: any): string {
     text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
     text = text.replace(/<think>[\s\S]*$/gi, '');
     return text.trim();
+}
+
+/**
+ * 暮色 2026-08-03：兜底多字段提取思维链（reasoning）。
+ *
+ * 不同的中转站 / 模型实现把"思维链"放在不同的字段，常见几种：
+ *   1. OpenAI 标准 / DeepSeek R1 / 官方 Qwen3：     message.reasoning_content
+ *   2. 部分中转站的别名：                            message.reasoning
+ *   3. 极个别中转把字段提到顶层：                    data.reasoning_content
+ *   4. 用 content 里的 <think>...</think> 块（"伪 reasoning"，跟 useChatAI 一样需要 strip）
+ *   5. Anthropic 协议经 anthropicResponseToOpenAI 合成：也被标准化到 message.reasoning_content
+ *
+ * 返回第一个非空字符串；都没有就返回 undefined。
+ * 提取出来后**不**strip <think> 块（因为这字段就是思维链本身，块标签是 content 的事）。
+ */
+export function extractThinking(data: any): string | undefined {
+    const msg = data?.choices?.[0]?.message;
+    // 1. message.reasoning_content — OpenAI 标准 / 多数主流中转
+    if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content.trim()) {
+        return msg.reasoning_content.trim();
+    }
+    // 2. message.reasoning — 少数中转的别名
+    if (typeof (msg as any)?.reasoning === 'string' && (msg as any).reasoning.trim()) {
+        return (msg as any).reasoning.trim();
+    }
+    // 3. 顶层 reasoning_content — 极个别中转
+    if (typeof data?.reasoning_content === 'string' && data.reasoning_content.trim()) {
+        return data.reasoning_content.trim();
+    }
+    // 4. content 里的 <think>...</think> 块 — 部分中转 / 某些 Qwen 蒸馏小模型
+    if (typeof msg?.content === 'string') {
+        const m = msg.content.match(/<think>([\s\S]*?)<\/think>/i);
+        if (m && m[1] && m[1].trim()) {
+            return m[1].trim();
+        }
+    }
+    return undefined;
 }
 
 /**

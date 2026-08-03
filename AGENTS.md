@@ -292,6 +292,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-08-02 | 记忆宫殿 副 API 设置 Gemini/Claude 协议下保存跳回旧值 + 预设按钮 OpenAI 没反应 | [`changelogs/2026-08-02-memory-palace-sub-api-save.md`](./changelogs/2026-08-02-memory-palace-sub-api-save.md) |
 | 2026-08-03 | 放歌工具成功路径省第二次主 API（省 5-7w token / 次） | [`changelogs/2026-08-03-play-song-success-skip-followup.md`](./changelogs/2026-08-03-play-song-success-skip-followup.md) |
 | 2026-08-03 | 见面 app：原生思维链折叠显示 + 输入框自动撑高 | [`changelogs/2026-08-03-dateapp-thinking-and-input-autogrow.md`](./changelogs/2026-08-03-dateapp-thinking-and-input-autogrow.md) |
+| 2026-08-03 | 见面 app：Claude 兼容思维链（`<think>` 块兜底） + 思维链中文 + 输入框回填修复 | [`changelogs/2026-08-03-dateapp-claude-thinking-fix-and-prompt.md`](./changelogs/2026-08-03-dateapp-claude-thinking-fix-and-prompt.md) |
 | 2026-08-02 | 悬浮窗 useOS 漏解构 addApiPreset 致 ReferenceError + 副 API 保存跳回 OpenAI 协议（syncEmotionApiToAllCharacters 丢字段） | [`changelogs/2026-08-02-add-api-preset-reference-error.md`](./changelogs/2026-08-02-add-api-preset-reference-error.md) |
 | 2026-08-02 | syncEmotionApiToAllCharacters 完全不碰 lightLLM（彻底修跳回 OpenAI + 闭包批处理陷阱） | [`changelogs/2026-08-02-sync-emotion-api-dont-touch-lightllm.md`](./changelogs/2026-08-02-sync-emotion-api-dont-touch-lightllm.md) |
 | 2026-08-02 | 音乐第 9 轮：一起听 5 改（卡片顺序 + 失败回执 + 误触发 + 搜索排序 pop + prompt 自然化 + 今日已用 X/3） | [`changelogs/2026-08-02-music-round9-invite-fixes.md`](./changelogs/2026-08-02-music-round9-invite-fixes.md) |

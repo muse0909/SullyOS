@@ -78,8 +78,8 @@ interface DateSessionProps {
     messages: Message[]; // The DB messages for history/novel mode
     peekStatus: string;  // Initial text from the Peek phase
     initialState?: DateState; // Resume state
-    onSendMessage: (text: string) => Promise<string>; // Returns AI content
-    onReroll: () => Promise<string>;
+    onSendMessage: (text: string) => Promise<{ content: string; thinking?: string }>; // Returns AI content + 可选原生思维链
+    onReroll: () => Promise<{ content: string; thinking?: string }>;
     onExit: (currentState: DateState) => void;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
@@ -126,6 +126,12 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [currentText, setCurrentText] = useState('');
     const [displayedText, setDisplayedText] = useState('');
     const [isTextAnimating, setIsTextAnimating] = useState(false);
+
+    // 原生思维链（reasoning_content）— 暮色 2026-08-03 加
+    //   每次发送/重 roll 后更新；新的一轮开始会覆盖旧的
+    //   开关在 DateSettings 的「长文主题 → 显示原生思维链」
+    const [currentThinking, setCurrentThinking] = useState<string>('');
+    const [thinkingExpanded, setThinkingExpanded] = useState(false);
     
     // Interaction State
     const [input, setInput] = useState('');
@@ -152,6 +158,23 @@ const DateSession: React.FC<DateSessionProps> = ({
         setShowFullInput(false);
         setTimeout(() => handleSend(), 0);
     };
+
+    // --- 暮色 2026-08-03：输入框自动撑高（参考 ChatInputArea 实现，1 行 → 最多 5 行 / 88px） ---
+    // 见面的输入框 max 88px（聊天页是 160px），按 text-sm + line-height ~20px 算约 4.4 行
+    // 撑大时改 isInputExpanded 用于后续可能的样式切换（目前保持视觉一致，先不挂任何 class）
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const MAX_INPUT_HEIGHT = 88;
+    const EXPAND_THRESHOLD = 40;
+    const [isInputExpanded, setIsInputExpanded] = useState(false);
+    useEffect(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        const next = Math.min(el.scrollHeight, MAX_INPUT_HEIGHT);
+        el.style.height = `${next}px`;
+        el.style.overflowY = el.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
+        setIsInputExpanded(el.scrollHeight > EXPAND_THRESHOLD);
+    }, [input]);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -490,11 +513,21 @@ const DateSession: React.FC<DateSessionProps> = ({
         setShowPlusMenu(false);
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
+        // 新一轮开始：清掉上一轮的思维链（避免叠加视觉污染）
+        setCurrentThinking('');
 
         try {
-            const aiContent = await onSendMessage(trimmed);
+            const result = await onSendMessage(trimmed);
+            // 原生思维链：开关开启时存进 state（用于在回复上方渲染折叠气泡）
+            const showThinking = char.dateShowThinking ?? true;
+            if (showThinking && result.thinking) {
+                setCurrentThinking(result.thinking);
+                setThinkingExpanded(false); // 默认折叠
+            } else {
+                setCurrentThinking('');
+            }
             // Parse new content
-            const items = parseDialogue(aiContent, 'normal');
+            const items = parseDialogue(result.content, 'normal');
             setDialogueBatch(items);
             setDialogueQueue(items);
             if (items.length > 0) {
@@ -511,9 +544,17 @@ const DateSession: React.FC<DateSessionProps> = ({
     const handleRerollClick = async () => {
         if (isTyping) return;
         setIsTyping(true);
+        setCurrentThinking(''); // 重 roll 也清一下
         try {
-            const aiContent = await onReroll();
-            const items = parseDialogue(aiContent, 'normal');
+            const result = await onReroll();
+            const showThinking = char.dateShowThinking ?? true;
+            if (showThinking && result.thinking) {
+                setCurrentThinking(result.thinking);
+                setThinkingExpanded(false);
+            } else {
+                setCurrentThinking('');
+            }
+            const items = parseDialogue(result.content, 'normal');
             setDialogueBatch(items);
             setDialogueQueue(items);
             if (items.length > 0) processNextDialogue(items[0], items.slice(1));
@@ -810,6 +851,25 @@ const DateSession: React.FC<DateSessionProps> = ({
                       </div>
                     );
                   })}
+                  {/* 原生思维链折叠气泡（暮色 2026-08-03）— 位于历史消息之后、AI 加载之前 */}
+                  {currentThinking && (char.dateShowThinking ?? true) && (
+                    <div className="mb-3 animate-fade-in">
+                      <button
+                        onClick={() => setThinkingExpanded(v => !v)}
+                        className="flex items-center gap-1.5 text-[10px] text-amber-200/80 hover:text-amber-100 transition-colors px-1 py-0.5 rounded-lg hover:bg-white/5"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span>🤔 推理过程 {thinkingExpanded ? '' : `(${currentThinking.length}字)`}</span>
+                      </button>
+                      {thinkingExpanded && (
+                        <div className="mt-1 ml-4 pl-3 border-l-2 border-amber-300/40 bg-amber-500/5 rounded-r-lg p-2 text-[11px] text-white/70 leading-relaxed whitespace-pre-wrap animate-slide-down">
+                          {currentThinking}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {isTyping && (
                     <div className={`flex gap-2 mb-4 ${longformTheme === 'half-novel' ? '' : ''}`}>
                       {longformTheme === 'long-bubble' && (
@@ -922,6 +982,26 @@ const DateSession: React.FC<DateSessionProps> = ({
                   style={{ bottom: 'max(120px, calc(env(safe-area-inset-bottom) + 92px))' }}>
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
                     </div>
+                    {!isTyping && currentThinking && (char.dateShowThinking ?? true) && (
+                        <div className="absolute inset-x-0 z-30 flex justify-center pointer-events-none" style={{ bottom: 'max(160px, calc(env(safe-area-inset-bottom) + 132px))' }}>
+                            <div className="w-[90%] max-w-lg pointer-events-auto animate-fade-in">
+                                <button
+                                    onClick={() => setThinkingExpanded(v => !v)}
+                                    className="flex items-center gap-1.5 text-[10px] text-amber-200/80 hover:text-amber-100 transition-colors px-1 py-0.5 rounded-lg hover:bg-white/5"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                                    </svg>
+                                    <span>🤔 推理过程 {thinkingExpanded ? '' : `(${currentThinking.length}字)`}</span>
+                                </button>
+                                {thinkingExpanded && (
+                                    <div className="mt-1 ml-4 pl-3 border-l-2 border-amber-300/40 bg-amber-500/5 rounded-r-lg p-2 text-[11px] text-white/70 leading-relaxed whitespace-pre-wrap animate-slide-down max-h-48 overflow-y-auto no-scrollbar">
+                                        {currentThinking}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                     {!isTyping && (
                         <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
                             <div className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer">
@@ -1055,6 +1135,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <CornersOut className="w-4 h-4" weight="bold" />
                   </button>
                   <textarea
+                    ref={inputRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
@@ -1062,7 +1143,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                     rows={1}
                     enterKeyHint="enter"
                     className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed no-scrollbar py-2 text-white placeholder:text-white/30"
-                    style={{ maxHeight: '88px', overflowY: 'auto' }}
                   />
                   <button
                     onClick={handleSend}

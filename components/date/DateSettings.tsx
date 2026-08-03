@@ -550,6 +550,23 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
 
   <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
     <div className="flex items-center justify-between">
+      <div>
+        <h3 className="text-sm font-bold text-slate-700">显示原生思维链</h3>
+        <p className="text-xs text-slate-400 mt-1">在 AI 回复上方显示折叠的推理过程（DeepSeek R1 / Qwen3 思维链模式等）。关闭后不留空位。</p>
+      </div>
+      <button
+        onClick={() => updateCharacter(char.id, { dateShowThinking: !(char.dateShowThinking ?? true) })}
+        className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${(char.dateShowThinking ?? true) ? 'bg-primary' : 'bg-slate-200'}`}
+        aria-pressed={char.dateShowThinking ?? true}
+        aria-label="显示原生思维链"
+      >
+        <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${(char.dateShowThinking ?? true) ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+      </button>
+    </div>
+  </section>
+
+  <section className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <div className="flex items-center justify-between">
       <div className="text-sm font-bold text-slate-700">气泡预设</div>
       {char.dateLongformBubblePresetId && (
         <button

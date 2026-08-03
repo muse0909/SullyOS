@@ -12,6 +12,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { getBuffColor } from '../utils/buffColor';
 import { useMusic, toHttps, musicApi } from '../context/MusicContext';
+import { pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, extractGeminiKeys, shortKey } from '../utils/geminiKeyPool';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
@@ -1546,28 +1547,76 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
             let data: any;
             if (useVisionGeminiProtocol) {
                 // 暮色 2026-07-27：Gemini 协议直连（独立 Key / Model 可用）
-                const geminiBody = buildGeminiVisionBody(imageUrl);
-                const res = await fetch(`${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(visionActiveKey || '')}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(geminiBody),
-                });
-                if (!res.ok) {
-                    const errText = await res.text().catch(() => '');
-                    throw new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                // 暮色 2026-08-04：key 池轮询 + 重试（同主 API 策略：429 切+401 不切+其他切）
+                const visionGeminiKeys = extractGeminiKeys(
+                    effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
+                );
+                const visionPicked = pickGeminiKey('vision', visionGeminiKeys);
+                if (!visionPicked) {
+                    throw new Error('识图 Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
                 }
-                const gj: any = await res.json();
-                const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                // 转 OpenAI 格式让下游代码无感
-                data = {
-                    choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
-                    usage: gj?.usageMetadata ? {
-                        prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
-                        completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
-                        total_tokens: gj.usageMetadata.totalTokenCount || 0,
-                    } : undefined,
-                };
-                console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字`);
+                const geminiBody = buildGeminiVisionBody(imageUrl);
+                let lastErr: Error | null = null;
+                let succeeded = false;
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const currentKey = (() => {
+                        if (attempt === 0) return visionPicked.key;
+                        const np = pickGeminiKey('vision', visionGeminiKeys);
+                        return np ? np.key : null;
+                    })();
+                    if (currentKey === null) {
+                        lastErr = new Error('识图 Gemini 协议：key 池里所有 key 都不可用');
+                        break;
+                    }
+                    const tryUrl = `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
+                    const res = await fetch(tryUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(geminiBody),
+                    });
+                    if (!res.ok) {
+                        const errText = await res.text().catch(() => '');
+                        // 重试用相对索引：attempt=0 用 visionPicked.keyIndex；attempt=1 需要找到 currentKey 的索引
+                        const usedKeyIndex = (() => {
+                            if (attempt === 0) return visionPicked.keyIndex;
+                            return visionGeminiKeys.indexOf(currentKey);
+                        })();
+                        const verdict = reportGeminiFailure('vision', usedKeyIndex, res.status, errText);
+                        if (verdict === 'fail-permanent') {
+                            addToast(`🔑 识图 Gemini key 失效（${shortKey(currentKey)}）— 请去 API 浮窗更新`, 'error');
+                            lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                            break;
+                        }
+                        if (verdict === 'fail-recoverable') {
+                            addToast(`⏳ 识图 Gemini key 池全部限流中，等会儿自动恢复`, 'info');
+                            lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                            break;
+                        }
+                        console.warn(`🌐 [Vision Gemini] ${res.status}，切下一个重试`);
+                        lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                        continue;
+                    }
+                    // 成功
+                    const usedKeyIndex = attempt === 0 ? visionPicked.keyIndex : visionGeminiKeys.indexOf(currentKey);
+                    reportGeminiSuccess('vision', usedKeyIndex);
+                    const gj: any = await res.json();
+                    const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    // 转 OpenAI 格式让下游代码无感
+                    data = {
+                        choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
+                        usage: gj?.usageMetadata ? {
+                            prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
+                            completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
+                            total_tokens: gj.usageMetadata.totalTokenCount || 0,
+                        } : undefined,
+                    };
+                    console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字 (key ${usedKeyIndex + 1}/${visionGeminiKeys.length}: ${shortKey(currentKey)})`);
+                    succeeded = true;
+                    break;
+                }
+                if (!succeeded) {
+                    throw lastErr || new Error('Gemini Vision 失败');
+                }
             } else {
                 const visionMessages = buildVisionMessages(imageUrl);
                 const requestBody = {
@@ -1715,9 +1764,22 @@ ${visionDesc}
                         maxOutputTokens: 8000,
                     },
                 };
+                // 暮色 2026-08-04：Gemini key 池轮询（多 key + 失败自动切下一个）
+                //   - extractGeminiKeys 兼容老字段 geminiApiKey（单字符串）→ 自动包成 1 元素数组
+                //   - pickGeminiKey round-robin + 跳过限流中的 key
+                //   - 真正 fetch + 重试逻辑在 line 1850+ 那段（fetchGeminiWithPool）
+                const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
+                const picked = pickGeminiKey('main', mainGeminiKeys);
+                if (!picked) {
+                    throw new Error('Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
+                }
                 const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
-                geminiUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(effectiveApi.apiKey || '')}`;
-                console.log(`🌐 [Gemini] 直连协议 → ${geminiUrl.split('?')[0]}?key=***`);
+                // 选中的 key 在 geminiMainKey 闭包变量里暂存，fetch 段使用
+                //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
+                (geminiRequestBody as any).__pickedKeyIndex = picked.keyIndex;
+                (geminiRequestBody as any).__pickedKeyShort = shortKey(picked.key);
+                geminiUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(picked.key)}`;
+                console.log(`🌐 [Gemini] 直连协议 → ${geminiUrl.split('?')[0]}?key=*** (池 ${picked.keyIndex + 1}/${picked.totalKeys}: ${picked.key ? shortKey(picked.key) : ''})`);
             }
             const baseReqBody: any = {
                 model: effectiveApi.model,
@@ -1838,31 +1900,86 @@ if (toolsList.length > 0) {
                 //   - Gemini 返回的字段是 candidates[].content.parts[].text
                 //   - 转成 OpenAI 格式 choices[].message.content，后续代码无感
                 //   - 解析 usageMetadata → usage（token 徽标能用）
-                const geminiHeaders = { 'Content-Type': 'application/json' };
-                const geminiRes = await fetch(geminiUrl, {
-                    method: 'POST',
-                    headers: geminiHeaders,
-                    body: JSON.stringify(geminiRequestBody),
-                });
-                if (!geminiRes.ok) {
-                    const errText = await geminiRes.text().catch(() => '');
-                    throw new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                // 暮色 2026-08-04：key 池 + 重试
+                //   - 失败时 reportGeminiFailure 标状态：429 → 切下一个重试 / 401 → 标 dead + 弹 toast 不重试 / 其他 → 切下一个重试
+                //   - 最多重试 1 次（避免无限循环）
+                const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
+                let lastErr: Error | null = null;
+                let lastStatus = 0;
+                let lastErrText = '';
+                let succeeded = false;
+                // 第 1 次用的 key 索引已经在 (geminiRequestBody as any).__pickedKeyIndex 里
+                //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const currentPicked = (() => {
+                        if (attempt === 0) {
+                            return { keyIndex: (geminiRequestBody as any).__pickedKeyIndex as number, key: '' };
+                        }
+                        const np = pickGeminiKey('main', mainGeminiKeys);
+                        if (!np) return null;
+                        return { keyIndex: np.keyIndex, key: np.key };
+                    })();
+                    if (!currentPicked) {
+                        // 池里没有可用 key 了
+                        lastErr = new Error('Gemini 协议：key 池里所有 key 都不可用（失效/限流中）');
+                        break;
+                    }
+                    // 第 1 次重试时重建 URL 用新 key
+                    const tryKey = attempt === 0
+                        ? decodeURIComponent(geminiUrl.split('?key=')[1] || '')
+                        : currentPicked.key;
+                    const tryUrl = `${(effectiveApi.baseUrl || '').replace(/\/+$/, '')}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(tryKey)}`;
+                    const geminiHeaders = { 'Content-Type': 'application/json' };
+                    const geminiRes = await fetch(tryUrl, {
+                        method: 'POST',
+                        headers: geminiHeaders,
+                        body: JSON.stringify(geminiRequestBody),
+                    });
+                    if (!geminiRes.ok) {
+                        const errText = await geminiRes.text().catch(() => '');
+                        lastStatus = geminiRes.status;
+                        lastErrText = errText;
+                        const verdict = reportGeminiFailure('main', currentPicked.keyIndex, geminiRes.status, errText);
+                        if (verdict === 'fail-permanent') {
+                            // 401 / 403：key 永久失效，不重试 + 弹 toast
+                            addToast(`🔑 Gemini key 失效（${shortKey(tryKey)}）— 请去 API 浮窗更新`, 'error');
+                            lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                            break;
+                        }
+                        if (verdict === 'fail-recoverable') {
+                            // 所有 key 都限流了，不重试
+                            addToast(`⏳ Gemini key 池全部限流中，等会儿自动恢复`, 'info');
+                            lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                            break;
+                        }
+                        // 'retry'：切下一个 + 重试
+                        console.warn(`🌐 [Gemini] 池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length} ${geminiRes.status}，切下一个重试`);
+                        lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                        continue;
+                    }
+                    // 成功
+                    reportGeminiSuccess('main', currentPicked.keyIndex);
+                    const geminiJson: any = await geminiRes.json();
+                    const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                    data = {
+                        choices: [{
+                            message: { role: 'assistant', content: geminiText },
+                            finish_reason: geminiFinish,
+                        }],
+                        usage: geminiJson?.usageMetadata ? {
+                            prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
+                            completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
+                            total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
+                        } : undefined,
+                    };
+                    console.log(`🌐 [Gemini] 响应 ${geminiText.length} 字 | usage=${JSON.stringify(data.usage)} (池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length}: ${shortKey(tryKey)})`);
+                    succeeded = true;
+                    break;
                 }
-                const geminiJson: any = await geminiRes.json();
-                const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
-                data = {
-                    choices: [{
-                        message: { role: 'assistant', content: geminiText },
-                        finish_reason: geminiFinish,
-                    }],
-                    usage: geminiJson?.usageMetadata ? {
-                        prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
-                        completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
-                        total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
-                    } : undefined,
-                };
-                console.log(`🌐 [Gemini] 响应 ${geminiText.length} 字 | usage=${JSON.stringify(data.usage)}`);
+                if (!succeeded) {
+                    throw lastErr || new Error(`Gemini API 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
+                }
             } else {
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                     method: 'POST', headers,

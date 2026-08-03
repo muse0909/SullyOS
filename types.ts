@@ -135,6 +135,18 @@ export interface VirtualTime {
 
 export type MinimaxRegion = 'domestic' | 'overseas';
 
+// 暮色 2026-08-04：见面 app 输入框上方的快捷键
+//   - 全局共用（所有角色共享一套），存在 localStorage 'os_date_quick_phrases'
+//   - display：显示用的字符（emoji 或文字），默认跟 content 一样，可单独改
+//   - content：点击图标后插入到输入框的文字（支持多行）
+//   - enabled：是否在快捷键栏显示（关闭就不显示但不删除）
+export interface DateQuickPhrase {
+  id: string;
+  display: string;     // 显示在按钮上的字符（emoji / 短文字），默认 = content
+  content: string;     // 插入到输入框的文字，支持换行
+  enabled: boolean;    // 是否在快捷键栏显示
+}
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
@@ -201,6 +213,10 @@ export interface APIConfig {
   geminiBaseUrl?: string;
   geminiApiKey?: string;
   geminiModel?: string;
+  // 暮色 2026-08-04：Gemini 直连 key 池（多 key 轮询 + 健康状态）
+  //   - 读时优先用 geminiApiKeys（数组），兼容老数据用 geminiApiKey（单字符串）
+  //   - 老 key 会自动包成 1 元素数组
+  geminiApiKeys?: string[];
   // 暮色 2026-07-27：识图三平台独立配置
   //   - 跟主 API 同样的三协议 + 独立 URL/Key/Model
   //   - visionBaseUrl/visionApiKey/visionModel 默认 OpenAI 协议
@@ -213,6 +229,8 @@ export interface APIConfig {
   visionGeminiBaseUrl?: string;
   visionGeminiApiKey?: string;
   visionGeminiModel?: string;
+  // 暮色 2026-08-04：识图 Gemini 直连 key 池
+  visionGeminiApiKeys?: string[];
   // 暮色 2026-07-27 晚：删 imageGemini* 字段（生图只走 OpenAI 兼容，暮色原话"生图不用"）
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;

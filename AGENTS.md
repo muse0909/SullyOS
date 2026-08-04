@@ -301,6 +301,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-08-04 | 见面 app 快捷键 v3：光标按 cursorPos 设置 + 键盘收快捷键自动隐藏 + 发送按钮重做 | [`changelogs/2026-08-04-quick-phrases-v3-cursor-bool-sendbtn.md`](./changelogs/2026-08-04-quick-phrases-v3-cursor-bool-sendbtn.md) |
 | 2026-08-04 | 见面 app 快捷键 v4：光标位置 3 选 1（最前/中间/最后） + 视觉视口监听（visualViewport API） + 齿轮防键盘收回 | [`changelogs/2026-08-04-quick-phrases-v4-cursorpos-3-and-visualviewport.md`](./changelogs/2026-08-04-quick-phrases-v4-cursorpos-3-and-visualviewport.md) |
 | 2026-08-04 | 见面 app 快捷键 v5：flushSync 强制同步 commit 修光标 Bug + focusin/focusout 全局监听修键盘收快捷键不隐藏 | [`changelogs/2026-08-04-quick-phrases-v5-flushsync-and-focusin.md`](./changelogs/2026-08-04-quick-phrases-v5-flushsync-and-focusin.md) |
+| 2026-08-04 | 见面 app 快捷键 v6 + v7：useRef 诊断 + 光标位置重定义「content 自身」（暮色当模板用：content 是【】，光标在【 和 】之间） | [`changelogs/2026-08-04-quick-phrases-v6-v7-diagnose-and-redefine.md`](./changelogs/2026-08-04-quick-phrases-v6-v7-diagnose-and-redefine.md) |
 | 2026-08-03 | 主动消息诊断 log ReferenceError — systemPrompt 挪到 try 块外 | [`changelogs/2026-08-03-proactive-diagnos-log-referenceerror.md`](./changelogs/2026-08-03-proactive-diagnos-log-referenceerror.md) |
 | 2026-08-04 | Gemini 直连 key 池 — 多 key 轮询 + 健康状态自动切换 | [`changelogs/2026-08-04-gemini-key-pool.md`](./changelogs/2026-08-04-gemini-key-pool.md) |
 | 2026-08-02 | 悬浮窗 useOS 漏解构 addApiPreset 致 ReferenceError + 副 API 保存跳回 OpenAI 协议（syncEmotionApiToAllCharacters 丢字段） | [`changelogs/2026-08-02-add-api-preset-reference-error.md`](./changelogs/2026-08-02-add-api-preset-reference-error.md) |

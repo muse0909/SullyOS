@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import { flushSync } from 'react-dom';
 import { CharacterProfile, Message, DateState, DialogueItem, UserProfile } from '../../types';
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
@@ -232,27 +233,45 @@ const DateSession: React.FC<DateSessionProps> = ({
         setIsInputExpanded(el.scrollHeight > EXPAND_THRESHOLD);
     }, [input]);
 
-    // 暮色 2026-08-04 v4：键盘收快捷键自动隐藏（用 visualViewport API）
-    //   安卓/iOS 软键盘弹起时 visualViewport.height 缩小；收起时恢复
-    //   监听 resize 事件 + 跟踪上一次的 keyboardHeight，只在「有→无」时关
-    //   - 不依赖 onFocus/onBlur（安卓 onBlur 不可靠，textarea focus 状态不准确）
-    //   - modal 打开时不影响 keyboardHeight（不会误关）
-    //   - 关闭 modal 后 textarea 重新 focus → onFocus 触发 setShowInputBox(true) 回来
+    // 暮色 2026-08-04 v5：键盘收快捷键自动隐藏
+    //   v4 用 visualViewport.resize 在部分安卓 WebView 不触发（小米/华为部分版本）
+    //   改用 focusin/focusout 全局监听，更稳
+    //   - focusin 到 textarea → 显示快捷键栏（键盘弹起自动触发）
+    //   - focusout 从 textarea → 100ms 后检查 activeElement，不是 textarea 就隐藏
+    //   - 齿轮按钮 onMouseDown preventDefault 阻止了 focusout（不影响）
+    //   - modal 打开时 activeElement 是 modal 的 input → 不是 textarea → 隐藏（正确）
+    //   - modal 关闭后用户点 textarea → focusin → 显示（正确）
     useEffect(() => {
-        if (typeof window === 'undefined' || !window.visualViewport) return;
-        let prevKeyboardHeight = 0;
-        const onResize = () => {
-            const vh = window.visualViewport?.height || 0;
-            const keyboardHeight = window.innerHeight - vh;
-            // 只在「键盘从弹起到收起」时关闭快捷键栏
-            //   阈值：>100 是键盘弹起，<50 是键盘完全收起
-            if (prevKeyboardHeight > 100 && keyboardHeight < 50) {
-                setShowInputBox(false);
+        const onFocusIn = (e: FocusEvent) => {
+            const target = e.target as HTMLElement | null;
+            if (!target) return;
+            if (target.tagName === 'TEXTAREA' || target === inputRef.current) {
+                setShowInputBox(true);
             }
-            prevKeyboardHeight = keyboardHeight;
         };
-        window.visualViewport.addEventListener('resize', onResize);
-        return () => window.visualViewport.removeEventListener('resize', onResize);
+        const onFocusOut = (e: FocusEvent) => {
+            const fromTarget = e.target as HTMLElement | null;
+            if (!fromTarget) return;
+            if (fromTarget.tagName !== 'TEXTAREA' && fromTarget !== inputRef.current) return;
+            // 延迟 100ms：等焦点稳定落点（避免点按钮时焦点跳到 button 触发误关）
+            setTimeout(() => {
+                const active = document.activeElement as HTMLElement | null;
+                if (!active) {
+                    // activeElement 是 body（键盘收导致 focus 丢失）→ 隐藏
+                    setShowInputBox(false);
+                    return;
+                }
+                if (active.tagName === 'TEXTAREA' || active === inputRef.current) return;
+                // 焦点跳到 modal 里的 input / 按钮 → 隐藏
+                setShowInputBox(false);
+            }, 100);
+        };
+        document.addEventListener('focusin', onFocusIn);
+        document.addEventListener('focusout', onFocusOut);
+        return () => {
+            document.removeEventListener('focusin', onFocusIn);
+            document.removeEventListener('focusout', onFocusOut);
+        };
     }, []);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
@@ -1237,14 +1256,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                             const before = input.slice(0, insertAt);
                             const after = input.slice(insertAt);
                             const newInput = before + p.content + after;
-                            setInput(newInput);
-                            // requestAnimationFrame 避开 React 批处理期间 selectionStart 还没更新的问题
-                            requestAnimationFrame(() => {
-                                ta.focus();
-                                // 光标位置和插入位置一致（按设置）
-                                const cursorAfter = insertAt + p.content.length;
-                                ta.setSelectionRange(cursorAfter, cursorAfter);
-                            });
+                            // 暮色 2026-08-04 v5：flushSync 强制 React 同步提交
+                            //   之前 requestAnimationFrame + setSelectionRange 在受控 input 上失效
+                            //   原因：setInput 是异步的，React 还没把新 value 提交到 DOM
+                            //   setSelectionRange 基于旧 value 设的位置，React 提交时会被重置到末尾
+                            //   修复：flushSync 强制 React 同步 commit，setInput 后 ta.value 立即是 newInput
+                            //   此时 setSelectionRange(cursorAfter) 才稳
+                            flushSync(() => setInput(newInput));
+                            ta.focus();
+                            const cursorAfter = insertAt + p.content.length;
+                            ta.setSelectionRange(cursorAfter, cursorAfter);
                         }}
                         className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
                         title={p.content}
@@ -1346,10 +1367,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                     //   鼠标点 textarea 时容器 onClick 不冒泡，showInputBox 一直是 false
                     //   修复：textarea onFocus 直接设 showInputBox=true（手机用 onClick / 电脑用 onFocus 都覆盖）
                     onFocus={() => setShowInputBox(true)}
-                    // 暮色 2026-08-04 v3 反馈：键盘收起快捷键自动隐藏
-                    //   iOS 软键盘收起会触发 blur → 快捷键栏自动关
-                    //   快捷键栏按钮 onMouseDown preventDefault 已经阻止了 blur，textarea 仍 focus → 不影响
-                    onBlur={() => setShowInputBox(false)}
+                    // 暮色 2026-08-04 v5：电脑端用 onBlur 关闭快捷键栏
+                    //   手机端主要走 document 的 focusin/focusout 全局监听
+                    //   电脑端 textarea blur 立即关（焦点跳到其他位置）
+                    onBlur={() => {
+                        // 延迟 100ms：避免和齿轮按钮 onMouseDown preventDefault 抢焦点
+                        setTimeout(() => {
+                            if (document.activeElement === inputRef.current) return;
+                            setShowInputBox(false);
+                        }, 100);
+                    }}
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}

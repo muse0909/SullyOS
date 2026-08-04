@@ -184,6 +184,8 @@ const DateSession: React.FC<DateSessionProps> = ({
         console.log('[quick-phrase] 弹窗点 pos =', pos, 'state =', phraseFormCursorPos);
         phraseFormCursorPosRef.current = pos;
         setPhraseFormCursorPosState(pos);
+        // 暮色 2026-08-04 v6：toast 反馈设置生效（不用开 console 也能看到）
+        addToast(`光标位置：${pos === 'start' ? '最前' : pos === 'middle' ? '中间' : '最后'}`, 'info');
     };
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
     // 暮色 v2 反馈：新建/编辑弹窗独立 state（不和"快捷键设置列表"共用一个 — 否则两个 modal 同时显示）
@@ -219,6 +221,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         // 暮色 2026-08-04 v6：读 ref 拿最新 cursorPos（不依赖 React state）
         const cursorPos = phraseFormCursorPosRef.current;
         console.log('[quick-phrase] submitPhrase 读 cursorPos =', cursorPos, 'state =', phraseFormCursorPos, 'mode =', phraseModalMode);
+        addToast(`保存 cursorPos = ${cursorPos}`, 'info');
         if (phraseModalMode === 'create') {
             addDateQuickPhrase(display, content, cursorPos);
             addToast('快捷键已添加', 'success');

@@ -174,7 +174,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [editingPhraseId, setEditingPhraseId] = useState<string | null>(null);
     const [phraseFormDisplay, setPhraseFormDisplay] = useState('');
     const [phraseFormContent, setPhraseFormContent] = useState('');
-    const [phraseFormCursorPos, setPhraseFormCursorPos] = useState<'last' | 'cursor'>('last');
+    const [phraseFormCursorPos, setPhraseFormCursorPos] = useState<'start' | 'middle' | 'end'>('end');
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
     // 暮色 v2 反馈：新建/编辑弹窗独立 state（不和"快捷键设置列表"共用一个 — 否则两个 modal 同时显示）
     const [phraseFormModalOpen, setPhraseFormModalOpen] = useState(false);
@@ -182,7 +182,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const openCreatePhrase = () => {
         setPhraseFormDisplay('');
         setPhraseFormContent('');
-        setPhraseFormCursorPos('last');
+        setPhraseFormCursorPos('end');
         setEditingPhraseId(null);
         setPhraseModalMode('create');
         setPhraseFormModalOpen(true);
@@ -192,7 +192,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!p) return;
         setPhraseFormDisplay(p.display);
         setPhraseFormContent(p.content);
-        setPhraseFormCursorPos(p.cursorPos || 'last');
+        setPhraseFormCursorPos(p.cursorPos || 'end');
         setEditingPhraseId(id);
         setPhraseModalMode('edit');
         // 编辑时直接弹新建/编辑 modal，关闭设置列表 modal
@@ -231,6 +231,29 @@ const DateSession: React.FC<DateSessionProps> = ({
         el.style.overflowY = el.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
         setIsInputExpanded(el.scrollHeight > EXPAND_THRESHOLD);
     }, [input]);
+
+    // 暮色 2026-08-04 v4：键盘收快捷键自动隐藏（用 visualViewport API）
+    //   安卓/iOS 软键盘弹起时 visualViewport.height 缩小；收起时恢复
+    //   监听 resize 事件 + 跟踪上一次的 keyboardHeight，只在「有→无」时关
+    //   - 不依赖 onFocus/onBlur（安卓 onBlur 不可靠，textarea focus 状态不准确）
+    //   - modal 打开时不影响 keyboardHeight（不会误关）
+    //   - 关闭 modal 后 textarea 重新 focus → onFocus 触发 setShowInputBox(true) 回来
+    useEffect(() => {
+        if (typeof window === 'undefined' || !window.visualViewport) return;
+        let prevKeyboardHeight = 0;
+        const onResize = () => {
+            const vh = window.visualViewport?.height || 0;
+            const keyboardHeight = window.innerHeight - vh;
+            // 只在「键盘从弹起到收起」时关闭快捷键栏
+            //   阈值：>100 是键盘弹起，<50 是键盘完全收起
+            if (prevKeyboardHeight > 100 && keyboardHeight < 50) {
+                setShowInputBox(false);
+            }
+            prevKeyboardHeight = keyboardHeight;
+        };
+        window.visualViewport.addEventListener('resize', onResize);
+        return () => window.visualViewport.removeEventListener('resize', onResize);
+    }, []);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
@@ -1169,8 +1192,10 @@ const DateSession: React.FC<DateSessionProps> = ({
               {showInputBox && (
                 <div className="px-4 pb-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
-                    {/* 暮色 v2：第 1 个改齿轮（点开弹快捷键设置 modal） */}
+                    {/* 暮色 v2：第 1 个改齿轮（点开弹快捷键设置 modal）
+                        暮色 2026-08-04 v4：加 onMouseDown preventDefault 防止安卓点齿轮键盘收回 */}
                     <button
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => setPhraseModalOpen(true)}
                       className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-transform"
                       title="快捷键设置"
@@ -1194,30 +1219,30 @@ const DateSession: React.FC<DateSessionProps> = ({
                         // 暮色 2026-08-04 反馈：iOS 软键盘会自动收回去 + 光标不出现
                         //   onMouseDown preventDefault 阻止按钮点击导致 textarea blur（核心修复）
                         //   onClick 里 focus + setSelectionRange 强制光标到设置的位置
-                        //   cursorPos: 'last' → 末尾；'cursor' → 用户当前光标处（如果失焦过则用上次聚焦时的 selectionStart）
+                        //   暮色 2026-08-04 v4：3 选 1（'start' 最前 / 'middle' 中间 / 'end' 最后）
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                             const ta = inputRef.current;
                             if (!ta) return;
-                            // 暮色 2026-08-04 v3 反馈：光标位置要和"光标位置"设置一致
-                            //   - 'last'（最后）: 光标停在末尾（= 输入框末尾 + content 长度）
-                            //   - 'cursor'（光标处）: 光标**不动**，保持在原 selectionStart
-                            //   之前 v2 我把两种情况都设成"移到插入内容末尾"——暮色说不对
-                            const useCursor = p.cursorPos === 'cursor';
-                            const insertAt = useCursor
-                                ? (ta.selectionStart || 0)
-                                : input.length;
+                            // 按 cursorPos 计算插入位置
+                            //   - 'start' → 0
+                            //   - 'middle' → floor(length/2)
+                            //   - 'end'（默认）→ length
+                            const pos = p.cursorPos || 'end';
+                            const insertAt = pos === 'start'
+                                ? 0
+                                : pos === 'middle'
+                                    ? Math.floor(input.length / 2)
+                                    : input.length;
                             const before = input.slice(0, insertAt);
                             const after = input.slice(insertAt);
                             const newInput = before + p.content + after;
                             setInput(newInput);
-                            // 保持焦点 + 按设置移动光标
                             // requestAnimationFrame 避开 React 批处理期间 selectionStart 还没更新的问题
                             requestAnimationFrame(() => {
                                 ta.focus();
-                                const cursorAfter = useCursor
-                                    ? insertAt          // 'cursor' → 保持原位不动
-                                    : newInput.length;  // 'last' → 末尾
+                                // 光标位置和插入位置一致（按设置）
+                                const cursorAfter = insertAt + p.content.length;
                                 ta.setSelectionRange(cursorAfter, cursorAfter);
                             });
                         }}
@@ -1536,18 +1561,17 @@ const DateSession: React.FC<DateSessionProps> = ({
                             className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30 resize-none leading-relaxed"
                         />
                     </div>
-                    {/* 暮色 2026-08-04 v2：光标位置段（参考 iOS 新建快捷键截图） */}
+                    {/* 暮色 2026-08-04 v4：光标位置 3 选 1（最前/中间/最后）— 之前"光标处"识别不到 */}
                     <div>
                         <label className="text-[11px] text-slate-500 font-bold mb-2 block">光标位置</label>
                         <div className="flex gap-2">
-                            <button
-                                onClick={() => setPhraseFormCursorPos('last')}
-                                className={`flex-1 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${phraseFormCursorPos === 'last' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
-                            >最后</button>
-                            <button
-                                onClick={() => setPhraseFormCursorPos('cursor')}
-                                className={`flex-1 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${phraseFormCursorPos === 'cursor' ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
-                            >光标处</button>
+                            {(['start', 'middle', 'end'] as const).map(pos => (
+                                <button
+                                    key={pos}
+                                    onClick={() => setPhraseFormCursorPos(pos)}
+                                    className={`flex-1 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all active:scale-95 ${phraseFormCursorPos === pos ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                                >{pos === 'start' ? '最前' : pos === 'middle' ? '中间' : '最后'}</button>
+                            ))}
                         </div>
                     </div>
                     {/* 预览 */}

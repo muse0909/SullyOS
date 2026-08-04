@@ -181,11 +181,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     //   ref 同步更新，submitPhrase 直接读 ref
     const phraseFormCursorPosRef = useRef<'start' | 'middle' | 'end'>('end');
     const setPhraseFormCursorPos = (pos: 'start' | 'middle' | 'end') => {
-        console.log('[quick-phrase] 弹窗点 pos =', pos, 'state =', phraseFormCursorPos);
         phraseFormCursorPosRef.current = pos;
         setPhraseFormCursorPosState(pos);
-        // 暮色 2026-08-04 v6：toast 反馈设置生效（不用开 console 也能看到）
-        addToast(`光标位置：${pos === 'start' ? '最前' : pos === 'middle' ? '中间' : '最后'}`, 'info');
     };
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
     // 暮色 v2 反馈：新建/编辑弹窗独立 state（不和"快捷键设置列表"共用一个 — 否则两个 modal 同时显示）
@@ -220,8 +217,6 @@ const DateSession: React.FC<DateSessionProps> = ({
         const display = phraseFormDisplay.trim() || content.slice(0, 2);
         // 暮色 2026-08-04 v6：读 ref 拿最新 cursorPos（不依赖 React state）
         const cursorPos = phraseFormCursorPosRef.current;
-        console.log('[quick-phrase] submitPhrase 读 cursorPos =', cursorPos, 'state =', phraseFormCursorPos, 'mode =', phraseModalMode);
-        addToast(`保存 cursorPos = ${cursorPos}`, 'info');
         if (phraseModalMode === 'create') {
             addDateQuickPhrase(display, content, cursorPos);
             addToast('快捷键已添加', 'success');
@@ -1269,7 +1264,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                             //   - 'middle'  → cursor 在 content 中间（【和】之间）→ 接着打字 = 你好【X】
                             //   - 'end'     → cursor 在 content 末尾（】之后）→ 接着打字 = 你好【】X
                             const pos = p.cursorPos || 'end';
-                            console.log('[quick-phrase] 使用快捷键 p.cursorPos =', p.cursorPos, 'pos =', pos, 'input.length =', input.length, 'content.length =', p.content.length);
                             const inputLen = input.length;
                             const contentLen = p.content.length;
                             // content 永远加在 input 末尾
@@ -1288,11 +1282,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                             flushSync(() => setInput(newInput));
                             ta.focus();
                             ta.setSelectionRange(cursorAfter, cursorAfter);
-                            // 暮色 2026-08-04 v6：toast 诊断 selectionStart 实际值
-                            addToast(`设置光标 ${ta.selectionStart} / 长 ${ta.value.length}（应到 ${cursorAfter}）`, 'info');
-                            setTimeout(() => {
-                                addToast(`100ms 后光标 ${ta.selectionStart} / 长 ${ta.value.length}`, 'info');
-                            }, 100);
                         }}
                         className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
                         title={p.content}

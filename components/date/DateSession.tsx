@@ -1261,29 +1261,32 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onClick={() => {
                             const ta = inputRef.current;
                             if (!ta) return;
-                            // 按 cursorPos 计算插入位置
-                            //   - 'start' → 0
-                            //   - 'middle' → floor(length/2)
-                            //   - 'end'（默认）→ length
+                            // 暮色 2026-08-04 v7：光标位置改"content 自己的位置"语义
+                            //   之前 v3-v6 都是 "input 字符中间" 语义 — 用户当模板用时（content 是【】）失效
+                            //   暮色原话："光标我想要留下【光标】括号中间"
+                            //   新语义：content 永远加在 input 末尾（不破坏用户已输入），cursor 在 content 自身不同位置
+                            //   - 'start'   → cursor 在 content 开头（【之前） → 接着打字 = 你好【X】
+                            //   - 'middle'  → cursor 在 content 中间（【和】之间）→ 接着打字 = 你好【X】
+                            //   - 'end'     → cursor 在 content 末尾（】之后）→ 接着打字 = 你好【】X
                             const pos = p.cursorPos || 'end';
-                            console.log('[quick-phrase] 使用快捷键 p.cursorPos =', p.cursorPos, 'pos =', pos, 'input.length =', input.length);
-                            const insertAt = pos === 'start'
-                                ? 0
-                                : pos === 'middle'
-                                    ? Math.floor(input.length / 2)
-                                    : input.length;
-                            const before = input.slice(0, insertAt);
-                            const after = input.slice(insertAt);
-                            const newInput = before + p.content + after;
+                            console.log('[quick-phrase] 使用快捷键 p.cursorPos =', p.cursorPos, 'pos =', pos, 'input.length =', input.length, 'content.length =', p.content.length);
+                            const inputLen = input.length;
+                            const contentLen = p.content.length;
+                            // content 永远加在 input 末尾
+                            const newInput = input + p.content;
+                            // cursor 在 content 身上的位置
+                            let cursorAfter: number;
+                            if (pos === 'start') {
+                                cursorAfter = inputLen;  // content 开头
+                            } else if (pos === 'middle') {
+                                cursorAfter = inputLen + Math.floor(contentLen / 2);  // content 自己中间
+                            } else {
+                                cursorAfter = inputLen + contentLen;  // content 末尾
+                            }
                             // 暮色 2026-08-04 v5：flushSync 强制 React 同步提交
-                            //   之前 requestAnimationFrame + setSelectionRange 在受控 input 上失效
-                            //   原因：setInput 是异步的，React 还没把新 value 提交到 DOM
-                            //   setSelectionRange 基于旧 value 设的位置，React 提交时会被重置到末尾
-                            //   修复：flushSync 强制 React 同步 commit，setInput 后 ta.value 立即是 newInput
-                            //   此时 setSelectionRange(cursorAfter) 才稳
+                            //   受控 input + setSelectionRange 必须 flushSync，否则 selection 被重置
                             flushSync(() => setInput(newInput));
                             ta.focus();
-                            const cursorAfter = insertAt + p.content.length;
                             ta.setSelectionRange(cursorAfter, cursorAfter);
                             // 暮色 2026-08-04 v6：toast 诊断 selectionStart 实际值
                             addToast(`设置光标 ${ta.selectionStart} / 长 ${ta.value.length}（应到 ${cursorAfter}）`, 'info');

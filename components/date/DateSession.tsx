@@ -175,7 +175,16 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [editingPhraseId, setEditingPhraseId] = useState<string | null>(null);
     const [phraseFormDisplay, setPhraseFormDisplay] = useState('');
     const [phraseFormContent, setPhraseFormContent] = useState('');
-    const [phraseFormCursorPos, setPhraseFormCursorPos] = useState<'start' | 'middle' | 'end'>('end');
+    const [phraseFormCursorPos, setPhraseFormCursorPosState] = useState<'start' | 'middle' | 'end'>('end');
+    // 暮色 2026-08-04 v6：useRef 同步 cursorPos，避免 React 批处理陷阱
+    //   setState 异步更新，submitPhrase 闭包可能捕获旧值
+    //   ref 同步更新，submitPhrase 直接读 ref
+    const phraseFormCursorPosRef = useRef<'start' | 'middle' | 'end'>('end');
+    const setPhraseFormCursorPos = (pos: 'start' | 'middle' | 'end') => {
+        console.log('[quick-phrase] 弹窗点 pos =', pos, 'state =', phraseFormCursorPos);
+        phraseFormCursorPosRef.current = pos;
+        setPhraseFormCursorPosState(pos);
+    };
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
     // 暮色 v2 反馈：新建/编辑弹窗独立 state（不和"快捷键设置列表"共用一个 — 否则两个 modal 同时显示）
     const [phraseFormModalOpen, setPhraseFormModalOpen] = useState(false);
@@ -184,6 +193,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         setPhraseFormDisplay('');
         setPhraseFormContent('');
         setPhraseFormCursorPos('end');
+        phraseFormCursorPosRef.current = 'end';
         setEditingPhraseId(null);
         setPhraseModalMode('create');
         setPhraseFormModalOpen(true);
@@ -193,7 +203,9 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!p) return;
         setPhraseFormDisplay(p.display);
         setPhraseFormContent(p.content);
-        setPhraseFormCursorPos(p.cursorPos || 'end');
+        const initPos = p.cursorPos || 'end';
+        setPhraseFormCursorPos(initPos);
+        phraseFormCursorPosRef.current = initPos;
         setEditingPhraseId(id);
         setPhraseModalMode('edit');
         // 编辑时直接弹新建/编辑 modal，关闭设置列表 modal
@@ -204,11 +216,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         const content = phraseFormContent.trim();
         if (!content) { addToast('填充内容不能为空', 'error'); return; }
         const display = phraseFormDisplay.trim() || content.slice(0, 2);
+        // 暮色 2026-08-04 v6：读 ref 拿最新 cursorPos（不依赖 React state）
+        const cursorPos = phraseFormCursorPosRef.current;
+        console.log('[quick-phrase] submitPhrase 读 cursorPos =', cursorPos, 'state =', phraseFormCursorPos, 'mode =', phraseModalMode);
         if (phraseModalMode === 'create') {
-            addDateQuickPhrase(display, content, phraseFormCursorPos);
+            addDateQuickPhrase(display, content, cursorPos);
             addToast('快捷键已添加', 'success');
         } else if (editingPhraseId) {
-            updateDateQuickPhrase(editingPhraseId, { display, content, cursorPos: phraseFormCursorPos });
+            updateDateQuickPhrase(editingPhraseId, { display, content, cursorPos });
             addToast('已保存', 'success');
         }
         setPhraseFormModalOpen(false);
@@ -1248,6 +1263,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                             //   - 'middle' → floor(length/2)
                             //   - 'end'（默认）→ length
                             const pos = p.cursorPos || 'end';
+                            console.log('[quick-phrase] 使用快捷键 p.cursorPos =', p.cursorPos, 'pos =', pos, 'input.length =', input.length);
                             const insertAt = pos === 'start'
                                 ? 0
                                 : pos === 'middle'

@@ -567,16 +567,15 @@ const DateSession: React.FC<DateSessionProps> = ({
     const handleSend = async () => {
         if (isTyping) return;
         const trimmed = input.trim();
-        // 空内容分支（暮色 2026-08-03 v2）：
-        //   - canReroll：走重 roll（之前的逻辑）
-        //   - hasPendingUserMessage：库里最后一条 user 消息还没收到 AI 回复 → 走重发（不重复入库）
-        //   - 其他：什么都不做
+        // 空内容分支（暮色 2026-08-04 v3 反馈）：
+        //   - hasPendingUserMessage（最后一条是 user）→ 走重发（不重复入库）
+        //   - 最后一条是 assistant → **不执行任何操作**（发送按钮锁死）
+        //   - 之前 v2 还在"最后一条是 assistant"时走 canReroll 触发重 roll——v3 删掉
         if (!trimmed) {
-            if (canReroll) {
-                await handleRerollClick();
-            } else if (hasPendingUserMessage) {
+            if (hasPendingUserMessage) {
                 await handleResend();
             }
+            // 最后一条是 assistant 或 messages 为空 → 不做事（按钮也已经 disabled）
             return;
         }
         setInput('');
@@ -1200,20 +1199,26 @@ const DateSession: React.FC<DateSessionProps> = ({
                         onClick={() => {
                             const ta = inputRef.current;
                             if (!ta) return;
-                            // 决定插入位置
-                            const insertAt = (p.cursorPos === 'last')
-                                ? input.length  // 强制末尾
-                                : (ta.selectionStart || 0);  // 当前光标（失焦时也保留最后聚焦时的位置）
+                            // 暮色 2026-08-04 v3 反馈：光标位置要和"光标位置"设置一致
+                            //   - 'last'（最后）: 光标停在末尾（= 输入框末尾 + content 长度）
+                            //   - 'cursor'（光标处）: 光标**不动**，保持在原 selectionStart
+                            //   之前 v2 我把两种情况都设成"移到插入内容末尾"——暮色说不对
+                            const useCursor = p.cursorPos === 'cursor';
+                            const insertAt = useCursor
+                                ? (ta.selectionStart || 0)
+                                : input.length;
                             const before = input.slice(0, insertAt);
                             const after = input.slice(insertAt);
                             const newInput = before + p.content + after;
                             setInput(newInput);
-                            // 保持焦点 + 移动光标到插入内容末尾
-                            // 用 requestAnimationFrame 避免 React 状态批处理期间 selectionStart 还没更新
+                            // 保持焦点 + 按设置移动光标
+                            // requestAnimationFrame 避开 React 批处理期间 selectionStart 还没更新的问题
                             requestAnimationFrame(() => {
                                 ta.focus();
-                                const newPos = insertAt + p.content.length;
-                                ta.setSelectionRange(newPos, newPos);
+                                const cursorAfter = useCursor
+                                    ? insertAt          // 'cursor' → 保持原位不动
+                                    : newInput.length;  // 'last' → 末尾
+                                ta.setSelectionRange(cursorAfter, cursorAfter);
                             });
                         }}
                         className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
@@ -1316,6 +1321,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                     //   鼠标点 textarea 时容器 onClick 不冒泡，showInputBox 一直是 false
                     //   修复：textarea onFocus 直接设 showInputBox=true（手机用 onClick / 电脑用 onFocus 都覆盖）
                     onFocus={() => setShowInputBox(true)}
+                    // 暮色 2026-08-04 v3 反馈：键盘收起快捷键自动隐藏
+                    //   iOS 软键盘收起会触发 blur → 快捷键栏自动关
+                    //   快捷键栏按钮 onMouseDown preventDefault 已经阻止了 blur，textarea 仍 focus → 不影响
+                    onBlur={() => setShowInputBox(false)}
                     placeholder={isTyping ? '等待回应…' : '输入对话…'}
                     disabled={isTyping}
                     rows={1}
@@ -1324,7 +1333,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                   />
                   <button
                     onClick={handleSend}
-                    disabled={(!input.trim() && !canReroll && !hasPendingUserMessage) || isTyping}
+                    // 暮色 2026-08-04 v3：去掉 canReroll（最后一条是 assistant 时不做事，按钮锁死）
+                    disabled={(!input.trim() && !hasPendingUserMessage) || isTyping}
                     className="shrink-0 w-8 h-8 bg-primary rounded-full flex items-center justify-center disabled:opacity-40 transition-all active:scale-90"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4 text-white">

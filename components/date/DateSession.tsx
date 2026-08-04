@@ -1192,7 +1192,30 @@ const DateSession: React.FC<DateSessionProps> = ({
                     {dateQuickPhrases.filter(p => p.enabled).map(p => (
                       <button
                         key={p.id}
-                        onClick={() => setInput(prev => prev ? prev + (prev.endsWith('\n') || prev === '' ? '' : '\n') + p.content : p.content)}
+                        // 暮色 2026-08-04 反馈：iOS 软键盘会自动收回去 + 光标不出现
+                        //   onMouseDown preventDefault 阻止按钮点击导致 textarea blur（核心修复）
+                        //   onClick 里 focus + setSelectionRange 强制光标到设置的位置
+                        //   cursorPos: 'last' → 末尾；'cursor' → 用户当前光标处（如果失焦过则用上次聚焦时的 selectionStart）
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                            const ta = inputRef.current;
+                            if (!ta) return;
+                            // 决定插入位置
+                            const insertAt = (p.cursorPos === 'last')
+                                ? input.length  // 强制末尾
+                                : (ta.selectionStart || 0);  // 当前光标（失焦时也保留最后聚焦时的位置）
+                            const before = input.slice(0, insertAt);
+                            const after = input.slice(insertAt);
+                            const newInput = before + p.content + after;
+                            setInput(newInput);
+                            // 保持焦点 + 移动光标到插入内容末尾
+                            // 用 requestAnimationFrame 避免 React 状态批处理期间 selectionStart 还没更新
+                            requestAnimationFrame(() => {
+                                ta.focus();
+                                const newPos = insertAt + p.content.length;
+                                ta.setSelectionRange(newPos, newPos);
+                            });
+                        }}
                         className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
                         title={p.content}
                       >

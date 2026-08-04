@@ -1285,6 +1285,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                             ta.focus();
                             const cursorAfter = insertAt + p.content.length;
                             ta.setSelectionRange(cursorAfter, cursorAfter);
+                            // 暮色 2026-08-04 v6：toast 诊断 selectionStart 实际值
+                            addToast(`设置光标 ${ta.selectionStart} / 长 ${ta.value.length}（应到 ${cursorAfter}）`, 'info');
+                            setTimeout(() => {
+                                addToast(`100ms 后光标 ${ta.selectionStart} / 长 ${ta.value.length}`, 'info');
+                            }, 100);
                         }}
                         className="shrink-0 w-7 h-7 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-white text-xs font-bold active:scale-90 transition-transform min-w-[1.75rem]"
                         title={p.content}

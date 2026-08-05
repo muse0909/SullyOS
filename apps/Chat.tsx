@@ -2891,6 +2891,9 @@ if (keepN > 0) {
                 onToggleEmotion={handleToggleEmotion}
                 contextLimit={char.contextLimit || 500}
                 onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
+                // 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国）
+                customTimezone={char.customTimezone || ''}
+                onSetCustomTimezone={(tz) => updateCharacter(char.id, { customTimezone: tz, customTimezoneEnabled: !!tz } as any)}
                 // 暮色 2026-07-18：纯聊天模式开关
                 chatMode={char.chatMode || 'full'}
                 onSetChatMode={(mode) => updateCharacter(char.id, { chatMode: mode } as any)}

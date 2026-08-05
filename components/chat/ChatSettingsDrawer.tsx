@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 import { X, Trash, MagnifyingGlass } from '@phosphor-icons/react';
 import { CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
+// 暮色 2026-08-05：角色时区列表（异国恋 / 角色身处异国）
+import { COMMON_TIMEZONES } from '../../utils/timezone';
 import { isMessageSemanticallyRelevant } from '../../utils/messageFormat';
 
 interface ChatSettingsDrawerProps {
@@ -31,6 +33,11 @@ interface ChatSettingsDrawerProps {
     // 上下文条数
     contextLimit: number;
     onSetContextLimit: (n: number) => void;
+
+    // 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国）
+    //   空字符串 = 没开（跟设备本地时区），非空 = IANA id 如 'America/New_York'
+    customTimezone: string;
+    onSetCustomTimezone: (tz: string) => void;
 
     // 暮色 2026-07-18：聊天模式开关（'full' = 完整 / 'pure' = 纯聊天）
     chatMode: 'full' | 'pure';
@@ -118,6 +125,8 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
     contextLimit, onSetContextLimit,
+    // 暮色 2026-08-05：角色自定义时区
+    customTimezone, onSetCustomTimezone,
     chatMode, onSetChatMode,
     hideSysLogs, onSetHideSysLogs,
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
@@ -512,6 +521,27 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                                 <br />已向量化的消息不再重复发给 AI，节省 token。
                             </p>
                         )}
+                    </section>
+
+                    {/* === 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国） === */}
+                    <section className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">角色时区</label>
+                        </div>
+                        <select
+                            value={customTimezone}
+                            onChange={e => onSetCustomTimezone(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                        >
+                            <option value="">跟随设备（默认）</option>
+                            {COMMON_TIMEZONES.map(tz => (
+                                <option key={tz.id} value={tz.id}>{tz.label}</option>
+                            ))}
+                        </select>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            💡 开启后，注入给该角色的"当前时间 / 早晨傍晚"判断全按这个时区折算。
+                            适合异国恋 / 角色身处异国场景。没开 → 跟设备本地时区（v1.0 行为）。
+                        </p>
                     </section>
 
                     {/* === 隐藏系统日志 === */}

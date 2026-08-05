@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, DateQuickPhrase } from '../types';
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
@@ -1424,6 +1425,16 @@ if (!isVisible || !isChattingWithThisChar) {
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled`);
+              return;
+          }
+
+          // 暮色 2026-08-05 Phase 3：每角色每天主动消息条数硬上限（防刷闸）
+          //   原 v1.0 主动消息只有"节流"（ProactiveChat.markUserContact 每 N 分钟才触发），
+          //   但没有"每天 N 条"硬上限——理论上角色可以无限触发。
+          //   MAX_PROACTIVE_PER_DAY 默认 10，可调（见 utils/proactiveCount.ts）
+          if (await hasReachedDailyLimit(charId)) {
+              drainQueuedProactive();
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: daily limit ${MAX_PROACTIVE_PER_DAY} reached`);
               return;
           }
 

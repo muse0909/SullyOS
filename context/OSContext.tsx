@@ -4,6 +4,8 @@ import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, To
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
+// 暮色 2026-08-05 Phase 3：聊天在场状态（主动消息撞车闸）
+import { isUserCurrentlyChatting, clearUserChatPresence } from '../utils/chatPresenceStorage';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
@@ -1438,6 +1440,16 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
+          // 暮色 2026-08-05 Phase 3：聊天在场撞车闸
+          //   如果用户 45 秒内跟这个角色发过消息，主动消息跳过
+          //   避免"用户刚发完 → 主动消息也弹出来"撞车体验
+          //   注意：情侣空间 AI 主动打卡（shouldTriggerAiCheckin）独立分支，不受这个闸影响
+          if (isUserCurrentlyChatting(charId)) {
+              drainQueuedProactive();
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: user is currently chatting (45s window)`);
+              return;
+          }
+
           // 暮色 2026-08-01：情侣空间 AI 主动打卡
           //   触发条件：30% 概率 / 一天最多 3 条 / 距上次主动 > 6 小时
           //   命中 → addCheckin + 推系统消息进聊天流（type: 'couple_space_event'）
@@ -1592,19 +1604,28 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
+              // 暮色 2026-08-05：主动消息 history 截断 + 记忆宫殿 recentMessages 收紧
+              //   修前：allMsgs = 拉 500 条（实际 ~271 条全塞 historySlice，token 炸）
+              //   修后：
+              //     - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
+              //     - historyForBuild = 8 条（buildMessageHistory 用，给 LLM 看的真实 history）
+              //   主动消息不需要"看完整 271 条"——AI 主动发消息只用最近的 8 条就够接语境
+              const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
+              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 8);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
               // 3a. 记忆宫殿向量召回 — 与 useChatAI 主流程一致，挂到 char.memoryPalaceInjection
               //     buildSystemPrompt 内部 buildCoreContext 会自动读取并注入
-              await injectMemoryPalace(char, allMsgs, undefined, currentUserProfile?.name);
+              //     recentMessages 给"query 上下文"用（splitLastTurnQueries），30 条够生成 query embedding
+              //     最终 top 5 检索结果不变（topN 默认 5）
+              await injectMemoryPalace(char, injectRecentMsgs, undefined, currentUserProfile?.name);
 
               // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
               const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
 
               const systemPromptResult = await ChatPrompts.buildSystemPrompt(
-                  char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
+                  char, currentUserProfile, currentGroups, emojis, categories, injectRecentMsgs,
                   currentRealtimeConfig, cachedInnerState,
                   // userListeningContext / isListeningTogether / musicCfg / chatMode 主动消息用不上，跳过
                   // 暮色 2026-08-05：isProactive=true（主动消息路径带真实世界感知）
@@ -1627,7 +1648,10 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
+              // 暮色 2026-08-05：主动消息 history 截断到 8 条（不是 500 / char.contextLimit）
+              //   修前：271 条全塞 apiMessages → token 炸（每次主动消息 5-10w tokens）
+              //   修后：8 条 history 给 LLM 接语境就够（主动消息不需要看完整 271 条）
+              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 8, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
@@ -1826,6 +1850,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   delete next[charId];
                   return next;
               });
+              // 暮色 2026-08-05 Phase 3：主动消息已发完，清掉"用户在场"标记
+              //   不然 45 秒内再触发同角色主动消息会误判为撞车
+              clearUserChatPresence(charId);
               drainQueuedProactive();
           }
       };

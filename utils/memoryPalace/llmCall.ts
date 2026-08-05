@@ -3,10 +3,17 @@
 //   - protocol === 'claude':         走 /v1/messages（Anthropic）
 //   - protocol === 'gemini':         走 /v1beta/models/{model}:generateContent
 //
-// 把原来 6 处散落的"llmConfig.baseUrl + /chat/completions + Bearer + OpenAI 协议"调用全部统一到这里
-// 旧代码保留兼容（不传 protocol 默认走 OpenAI 兼容）
+// 暮色 2026-08-05：所有协议 fetch 加 60s 硬超时（AbortController）
+//   - 之前是裸 fetch，如果 LLM 端 stall（502/524/网络黑洞），fetch 永远不返回
+//   - 处理锁（pipeline.processingLocks）永远不释放 → 下次同角色再点立刻拿到 'lock' 跳过
+//   - 表现：用户看到"立即追平"好像没反应，其实是上一次自己卡死的请求挡了
+//   - 60s 是经验值：单次 LLM 提取（12 条消息上下文）正常 5-15s，60s 留 4x 余量
+//     如果 60s 还没回，stall 的概率 >> 真的在算的概率，放弃是合理的
 
 import type { LightLLMConfig } from './pipeline';
+
+/** 暮色 2026-08-05：副 LLM 调用硬超时（ms）。60s 覆盖单次提取正常耗时（5-15s）的 4x 余量。 */
+const LLM_CALL_TIMEOUT_MS = 60_000;
 
 export interface CallLLMOptions {
     temperature?: number;
@@ -23,6 +30,32 @@ export interface CallLLMResult {
         completion_tokens: number;
         total_tokens: number;
     };
+}
+
+/**
+ * 暮色 2026-08-05：fetch 加硬超时的公共 helper。
+ * 替代裸 fetch：超时自动 abort，避免 LLM 端 stall 永远不返回导致处理锁永远不释放。
+ */
+async function fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number = LLM_CALL_TIMEOUT_MS,
+    protocolLabel: string
+): Promise<Response> {
+    const ac = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+        ac.abort(new Error(`timeout ${timeoutMs}ms`));
+    }, timeoutMs);
+    try {
+        return await fetch(url, { ...init, signal: ac.signal });
+    } catch (e: any) {
+        if (e?.name === 'AbortError' || /aborted|abort/i.test(e?.message || '')) {
+            throw new Error(`LightLLM ${protocolLabel} 超时（${timeoutMs}ms）— 副 API 无响应，请检查网络或换 key`);
+        }
+        throw e;
+    } finally {
+        clearTimeout(timeoutHandle);
+    }
 }
 
 export async function callLLM(
@@ -57,7 +90,7 @@ async function callOpenAI(
     maxTokens: number,
     stream: boolean
 ): Promise<CallLLMResult> {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -73,7 +106,7 @@ async function callOpenAI(
             max_tokens: maxTokens,
             stream,
         }),
-    });
+    }, LLM_CALL_TIMEOUT_MS, 'OpenAI');
     if (!res.ok) {
         const errText = await res.text().catch(() => '');
         throw new Error(`LightLLM OpenAI ${res.status}: ${errText.slice(0, 300)}`);
@@ -100,7 +133,7 @@ async function callClaude(
     maxTokens: number
 ): Promise<CallLLMResult> {
     // Claude 协议走 /v1/messages
-    const res = await fetch(`${baseUrl}/v1/messages`, {
+    const res = await fetchWithTimeout(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -114,7 +147,7 @@ async function callClaude(
             temperature,
             max_tokens: maxTokens,
         }),
-    });
+    }, LLM_CALL_TIMEOUT_MS, 'Claude');
     if (!res.ok) {
         const errText = await res.text().catch(() => '');
         throw new Error(`LightLLM Claude ${res.status}: ${errText.slice(0, 300)}`);
@@ -144,7 +177,7 @@ async function callGemini(
     // Gemini 协议走 /v1beta/models/{model}:generateContent?key=xxx
     const cleanBase = baseUrl.replace(/\/+$/, '');
     const url = `${cleanBase}/models/${encodeURIComponent(llmConfig.model)}:generateContent?key=${encodeURIComponent(llmConfig.apiKey || '')}`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -152,7 +185,7 @@ async function callGemini(
             systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
             generationConfig: { temperature, maxOutputTokens: maxTokens },
         }),
-    });
+    }, LLM_CALL_TIMEOUT_MS, 'Gemini');
     if (!res.ok) {
         const errText = await res.text().catch(() => '');
         throw new Error(`LightLLM Gemini ${res.status}: ${errText.slice(0, 300)}`);

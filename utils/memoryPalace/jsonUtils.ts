@@ -17,7 +17,20 @@ export function safeParseJsonArray(raw: string): any[] {
     if (!raw || !raw.trim()) return [];
 
     // 去掉 markdown 代码块包裹
-    let cleaned = raw.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
+    //   暮色 2026-08-05 加固：之前只剥 ```json 和 ``` 两个 tag，实际场景里 LLM 经常
+    //     在前面加 ```json 行（带语言标识）+ 后面 ``` 行收尾，间中还有多行 ``` 行。
+    //     原正则 ```(?:json)?\s* 能匹配开头 ```json + 空白，但遇到 ```\n 这种独立行（不跟 json 关键字）会漏。
+    //     改：先按行扫，把所有 ```xxx 整行删掉 + 所有孤立 ``` 整行删掉。
+    //     单向收紧：之前能解析的格式还能解析；之前解析失败的现在大概率能解析。
+    const lines = raw.split('\n');
+    const strippedLines: string[] = [];
+    for (const line of lines) {
+        const trimmed = line.trim();
+        // 跳过单独的 ``` 行、```json 行、```其他语言 行
+        if (/^```/.test(trimmed) && trimmed.replace(/^```\w*\s*$/, '') === '') continue;
+        strippedLines.push(line);
+    }
+    let cleaned = strippedLines.join('\n').replace(/```/g, '').trim();
 
     // 1. 尝试提取完整的 [...] 块
     const fullMatch = cleaned.match(/\[[\s\S]*\]/);

@@ -10,6 +10,8 @@
  */
 
 import { CharacterProfile, CharCurrentListening, CharPlaylistSong, DailySchedule, ScheduleSlot } from '../types';
+import { getLocalDateKey } from './localDate';
+import { getScheduleWallClock } from './scheduleTime';
 
 const LISTENING_KEYWORDS = [
     '听歌', '听音乐', '戴耳机', '戴上耳机', '戴着耳机', '耳机',
@@ -17,8 +19,6 @@ const LISTENING_KEYWORDS = [
     '播放列表', '歌单', '副歌', '前奏',
     'listening', 'music', 'song', 'playlist', 'vinyl', 'headphone', '🎵', '🎶', '🎧',
 ];
-
-const MAX_SAMPLED_SONGS = 20;
 
 /** 返回当前时间属于哪一个 slot */
 export const getCurrentSlot = (schedule: DailySchedule | null, at: Date = new Date()): ScheduleSlot | null => {
@@ -45,6 +45,47 @@ const slotStartToDate = (slot: ScheduleSlot, baseDate: Date): Date => {
     const d = new Date(baseDate);
     d.setHours(h || 0, m || 0, 0, 0);
     return d;
+};
+
+/**
+ * 抽样池：按歌单顺序去重取前 MAX_SAMPLED_SONGS 首。
+ *
+ * 暮色 2026-08-05 Phase 1：原作者 feat/amsg2-multitask-gate cherry-pick，
+ * 给主动消息 2.0 fire_pack 用——worker 到点用下面同一个 pickSongFromPool 抽，
+ * 抽出来的跟角色在聊天里说的是同一首。
+ */
+export const buildSongPool = (char: CharacterProfile): CharPlaylistSong[] => {
+    const p = char.musicProfile;
+    if (!p) return [];
+    const pool: CharPlaylistSong[] = [];
+    const seen = new Set<number>();
+    for (const pl of p.playlists) {
+        for (const s of pl.songs) {
+            if (seen.has(s.id)) continue;
+            seen.add(s.id);
+            pool.push(s);
+            if (pool.length >= MAX_SAMPLED_SONGS) break;
+        }
+        if (pool.length >= MAX_SAMPLED_SONGS) break;
+    }
+    return pool;
+};
+
+/**
+ * 基于 (today + slot.startTime + charId) 种子从池子里稳定抽一首。
+ * 同一 slot 期间永远是同一首歌，不会跳。
+ */
+export const pickSongFromPool = <T,>(
+    pool: T[],
+    slotStartTime: string,
+    today: string,
+    charId: string,
+): T | null => {
+    if (pool.length === 0) return null;
+    const seedStr = `${today}-${slotStartTime}-${charId}`;
+    let h = 0;
+    for (const ch of seedStr) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return pool[h % pool.length];
 };
 
 /**

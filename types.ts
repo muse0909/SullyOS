@@ -2487,3 +2487,104 @@ export interface VRApiCall {
     errorMsg?: string;
     timestamp: number;
 }
+
+// ============================================================================
+// 暮色 2026-08-05：主动消息 2.0 类型（从原作者 feat/amsg2-multitask-gate fork）
+// Phase 1 阶段：只 cherry-pick 类型定义，不动其他类型（避免破坏主程序）
+// ============================================================================
+
+/** 主动消息模式：固定文案 / 自由发挥 / 提示后决定 */
+export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
+
+/** 任务重复类型：不重复 / 每天 / 每周 */
+export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
+
+/** 主动消息 2.0 副 API 配置（用于主动消息的便宜模型） */
+export interface ActiveMsg2ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+/** 全局主动消息 2.0 配置：worker 地址 + 凭据 */
+export interface ActiveMsg2GlobalConfig {
+  userId: string;
+  /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
+  workerUrl: string;
+  /** 与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token */
+  serverToken?: string;
+  initializedAt?: number;
+  updatedAt?: number;
+}
+
+/** 任务过期策略：到期让路 / 强制触发 */
+export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
+
+/** 任务来源：用户排的 / 角色自己排的 */
+export type ActiveMsg2TaskSource = 'user' | 'character';
+
+/** 任务状态：待触发 / 已取消（取消后即从清单移除） */
+export type ActiveMsg2TaskStatus = 'scheduled' | 'cancelled';
+
+/** 单个主动消息任务记录 */
+export interface ActiveMsg2TaskRecord {
+  taskUuid: string;
+  clientTaskId: string;
+  mode: ActiveMsg2Mode;
+  firstSendTime: string;
+  nextSendAt?: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  userMessage?: string;
+  promptHint?: string;
+  expirePolicy: ActiveMsg2ExpirePolicy;
+  anchorLastUserMsgAt?: number;
+  source: ActiveMsg2TaskSource;
+  status: ActiveMsg2TaskStatus;
+  createdAt: number;
+  lastError?: string;
+}
+
+/** 单个角色的主动消息 2.0 配置：任务清单 + 副 API */
+export interface ActiveMsg2CharacterConfig {
+  enabled: boolean;
+  tasks?: ActiveMsg2TaskRecord[];
+  maxTokens?: number;
+  useSecondaryApi?: boolean;
+  secondaryApi?: ActiveMsg2ApiConfig;
+  lastSyncedAt?: number;
+  lastError?: string;
+}
+
+/** 任务"作废"回执记录：闸自动作废 / 用户手动取消 */
+export interface Amsg2ExpiredNoticeRecord {
+  id: string;
+  charId: string;
+  occurrenceMs: number;
+  mode: ActiveMsg2Mode;
+  promptHint?: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  kind?: 'expired' | 'user-cancelled';
+  notifiedAt?: number;
+  createdAt: number;
+}
+
+/** 主动消息收件箱消息（从云端拉回来给前端展示） */
+export interface ActiveMsg2InboxMessage {
+  messageId: string;
+  charId: string;
+  charName: string;
+  body: string;
+  previewBody?: string;
+  avatarUrl?: string;
+  source?: string;
+  messageType?: string;
+  messageSubtype?: string;
+  taskId?: string | null;
+  taskUuid?: string | null;
+  recurrenceType?: string | null;
+  occurrenceMs?: number | null;
+  metadata?: Record<string, any>;
+  sentAt?: number;
+  receivedAt: number;
+  processAttempts?: number;
+}

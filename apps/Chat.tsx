@@ -312,6 +312,10 @@ const Chat: React.FC = () => {
     };
     const handleClearPerCharApi = async () => {
         if (!char) return;
+        // 暮色 2026-08-05 修：清空时把所有 3 套 state 都清成空（之前 Gemini URL 设了默认值"https://..."，
+        //   留下后用户点保存，line 293 判断 perCharApiGeminiUrl 非空 → 走 else 分支保存成默认 Gemini 配置，
+        //   → char.apiConfig 又有值了，triggerAI 还是走角色 API，不是主 API）。
+        // 同时关抽屉（跟 handleSavePerCharApi 一致 — 清空后 user 看不到状态，留个 open 抽屉让人误以为没清空）。
         setPerCharApiBaseUrl('');
         setPerCharApiKey('');
         setPerCharApiModel('');
@@ -319,10 +323,13 @@ const Chat: React.FC = () => {
         setPerCharApiClaudeUrl('');
         setPerCharApiClaudeKey('');
         setPerCharApiClaudeModel('');
-        setPerCharApiGeminiUrl('https://generativelanguage.googleapis.com/v1beta');
+        setPerCharApiGeminiUrl('');
         setPerCharApiGeminiKey('');
-        setPerCharApiGeminiModel('gemini-2.0-flash');
+        setPerCharApiGeminiModel('');
         await updateCharApiConfig(char.id, undefined);
+        // 暮色 2026-08-05 加：清空后给个明确反馈，看不见过程会以为没生效
+        addToast('角色 API 已清空，下次发送将使用全局主 API', 'success');
+        setShowChatSettingsDrawer(false);
     };
     // 从预设加载（只填输入框，不直接保存）
     // 暮色 2026-07-27：预设也带 protocol 字段，加载时按 protocol 切换 + 填对应那组（修 401 bug）
@@ -1979,8 +1986,15 @@ if (keepN > 0) {
                 round++;
                 const hwm = getMemoryPalaceHighWaterMark(char.id);
                 const allMessages = await DB.getMessagesByCharId(char.id, true);
+                // 暮色 2026-08-05 修：跟 Pipeline 内部用同一个 filter (isMessageSemanticallyRelevant)
+                //   之前只过 text 类型 — Pipeline 内部包含 system / interaction / score_card / transfer
+                //   → ForceVectorize 算的"剩余 209"和 Pipeline 算的"缓冲区 9"对不上号
+                //   → 第 2 轮 Pipeline 跳过（阈值 10），ForceVectorize 不知道 → 实际只跑了 56 条
+                //   → 弹窗说"还有 209 条没处理" — 计数骗用户
+                //   修法：动态 import isMessageSemanticallyRelevant + 用同款 filter
+                const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
                 const textMessages = allMessages
-                    .filter(m => m.type === 'text' && m.content?.trim())
+                    .filter(m => isMessageSemanticallyRelevant(m))
                     .sort((a, b) => a.id - b.id);
 
                 // 计算未处理的消息
@@ -2001,7 +2015,19 @@ if (keepN > 0) {
                     break;
                 }
 
-                totalProcessed += batch.length;
+                // 暮色 2026-08-05 修：totalProcessed 加真实处理的条数（不是 batch.length）
+                //   Pipeline 内部 processCount = buffer * 0.85，且 hwm 只推 toProcess 最后一条的 id
+                //   → batch 170 → 真处理 56，hwm 推进只到 toProcess 末尾
+                //   → 用 batch.length 累计会骗用户说"处理了 170"，实际只处理 56
+                //   → autoArchive.hideBeforeMessageId 才是真推进的边界
+                if (pipelineResult?.autoArchive?.hideBeforeMessageId) {
+                    const realProcessed = Math.max(0, pipelineResult.autoArchive.hideBeforeMessageId - hwm);
+                    totalProcessed += realProcessed;
+                } else {
+                    // 没 autoArchive 时 fallback 用 newHwm - hwm（防御性，老路径兼容）
+                    const newHwmTmp = getMemoryPalaceHighWaterMark(char.id);
+                    totalProcessed += Math.max(0, newHwmTmp - hwm);
+                }
 
                 // 累积自动归档，统一在循环结束后 updateCharacter
                 // 避免每轮 setState 触发 char 对象重建进而 dep 失效

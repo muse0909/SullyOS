@@ -1902,7 +1902,8 @@ if (toolsList.length > 0) {
                 //   - 解析 usageMetadata → usage（token 徽标能用）
                 // 暮色 2026-08-04：key 池 + 重试
                 //   - 失败时 reportGeminiFailure 标状态：429 → 切下一个重试 / 401 → 标 dead + 弹 toast 不重试 / 其他 → 切下一个重试
-                //   - 最多重试 1 次（避免无限循环）
+                //   - 最多重试 2 次（避免无限循环，但 16 个 key 池 1 次太少 — 暮色 2026-08-05 反馈）
+                //   - 关键：不是所有 key 都坏，多切几个才能跨过 1 个坏 key
                 const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
                 let lastErr: Error | null = null;
                 let lastStatus = 0;
@@ -1910,7 +1911,7 @@ if (toolsList.length > 0) {
                 let succeeded = false;
                 // 第 1 次用的 key 索引已经在 (geminiRequestBody as any).__pickedKeyIndex 里
                 //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
-                for (let attempt = 0; attempt < 2; attempt++) {
+                for (let attempt = 0; attempt < 3; attempt++) {
                     const currentPicked = (() => {
                         if (attempt === 0) {
                             return { keyIndex: (geminiRequestBody as any).__pickedKeyIndex as number, key: '' };

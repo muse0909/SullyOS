@@ -1148,7 +1148,13 @@ export async function processNewMessages(
         const lastProcessedId = getLastProcessedId(charId);
         const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
 
-        const minThreshold = force ? 10 : BUFFER_THRESHOLD;
+        // 暮色 2026-08-05 修：force 模式阈值从 10 降到 5
+        //   之前 force=true 时阈值 10，但 hwm 推进后会进入 hotZone 范围，
+        //   buffer (hwm, hotZoneStartId) 经常只剩 5-9 条消息（id 间断），
+        //   → 阈值 10 永远跳不过 → 一键向量化只跑 1 轮就停
+        //   → 弹窗说"还有 209 条没处理" — 用户被骗
+        //   5 是经验值：一轮还能提取 1-2 条记忆；< 5 时确实没什么内容可挖
+        const minThreshold = force ? 5 : BUFFER_THRESHOLD;
         if (buffer.length < minThreshold) {
             console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
             return makeSkipResult('threshold');

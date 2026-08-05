@@ -1769,7 +1769,7 @@ export default function MemoryPalaceApp() {
                                                         color: palaceOn ? '#7c3aed' : '#9ca3af',
                                                     }}
                                                 >
-                                                    {palaceOn ? (syncing ? '同步中' : '已就绪') : '未启用'}
+                                                    {palaceOn ? '已就绪' : '未启用'}
                                                 </div>
                                             </div>
 
@@ -1913,14 +1913,14 @@ export default function MemoryPalaceApp() {
                                                 <label
                                                     style={{
                                                         position: 'relative', display: 'inline-block',
-                                                        width: 42, height: 24, cursor: syncing ? 'wait' : 'pointer', flexShrink: 0,
+                                                        width: 42, height: 24, cursor: 'pointer', flexShrink: 0,
                                                     }}
                                                     onClick={e => e.stopPropagation()}
                                                 >
                                                     <input
                                                         type="checkbox"
                                                         checked={autoOn}
-                                                        disabled={syncing || !palaceOn}
+                                                        disabled={!palaceOn}
                                                         onChange={e => handleToggleAutoArchiveFromPicker(c.id, e.target.checked)}
                                                         style={{ opacity: 0, width: 0, height: 0 }}
                                                     />
@@ -1934,7 +1934,7 @@ export default function MemoryPalaceApp() {
                                                             boxShadow: autoOn
                                                                 ? 'inset 0 1px 2px rgba(0,0,0,0.1), 0 2px 6px rgba(219,39,119,0.3)'
                                                                 : 'inset 0 1px 2px rgba(0,0,0,0.05)',
-                                                            opacity: syncing ? 0.6 : 1,
+                                                            opacity: 1,
                                                         }}
                                                     />
                                                     <span

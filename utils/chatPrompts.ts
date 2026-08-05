@@ -8,6 +8,8 @@ import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleGenerator';
+// 暮色 2026-08-05 Phase 3：角色时区格式化
+import { nowInTimeZone, resolveCharTimeZone, tzLabel } from './timezone';
 import { getRecentPosts, MomentPost } from './momentsStorage';
 
 // 2026-07-22：私密记事 prompt 自定义（用户可在 Settings 里覆盖默认 prompt 段）
@@ -227,12 +229,22 @@ export const ChatPrompts = {
         //    - 正常聊天：只带"2026-08-05 周三 晚上 21:00"，不带热搜/天气（每天相同内容浪费 token）
         //    - 主动消息：带时间戳 + 热搜 + 天气（AI 主动发消息需要感知真实世界）
         //    - 早晚各一次主动推：走 OSContext.runProactive → isProactive=true → 注入
+        //    暮色 2026-08-05 Phase 3：时间戳按角色时区（customTimezone）算——异国恋 / 角色身处异国场景
         const timePromise: Promise<string> = (async () => {
             try {
-                const time = RealtimeContextManager.getTimeContext();
+                // 暮色 2026-08-05 Phase 3：角色时区感知（异国恋场景）
+                //   角色开启 customTimezoneEnabled → 时间戳按角色所在地时区算
+                //   没开 → 跟设备本地时区（v1.0 行为）
+                const charTz = resolveCharTimeZone(char);
+                const time = charTz
+                    ? formatTimeInZone(charTz)
+                    : RealtimeContextManager.getTimeContext();
                 const specialDates = RealtimeContextManager.checkSpecialDates();
                 let s = `\n### 【当前时间】\n`;
                 s += `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}\n`;
+                if (charTz) {
+                    s += `（角色时区：${tzLabel(charTz)}）\n`;
+                }
                 if (specialDates.length > 0) s += `今日特殊: ${specialDates.join('、')}\n`;
                 return s;
             } catch (e) {
@@ -240,6 +252,47 @@ export const ChatPrompts = {
                 return '';
             }
         })();
+        // 暮色 2026-08-05 Phase 3：按 IANA 时区格式化当前时间
+        //   返回格式跟 RealtimeContextManager.getTimeContext 一致（dateStr / dayOfWeek / timeOfDay / timeStr）
+        //   用 Intl.DateTimeFormat 拿 tz 折算后的本地时间字段
+        function formatTimeInZone(tz: string): {
+            dateStr: string; timeStr: string; dayOfWeek: string; timeOfDay: string; mood: string; hour: number; isWeekend: boolean;
+        } {
+            const now = nowInTimeZone(tz);
+            const fmt = new Intl.DateTimeFormat('zh-CN', {
+                timeZone: tz,
+                year: 'numeric', month: 'numeric', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'long',
+            });
+            const parts = fmt.formatToParts(now);
+            const get = (t: string) => parts.find(p => p.type === t)?.value || '';
+            const year = parseInt(get('year'), 10);
+            const month = parseInt(get('month'), 10);
+            const day = parseInt(get('day'), 10);
+            const hour = parseInt(get('hour'), 10);
+            const minute = parseInt(get('minute'), 10);
+            const dayNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            const weekdayRaw = get('weekday'); // "星期一" / "星期二" ...
+            const dayOfWeek = dayNames.find(d => weekdayRaw.includes(d.slice(2))) || weekdayRaw;
+            let timeOfDay = '凌晨';
+            if (hour >= 5 && hour < 9) timeOfDay = '早晨';
+            else if (hour >= 9 && hour < 12) timeOfDay = '上午';
+            else if (hour >= 12 && hour < 14) timeOfDay = '中午';
+            else if (hour >= 14 && hour < 17) timeOfDay = '下午';
+            else if (hour >= 17 && hour < 19) timeOfDay = '傍晚';
+            else if (hour >= 19 && hour < 23) timeOfDay = '晚上';
+            // isWeekend：用角色所在地的星期
+            const wIdx = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'].indexOf(weekdayRaw);
+            return {
+                dateStr: `${year}年${month}月${day}日`,
+                timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+                dayOfWeek,
+                timeOfDay,
+                mood: '—',
+                hour,
+                isWeekend: wIdx === 0 || wIdx === 6,
+            };
+        }
         const hotNewsPromise: Promise<string> = (async () => {
             // shouldInjectRealtime = isProactive：只有主动消息 / 早晚推才带热搜 + 天气
             if (!shouldInjectRealtime) return '';

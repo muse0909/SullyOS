@@ -1085,8 +1085,13 @@ export interface CharacterProfile {
   bubbleStyle?: string;
   chatBackground?: string;
   contextLimit?: number;
-  hideSystemLogs?: boolean; 
-  hideBeforeMessageId?: number; 
+  hideSystemLogs?: boolean;
+  hideBeforeMessageId?: number;
+  // 暮色 2026-08-05 Phase 3：角色自定义时区（异国恋 / 角色身处异国等场景）
+  //   开启后，注入给该角色的"当前时间 / 消息时间戳 / 夜间判断"都按这个时区折算
+  //   让 ta 真的活在自己的本地时间里
+  customTimezoneEnabled?: boolean;
+  customTimezone?: string;  // IANA 时区 id，如 'America/New_York'，空 = 跟随设备
   
   dateBackground?: string;
   dateBubbleThemeStyle?: 'light' | 'dark'; // 长文气泡主题（亮色/暗色）

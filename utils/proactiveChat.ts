@@ -24,6 +24,8 @@ import {
   startHeartbeat,
   stopHeartbeat,
 } from './proactivePushConfig';
+// 暮色 2026-08-05 Phase 3：聊天在场状态存储（跟 amsgChatPresence 配对）
+import { markUserChatPresence as _markUserChatPresence } from './chatPresenceStorage';
 
 export interface ProactiveSchedule {
   charId: string;
@@ -331,6 +333,9 @@ export const ProactiveChat = {
 
   /** Reset the waiting window when the user contacts a character. */
   markUserContact(charId: string, ts = Date.now()) {
+    // 暮色 2026-08-05 Phase 3：写"用户在场"标记（在 schedule 检查前，避免被 if 早退挡掉）
+    //   即使这个角色没开主动消息也写——防其他角色的主动消息撞车（用户正在跟 A 聊，B 主动发会撞）
+    _markUserChatPresence(charId, ts);
     if (!loadSchedules()[charId]) return;
     setLastFireTime(charId, ts);
     syncSchedulesToSW();

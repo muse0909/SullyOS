@@ -1,0 +1,50 @@
+## 主动消息 2.0 · Cloudflare Worker 部署配置
+##
+## 部署前必做：
+##   1. 暮色去 Cloudflare 控制台 → Workers → Create application
+##      - Project name: sully-amsg2-worker
+##      - Build command: 留空（本地已 build 好）
+##      - Deploy command: npx wrangler deploy
+##      - Path: 留空（= 当前目录 /，连到仓库根的 wrangler.toml）
+##   2. 跑 `npm run build:worker:amsg` 出 worker.bundle.js
+##   3. wrangler d1 create sully-amsg2 拿 database_id，填下面的
+##      [[d1_databases]] database_id = "..."
+##   4. wrangler secret put MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY /
+##      VAPID_EMAIL  设密钥（每个都手动输一遍）
+##   5. wrangler deploy 部署
+##   6. 拿到 worker URL（https://sully-amsg2-worker.<account>.workers.dev），
+##      前端 Settings → 主动消息 2.0 → API base URL 填这个
+##
+## 注意：
+##   - compatibility_date 选 2025-04-01（amsg-server 2.6.0 适配的版本）
+##   - 不要加 nodejs_compat flag（amsg-server/cloudflare 子路径用纯 Web Crypto）
+##   - 路由用 endsWith 匹配，所以前端 baseUrl 带不带 /api/v1 前缀都行
+
+name = "sully-amsg2-worker"
+main = "worker/amsg/worker.bundle.js"
+compatibility_date = "2025-04-01"
+compatibility_flags = []
+workers_dev = true
+
+## D1 数据库绑定（暮色 Cloudflare 控制台 create 后填 database_id）
+## 建库命令：wrangler d1 create sully-amsg2
+[[d1_databases]]
+binding = "DB"
+database_name = "sully-amsg2"
+database_id = "REPLACE_WITH_D1_ID_AFTER_wrangler_d1_create"
+
+## Cron 触发器：每分钟扫一次到期任务
+## 主动消息 2.0 支持 minute 级精度（比 1.0 的 30 分钟细一截）
+[triggers]
+crons = ["* * * * *"]
+
+## 非敏感环境变量（明文可放这里）。密钥类走 `wrangler secret put`。
+##   - SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
+##     留空 = 不校验（生产环境必须设强随机串）
+##   - CORS_ALLOWED_ORIGIN：跨域白名单。填具体 origin（推荐），
+##     留空则按请求 origin 回显（开发模式）。
+##
+## MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL 走 secret
+[vars]
+SERVER_TOKEN = ""
+CORS_ALLOWED_ORIGIN = "https://sully-os-git-preview-muse0909s-projects.vercel.app"

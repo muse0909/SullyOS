@@ -888,6 +888,9 @@ export const useChatAI = ({
                 isListeningTogether, music.cfg,
                 // 暮色 2026-07-18：传 chatMode 给 buildSystemPrompt（undefined 时 chatPrompts 内部 fallback 到 char.chatMode）
                 char.chatMode,
+                // 暮色 2026-08-05：isProactive=false（正常聊天不带真实世界感知）
+                //   主动消息 / 早晚推送走 OSContext.runProactive 路径，isProactive=true
+                false,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
@@ -1274,9 +1277,12 @@ export const useChatAI = ({
                     });
                 }
             } else {
-                // OpenAI 协议：push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
-                for (const part of dynamicTailParts) {
-                    fullMessages.push({ role: 'system', content: part });
+                // 暮色 2026-08-05：OpenAI 协议下 dynamic tail 6 段合并成 1 条 system 消息
+                //   改前：每段 1 条 system 消息 → messages 末尾有 6 条 system（消息头膨胀 + cache prefix 短）
+                //   改后：1 条 system 消息（6 段用 \n\n join）→ messages 里只剩 2 条 system（top + tail）
+                //   LLM 视角信息完全等价（看到的都是拼接后的完整文本）
+                if (dynamicTailParts.length > 0) {
+                    fullMessages.push({ role: 'system', content: dynamicTailParts.join('\n\n') });
                 }
             }
 

@@ -1595,11 +1595,16 @@ if (!isVisible || !isChattingWithThisChar) {
               const systemPromptResult = await ChatPrompts.buildSystemPrompt(
                   char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
                   currentRealtimeConfig, cachedInnerState,
+                  // userListeningContext / isListeningTogether / musicCfg / chatMode 主动消息用不上，跳过
+                  // 暮色 2026-08-05：isProactive=true（主动消息路径带真实世界感知）
+                  //   正常聊天（useChatAI）传 false → 不带
+                  undefined, undefined, undefined, undefined, /* isProactive */ true,
               );
               // 暮色 2026-07-22：buildSystemPrompt 现在返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}
               //   之前直接赋给 content 是个对象，京东云 OpenAI 兼容拒收（400）
               //   修法：拼回 string（仿 useChatAI line 940）
               //   dynamicTail.realtimeText 给主动消息用（"现在几点了"），innerState 情绪延续，privateNotes 主动消息不需要
+              //   暮色 2026-08-05：isProactive=true → hotNewsText（5 条热搜 + 天气）也带上
               //   6 段末尾 push 主动消息不需要（max_tokens: 500 承受不起）
               const sp = systemPromptResult as any;
               const systemPromptParts = [
@@ -1607,6 +1612,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.bp2Rules,
                   sp.bp3Context,
                   sp.dynamicTail?.realtimeText,
+                  sp.dynamicTail?.hotNewsText,  // 暮色 2026-08-05：热搜+天气（仅主动消息 / 早晚推）
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到

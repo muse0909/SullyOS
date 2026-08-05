@@ -177,6 +177,11 @@ export const ChatPrompts = {
         //                   工具层里 Notion/飞书/小红书/搜索 的提示词也不输出
         //                   目的：降输入 token
         chatMode?: 'full' | 'pure',
+        // 暮色 2026-08-05：isProactive 控制是否注入 realtimeText（真实世界感知）
+        //   - true  （主动消息路径）: 注入天气/热搜/时间，AI 主动发消息需要感知真实世界
+        //   - false （正常聊天路径）: 不注入，每次请求不带"今天天气"等已经过期内容
+        //   正常聊天不带 → 避免每次请求都重复塞热搜 5 条 + 天气 + 时间
+        isProactive?: boolean,
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -189,6 +194,8 @@ export const ChatPrompts = {
 
         // 暮色 2026-07-18：纯聊天模式判定（undefined 兼容老角色 = 完整模式）
         const isPureMode = (chatMode ?? char.chatMode ?? 'full') === 'pure';
+        // 暮色 2026-08-05：主动消息判定（默认 false = 正常聊天不带实时世界感知）
+        const shouldInjectRealtime = !!isProactive;
 
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         const coreT0 = performance.now();
@@ -215,13 +222,13 @@ export const ChatPrompts = {
         const config = realtimeConfig || defaultRealtimeConfig;
         const today = new Date().toISOString().split('T')[0];
 
-        // 1. 实时世界信息（天气/新闻/时间）
-        const realtimePromise: Promise<string> = (async () => {
+        // 1. 时间戳（始终注入） + 热搜/天气（仅 isProactive=true 时注入）
+        //    暮色 2026-08-05：时间戳每次都带，热搜 5 条 + 天气只在主动消息 / 早晚推时带
+        //    - 正常聊天：只带"2026-08-05 周三 晚上 21:00"，不带热搜/天气（每天相同内容浪费 token）
+        //    - 主动消息：带时间戳 + 热搜 + 天气（AI 主动发消息需要感知真实世界）
+        //    - 早晚各一次主动推：走 OSContext.runProactive → isProactive=true → 注入
+        const timePromise: Promise<string> = (async () => {
             try {
-                if (config.weatherEnabled || config.newsEnabled) {
-                    const realtimeContext = await RealtimeContextManager.buildFullContext(config);
-                    return `\n${realtimeContext}\n`;
-                }
                 const time = RealtimeContextManager.getTimeContext();
                 const specialDates = RealtimeContextManager.checkSpecialDates();
                 let s = `\n### 【当前时间】\n`;
@@ -229,7 +236,18 @@ export const ChatPrompts = {
                 if (specialDates.length > 0) s += `今日特殊: ${specialDates.join('、')}\n`;
                 return s;
             } catch (e) {
-                console.error('Failed to inject realtime context:', e);
+                console.error('Failed to inject time context:', e);
+                return '';
+            }
+        })();
+        const hotNewsPromise: Promise<string> = (async () => {
+            // shouldInjectRealtime = isProactive：只有主动消息 / 早晚推才带热搜 + 天气
+            if (!shouldInjectRealtime) return '';
+            if (!config.weatherEnabled && !config.newsEnabled) return '';
+            try {
+                return await RealtimeContextManager.buildFullContext(config);
+            } catch (e) {
+                console.error('Failed to inject hot news context:', e);
                 return '';
             }
         })();
@@ -367,9 +385,10 @@ export const ChatPrompts = {
             }
         })();
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText, roomNotesText] =
+        const [timeText, hotNewsText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText, roomNotesText] =
             await Promise.all([
-                timed('realtime', realtimePromise),
+                timed('time', timePromise),
+                timed('hotNews', hotNewsPromise),
                 timed('schedule', schedulePromise),
                 timed('groupCtx', groupContextPromise),
                 timed('notionDiary', notionDiaryPromise),
@@ -1021,7 +1040,12 @@ ${!isPureMode ? `${[
             bp2Rules,
             bp3Context,
             dynamicTail: {
-                realtimeText: realtimeText || '',
+                // 暮色 2026-08-05：拆成两段
+                //   - timeText: 时间戳（每次都带，isProactive 无关）
+                //   - hotNewsText: 5 条热搜 + 天气（仅 isProactive=true 时带 = 主动消息 / 早晚推）
+                //   正常聊天 → 每次少塞热搜 + 天气，token 省 1-2k
+                realtimeText: timeText || '',
+                hotNewsText: hotNewsText || '',
                 innerState: evolvedNarrative || '',
                 privateNotesText: roomNotesText || '',
             },

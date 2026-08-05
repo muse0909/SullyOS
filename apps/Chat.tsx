@@ -26,6 +26,7 @@ import { isMcdConfigured } from '../utils/mcdMcpClient';
 import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
 import MessageItem from '../components/chat/MessageItem';
 import McdMiniApp from '../components/mcd/McdMiniApp';
+import Modal from '../components/os/Modal';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
@@ -147,6 +148,15 @@ const Chat: React.FC = () => {
 
     const [isVectorizing, setIsVectorizing] = useState(false);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+
+    // 暮色 2026-08-05：清空聊天前的安全确认弹窗（路 3 弹窗，替代浏览器原生 confirm）
+    //   触发条件：用户点"执行清空" + 记忆宫殿开启 + 还有未向量化的消息
+    //   内容：未向量化条数 + 2 按钮（仅删已处理 / 取消）
+    const [showClearConfirm, setShowClearConfirm] = useState<{
+        unprocessedCount: number;
+        processedMsgs: any[];
+        hwm: number;
+    } | null>(null);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editEmojiNewName, setEditEmojiNewName] = useState('');
@@ -312,6 +322,10 @@ const Chat: React.FC = () => {
     };
     const handleClearPerCharApi = async () => {
         if (!char) return;
+        // 暮色 2026-08-05 修：清空时把所有 3 套 state 都清成空（之前 Gemini URL 设了默认值"https://..."，
+        //   留下后用户点保存，line 293 判断 perCharApiGeminiUrl 非空 → 走 else 分支保存成默认 Gemini 配置，
+        //   → char.apiConfig 又有值了，triggerAI 还是走角色 API，不是主 API）。
+        // 同时关抽屉（跟 handleSavePerCharApi 一致 — 清空后 user 看不到状态，留个 open 抽屉让人误以为没清空）。
         setPerCharApiBaseUrl('');
         setPerCharApiKey('');
         setPerCharApiModel('');
@@ -319,10 +333,13 @@ const Chat: React.FC = () => {
         setPerCharApiClaudeUrl('');
         setPerCharApiClaudeKey('');
         setPerCharApiClaudeModel('');
-        setPerCharApiGeminiUrl('https://generativelanguage.googleapis.com/v1beta');
+        setPerCharApiGeminiUrl('');
         setPerCharApiGeminiKey('');
-        setPerCharApiGeminiModel('gemini-2.0-flash');
+        setPerCharApiGeminiModel('');
         await updateCharApiConfig(char.id, undefined);
+        // 暮色 2026-08-05 加：清空后给个明确反馈，看不见过程会以为没生效
+        addToast('角色 API 已清空，下次发送将使用全局主 API', 'success');
+        setShowChatSettingsDrawer(false);
     };
     // 从预设加载（只填输入框，不直接保存）
     // 暮色 2026-07-27：预设也带 protocol 字段，加载时按 protocol 切换 + 填对应那组（修 401 bug）
@@ -1879,40 +1896,21 @@ const Chat: React.FC = () => {
         if (char.memoryPalaceEnabled) {
             const hwm = await getMemoryPalaceHWM(char.id);
             const allMessages = await DB.getMessagesByCharId(char.id, true);
-            const textMessages = allMessages.filter(m => m.type === 'text' && m.content?.trim());
+            // 暮色 2026-08-05：跟 forceVectorize 用同一个 filter (isMessageSemanticallyRelevant)
+            //   之前只过 text 类型，跟新统一入口 filter 不一致（"还有 N 条"两个数对不上号）
+            const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
+            const textMessages = allMessages.filter(m => isMessageSemanticallyRelevant(m));
             const unprocessedCount = textMessages.filter(m => m.id > hwm).length;
 
             if (unprocessedCount > 0) {
-                // 有未处理的消息，弹出选择对话框
-                const processedMsgs = allMessages.filter(m => m.id <= hwm);
-                const choice = confirm(
-                    `⚠️ 记忆宫殿提醒\n\n` +
-                    `当前有 ${unprocessedCount} 条聊天记录尚未被记忆宫殿处理（向量化）。\n` +
-                    `直接清空会导致这些记录永久丢失，无法被角色记住。\n\n` +
-                    `点击「确定」→ 仅删除已被记忆宫殿处理过的记录（安全）\n` +
-                    `点击「取消」→ 取消清空操作\n\n` +
-                    `（看不懂在问什么的话就点确定）`
-                );
-
-                if (!choice) {
-                    return; // 用户取消
-                }
-
-                // 安全删除：只删除高水位之前的消息
-                if (processedMsgs.length === 0) {
-                    addToast('没有已处理的记录可以删除', 'info');
-                    return;
-                }
-                const processedIds = processedMsgs.map(m => m.id);
-                await DB.deleteMessages(processedIds);
-                discardVoiceForMessages(processedIds);
-                const remaining = sanitizeChatMessages(allMessages).filter(m => m.id > hwm);
-                setMessages(remaining.slice(-200));
-                setTotalMsgCount(remaining.length);
-                setVisibleCount(LOAD_BATCH_SIZE);
-                visibleCountRef.current = LOAD_BATCH_SIZE;
-                addToast(`已安全清理 ${processedMsgs.length} 条已处理记录，保留 ${remaining.length} 条未处理记录`, 'success');
-                setModalType('none');
+                // 有未处理的消息 → 弹好看的 Modal（路 3 弹窗，替代之前的浏览器原生 confirm）
+                //   暮色 2026-08-05 拍板：升级成 Modal（之前用 confirm 太丑）
+                //   2 按钮：「仅删已处理」= 现在的"确定"逻辑 / 「取消」= 关弹窗
+                setShowClearConfirm({
+                    unprocessedCount,
+                    processedMsgs: allMessages.filter(m => m.id <= hwm),
+                    hwm,
+                });
                 return;
             }
         }
@@ -1965,75 +1963,58 @@ if (keepN > 0) {
         addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
-            const { processNewMessages, getMemoryPalaceHighWaterMark, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
-            const BATCH_PROCESS_RATIO = 0.85;
-            const BATCH_SIZE = 170; // 200 * 0.85
-            let totalProcessed = 0;
-            let round = 0;
-            const MAX_ROUNDS = 50; // 安全上限
-            // 每轮合并进来的 palace MemoryFragment；全部处理完后一次性 updateCharacter
-            let accumulatedMemories = char.memories ? [...char.memories] : [];
-            let latestHideBefore = char.hideBeforeMessageId;
+            // 暮色 2026-08-05：改用统一入口 runForceVectorizeForChar
+            //   之前是 90 行手写循环（与 MemoryPalaceApp.runAutoArchiveCatchUp 重复）
+            //   现在统一到一个函数（utils/memoryPalace/forceVectorize.ts）
+            //   - 5 轮限制（暮色拍板，1-2 分钟内可跑完）
+            //   - 真处理条数累计（不是 batch.length）
+            //   - 失败/成功都有清晰日志
+            // 写回 char.memories 仍在 UI 层做（避免 forceVectorize 依赖 OSContext）
+            const { runForceVectorizeForChar } = await import('../utils/memoryPalace/forceVectorize');
+            const { mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+            const result = await runForceVectorizeForChar({
+                charId: char.id,
+                charName: char.name,
+                mpEmb,
+                mpLLM,
+                userName: userProfile?.name || '',
+                maxRounds: 5, // 暮色 2026-08-05 拍板：1-2 分钟内可跑完
+                onProgress: ({ round, processed, remaining }) => {
+                    console.log(`🏰 [ForceVectorize/Chat] 进度：第 ${round}/5 轮 / 累计处理 ${processed} / 还剩 ${remaining}`);
+                },
+            });
 
-            while (round < MAX_ROUNDS) {
-                round++;
-                const hwm = getMemoryPalaceHighWaterMark(char.id);
-                const allMessages = await DB.getMessagesByCharId(char.id, true);
-                const textMessages = allMessages
-                    .filter(m => m.type === 'text' && m.content?.trim())
-                    .sort((a, b) => a.id - b.id);
-
-                // 计算未处理的消息
-                const unprocessed = textMessages.filter(m => m.id > hwm);
-                if (unprocessed.length < 10) break; // 剩余太少，停止
-
-                // 取一批处理
-                const batch = unprocessed.slice(0, BATCH_SIZE);
-                console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
-
-                const pipelineResult = await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
-
-                // 软跳过：缓冲区还没到阈值 / 热区还没被挤出 / 已有任务在跑 —— 不是 LLM 失败
-                if (pipelineResult?.skipReason) {
-                    if (pipelineResult.skipReason !== 'lock') {
-                        addToast('当前聊天不足以触发总结，请保持这个状态聊天~', 'info');
-                    }
-                    break;
+            // 写回累积的自动归档片段到 char.memories（仅在 char.autoArchiveEnabled 时）
+            // 暮色 2026-08-05：跟之前逻辑一致 —— palace 仍向量化，但不推 hideBefore
+            if (result.accumulatedFragments.length > 0 && (char as any).autoArchiveEnabled) {
+                const currentMemories = char.memories ? [...char.memories] : [];
+                const merged = mergePalaceFragmentsIntoMemories(currentMemories, result.accumulatedFragments);
+                if (merged.length !== currentMemories.length || result.latestHideBefore !== char.hideBeforeMessageId) {
+                    updateCharacter(char.id, {
+                        memories: merged,
+                        hideBeforeMessageId: result.latestHideBefore ?? char.hideBeforeMessageId,
+                    } as any);
                 }
-
-                totalProcessed += batch.length;
-
-                // 累积自动归档，统一在循环结束后 updateCharacter
-                // 避免每轮 setState 触发 char 对象重建进而 dep 失效
-                // 仅在 char.autoArchiveEnabled 开启时累积；未开启则 palace 仍向量化，但不推 hideBefore
-                if (pipelineResult?.autoArchive && (char as any).autoArchiveEnabled) {
-                    accumulatedMemories = mergePalaceFragmentsIntoMemories(
-                        accumulatedMemories,
-                        pipelineResult.autoArchive.fragments,
-                    );
-                    latestHideBefore = pipelineResult.autoArchive.hideBeforeMessageId;
-                }
-
-                // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
-                const newHwm = getMemoryPalaceHighWaterMark(char.id);
-                if (newHwm <= hwm) {
-                    addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
-                    break;
+            } else if (result.latestHideBefore !== undefined && (char as any).autoArchiveEnabled) {
+                // 防御：没 fragments 但有 hideBefore 推进（理论上不应该发生，但写回 hideBefore）
+                if (result.latestHideBefore !== char.hideBeforeMessageId) {
+                    updateCharacter(char.id, { hideBeforeMessageId: result.latestHideBefore } as any);
                 }
             }
 
-            // 循环结束后把累积的自动归档一次性写回角色
-            if (latestHideBefore !== char.hideBeforeMessageId || accumulatedMemories.length !== (char.memories?.length || 0)) {
-                updateCharacter(char.id, {
-                    memories: accumulatedMemories,
-                    hideBeforeMessageId: latestHideBefore,
-                } as any);
-            }
-
-            if (totalProcessed > 0) {
-                addToast(`✅ 向量化完成：${round} 轮处理了约 ${totalProcessed} 条消息`, 'success');
-            } else {
+            // 暮色 2026-08-05：toast 反馈清晰化
+            //   - 成功且全部完成：✅ 全部搞定
+            //   - 成功但还有剩：⚠️ 还剩 N 条，再点一次继续
+            //   - 失败：❌ 失败原因
+            //   - 跑了 0 轮（可能没未处理消息）：info 提示
+            if (result.rounds === 0) {
                 addToast('所有聊天记录都已处理完毕，无需操作', 'info');
+            } else if (result.finishedNaturally && result.remaining === 0) {
+                addToast(`✅ 全部处理完毕：${result.rounds} 轮 / ${result.processed} 条消息已向量化`, 'success');
+            } else if (result.finishedNaturally && result.remaining > 0) {
+                addToast(`⚠️ 本轮跑了 ${result.rounds} 轮 / 处理 ${result.processed} 条 / 还剩 ${result.remaining} 条没处理。再点一次继续。`, 'info');
+            } else {
+                addToast(`❌ 第 ${result.rounds} 轮中断：${result.errorMessage}（已处理 ${result.processed} 条 / 还剩 ${result.remaining} 条）`, 'error');
             }
         } catch (e: any) {
             addToast(`❌ 向量化失败：${e.message}`, 'error');
@@ -2046,6 +2027,35 @@ if (keepN > 0) {
         updateCharacter(char.id, { hideBeforeMessageId: messageId });
         setModalType('none');
         addToast(messageId ? '已隐藏历史消息' : '已恢复全部历史记录', 'success');
+    };
+
+    // 暮色 2026-08-05：清空安全确认 Modal 的"仅删已处理"按钮逻辑
+    //   之前是浏览器原生 confirm() 里直接走删，现在拆出来给 Modal 用
+    //   逻辑跟之前 confirm() 点"确定"完全一致 —— 安全删除 + 保留未向量化
+    const handleConfirmClearPartial = async () => {
+        if (!char || !showClearConfirm) return;
+        const { processedMsgs, hwm } = showClearConfirm;
+
+        if (processedMsgs.length === 0) {
+            addToast('没有已处理的记录可以删除', 'info');
+            setShowClearConfirm(null);
+            return;
+        }
+        const processedIds = processedMsgs.map(m => m.id);
+        await DB.deleteMessages(processedIds);
+        discardVoiceForMessages(processedIds);
+        const allMessages = await DB.getMessagesByCharId(char.id, true);
+        const remaining = sanitizeChatMessages(allMessages).filter(m => m.id > hwm);
+        setMessages(remaining.slice(-200));
+        setTotalMsgCount(remaining.length);
+        setVisibleCount(LOAD_BATCH_SIZE);
+        visibleCountRef.current = LOAD_BATCH_SIZE;
+        addToast(
+            `已安全清理 ${processedMsgs.length} 条已处理记录，保留 ${remaining.length} 条未处理记录`,
+            'success'
+        );
+        setModalType('none');
+        setShowClearConfirm(null);
     };
 
     const handleFullArchive = async () => {
@@ -2563,6 +2573,54 @@ if (keepN > 0) {
             className={chatRootClass}
             style={chatRootStyle}
         >
+             {/* 暮色 2026-08-05：清空安全确认弹窗（路 3 弹窗）
+                 替代之前的浏览器原生 confirm() —— 用项目级 Modal 视觉统一
+                 zIndex=210：盖过 ChatSettingsDrawer 的 z-[200]
+                 2 按钮：「仅删已处理」= 保留未向量化 / 「取消」= 关弹窗 */}
+             {showClearConfirm && (
+                 <Modal
+                     isOpen
+                     title="清空聊天记录"
+                     onClose={() => setShowClearConfirm(null)}
+                     adaptiveHeight
+                     zIndex={210}
+                     footer={
+                         <>
+                             <button
+                                 onClick={() => setShowClearConfirm(null)}
+                                 className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                             >
+                                 取消
+                             </button>
+                             <button
+                                 onClick={handleConfirmClearPartial}
+                                 className="flex-1 py-3 bg-gradient-to-r from-rose-500 to-pink-500 text-white font-bold rounded-2xl active:scale-95 transition-transform"
+                             >
+                                 仅删已处理 ({showClearConfirm.processedMsgs.length})
+                             </button>
+                         </>
+                     }
+                 >
+                     <div className="space-y-3">
+                         <div className="flex items-center gap-2 text-amber-600">
+                             <span className="text-base">⚠️</span>
+                             <span className="text-xs font-bold">记忆宫殿提醒</span>
+                         </div>
+                         <p className="text-sm text-slate-700 leading-relaxed">
+                             当前有 <span className="font-bold text-rose-600">{showClearConfirm.unprocessedCount}</span> 条聊天记录尚未被记忆宫殿处理（向量化）。
+                         </p>
+                         <p className="text-xs text-slate-500 leading-relaxed">
+                             直接清空会导致这些记录永久丢失，无法被角色记住。
+                         </p>
+                         <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 leading-relaxed space-y-1">
+                             <p>• <span className="font-bold">「仅删已处理」</span> = 删除已向量化部分，保留未向量化（安全）</p>
+                             <p>• <span className="font-bold">「取消」</span> = 放弃清空</p>
+                             <p>• 想清空全部？先到聊天设置「一键向量化所有聊天记录」处理完再清空</p>
+                         </div>
+                     </div>
+                 </Modal>
+             )}
+
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
              {/* 收藏定位高亮（临时注入，2 秒后清空） */}

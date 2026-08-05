@@ -888,6 +888,9 @@ export const useChatAI = ({
                 isListeningTogether, music.cfg,
                 // 暮色 2026-07-18：传 chatMode 给 buildSystemPrompt（undefined 时 chatPrompts 内部 fallback 到 char.chatMode）
                 char.chatMode,
+                // 暮色 2026-08-05：isProactive=false（正常聊天不带真实世界感知）
+                //   主动消息 / 早晚推送走 OSContext.runProactive 路径，isProactive=true
+                false,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
@@ -1274,9 +1277,12 @@ export const useChatAI = ({
                     });
                 }
             } else {
-                // OpenAI 协议：push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
-                for (const part of dynamicTailParts) {
-                    fullMessages.push({ role: 'system', content: part });
+                // 暮色 2026-08-05：OpenAI 协议下 dynamic tail 6 段合并成 1 条 system 消息
+                //   改前：每段 1 条 system 消息 → messages 末尾有 6 条 system（消息头膨胀 + cache prefix 短）
+                //   改后：1 条 system 消息（6 段用 \n\n join）→ messages 里只剩 2 条 system（top + tail）
+                //   LLM 视角信息完全等价（看到的都是拼接后的完整文本）
+                if (dynamicTailParts.length > 0) {
+                    fullMessages.push({ role: 'system', content: dynamicTailParts.join('\n\n') });
                 }
             }
 
@@ -1902,7 +1908,8 @@ if (toolsList.length > 0) {
                 //   - 解析 usageMetadata → usage（token 徽标能用）
                 // 暮色 2026-08-04：key 池 + 重试
                 //   - 失败时 reportGeminiFailure 标状态：429 → 切下一个重试 / 401 → 标 dead + 弹 toast 不重试 / 其他 → 切下一个重试
-                //   - 最多重试 1 次（避免无限循环）
+                //   - 最多重试 2 次（避免无限循环，但 16 个 key 池 1 次太少 — 暮色 2026-08-05 反馈）
+                //   - 关键：不是所有 key 都坏，多切几个才能跨过 1 个坏 key
                 const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
                 let lastErr: Error | null = null;
                 let lastStatus = 0;
@@ -1910,7 +1917,7 @@ if (toolsList.length > 0) {
                 let succeeded = false;
                 // 第 1 次用的 key 索引已经在 (geminiRequestBody as any).__pickedKeyIndex 里
                 //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
-                for (let attempt = 0; attempt < 2; attempt++) {
+                for (let attempt = 0; attempt < 3; attempt++) {
                     const currentPicked = (() => {
                         if (attempt === 0) {
                             return { keyIndex: (geminiRequestBody as any).__pickedKeyIndex as number, key: '' };

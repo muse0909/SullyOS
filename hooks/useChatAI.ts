@@ -3224,7 +3224,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             try {
                 const todayStart = new Date();
                 todayStart.setHours(0, 0, 0, 0);
-                const todaysXZT = (await DB.getXiaoZhiTiao(char.id))
+                const todaysXZT = (await DB.getXiaoZhiTiaos(char.id))
                     .filter(n => n.timestamp >= todayStart.getTime());
                 if (todaysXZT.length >= 5) {
                     console.log(`📝 [XiaoZhiTiao] 今天已写 ${todaysXZT.length} 条，跳过`);

@@ -24,7 +24,6 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
-import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
 import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
@@ -880,7 +879,7 @@ export const useChatAI = ({
                 userListeningContext && music.listeningTogetherWith.includes(char.id)
             );
             // buildSystemPrompt 和 DB 消息加载彼此独立，并发跑节省 Math.max 以外的等待时间
-            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；私密记事 / 朋友圈 主动行为用 100 条足够）
+            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；朋友圈 主动行为用 100 条足够）
             const limit = char.contextLimit || 100;
             const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
@@ -922,16 +921,6 @@ export const useChatAI = ({
             let dynamicRecentEmotions = '';
             // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
             const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
-
-            // 暮色 2026-07-17：定时提醒注入（每天到点后第一次 chat 触发）
-            //   - 检查 shouldShowReminder（今天是否到点 + 还没提醒过）
-            //   - 满足条件：往 bp2Rules 拼 reminderText，markReminderShown 防止重复
-            //   - 归 bp2Rules 因为是行为约束（每天一次，cache miss 一次可接受）
-            if (shouldShowReminder()) {
-                bp2Rules += buildReminderText(char.name, userProfile.name);
-                markReminderShown();
-                console.log(`📒 [NoteReminder] 触发今天 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 的私密记事提醒`);
-            }
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
@@ -1231,7 +1220,7 @@ export const useChatAI = ({
             //                  不再 push 到 messages，bp1-bp3 cache 命中完全不受影响
             //     - OpenAI 协议：保留原样 push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
             //
-            //   6 段：bilingual reminder / realtimeText / innerState / privateNotesText / recentEmotions / memoryPalace
+            //   5 段：bilingual reminder / realtimeText / innerState / recentEmotions / memoryPalace
             //   都不挂 cache_control（每轮必变），进 bpDynamic 段。
             //
             // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪出 systemPrompt
@@ -1240,8 +1229,7 @@ export const useChatAI = ({
             //   挪出 systemPrompt：让 bp3Context 段真正稳定
             //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
             //
-            // ⚠️ 2026-07-17 4 断点优化：再加 3 段
-            //   - privateNotesText: 最近 5 条私密记事
+            // ⚠️ 2026-07-17 4 断点优化：再加 2 段
             //   - recentEmotions:   最近 5 条心声
             //   - memoryPalace:     向量检索结果
             const dynamicTailParts: string[] = [];
@@ -1253,10 +1241,6 @@ export const useChatAI = ({
             }
             if (dynamicTail?.innerState && dynamicTail.innerState.trim()) {
                 dynamicTailParts.push(`[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`);
-            }
-            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness
-            if (dynamicTail?.privateNotesText && dynamicTail.privateNotesText.trim()) {
-                dynamicTailParts.push(dynamicTail.privateNotesText.trim());
             }
             // ⚠️ 2026-07-17 4 断点优化：最近心声
             if (dynamicRecentEmotions) {
@@ -3233,47 +3217,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 console.warn('📱 [Moments] 解析失败:', e);
             }
 
-            // 5.9d Handle Private Notes (私密记事) Actions
-            // 暮色 2026-07-17：让 AI 自己决定写私密记事（仿 MOMENT_POST 文本 token 模式）
-            // AI 在 chat reply 里输出 [[PRIVATE_NOTE: 内容 | type]] → 这里解析 → saveRoomNote + 推 system 消息
-            // type 必须是: thought / doodle / search / lyric / gossip 之一
-            try {
-                const noteMatches = [...aiContent.matchAll(/\[\[PRIVATE_NOTE:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
-                if (noteMatches.length > 0) {
-                    // 限制每次最多 1 条（避免 AI 一次刷 N 条）
-                    const m = noteMatches[0];
-                    const content = m[1].trim();
-                    const type = m[2].toLowerCase() as RoomNote['type'];
-                    if (content) {
-                        const newNote: RoomNote = {
-                            id: `note-${Date.now()}`,
-                            charId: char.id,
-                            timestamp: Date.now(),
-                            content,
-                            type,
-                            // 2026-07-22：暮色自定义小纸条样式（写入时从激活组随机选图，存到 note）
-                            styleImageUrl: pickRandomStyleImage(),
-                        };
-                        await DB.saveRoomNote(newNote);
-                        console.log(`📒 [PrivateNote] ${char.name} 写了一条私密记事: ${content.slice(0, 30)}... (type=${type})`);
-                        // 推 system 消息进聊天流（让用户感知到）
-                        await DB.saveMessage({
-                            charId: char.id,
-                            role: 'system',
-                            type: 'text',
-                            content: `[系统: ${char.name} 在记事本上写道: \n"${content}"]`,
-                        });
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                        addToast(`📒 ${char.name} 写了一条私密记事`, 'success', 2500);
-                    }
-                }
-                // 移除所有 PRIVATE_NOTE 标记（无论发没发出去）
-                aiContent = aiContent.replace(/\[\[PRIVATE_NOTE:\s*[\s\S]+?\]\]/g, '').trim();
-            } catch (e) {
-                console.warn('📒 [PrivateNote] 解析失败:', e);
-            }
-
-            // 5.9e Handle XiaoZhiTiao (小纸条) Actions
+            // 5.9d Handle XiaoZhiTiao (小纸条) Actions
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
             // AI 在 chat reply 里输出 [[XIAO_ZHI_TIAO: 内容 | type]] → 这里解析 → saveXiaoZhiTiao + 推 system 消息
             // type 必须是: thought / doodle / search / lyric / gossip 之一

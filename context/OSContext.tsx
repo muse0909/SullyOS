@@ -1683,19 +1683,39 @@ if (!isVisible || !isChattingWithThisChar) {
                   body: JSON.stringify(reqBody),
               }, 2, 0, apiProtocol);
 
-              // 暮色 2026-07-22：成功路径也把请求体存一份，便于和失败时对比
+              // 暮色 2026-08-06：跟主 API 一样的请求体日志（存完整请求体到 localStorage）
+              //   之前 7-22 只存元数据（msgCount / 字符数），暮色要看到完整 body 才能排查
+              //   跟主 API 区别 key：sullyos:lastProactiveReqLog（主 API 是 sullyos:lastApiReqLog）
+              //   console 提示从那里复制
               try {
                   const logEntry = {
-                      ts: new Date().toISOString(),
+                      timestamp: new Date().toISOString(),
+                      url: `${api.baseUrl}/chat/completions`,
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
                       model: api.model,
-                      msgCount: reqBody.messages?.length || 0,
+                      stream: false,
+                      temperature: reqBody.temperature,
+                      maxTokens: reqBody.max_tokens,
+                      totalMessages: reqBody.messages?.length || 0,
                       systemChars: systemPrompt.length,
                       totalBodyChars: JSON.stringify(reqBody).length,
+                      requestBody: reqBody,
                   };
-                  localStorage.setItem('sullyos:proactiveLastReq', JSON.stringify(logEntry, null, 2));
+                  const json = JSON.stringify(logEntry, null, 2);
+                  localStorage.setItem('sullyos:lastProactiveReqLog', json);
+                  console.log(
+                      `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
+                      `角色: ${char.name} (${charId})\n` +
+                      `URL: ${logEntry.url}\n` +
+                      `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
+                      `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
+                      `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
+                      'color: #7c3aed; font-weight: bold;'
+                  );
+                  console.log('完整请求体:', reqBody);
               } catch { /* quota 忽略 */ }
 
               // 5. Process & save response

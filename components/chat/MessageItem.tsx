@@ -727,25 +727,14 @@ const MessageItem = React.memo(({
                         <div className={`absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
                         {/*
-                          暮色 2026-08-02：时间戳挪到头像正下方（A 方案），所有消息都用
-                          - 样式：圆点 + 胶囊 + slate 深灰（恢复 7-27 v2 圆点胶囊样式但换深灰）
-                          - 主动消息新数据：只在 proactiveRoundStart=true 时画（轮首唯一）
-                          - 主动消息老数据：每条都画（保留 7-23 行为，避免老数据头像消失）
-                          - 普通 AI 消息：isLastInGroup 时画
+                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
+                          - 用户头像下 + AI 头像下 都画
+                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
+                          - 7-23/7-27/6edc7fc (8-2) 几个版本的方向都反了 — 这次按暮色原话实现
                         */}
                         {(() => {
-                            const meta: any = m.metadata || {};
-                            const isProactive = meta.isProactive;
-                            // 暮色 2026-08-02 21:48：统一"按轮"画时间戳
-                            //   主动消息新数据：proactiveRoundStart=true 才画（轮首）
-                            //   主动消息老数据：按 isLastInGroup（不每条画）
-                            //   普通 AI 消息：isLastInGroup
-                            const showAiTs = isProactive
-                                ? ('proactiveRoundStart' in meta ? !!meta.proactiveRoundStart : isLastInGroup)
-                                : isLastInGroup;
-                            if (!showAiTs || showTimestamp === 'never') return null;
+                            if (showTimestamp === 'never') return null;
                             return (
-                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底（圆点+胶囊太撑）
                                 <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>
@@ -790,15 +779,13 @@ const MessageItem = React.memo(({
                     <div className={`absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
                         {/*
-                          暮色 2026-08-02：用户消息时间戳也挪到头像下（统一）
-                          - isLastInGroup 行为（30 分钟 group 最后一个）
-                          - 样式跟 AI 头像下时间戳一致
+                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
+                          - 用户头像下 + AI 头像下 都画
+                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
                         */}
                         {(() => {
-                            if (!isLastInGroup) return null;
                             if (showTimestamp === 'never') return null;
                             return (
-                                // 暮色 2026-08-02 反馈：去掉圆点保留胶囊底
                                 <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>

@@ -1526,7 +1526,9 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
         return {
             contents: [{ role: 'user', parts }],
             systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+            // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
+            //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
+            generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
         };
     };
 
@@ -1625,10 +1627,12 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
                 }
             } else {
                 const visionMessages = buildVisionMessages(imageUrl);
+                // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
+                //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
                 const requestBody = {
                     model: requestModel,
                     messages: visionMessages,
-                    temperature: 0.3,
+                    temperature: 0.85,
                     stream: false,
                 };
                 data = await safeFetchJson(`${visionUrl}/chat/completions`, {
@@ -1940,7 +1944,17 @@ if (toolsList.length > 0) {
                     const geminiRes = await fetch(tryUrl, {
                         method: 'POST',
                         headers: geminiHeaders,
-                        body: JSON.stringify(geminiRequestBody),
+                        // 暮色 2026-08-06：修 Gemini 400 真凶 — 之前 8-4 加 key 池时往 geminiRequestBody 上挂了
+                        //   __pickedKeyIndex / __pickedKeyShort 闭包变量，line 1785-1786 直接
+                        //   (geminiRequestBody as any).__pickedKeyIndex = picked.keyIndex
+                        //   fetch 时 JSON.stringify(geminiRequestBody) 把这俩字段也发出去了
+                        //   Google 收到未知字段 → 400 INVALID_ARGUMENT
+                        //   修法：序列化前先剥掉这俩内部字段，只发 Gemini 标准字段
+                        body: JSON.stringify({
+                            contents: geminiRequestBody.contents,
+                            systemInstruction: geminiRequestBody.systemInstruction,
+                            generationConfig: geminiRequestBody.generationConfig,
+                        }),
                     });
                     if (!geminiRes.ok) {
                         const errText = await geminiRes.text().catch(() => '');

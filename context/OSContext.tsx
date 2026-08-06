@@ -1552,7 +1552,9 @@ if (!isVisible || !isChattingWithThisChar) {
               const recentChatContext = recentMsgs
                   .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
                   .filter(m => ChatParser.hasDisplayContent(m.content || ''))
-                  .slice(-50)  // 暮色 2026-08-02：8 → 50（让 AI 看到更多上下文，思考更准）
+                  // 暮色 2026-08-06：8 → 10 轮（这是 system prompt 末尾"最近聊天"段的来源，唯一上下文）
+                  //   之前 .slice(-50) 拉 50 条但 label 写 8 条，文档不一致；现在固定 10 轮
+                  .slice(-10)
                   .map(m => {
                       const speaker = m.role === 'user' ? userName : char.name;
                       const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();
@@ -1588,7 +1590,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   '不想写就跳过，你真实的内心状态比完美的输出更重要。',
                   '这串标签和里面的内容会被处理掉。',
                   '',
-                  recentChatContext ? `【最近聊天（8 条）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
+                  recentChatContext ? `【最近聊天（10 轮）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
                   '',
                   '【如果完全不想发】',
                   '就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰用户。',
@@ -1604,14 +1606,13 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              // 暮色 2026-08-05：主动消息 history 截断 + 记忆宫殿 recentMessages 收紧
-              //   修前：allMsgs = 拉 500 条（实际 ~271 条全塞 historySlice，token 炸）
-              //   修后：
-              //     - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
-              //     - historyForBuild = 8 条（buildMessageHistory 用，给 LLM 看的真实 history）
-              //   主动消息不需要"看完整 271 条"——AI 主动发消息只用最近的 8 条就够接语境
+              // 暮色 2026-08-06：messages 数组不放 user/assistant history（去重）
+              //   之前 8-5 改的"history 截断到 8 条"跟 system prompt 末尾"最近聊天"段重复了
+              //   暮色 8-6 反馈：图 1（messages 8 条）+ 图 2（system prompt 末尾 8 轮）= 同一段对话构造两次，浪费 token
+              //   改后：messages 数组只放 1 条 system + AI 回复，user/assistant history 全从 system prompt 末尾"最近聊天（10 轮）"段读
+              // 记忆宫殿 recentMessages 收紧逻辑保留（不影响）：
+              //   - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
-              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 8);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
@@ -1648,10 +1649,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              // 暮色 2026-08-05：主动消息 history 截断到 8 条（不是 500 / char.contextLimit）
-              //   修前：271 条全塞 apiMessages → token 炸（每次主动消息 5-10w tokens）
-              //   修后：8 条 history 给 LLM 接语境就够（主动消息不需要看完整 271 条）
-              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 8, char, currentUserProfile, emojis);
+              // 暮色 2026-08-06：主动消息 apiMessages 传空数组（去重）
+              //   之前：historyForBuild = 8 条，buildMessageHistory 把 8 条塞进 apiMessages
+              //   现在：user/assistant history 全从 system prompt 末尾"最近聊天（10 轮）"段读，apiMessages 留空
+              //   fullMessages = [system, ...apiMessages] = [system] — 极简结构，token 减半
+              const { apiMessages } = ChatPrompts.buildMessageHistory([], 0, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。

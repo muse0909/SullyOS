@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
+import Modal from '../components/os/Modal';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
@@ -4911,6 +4912,10 @@ function DedupView({ char, onBack, onReload, addToast, memoryPalaceConfig, remot
     // 真合并弹窗：存当前选中的 pair
     const [realMergePair, setRealMergePair] = useState<DuplicatePair | null>(null);
     const [realMerging, setRealMerging] = useState(false);
+    // 一键合并全部：二次确认弹窗 + 进度
+    const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+    const [bulkMerging, setBulkMerging] = useState(false);
+    const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
 
     const runFind = async () => {
         setSearching(true);
@@ -4980,6 +4985,51 @@ function DedupView({ char, onBack, onReload, addToast, memoryPalaceConfig, remot
 
     const handleKeepBoth = (p: DuplicatePair) => {
         setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+    };
+
+    // 一键合并全部：默认 mode = 'concat'（A+B 拼接 + tags 合并 + 重跑 embedding）
+    //   只合并未处理的（visiblePairs）—— 手动处理过的跳过
+    //   失败单条隔离：try/catch 当前对，失败不阻塞下一对
+    const handleBulkMerge = async () => {
+        if (bulkMerging) return;
+        const targets = visiblePairs;
+        if (targets.length === 0) {
+            addToast('没有可合并的重复', 'info');
+            setShowBulkConfirm(false);
+            return;
+        }
+        setBulkMerging(true);
+        setShowBulkConfirm(false);
+        setBulkProgress({ done: 0, total: targets.length });
+        let ok = 0;
+        let failed = 0;
+        const { realMergeMemories } = await import('../utils/memoryPalace');
+        for (let i = 0; i < targets.length; i++) {
+            const p = targets[i];
+            try {
+                const result = await realMergeMemories(char.id, p.aId, p.bId, 'concat', {
+                    embeddingConfig: memoryPalaceConfig?.embedding,
+                    remoteVectorConfig,
+                });
+                if (result.merged) {
+                    setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+                    setMergedKeys(prev => new Set(prev).add(pairKey(p)));
+                    ok++;
+                } else {
+                    failed++;
+                }
+            } catch {
+                failed++;
+            }
+            setBulkProgress({ done: i + 1, total: targets.length });
+        }
+        setBulkMerging(false);
+        if (ok > 0) await onReload();
+        if (failed === 0) {
+            addToast(`✅ 一键合并完成：${ok} 对`, 'success');
+        } else {
+            addToast(`⚠️ 一键合并完成：${ok} 成功 / ${failed} 失败`, failed === 0 ? 'success' : 'info');
+        }
     };
 
     // 过滤掉已处理（合并 / 都保留）
@@ -5126,8 +5176,24 @@ function DedupView({ char, onBack, onReload, addToast, memoryPalaceConfig, remot
                     </div>
 
                     {pairs.length > 0 && (
-                        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
-                            找到 {pairs.length} 组重复（已处理 {processedKeys.size} 组，其中合并 {mergedKeys.size} 组）
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+                            <div style={{ fontSize: 12, color: '#6b7280', flex: 1 }}>
+                                找到 {pairs.length} 组重复（已处理 {processedKeys.size} 组，其中合并 {mergedKeys.size} 组）
+                            </div>
+                            {visiblePairs.length > 0 && (
+                                <div
+                                    onClick={bulkMerging ? undefined : () => setShowBulkConfirm(true)}
+                                    style={{
+                                        textAlign: 'center', padding: '5px 12px', borderRadius: 999, cursor: bulkMerging ? 'wait' : 'pointer',
+                                        fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+                                        background: bulkMerging ? '#9ca3af' : '#ef4444', color: 'white',
+                                    }}
+                                >
+                                    {bulkMerging
+                                        ? `合并中 ${bulkProgress.done}/${bulkProgress.total}`
+                                        : `🔀 一键合并全部 ${visiblePairs.length} 对`}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -5390,6 +5456,63 @@ function DedupView({ char, onBack, onReload, addToast, memoryPalaceConfig, remot
                     </div>
                 );
             })()}
+
+            {/* ─── 一键合并全部确认弹窗 ─── */}
+            <Modal
+                isOpen={showBulkConfirm}
+                title="一键合并全部"
+                onClose={() => !bulkMerging && setShowBulkConfirm(false)}
+                zIndex={220}
+                footer={
+                    <>
+                        <button
+                            onClick={() => setShowBulkConfirm(false)}
+                            disabled={bulkMerging}
+                            className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={handleBulkMerge}
+                            disabled={bulkMerging}
+                            className="flex-1 py-3 text-white font-bold rounded-2xl active:scale-95 transition-transform"
+                            style={{
+                                background: bulkMerging ? '#9ca3af' : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                boxShadow: bulkMerging ? 'none' : '0 6px 18px -6px rgba(239,68,68,0.5)',
+                            }}
+                        >
+                            {bulkMerging ? `合并中 ${bulkProgress.done}/${bulkProgress.total}` : '开始合并'}
+                        </button>
+                    </>
+                }
+            >
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-red-500">
+                        <span className="text-base">⚠️</span>
+                        <span className="text-xs font-bold">删除不可逆</span>
+                    </div>
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                        将要拼接合并 <span className="font-bold text-red-500">{visiblePairs.length}</span> 对重复记忆。
+                    </p>
+                    <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 leading-relaxed space-y-1">
+                        <p>• 默认 mode = <b>拼接</b>：A + B 内容合并 + 标签去重 + importance 取大</p>
+                        <p>• 每对 A 保留，B 删除（连同向量和链接）</p>
+                        <p>• 合并后异步重跑 embedding（约 1-2 秒/对）</p>
+                        <p>• 单对失败不阻塞其他对，结束后统一报告</p>
+                    </div>
+                    {bulkMerging && (
+                        <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'rgba(239,68,68,0.15)' }}>
+                            <div
+                                className="h-full transition-all duration-200"
+                                style={{
+                                    width: `${bulkProgress.total > 0 ? (bulkProgress.done / bulkProgress.total * 100) : 0}%`,
+                                    background: 'linear-gradient(90deg, #ef4444, #f87171)',
+                                }}
+                            />
+                        </div>
+                    )}
+                </div>
+            </Modal>
         </div>
     );
 }

@@ -62,7 +62,9 @@ export {
     bindMemoriesIntoEventBox, manuallyBindMemories,
     removeMemoryFromBox, reviveArchivedMemory,
     unbindAllLiveMemories,
+    realMergeMemories,
 } from './eventBox';
+export type { RealMergeMode } from './eventBox';
 export {
     maybeCompressEventBoxes, compressAllEligibleBoxes,
 } from './eventBoxCompression';

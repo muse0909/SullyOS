@@ -15,7 +15,10 @@
 import type { EventBox, MemoryNode } from './types';
 import { EVENT_BOX_LIVE_HARD_CAP } from './types';
 import type { EventBoxHint } from './extraction';
-import { EventBoxDB, MemoryNodeDB } from './db';
+import { EventBoxDB, MemoryNodeDB, MemoryLinkDB, MemoryVectorDB } from './db';
+import { vectorizeAndStore } from './vectorStore';
+import type { EmbeddingConfig } from './embedding';
+import type { RemoteVectorConfig } from './supabaseVector';
 
 // ─── ID 生成 ───────────────────────────────────────────
 
@@ -355,4 +358,102 @@ export async function reviveArchivedMemory(memoryId: string): Promise<void> {
             await EventBoxDB.save(box);
         }
     }
+}
+
+/**
+ * 真合并模式：把两条重复记忆合并成一条，删另一条。
+ * 区别于 `manuallyBindMemories`（仅绑到同一事件盒，两条都保留）。
+ *
+ * 三种 mode：
+ *  - 'keep_a'：保留 keep，删 drop（keep 不变）
+ *  - 'keep_b'：保留 drop，删 keep（drop 不变）—— 调用方应自己把 keepId / dropId 对调
+ *  - 'concat'：保留 keep，删 drop，keep.content = keep.content + "\n" + drop.content
+ *              tags 去重并集、importance 取 max、mood 保持 keep 的
+ *              触发 keep.embedded=false，async 重跑 embedding
+ *
+ * 删除走完整清理：解绑 EventBox → 清 vec → 清 links → 删 node
+ * （与 DedupeView 的 handleBatchCleanDelete 同款）
+ */
+export type RealMergeMode = 'keep_a' | 'keep_b' | 'concat';
+
+export async function realMergeMemories(
+    charId: string,
+    keepId: string,
+    dropId: string,
+    mode: RealMergeMode,
+    options?: {
+        embeddingConfig?: EmbeddingConfig;
+        remoteVectorConfig?: RemoteVectorConfig;
+    },
+): Promise<{ merged: boolean; reason?: string; keepNode?: MemoryNode }> {
+    if (keepId === dropId) return { merged: false, reason: 'keep 和 drop 是同一条记忆' };
+    const keep = await MemoryNodeDB.getById(keepId);
+    const drop = await MemoryNodeDB.getById(dropId);
+    if (!keep || !drop) return { merged: false, reason: '记忆不存在' };
+
+    let mergedNode: MemoryNode = { ...keep };
+
+    if (mode === 'concat') {
+        const dropContent = drop.content.trim();
+        const keepContent = keep.content.trim();
+        if (dropContent && !keepContent.includes(dropContent)) {
+            mergedNode.content = keepContent
+                ? `${keepContent}\n${dropContent}`
+                : dropContent;
+        }
+        // tags 去重并集
+        const tagSet = new Set([...keep.tags, ...drop.tags]);
+        mergedNode.tags = Array.from(tagSet);
+        // importance 取 max
+        mergedNode.importance = Math.max(keep.importance, drop.importance);
+        // mood 保持 keep 的
+        // room 保持 keep 的
+        // content 变了 → 标记为待重跑
+        mergedNode.embedded = false;
+        mergedNode.lastAccessedAt = Date.now();
+    } else if (mode === 'keep_b') {
+        // 调用方传参错位：理论不该走到这，但容错
+        mergedNode = { ...drop, id: keepId };
+        mergedNode.embedded = false;
+    }
+    // 'keep_a' 模式：mergedNode 直接是 keep，无需改
+
+    // 1. 保存 keep 节点的最终状态（concat 模式重设了 content/importance/tags）
+    await MemoryNodeDB.save(mergedNode);
+
+    // 2. 解绑 drop 的 EventBox
+    try { await removeMemoryFromBox(dropId); } catch { /* 可能没绑 box */ }
+
+    // 3. 清 drop 的向量
+    try { await MemoryVectorDB.delete(dropId); } catch { /* 可能没向量 */ }
+
+    // 4. 清 drop 的所有链接
+    const dropLinks = await MemoryLinkDB.getByNodeId(dropId);
+    for (const l of dropLinks) {
+        try { await MemoryLinkDB.delete(l.id); } catch { /* ignore */ }
+    }
+
+    // 5. 删 drop 节点
+    await MemoryNodeDB.delete(dropId);
+
+    // 6. concat 模式触发重跑 embedding
+    if (mode === 'concat' && options?.embeddingConfig?.baseUrl && options.embeddingConfig.apiKey) {
+        try {
+            const result = await vectorizeAndStore(
+                [mergedNode],
+                options.embeddingConfig,
+                options.remoteVectorConfig,
+                { skipDedup: true }
+            );
+            if (result.stored > 0) {
+                mergedNode.embedded = true;
+                await MemoryNodeDB.save(mergedNode);
+            }
+        } catch (e: any) {
+            console.warn(`🔀 [RealMerge] 重跑 embedding 失败（节点已合并，embedded 保持 false）：${e?.message || e}`);
+        }
+    }
+
+    console.log(`🔀 [RealMerge] ${keepId} + ${dropId} → 模式 ${mode}，已合并并清理 drop 的 vec/links/node`);
+    return { merged: true, keepNode: mergedNode };
 }

@@ -1426,7 +1426,12 @@ if (!isVisible || !isChattingWithThisChar) {
           // Respect per-character proactive config
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
-              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled`);
+              // 暮色 2026-08-06：修角色隔离 bug — 不光 skip，还要主动 stop 把 ProactiveChat 里的 schedule 真清掉
+              //   之前只 skip 一次：schedule 还在 localStorage + listener 还在主线程，每 20 秒 / 30 分钟 fire 一次 → 每次都被 skip
+              //   用户感受："关了还触发" / "全部关了还收到"（其实是 schedule 在空跑，runProactive 走到底才拦截）
+              //   修法：调 ProactiveChat.stop(charId) 真删 schedule + 删 last fire + 同步 SW
+              ProactiveChat.stop(charId);
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled, schedule cleared`);
               return;
           }
 
@@ -1606,13 +1611,14 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              // 暮色 2026-08-06：messages 数组不放 user/assistant history（去重）
-              //   之前 8-5 改的"history 截断到 8 条"跟 system prompt 末尾"最近聊天"段重复了
-              //   暮色 8-6 反馈：图 1（messages 8 条）+ 图 2（system prompt 末尾 8 轮）= 同一段对话构造两次，浪费 token
-              //   改后：messages 数组只放 1 条 system + AI 回复，user/assistant history 全从 system prompt 末尾"最近聊天（10 轮）"段读
+              // 暮色 2026-08-06：messages 数组 history 跟 system prompt 末尾"最近聊天"段不重复，用途不同
+              //   - messages 数组 history（user/assistant role）= 对话流，让 LLM 接续上一句
+              //   - system prompt 末尾"最近聊天（10 轮）"段 = 写作素材，文本格式"【江澈】...【暮色】..."
+              //   之前 1171c6fc commit 我误删了 messages history，暮色 8-6 反馈"正文全没了"，回滚到 8 条
               // 记忆宫殿 recentMessages 收紧逻辑保留（不影响）：
               //   - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
+              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 8);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
@@ -1649,11 +1655,12 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              // 暮色 2026-08-06：主动消息 apiMessages 传空数组（去重）
-              //   之前：historyForBuild = 8 条，buildMessageHistory 把 8 条塞进 apiMessages
-              //   现在：user/assistant history 全从 system prompt 末尾"最近聊天（10 轮）"段读，apiMessages 留空
-              //   fullMessages = [system, ...apiMessages] = [system] — 极简结构，token 减半
-              const { apiMessages } = ChatPrompts.buildMessageHistory([], 0, char, currentUserProfile, emojis);
+              // 暮色 2026-08-06：恢复 messages 数组 history（之前 1171c6fc 误删，回滚）
+              //   historyForBuild 8 条 → buildMessageHistory 拼成 8 条 user/assistant 消息进 messages 数组
+              //   这跟 system prompt 末尾"最近聊天（10 轮）"段是两套机制，作用不同：
+              //   - messages 数组 history = 对话流（让 AI 接续上一句）
+              //   - system prompt 末尾段 = 写作素材（让 AI 知道聊过什么）
+              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 8, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
@@ -1822,10 +1829,26 @@ if (!isVisible || !isChattingWithThisChar) {
                       detail: { charId, charName: char.name, body: preview }
                   }));
               } else {
-                  // 暮色 2026-08-02 23:49：AI 返回空字符串（主动选择不发）
-                  //   之前是静默——聊天流里看不到任何东西
-                  //   现在弹一个"提醒"toast——类似连接失败的视觉，但语义是"AI 这次没说话"
-                  addToast(`${char.name} 这次没想好说什么`, 'bell');
+                  // 暮色 2026-08-06 19:09：AI 返回空字符串（主动选择不发）
+                  //   之前是弹 toast 提醒——但暮色要"在聊天页里的系统提示"风格，跟 [连接中断: ...] 一样
+                  //   改成推 system 消息进聊天流（铃铛胶囊），跟图床警告、连接中断、小纸条同款
+                  //   prefix 用 [系统: ...]（不是 [连接中断: ...]，语义不准确；是 AI 主动选择不发，不是网络问题）
+                  try {
+                      await DB.saveMessage({
+                          charId,
+                          role: 'system',
+                          type: 'text',
+                          content: `[系统: ${char.name} 这次没想好说什么]`,
+                          metadata: { source: 'proactive_skipped', hidden: false },
+                      });
+                      // 触发 Chat 重新拉 messages 显示新 system 消息
+                      window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                          detail: { charId, charName: char.name, body: '这次没想好说什么' }
+                      }));
+                  } catch (saveErr) {
+                      console.warn('🤖 [Proactive] 推"没想好说什么"系统消息失败:', saveErr);
+                      addToast(`${char.name} 这次没想好说什么`, 'bell'); // 兜底：保存失败时还是弹 toast
+                  }
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);

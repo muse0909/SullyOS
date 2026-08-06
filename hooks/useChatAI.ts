@@ -4512,6 +4512,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
     const startProactiveChat = (intervalMinutes: number) => {
         if (!char) return;
+        // 暮色 2026-08-06：修角色隔离 bug — char.proactiveConfig.enabled=false 时不 start
+        //   之前 start 调了但 enabled=false，ProactiveChat 里有 schedule → runProactive 每次 fire 都 skip
+        //   用户感觉"关了还触发"——其实是 schedule 在空跑
+        if (char.proactiveConfig && char.proactiveConfig.enabled === false) {
+            console.log(`[ChatAI] startProactiveChat skipped: ${char.name} has proactiveConfig.enabled=false`);
+            return;
+        }
         ProactiveChat.start(char.id, intervalMinutes);
     };
 

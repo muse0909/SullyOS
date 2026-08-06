@@ -84,27 +84,33 @@ crons = ["* * * * *"]
 
 ## 部署步骤（暮色在 Cloudflare 仪表盘走一遍）
 
-1. **Cloudflare 控制台** → Workers & Pages → Create application → 选 "Create Worker"（不是 Pages）
-   - Project name: `sully-amsg2-worker`
-   - Connect to Git：选 `muse0909/SullyOS` 仓库 + `preview` 分支
-   - Build command: **留空**（本地已 build 好，dashboard 自动 build 会跟我的本地 build 冲突）
-   - Deploy command: `npx wrangler deploy`（仪表盘默认会先 `npm install`）
-   - Path: **留空**（默认 `/`，连到仓库根的 `wrangler.toml`）
+**先做第 0 步再建 Worker**（否则 deploy 会卡 database_id）：
 
-2. **D1 数据库**：本地跑 `wrangler d1 create sully-amsg2`，把输出的 `database_id` 填进 `wrangler.toml` 的 `[[d1_databases]]` 块。**或者** Cloudflare 控制台 D1 → Create database → 拿 id。
+0. **D1 数据库**：Cloudflare 仪表盘 D1 → Create database → name 填 `sully-amsg2` → 拿到 `database_id` → 填进 `wrangler.toml` 的 `[[d1_databases]]` 块（替换 `REPLACE_WITH_D1_ID_AFTER_wrangler_d1_create`）→ 推一次 preview。
 
-3. **设密钥**（每个都跑一次）：
+1. **Cloudflare 仪表盘** → Workers & Pages → Create application → Create Worker
+   - **Select a method**: Import from Git（选这个，不是 "Create from scratch"）
+   - **Select a repository**: 选 `muse0909/SullyOS`（**没有"选分支"的下一步**——Cloudflare 自动监控所有分支；preview 分支 push 会自动触发 deploy，不用手选）
+   - **Set up your application**（"Create and deploy" 那一步）：
+     - **Project name**: 随便起（暮色填了 `sullyos`，可以）——这个**覆盖** `wrangler.toml` 里的 `name`，最终 URL 是 `sullyos.<account>.workers.dev`
+     - **Build command**: `npm run build:worker:amsg`（**不能留空**也不能用默认的 `npm run build`，那打的是 vite 前端不是 worker）
+     - **Deploy command**: `npx wrangler deploy`（默认就是这样，不用改）
+     - **"Builds for non-production branches"**：**勾上**（这样 `preview` 分支 push 自动部署）
+   - **没看到 Path 字段？** 正常。Workers 模式没有这字段（我之前 changelog 写错了，是把 Pages 跟 Workers 搞混了）。
+   - **没看到"选分支"的下拉？** 正常。Cloudflare Workers 部署自动监控所有分支，不需要手动指定。
+
+2. **设密钥**（Deploy 成功后，worker 面板 → Settings → Variables and Secrets）：
    ```bash
    wrangler secret put MASTER_KEY
    wrangler secret put VAPID_EMAIL
    wrangler secret put VAPID_PUBLIC_KEY
    wrangler secret put VAPID_PRIVATE_KEY
    ```
-   VAPID 密钥对去 vapidkeys.com 生成（公私钥都返回）。
+   VAPID 密钥对去 vapidkeys.com 生成（公私钥都返回）。或者在仪表盘 Settings → Variables and Secrets → Add 手动加。
 
-4. **部署**：`npm run deploy:worker:amsg` 或 Cloudflare 仪表盘 push trigger。
+3. **触发部署**：仪表盘 Deploy 按钮 / `git push origin preview`（自动）/`npm run deploy:worker:amsg`（本地手动）。
 
-5. **拿到 worker URL**（如 `https://sully-amsg2-worker.<account>.workers.dev`），前端 Settings → 主动消息 2.0 → API base URL 填这个。
+4. **拿到 worker URL**（如 `https://sullyos.<account>.workers.dev`），前端 Settings → 主动消息 2.0 → API base URL 填这个。
 
 ## 备注
 

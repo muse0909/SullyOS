@@ -3219,35 +3219,39 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
             // 5.9d Handle XiaoZhiTiao (小纸条) Actions
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
-            // AI 在 chat reply 里输出 [[XIAO_ZHI_TIAO: 内容 | type]] → 这里解析 → saveXiaoZhiTiao + 推 system 消息
-            // type 必须是: thought / doodle / search / lyric / gossip 之一
+            // 暮色 2026-08-07：去掉 type 字段（type 没用），token 简化为 [[XIAO_ZHI_TIAO: 内容 ]]
+            // 暮色 2026-08-07：每天最多 5 条 — 系统硬限制（即使 prompt 写了，AI 仍可能超）
             try {
-                const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
-                if (xztMatches.length > 0) {
-                    const m = xztMatches[0];
-                    const content = m[1].trim();
-                    const type = m[2].toLowerCase() as XiaoZhiTiao['type'];
-                    if (content) {
-                        const newNote: XiaoZhiTiao = {
-                            id: `xzt-${Date.now()}`,
-                            charId: char.id,
-                            timestamp: Date.now(),
-                            content,
-                            type,
-                            // 2026-07-22：自定义样式（写入时从激活组随机选图存到 note）
-                            styleImageUrl: pickRandomXiaoZhiTiaoImage(),
-                        };
-                        await DB.saveXiaoZhiTiao(newNote);
-                        console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}... (type=${type})`);
-                        // 推 system 消息进聊天流
-                        await DB.saveMessage({
-                            charId: char.id,
-                            role: 'system',
-                            type: 'text',
-                            content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
-                        });
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                        addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                const todaysXZT = (await DB.getXiaoZhiTiao(char.id))
+                    .filter(n => n.timestamp >= todayStart.getTime());
+                if (todaysXZT.length >= 5) {
+                    console.log(`📝 [XiaoZhiTiao] 今天已写 ${todaysXZT.length} 条，跳过`);
+                } else {
+                    const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/g)];
+                    if (xztMatches.length > 0) {
+                        const m = xztMatches[0];
+                        const content = m[1].trim();
+                        if (content) {
+                            const newNote: XiaoZhiTiao = {
+                                id: `xzt-${Date.now()}`,
+                                charId: char.id,
+                                timestamp: Date.now(),
+                                content,
+                                styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                            };
+                            await DB.saveXiaoZhiTiao(newNote);
+                            console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
+                            await DB.saveMessage({
+                                charId: char.id,
+                                role: 'system',
+                                type: 'text',
+                                content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
+                            });
+                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                        }
                     }
                 }
                 // 移除所有 XIAO_ZHI_TIAO 标记

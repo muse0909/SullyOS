@@ -503,7 +503,6 @@ export interface XiaoZhiTiao {
     charId: string;
     timestamp: number;
     content: string;
-    type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
     // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
     styleImageUrl?: string;
     replies?: XiaoZhiTiaoReply[];

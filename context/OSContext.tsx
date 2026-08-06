@@ -1551,21 +1551,9 @@ if (!isVisible || !isChattingWithThisChar) {
               //    - 角色定位从"为用户服务"改成"有自己的生活"（借鉴 330 Part 5 行为铁律）
               //    - 删除"一两句话就好"硬限制
               //    - 加 thought_chain 思维链前置（ChatParser 会清洗 [[THOUGHT:...]] 不渲染）
-              //    - 注入最近 8 条对话原文（user + assistant）让 AI 有真实素材可参考
+              //    - 暮色 2026-08-06：去掉末尾"【最近聊天（10 轮）】"段（跟 messages 数组 history 重复）
+              //      上下文统一从 messages 数组拿（20 条 history），system prompt 不再注入重复内容
               const userName = currentUserProfile?.name || '对方';
-
-              const recentChatContext = recentMsgs
-                  .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
-                  .filter(m => ChatParser.hasDisplayContent(m.content || ''))
-                  // 暮色 2026-08-06：8 → 10 轮（这是 system prompt 末尾"最近聊天"段的来源，唯一上下文）
-                  //   之前 .slice(-50) 拉 50 条但 label 写 8 条，文档不一致；现在固定 10 轮
-                  .slice(-10)
-                  .map(m => {
-                      const speaker = m.role === 'user' ? userName : char.name;
-                      const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();
-                      return `【${speaker}】${text}`;
-                  })
-                  .join('\n');
 
               const gapLongEnough = timeSinceUser && (() => {
                   if (timeSinceUser.includes('天')) return true;
@@ -1595,8 +1583,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   '不想写就跳过，你真实的内心状态比完美的输出更重要。',
                   '这串标签和里面的内容会被处理掉。',
                   '',
-                  recentChatContext ? `【最近聊天（10 轮）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
-                  '',
+                  // 暮色 2026-08-06：去掉"【最近聊天（10 轮）— 写消息时可以参考】"整段
+                  //   跟 messages 数组 history 重复，只留一个就行
+                  //   上下文统一从 messages 数组拿（下面 buildMessageHistory 改 20 条）
                   '【如果完全不想发】',
                   '就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰用户。',
                   ']', // 暮色 2026-07-27: 用 ] 单独一行收尾，方便后期 grep 改提示词
@@ -1618,7 +1607,8 @@ if (!isVisible || !isChattingWithThisChar) {
               // 记忆宫殿 recentMessages 收紧逻辑保留（不影响）：
               //   - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
-              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 8);
+              // 暮色 2026-08-06：history 8 → 20 条（system prompt 末尾"最近聊天"段去掉了，唯一上下文来源）
+              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 20);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
@@ -1655,12 +1645,13 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              // 暮色 2026-08-06：恢复 messages 数组 history（之前 1171c6fc 误删，回滚）
-              //   historyForBuild 8 条 → buildMessageHistory 拼成 8 条 user/assistant 消息进 messages 数组
-              //   这跟 system prompt 末尾"最近聊天（10 轮）"段是两套机制，作用不同：
-              //   - messages 数组 history = 对话流（让 AI 接续上一句）
-              //   - system prompt 末尾段 = 写作素材（让 AI 知道聊过什么）
-              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 8, char, currentUserProfile, emojis);
+              // 暮色 2026-08-06 19:42：messages 数组 history 8 → 20 条（system prompt 末尾"最近聊天"段去掉了）
+              //   上下文唯一来源 = messages 数组（20 条 user/assistant history）
+              //   之前 8-5 改的 8 条太短（AI 主动发消息看不到上一轮对话"接续"，感觉断）
+              //   之前 1171c6fc 改的"messages 数组清空"错（说"正文全没了"）
+              //   之前 2de5308 改的"messages 8 条 + system prompt 末尾 10 轮"两段重复（暮色指出来"内容是一样的"）
+              //   现在：messages 数组 20 条 + system prompt 末尾不重复，干净
+              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 20, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。

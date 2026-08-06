@@ -1426,10 +1426,7 @@ if (!isVisible || !isChattingWithThisChar) {
           // Respect per-character proactive config
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
-              // 暮色 2026-08-06：修角色隔离 bug — 不光 skip，还要主动 stop 把 ProactiveChat 里的 schedule 真清掉
-              //   之前只 skip 一次：schedule 还在 localStorage + listener 还在主线程，每 20 秒 / 30 分钟 fire 一次 → 每次都被 skip
-              //   用户感受："关了还触发" / "全部关了还收到"（其实是 schedule 在空跑，runProactive 走到底才拦截）
-              //   修法：调 ProactiveChat.stop(charId) 真删 schedule + 删 last fire + 同步 SW
+              // 主动 stop 把 schedule 真清掉——只 skip 的话 listener 还在主线程，schedule 空跑每 20s/30min fire 一次
               ProactiveChat.stop(charId);
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled, schedule cleared`);
               return;
@@ -1487,19 +1484,10 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
-          // Determine which API to use
-          // 暮色 2026-07-27：3 层优先级
-          //   1. 副 API 开关打开 + 配了 baseUrl → 走副 API
-          //   2. 角色独立 API 开关打开 + 角色配了 baseUrl → 走角色独立 API（proactiveConfig.useCharApi）
-          //   3. 都没开 → 走全局主 API
-          // 暮色 2026-08-06：修角色独立 API 走主 API 的 bug
-          //   之前 useCharApi 检查 `char.apiConfig?.baseUrl`（openai 套），
-          //   但角色 API 现在分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存到不同字段：
-          //     - openai 协议: char.apiConfig.baseUrl
-          //     - claude 协议: char.apiConfig.claudeBaseUrl
-          //     - gemini 协议: char.apiConfig.geminiBaseUrl
-          //   之前只看 openai 套 baseUrl → 配 Claude/Gemini 协议时 openai 套是空 → 误判 useCharApi=false → 走主 API
-          //   修法：按 char.apiConfig.protocol 选对应那套的 baseUrl/apiKey/model
+          // API 优先级：副 API > 角色独立 API > 主 API
+          // 角色 API 分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存不同字段
+          //   openai → .baseUrl, claude → .claudeBaseUrl, gemini → .geminiBaseUrl
+          //   必须按 char.apiConfig.protocol 选，否则配 Claude/Gemini 时 useCharApi 误判成 false
           const pCfg = char.proactiveConfig;
           const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
           // 角色 API 3 协议下的 baseUrl 选择器
@@ -1524,9 +1512,8 @@ if (!isVisible || !isChattingWithThisChar) {
               api = currentApiConfig;
               apiSource = 'main';
           }
-          // 暮色 2026-08-06：api.baseUrl 也要按 protocol 选（之前硬读 api.baseUrl 不对，claude/gemini 协议是 api.claudeBaseUrl/api.geminiBaseUrl）
-          //   注意：副 API 没用 3 套协议分支，pCfg.secondaryApi 保持只有 baseUrl
-          //   角色 API：api 整个对象，fetch 时按 protocol 走对应 endpoint（safeFetchJson 内部会处理 openai/claude，gemini 待补）
+          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 3 套
+          //   gemini 协议 fetch URL 还没修（safeFetchJson 不支持），先记着
           if (!api.baseUrl && !((api as any).claudeBaseUrl || (api as any).geminiBaseUrl)) {
               drainQueuedProactive();
               return;
@@ -1566,12 +1553,8 @@ if (!isVisible || !isChattingWithThisChar) {
                   else timeSinceUser = `${Math.floor(gapMin / 1440)}天${Math.floor((gapMin % 1440) / 60)}小时`;
               }
 
-              // 2. Save hidden system hint — 暮色 2026-08-06 21:35 重写（沿用 7-27 prompt 模式）：
-              //    - 角色定位保持"有自己的生活"，但唤醒机制改名为"自动唤醒"（更明确是系统驱动）
-              //    - 加"可以调用各种工具"——主动消息不只发文字，朋友圈/卡片/小纸条/画图/放歌都允许
-              //    - 暮色 8-6 21:35 prompt 内容替换：暮色给的新版（保留原文，"定时定时" 暮色文字保留）
-              //      补全格式：第 1 行 `[系统提示（...）` 缺 `]`，整个 prompt 末尾补 `]`
-              //    - 跟之前一样：上下文统一从 messages 数组拿，hint 里不再塞 history
+              // 2. Save hidden system hint
+              //    主动消息模式：自动唤醒 + 可调用工具；history 走 messages 数组，hint 不再塞
               const userName = currentUserProfile?.name || '对方';
 
               const gapLongEnough = timeSinceUser && (() => {
@@ -1603,7 +1586,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   '这串标签和里面的内容会被处理掉。',
                   `【如果完全不想发】`,
                   `就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰她。`,
-                  `]`, // 暮色 2026-07-27 起的惯例：] 单独一行收尾，方便 grep 改 prompt
+                  `]`, // 单独一行收尾，方便 grep 改 prompt
               ].join('\n');
 
               await DB.saveMessage({
@@ -1615,14 +1598,8 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              // 暮色 2026-08-06 19:42：messages 数组 history 跟 system prompt 末尾"最近聊天"段不重复，用途不同
-              // 暮色 2026-08-06 20:09：拉 history 时过滤掉 proactiveHint 消息
-              //   之前 line 1594-1600 把 system hint 以 role:'user' 存到 IDB（伪装成 user 消息）
-              //   拉 20 条时这条 hint 进了 messages 数组末尾 → AI 看到"暮色已经 10分钟没找你说话...
-              //   你今天有自己的事"，**不接 history 末尾的"重写一版"话题**（暮色实测断裂）
-              //   修法：多拉 5 条兜底，过滤掉 proactiveHint 后再 slice(-20)
-              // 记忆宫殿 recentMessages 收紧逻辑保留（不影响）：
-              //   - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
+              // 拉 history 时过滤掉 proactiveHint——不然后面多拉 5 条兜底会被 hint 污染末尾
+              // injectRecentMsgs 多拉（30 条）给记忆宫殿 query 上下文用，不影响 messages 数组的 top 20
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
               const rawHistory = await DB.getRecentMessagesByCharId(charId, 25);
               const historyForBuild = rawHistory
@@ -1648,12 +1625,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   //   正常聊天（useChatAI）传 false → 不带
                   undefined, undefined, undefined, undefined, /* isProactive */ true,
               );
-              // 暮色 2026-07-22：buildSystemPrompt 现在返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}
-              //   之前直接赋给 content 是个对象，京东云 OpenAI 兼容拒收（400）
-              //   修法：拼回 string（仿 useChatAI line 940）
-              //   dynamicTail.realtimeText 给主动消息用（"现在几点了"），innerState 情绪延续，privateNotes 主动消息不需要
-              //   暮色 2026-08-05：isProactive=true → hotNewsText（5 条热搜 + 天气）也带上
-              //   6 段末尾 push 主动消息不需要（max_tokens: 500 承受不起）
+              // buildSystemPrompt 返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}——拼回 string
+              // dynamicTail.realtimeText 主动消息用，innerState 情绪延续，privateNotes 主动消息不需要
+              // isProactive=true → hotNewsText（5 条热搜 + 天气）也带上
               const sp = systemPromptResult as any;
               const systemPromptParts = [
                   sp.bp1Tools,
@@ -1664,12 +1638,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              // 暮色 2026-08-06 19:42：messages 数组 history 8 → 20 条（system prompt 末尾"最近聊天"段去掉了）
-              //   上下文唯一来源 = messages 数组（20 条 user/assistant history）
-              //   之前 8-5 改的 8 条太短（AI 主动发消息看不到上一轮对话"接续"，感觉断）
-              //   之前 1171c6fc 改的"messages 数组清空"错（说"正文全没了"）
-              //   之前 2de5308 改的"messages 8 条 + system prompt 末尾 10 轮"两段重复（暮色指出来"内容是一样的"）
-              //   现在：messages 数组 20 条 + system prompt 末尾不重复，干净
+              // messages 数组 20 条（system prompt 末尾不重复塞历史——之前两段重复了）
               const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 20, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
@@ -1677,12 +1646,7 @@ if (!isVisible || !isChattingWithThisChar) {
 
             
               // 4. Send request to AI
-              // 暮色 2026-08-02：max_tokens 500 → 2000
-              //   旧 500 是 7-17 配 4 断点 prompt cache 定的
-              //   7-27 删"一两句话就好"硬限制后没同步调，prompt 允许 AI 写多点
-              //   AI 真的在 [[THOUGHT: ...]] 里写了不少（截图里 "11 个小时了，她还是没回。外面体感温度..."）
-              //   → 思维链 + 正文一起被 500 卡掉，正文被截断
-              //   → 2000 给足空间，prompt 保持原样（不强制两段、不限定字数）
+              // max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
               reqBody = {
                   model: api.model,
                   messages: fullMessages,

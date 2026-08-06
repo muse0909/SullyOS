@@ -749,14 +749,7 @@ const MessageItem = React.memo(({
                     Added explicit margins to clear absolute avatars.
                 */}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
-                    {/* 暮色 2026-08-02：思维链折叠显示
-                        - 浅灰小字"💭 思维链 ›"，不斜体
-                        - 点击展开 → 完整内容显示在下方浅色块里
-                        - 只在 metadata.thought 存在时渲染（OSContext 主动消息 + useChatAI 正常聊天都会写）
-                        - 暮色 2026-08-06：取消 proactiveRoundStart 限制
-                          之前主动消息只在轮首显示思维链，正常聊天根本不显示
-                          现在：所有 assistant 消息只要 metadata.thought 有值就显示
-                    */}
+                    {/* metadata.thought 有值就显示，OSContext 主动消息 + useChatAI 正常聊天都会写 */}
                     {!isUser && (m as any).metadata?.thought && (
                         <ThoughtFold thought={(m as any).metadata.thought} />
                     )}

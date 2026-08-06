@@ -4236,10 +4236,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // Clean all quote tag variants from content
             aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
 
-            // 暮色 2026-08-06：先提取 [[THOUGHT: ...]] 思维链存到 metadata.thought
-            //   跟 OSContext.runProactive 主动消息路径同款机制（line 1726-1730）
-            //   之前 chatParser.sanitize 会 strip 掉 THOUGHT 标签（chatParser.ts:316）
-            //   现在先提取再 sanitize：metadata.thought 存原文，content 保持干净
+            // 先提取 [[THOUGHT: ...]] 存 metadata.thought
+            //   必须在 sanitize 之前提取——sanitize 会 strip 掉 THOUGHT 标签
             //   MessageItem 渲染时读 metadata.thought 显示折叠的"💭 思维链"
             let thoughtContent = '';
             const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
@@ -4268,10 +4266,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
                 let globalMsgIndex = 0;
 
-                // 暮色 2026-08-06：思维链挂到本轮首条消息的 metadata
-                //   跟 OSContext.runProactive 主动消息同款机制（line 1774 挂到轮首）
-                //   正常聊天没有"轮"概念，简单点：每轮只挂到第一条 assistant 消息
-                //   后续 chunk（globalMsgIndex > 0）不挂 thought，避免重复显示
+                // thought 只挂到本轮首条消息（globalMsgIndex === 0）——后续 chunk 不挂，避免重复显示
                 const buildChunkMeta = () => {
                     if (globalMsgIndex === 0 && thoughtContent) {
                         return { ...(mcdInheritMeta || {}), thought: thoughtContent };
@@ -4532,16 +4527,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
     // NOTE: The actual proactive trigger handler is registered globally in OSContext
     // so it works even when Chat is not open. These are just start/stop helpers.
 
-    // 暮色 2026-08-06：修角色隔离 bug — config.enabled=false 时不 start
-    //   之前 start 调了但 enabled=false，ProactiveChat 里有 schedule → runProactive 每次 fire 都 skip
-    //   用户感觉"关了还触发"——其实是 schedule 在空跑
-    //
-    // 暮色 2026-08-06 21:35：必须用新传进来的 config.enabled，不能用闭包里的 char.proactiveConfig.enabled
-    //   关键：updateCharacter 是异步的（setCharacters 调度了，但没真更新），startProactiveChat 紧跟着同步调
-    //   → 闭包里的 char 还是老 ref，char.proactiveConfig.enabled 还是 false（如果角色之前关过）
-    //   → 误判 enabled=false → schedule 没起 → toast 还照常弹"已启动" → 用户看到"弹窗没了，已开启，实际没开启"
-    //   → 第二次点能成功是因为第一次的 updateCharacter 已经把 enabled:true 写进 IDB，老 ref 刷新成新值了
-    //   修法：把新 config 整个传进来，用新 config 的 enabled 做判断（不再读闭包里的 char.proactiveConfig）
+    // config.enabled=false 时不 start（防御性，runProactive 也会做实际拦截）
+    // 必须用传进来的 config.enabled，不能读闭包里的 char.proactiveConfig.enabled
+    //   updateCharacter 异步调度，startProactiveChat 紧跟同步调，闭包里的 char 还是老 ref
+    //   老 ref 可能是 {enabled:false}（被 runProactive 主动 stop 过）→ 误判 → schedule 没起
+    //   修法：传整个新 config，用 config.enabled 判断
     const startProactiveChat = (config: NonNullable<CharacterProfile['proactiveConfig']>) => {
         if (!char) return;
         if (config.enabled === false) {

@@ -10,7 +10,11 @@
     "cap:sync": "cap sync",
     "cap:android": "cap open android",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "build:workers": "node scripts/build-workers.mjs",
+    "build:worker:amsg": "node scripts/build-workers.mjs amsg",
+    "build:worker:proactive-push": "node scripts/build-workers.mjs proactive-push",
+    "deploy:worker:amsg": "npm run build:worker:amsg && npx wrangler deploy"
   },
   "dependencies": {
     "@capacitor/android": "^6.0.0",

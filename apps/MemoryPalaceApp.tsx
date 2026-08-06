@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
+import Modal from '../components/os/Modal';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
@@ -11,6 +12,7 @@ import {
     reviveArchivedMemory,
     wipeAllMemoryPalace,
     findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES,
+    vectorizeAndStore,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
 
@@ -998,6 +1000,9 @@ export default function MemoryPalaceApp() {
         if (!selectedNode || !char) return;
         setSaving(true);
         try {
+            // 向量只跟 content 相关；content 变了才需要重跑 embedding
+            const contentChanged = editContent.trim() !== selectedNode.content;
+            const wasEmbedded = !!selectedNode.embedded;
             const updated: MemoryNode = {
                 ...selectedNode,
                 content: editContent.trim(),
@@ -1005,18 +1010,39 @@ export default function MemoryPalaceApp() {
                 mood: editMood.trim(),
                 room: editRoom,
                 tags: editTags.split(/[,，]/).map(t => t.trim()).filter(Boolean),
+                // content 变了且原本已向量化 → 标记为待重跑，save 后异步跑
+                embedded: contentChanged && wasEmbedded ? false : selectedNode.embedded,
             };
             await MemoryNodeDB.save(updated);
-            // 远程同步由 MemoryNodeDB.save 自动处理
             setSelectedNode(updated);
             setEditing(false);
-            // 如果房间变了，刷新房间列表
             if (selectedRoom) {
                 const nodes = await MemoryNodeDB.getByRoom(char.id, selectedRoom);
                 nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
                 setRoomNodes(nodes);
             }
             loadStats();
+            // 重跑 embedding：照搬 pipeline.ts:1483 纠正路径的同款范本（skipDedup: true）
+            if (contentChanged && wasEmbedded) {
+                const mpEmb = memoryPalaceConfig?.embedding;
+                if (!mpEmb?.baseUrl || !mpEmb?.apiKey) {
+                    addToast('已保存，但未配置 Embedding API，跳过重新向量化', 'info');
+                    return;
+                }
+                addToast('已保存，正在重新向量化...', 'info');
+                vectorizeAndStore([updated], mpEmb, remoteVectorConfig, { skipDedup: true })
+                    .then(result => {
+                        if (result.stored > 0) {
+                            setSelectedNode(prev => prev ? { ...prev, embedded: true } : prev);
+                            addToast('重新向量化完成', 'success');
+                        } else {
+                            addToast('重新向量化未生效（可能被识别为重复）', 'info');
+                        }
+                    })
+                    .catch(e => {
+                        addToast('重新向量化失败：' + (e?.message || e), 'error');
+                    });
+            }
         } finally {
             setSaving(false);
         }
@@ -4066,6 +4092,8 @@ create table if not exists memory_vectors (
                 onBack={() => setView('palace')}
                 onReload={reloadAllNodes}
                 addToast={addToast}
+                memoryPalaceConfig={memoryPalaceConfig}
+                remoteVectorConfig={remoteVectorConfig}
             />
         );
     }
@@ -4863,11 +4891,13 @@ create table if not exists memory_vectors (
  * 设计原则：默认进「找重复」tab 但**不立即跑比对**（1794 条全量两两比 ~20s 太卡），
  * 用户点「开始找重复」按钮才触发，进度条反馈。
  */
-function DedupView({ char, onBack, onReload, addToast }: {
+function DedupView({ char, onBack, onReload, addToast, memoryPalaceConfig, remoteVectorConfig }: {
     char: any;
     onBack: () => void;
     onReload: () => Promise<void>;
     addToast: (msg: string, type: 'success' | 'error' | 'info') => void;
+    memoryPalaceConfig: any;
+    remoteVectorConfig: any;
 }) {
     const [tab, setTab] = useState<'find' | 'cleanup'>('find');
 
@@ -4879,6 +4909,13 @@ function DedupView({ char, onBack, onReload, addToast }: {
     const [searching, setSearching] = useState(false);
     const [processedKeys, setProcessedKeys] = useState<Set<string>>(new Set());
     const [mergedKeys, setMergedKeys] = useState<Set<string>>(new Set());
+    // 真合并弹窗：存当前选中的 pair
+    const [realMergePair, setRealMergePair] = useState<DuplicatePair | null>(null);
+    const [realMerging, setRealMerging] = useState(false);
+    // 一键合并全部：二次确认弹窗 + 进度
+    const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+    const [bulkMerging, setBulkMerging] = useState(false);
+    const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
 
     const runFind = async () => {
         setSearching(true);
@@ -4918,8 +4955,81 @@ function DedupView({ char, onBack, onReload, addToast }: {
         }
     };
 
+    // 真合并：删一条，留另一条（或拼接）
+    const handleRealMerge = async (p: DuplicatePair, mode: 'keep_a' | 'keep_b' | 'concat') => {
+        if (realMerging) return;
+        setRealMerging(true);
+        const keepId = mode === 'keep_b' ? p.bId : p.aId;
+        const dropId = mode === 'keep_b' ? p.aId : p.bId;
+        try {
+            const { realMergeMemories } = await import('../utils/memoryPalace');
+            const result = await realMergeMemories(char.id, keepId, dropId, mode, {
+                embeddingConfig: memoryPalaceConfig?.embedding,
+                remoteVectorConfig,
+            });
+            if (result.merged) {
+                setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+                setMergedKeys(prev => new Set(prev).add(pairKey(p)));
+                addToast(mode === 'concat' ? '已拼接合并 + 重跑 embedding' : '已合并（保留其中一条）', 'success');
+                await onReload();
+            } else {
+                addToast('合并失败：' + (result.reason || '未知原因'), 'error');
+            }
+        } catch (e: any) {
+            addToast('合并失败：' + (e?.message || e), 'error');
+        } finally {
+            setRealMerging(false);
+            setRealMergePair(null);
+        }
+    };
+
     const handleKeepBoth = (p: DuplicatePair) => {
         setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+    };
+
+    // 一键合并全部：默认 mode = 'concat'（A+B 拼接 + tags 合并 + 重跑 embedding）
+    //   只合并未处理的（visiblePairs）—— 手动处理过的跳过
+    //   失败单条隔离：try/catch 当前对，失败不阻塞下一对
+    const handleBulkMerge = async () => {
+        if (bulkMerging) return;
+        const targets = visiblePairs;
+        if (targets.length === 0) {
+            addToast('没有可合并的重复', 'info');
+            setShowBulkConfirm(false);
+            return;
+        }
+        setBulkMerging(true);
+        setShowBulkConfirm(false);
+        setBulkProgress({ done: 0, total: targets.length });
+        let ok = 0;
+        let failed = 0;
+        const { realMergeMemories } = await import('../utils/memoryPalace');
+        for (let i = 0; i < targets.length; i++) {
+            const p = targets[i];
+            try {
+                const result = await realMergeMemories(char.id, p.aId, p.bId, 'concat', {
+                    embeddingConfig: memoryPalaceConfig?.embedding,
+                    remoteVectorConfig,
+                });
+                if (result.merged) {
+                    setProcessedKeys(prev => new Set(prev).add(pairKey(p)));
+                    setMergedKeys(prev => new Set(prev).add(pairKey(p)));
+                    ok++;
+                } else {
+                    failed++;
+                }
+            } catch {
+                failed++;
+            }
+            setBulkProgress({ done: i + 1, total: targets.length });
+        }
+        setBulkMerging(false);
+        if (ok > 0) await onReload();
+        if (failed === 0) {
+            addToast(`✅ 一键合并完成：${ok} 对`, 'success');
+        } else {
+            addToast(`⚠️ 一键合并完成：${ok} 成功 / ${failed} 失败`, failed === 0 ? 'success' : 'info');
+        }
     };
 
     // 过滤掉已处理（合并 / 都保留）
@@ -5066,8 +5176,24 @@ function DedupView({ char, onBack, onReload, addToast }: {
                     </div>
 
                     {pairs.length > 0 && (
-                        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
-                            找到 {pairs.length} 组重复（已处理 {processedKeys.size} 组，其中合并 {mergedKeys.size} 组）
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+                            <div style={{ fontSize: 12, color: '#6b7280', flex: 1 }}>
+                                找到 {pairs.length} 组重复（已处理 {processedKeys.size} 组，其中合并 {mergedKeys.size} 组）
+                            </div>
+                            {visiblePairs.length > 0 && (
+                                <div
+                                    onClick={bulkMerging ? undefined : () => setShowBulkConfirm(true)}
+                                    style={{
+                                        textAlign: 'center', padding: '5px 12px', borderRadius: 999, cursor: bulkMerging ? 'wait' : 'pointer',
+                                        fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+                                        background: bulkMerging ? '#9ca3af' : '#ef4444', color: 'white',
+                                    }}
+                                >
+                                    {bulkMerging
+                                        ? `合并中 ${bulkProgress.done}/${bulkProgress.total}`
+                                        : `🔀 一键合并全部 ${visiblePairs.length} 对`}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -5106,12 +5232,19 @@ function DedupView({ char, onBack, onReload, addToast }: {
                                     {p.bContent}
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                                    <div onClick={() => setRealMergePair(p)}
+                                        style={{
+                                            flex: 1, minWidth: 80, textAlign: 'center', padding: '6px 0', borderRadius: 999, cursor: realMerging ? 'wait' : 'pointer',
+                                            fontSize: 11, fontWeight: 600, color: 'white', background: mergedFlag ? '#9ca3af' : '#ef4444',
+                                        }}>
+                                        {mergedFlag ? '✓ 已合并' : '真合并两条'}
+                                    </div>
                                     <div onClick={() => handleMerge(p)}
                                         style={{
                                             flex: 1, minWidth: 80, textAlign: 'center', padding: '6px 0', borderRadius: 999, cursor: 'pointer',
-                                            fontSize: 11, fontWeight: 600, color: 'white', background: mergedFlag ? '#9ca3af' : '#0ea5e9',
+                                            fontSize: 11, fontWeight: 600, color: '#0ea5e9', background: '#e0f2fe',
                                         }}>
-                                        {mergedFlag ? '✓ 已合并' : '合并到同一事件盒'}
+                                        绑到同一事件盒
                                     </div>
                                     <div onClick={() => handleKeepBoth(p)}
                                         style={{
@@ -5231,6 +5364,155 @@ function DedupView({ char, onBack, onReload, addToast }: {
                     )}
                 </div>
             )}
+
+            {/* ─── 真合并模式弹窗（选 keep/drop/concat）─── */}
+            {realMergePair && (() => {
+                const p = realMergePair;
+                const aRoom = ROOM_COLORS[p.aRoom];
+                const bRoom = ROOM_COLORS[p.bRoom];
+                const aDate = new Date(p.aCreatedAt).toLocaleDateString('zh-CN');
+                const bDate = new Date(p.bCreatedAt).toLocaleDateString('zh-CN');
+                return (
+                    <div style={{
+                        position: 'fixed', inset: 0, zIndex: 220,
+                        background: 'rgba(15,23,42,0.55)', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', padding: 16,
+                    }} onClick={() => !realMerging && setRealMergePair(null)}>
+                        <div style={{
+                            width: '100%', maxWidth: 380, maxHeight: '80vh',
+                            background: 'white', borderRadius: 24,
+                            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                            boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
+                        }} onClick={e => e.stopPropagation()}>
+                            <div className="px-6 pt-6 pb-3 text-center">
+                                <div className="text-[10px] tracking-[0.25em] uppercase font-semibold text-rose-500">真合并</div>
+                                <div className="text-[16px] font-bold mt-1 text-slate-800">选保留方式</div>
+                                <div className="text-[11px] text-slate-400 mt-1">删除不可逆，请确认</div>
+                            </div>
+                            <div className="flex-1 overflow-y-auto px-5 py-2 space-y-2 no-scrollbar">
+                                {/* 候选 A */}
+                                <button
+                                    disabled={realMerging}
+                                    onClick={() => handleRealMerge(p, 'keep_a')}
+                                    style={{
+                                        width: '100%', textAlign: 'left', padding: 10, borderRadius: 12,
+                                        border: '1px solid #e5e7eb', background: 'white',
+                                        cursor: realMerging ? 'wait' : 'pointer',
+                                    }}>
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <span className="text-[10px] font-bold text-emerald-600">保留 A · 删 B</span>
+                                        <span style={{ fontSize: 10, color: aRoom }}>{getRoomLabel(p.aRoom, char.userName || '')}</span>
+                                        <span className="text-[10px] text-slate-400 ml-auto">{aDate}</span>
+                                    </div>
+                                    <div className="text-[12px] text-slate-700 leading-relaxed">{p.aContent}</div>
+                                </button>
+                                {/* 候选 B */}
+                                <button
+                                    disabled={realMerging}
+                                    onClick={() => handleRealMerge(p, 'keep_b')}
+                                    style={{
+                                        width: '100%', textAlign: 'left', padding: 10, borderRadius: 12,
+                                        border: '1px solid #e5e7eb', background: 'white',
+                                        cursor: realMerging ? 'wait' : 'pointer',
+                                    }}>
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <span className="text-[10px] font-bold text-emerald-600">保留 B · 删 A</span>
+                                        <span style={{ fontSize: 10, color: bRoom }}>{getRoomLabel(p.bRoom, char.userName || '')}</span>
+                                        <span className="text-[10px] text-slate-400 ml-auto">{bDate}</span>
+                                    </div>
+                                    <div className="text-[12px] text-slate-700 leading-relaxed">{p.bContent}</div>
+                                </button>
+                                {/* 拼接 */}
+                                <button
+                                    disabled={realMerging}
+                                    onClick={() => handleRealMerge(p, 'concat')}
+                                    style={{
+                                        width: '100%', textAlign: 'left', padding: 10, borderRadius: 12,
+                                        border: '1px solid #fbbf24', background: '#fffbeb',
+                                        cursor: realMerging ? 'wait' : 'pointer',
+                                    }}>
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <span className="text-[10px] font-bold text-amber-600">拼接 A + B · 删 B</span>
+                                        <span className="text-[10px] text-slate-400 ml-auto">importance 取大、tags 合并</span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 leading-relaxed" style={{
+                                        display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                                        overflow: 'hidden',
+                                    }}>
+                                        A: {p.aContent}<br />B: {p.bContent}
+                                    </div>
+                                </button>
+                            </div>
+                            <div className="px-6 pb-6 pt-2 flex gap-2">
+                                <button
+                                    onClick={() => setRealMergePair(null)}
+                                    disabled={realMerging}
+                                    className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* ─── 一键合并全部确认弹窗 ─── */}
+            <Modal
+                isOpen={showBulkConfirm}
+                title="一键合并全部"
+                onClose={() => !bulkMerging && setShowBulkConfirm(false)}
+                zIndex={220}
+                footer={
+                    <>
+                        <button
+                            onClick={() => setShowBulkConfirm(false)}
+                            disabled={bulkMerging}
+                            className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={handleBulkMerge}
+                            disabled={bulkMerging}
+                            className="flex-1 py-3 text-white font-bold rounded-2xl active:scale-95 transition-transform"
+                            style={{
+                                background: bulkMerging ? '#9ca3af' : 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                boxShadow: bulkMerging ? 'none' : '0 6px 18px -6px rgba(239,68,68,0.5)',
+                            }}
+                        >
+                            {bulkMerging ? `合并中 ${bulkProgress.done}/${bulkProgress.total}` : '开始合并'}
+                        </button>
+                    </>
+                }
+            >
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-red-500">
+                        <span className="text-base">⚠️</span>
+                        <span className="text-xs font-bold">删除不可逆</span>
+                    </div>
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                        将要拼接合并 <span className="font-bold text-red-500">{visiblePairs.length}</span> 对重复记忆。
+                    </p>
+                    <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 leading-relaxed space-y-1">
+                        <p>• 默认 mode = <b>拼接</b>：A + B 内容合并 + 标签去重 + importance 取大</p>
+                        <p>• 每对 A 保留，B 删除（连同向量和链接）</p>
+                        <p>• 合并后异步重跑 embedding（约 1-2 秒/对）</p>
+                        <p>• 单对失败不阻塞其他对，结束后统一报告</p>
+                    </div>
+                    {bulkMerging && (
+                        <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'rgba(239,68,68,0.15)' }}>
+                            <div
+                                className="h-full transition-all duration-200"
+                                style={{
+                                    width: `${bulkProgress.total > 0 ? (bulkProgress.done / bulkProgress.total * 100) : 0}%`,
+                                    background: 'linear-gradient(90deg, #ef4444, #f87171)',
+                                }}
+                            />
+                        </div>
+                    )}
+                </div>
+            </Modal>
         </div>
     );
 }

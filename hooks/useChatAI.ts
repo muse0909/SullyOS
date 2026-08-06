@@ -24,7 +24,6 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
-import { shouldShowReminder, markReminderShown, buildReminderText } from '../utils/noteReminder';
 import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import {
@@ -880,7 +879,7 @@ export const useChatAI = ({
                 userListeningContext && music.listeningTogetherWith.includes(char.id)
             );
             // buildSystemPrompt 和 DB 消息加载彼此独立，并发跑节省 Math.max 以外的等待时间
-            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；私密记事 / 朋友圈 主动行为用 100 条足够）
+            // 暮色 2026-07-17：聊天 history 注入默认 100 条（之前 500 太多，省 token；朋友圈 主动行为用 100 条足够）
             const limit = char.contextLimit || 100;
             const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
@@ -922,16 +921,6 @@ export const useChatAI = ({
             let dynamicRecentEmotions = '';
             // 兼容老字段：setLastSystemPrompt 还要用，仍拼成大 string 展示
             const systemPrompt = `${bp3Context}\n\n${bp1Tools}\n\n${bp2Rules}`;
-
-            // 暮色 2026-07-17：定时提醒注入（每天到点后第一次 chat 触发）
-            //   - 检查 shouldShowReminder（今天是否到点 + 还没提醒过）
-            //   - 满足条件：往 bp2Rules 拼 reminderText，markReminderShown 防止重复
-            //   - 归 bp2Rules 因为是行为约束（每天一次，cache miss 一次可接受）
-            if (shouldShowReminder()) {
-                bp2Rules += buildReminderText(char.name, userProfile.name);
-                markReminderShown();
-                console.log(`📒 [NoteReminder] 触发今天 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 的私密记事提醒`);
-            }
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
@@ -1231,7 +1220,7 @@ export const useChatAI = ({
             //                  不再 push 到 messages，bp1-bp3 cache 命中完全不受影响
             //     - OpenAI 协议：保留原样 push 到 messages 末尾（OpenAI 协议允许 system 在任意位置）
             //
-            //   6 段：bilingual reminder / realtimeText / innerState / privateNotesText / recentEmotions / memoryPalace
+            //   5 段：bilingual reminder / realtimeText / innerState / recentEmotions / memoryPalace
             //   都不挂 cache_control（每轮必变），进 bpDynamic 段。
             //
             // ⚠️ 2026-07-16 暮色提议：把每轮必变的"动态尾巴"挪出 systemPrompt
@@ -1240,8 +1229,7 @@ export const useChatAI = ({
             //   挪出 systemPrompt：让 bp3Context 段真正稳定
             //   预期：cache 命中率从即享 kiro 18% / 青屿 80% 提升到 70%+ / 95%+
             //
-            // ⚠️ 2026-07-17 4 断点优化：再加 3 段
-            //   - privateNotesText: 最近 5 条私密记事
+            // ⚠️ 2026-07-17 4 断点优化：再加 2 段
             //   - recentEmotions:   最近 5 条心声
             //   - memoryPalace:     向量检索结果
             const dynamicTailParts: string[] = [];
@@ -1253,10 +1241,6 @@ export const useChatAI = ({
             }
             if (dynamicTail?.innerState && dynamicTail.innerState.trim()) {
                 dynamicTailParts.push(`[当前意识流]\n${dynamicTail.innerState.trim()}\n（这是你此刻真实的内心独白，自然染进语气和情绪里就好，不用刻意呈现。）`);
-            }
-            // ⚠️ 2026-07-17 4 断点优化：私密记事 awareness
-            if (dynamicTail?.privateNotesText && dynamicTail.privateNotesText.trim()) {
-                dynamicTailParts.push(dynamicTail.privateNotesText.trim());
             }
             // ⚠️ 2026-07-17 4 断点优化：最近心声
             if (dynamicRecentEmotions) {
@@ -1526,7 +1510,9 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
         return {
             contents: [{ role: 'user', parts }],
             systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+            // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
+            //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
+            generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
         };
     };
 
@@ -1625,10 +1611,12 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
                 }
             } else {
                 const visionMessages = buildVisionMessages(imageUrl);
+                // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
+                //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
                 const requestBody = {
                     model: requestModel,
                     messages: visionMessages,
-                    temperature: 0.3,
+                    temperature: 0.85,
                     stream: false,
                 };
                 data = await safeFetchJson(`${visionUrl}/chat/completions`, {
@@ -1940,7 +1928,17 @@ if (toolsList.length > 0) {
                     const geminiRes = await fetch(tryUrl, {
                         method: 'POST',
                         headers: geminiHeaders,
-                        body: JSON.stringify(geminiRequestBody),
+                        // 暮色 2026-08-06：修 Gemini 400 真凶 — 之前 8-4 加 key 池时往 geminiRequestBody 上挂了
+                        //   __pickedKeyIndex / __pickedKeyShort 闭包变量，line 1785-1786 直接
+                        //   (geminiRequestBody as any).__pickedKeyIndex = picked.keyIndex
+                        //   fetch 时 JSON.stringify(geminiRequestBody) 把这俩字段也发出去了
+                        //   Google 收到未知字段 → 400 INVALID_ARGUMENT
+                        //   修法：序列化前先剥掉这俩内部字段，只发 Gemini 标准字段
+                        body: JSON.stringify({
+                            contents: geminiRequestBody.contents,
+                            systemInstruction: geminiRequestBody.systemInstruction,
+                            generationConfig: geminiRequestBody.generationConfig,
+                        }),
                     });
                     if (!geminiRes.ok) {
                         const errText = await geminiRes.text().catch(() => '');
@@ -3219,77 +3217,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 console.warn('📱 [Moments] 解析失败:', e);
             }
 
-            // 5.9d Handle Private Notes (私密记事) Actions
-            // 暮色 2026-07-17：让 AI 自己决定写私密记事（仿 MOMENT_POST 文本 token 模式）
-            // AI 在 chat reply 里输出 [[PRIVATE_NOTE: 内容 | type]] → 这里解析 → saveRoomNote + 推 system 消息
-            // type 必须是: thought / doodle / search / lyric / gossip 之一
-            try {
-                const noteMatches = [...aiContent.matchAll(/\[\[PRIVATE_NOTE:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
-                if (noteMatches.length > 0) {
-                    // 限制每次最多 1 条（避免 AI 一次刷 N 条）
-                    const m = noteMatches[0];
-                    const content = m[1].trim();
-                    const type = m[2].toLowerCase() as RoomNote['type'];
-                    if (content) {
-                        const newNote: RoomNote = {
-                            id: `note-${Date.now()}`,
-                            charId: char.id,
-                            timestamp: Date.now(),
-                            content,
-                            type,
-                            // 2026-07-22：暮色自定义小纸条样式（写入时从激活组随机选图，存到 note）
-                            styleImageUrl: pickRandomStyleImage(),
-                        };
-                        await DB.saveRoomNote(newNote);
-                        console.log(`📒 [PrivateNote] ${char.name} 写了一条私密记事: ${content.slice(0, 30)}... (type=${type})`);
-                        // 推 system 消息进聊天流（让用户感知到）
-                        await DB.saveMessage({
-                            charId: char.id,
-                            role: 'system',
-                            type: 'text',
-                            content: `[系统: ${char.name} 在记事本上写道: \n"${content}"]`,
-                        });
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                        addToast(`📒 ${char.name} 写了一条私密记事`, 'success', 2500);
-                    }
-                }
-                // 移除所有 PRIVATE_NOTE 标记（无论发没发出去）
-                aiContent = aiContent.replace(/\[\[PRIVATE_NOTE:\s*[\s\S]+?\]\]/g, '').trim();
-            } catch (e) {
-                console.warn('📒 [PrivateNote] 解析失败:', e);
-            }
-
-            // 5.9e Handle XiaoZhiTiao (小纸条) Actions
+            // 5.9d Handle XiaoZhiTiao (小纸条) Actions
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
-            // AI 在 chat reply 里输出 [[XIAO_ZHI_TIAO: 内容 | type]] → 这里解析 → saveXiaoZhiTiao + 推 system 消息
-            // type 必须是: thought / doodle / search / lyric / gossip 之一
+            // 暮色 2026-08-07：去掉 type 字段（type 没用），token 简化为 [[XIAO_ZHI_TIAO: 内容 ]]
+            // 暮色 2026-08-07：每天最多 5 条 — 系统硬限制（即使 prompt 写了，AI 仍可能超）
             try {
-                const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\|\s*(thought|doodle|search|lyric|gossip)\s*\]\]/gi)];
-                if (xztMatches.length > 0) {
-                    const m = xztMatches[0];
-                    const content = m[1].trim();
-                    const type = m[2].toLowerCase() as XiaoZhiTiao['type'];
-                    if (content) {
-                        const newNote: XiaoZhiTiao = {
-                            id: `xzt-${Date.now()}`,
-                            charId: char.id,
-                            timestamp: Date.now(),
-                            content,
-                            type,
-                            // 2026-07-22：自定义样式（写入时从激活组随机选图存到 note）
-                            styleImageUrl: pickRandomXiaoZhiTiaoImage(),
-                        };
-                        await DB.saveXiaoZhiTiao(newNote);
-                        console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}... (type=${type})`);
-                        // 推 system 消息进聊天流
-                        await DB.saveMessage({
-                            charId: char.id,
-                            role: 'system',
-                            type: 'text',
-                            content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
-                        });
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                        addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                const todaysXZT = (await DB.getXiaoZhiTiaos(char.id))
+                    .filter(n => n.timestamp >= todayStart.getTime());
+                if (todaysXZT.length >= 5) {
+                    console.log(`📝 [XiaoZhiTiao] 今天已写 ${todaysXZT.length} 条，跳过`);
+                } else {
+                    const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/g)];
+                    if (xztMatches.length > 0) {
+                        const m = xztMatches[0];
+                        const content = m[1].trim();
+                        if (content) {
+                            const newNote: XiaoZhiTiao = {
+                                id: `xzt-${Date.now()}`,
+                                charId: char.id,
+                                timestamp: Date.now(),
+                                content,
+                                styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                            };
+                            await DB.saveXiaoZhiTiao(newNote);
+                            console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
+                            await DB.saveMessage({
+                                charId: char.id,
+                                role: 'system',
+                                type: 'text',
+                                content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
+                            });
+                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                        }
                     }
                 }
                 // 移除所有 XIAO_ZHI_TIAO 标记
@@ -4222,6 +4184,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // Clean all quote tag variants from content
             aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
 
+            // 先提取 [[THOUGHT: ...]] 存 metadata.thought
+            //   必须在 sanitize 之前提取——sanitize 会 strip 掉 THOUGHT 标签
+            //   MessageItem 渲染时读 metadata.thought 显示折叠的"💭 思维链"
+            let thoughtContent = '';
+            const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+            if (thoughtMatch) {
+                thoughtContent = thoughtMatch[1].trim();
+            }
+
             // 8. Split and Stream (Simulate Typing)
             // Note: SEND_EMOJI tags are preserved through sanitize so splitResponse can interleave them with text
 
@@ -4242,6 +4213,14 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
 
                 let globalMsgIndex = 0;
+
+                // thought 只挂到本轮首条消息（globalMsgIndex === 0）——后续 chunk 不挂，避免重复显示
+                const buildChunkMeta = () => {
+                    if (globalMsgIndex === 0 && thoughtContent) {
+                        return { ...(mcdInheritMeta || {}), thought: thoughtContent };
+                    }
+                    return mcdInheritMeta;
+                };
 
                 if (hasTranslationTags) {
                     // ─── New bilingual format: each <翻译> block = one bubble ───
@@ -4269,7 +4248,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     if (!chunk) continue;
                                     const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                     await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                     setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                     globalMsgIndex++;
                                 }
@@ -4285,7 +4264,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 : (originalText || translatedText);
                             const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                             await new Promise(r => setTimeout(r, Math.min(Math.max(biContent.length * 30, 400), 2000)));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: buildChunkMeta() } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             globalMsgIndex++;
                         }
@@ -4304,7 +4283,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (!chunk) continue;
                                 const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                 await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                 globalMsgIndex++;
                             }
@@ -4316,7 +4295,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         const foundEmoji = emojis.find(e => e.name === emojiName);
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         }
                     }
@@ -4331,7 +4310,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const foundEmoji = emojis.find(e => e.name === part.content);
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             }
                         } else {
@@ -4368,7 +4347,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (ChatParser.hasDisplayContent(chunk)) {
                                     const cleanChunk = ChatParser.sanitize(chunk);
                                     if (cleanChunk) {
-                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                         setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                         globalMsgIndex++;
                                     }
@@ -4496,9 +4475,18 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
     // NOTE: The actual proactive trigger handler is registered globally in OSContext
     // so it works even when Chat is not open. These are just start/stop helpers.
 
-    const startProactiveChat = (intervalMinutes: number) => {
+    // config.enabled=false 时不 start（防御性，runProactive 也会做实际拦截）
+    // 必须用传进来的 config.enabled，不能读闭包里的 char.proactiveConfig.enabled
+    //   updateCharacter 异步调度，startProactiveChat 紧跟同步调，闭包里的 char 还是老 ref
+    //   老 ref 可能是 {enabled:false}（被 runProactive 主动 stop 过）→ 误判 → schedule 没起
+    //   修法：传整个新 config，用 config.enabled 判断
+    const startProactiveChat = (config: NonNullable<CharacterProfile['proactiveConfig']>) => {
         if (!char) return;
-        ProactiveChat.start(char.id, intervalMinutes);
+        if (config.enabled === false) {
+            console.log(`[ChatAI] startProactiveChat skipped: ${char.name} config.enabled=false`);
+            return;
+        }
+        ProactiveChat.start(char.id, config.intervalMinutes);
     };
 
     const stopProactiveChat = () => {

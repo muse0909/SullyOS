@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule } from '../types';
-import { useRoomNotes } from '../hooks/useRoomNotes';
 import ScheduleCard from '../components/schedule/ScheduleCard';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
@@ -248,12 +247,8 @@ const RoomApp: React.FC = () => {
     
     // Extended State
     const [todaysTodo, setTodaysTodo] = useState<RoomTodo | null>(null);
-    // 暮色 2026-07-17：私密记事独立成发现页子页，RoomApp 改用共用 hook（UI 不变）
-    // 阶段 2：删除旧 notebookEntry 写入逻辑后，addNote 也不再被 RoomApp 调用，只保留读+删
-    // 2026-07-22 fix：原代码在 char 定义之前调 useRoomNotes(char?.id) → char 处于 TDZ，访问抛 ReferenceError
-    //   修法：把 const char 提到 useRoomNotes 之前（hook 顺序不能改，所以不能挪 hook 调用位置）
+    const [notebookEntries, setNotebookEntries] = useState<RoomNote[]>([]);
     const char = characters.find(c => c.id === activeCharacterId);
-    const { notes: notebookEntries, deleteNote: deleteNoteBase } = useRoomNotes(char?.id);
     const [showSidebar, setShowSidebar] = useState(false);
     const [activePanel, setActivePanel] = useState<'todo' | 'notebook' | 'schedule'>('todo');
     const [roomSchedule, setRoomSchedule] = useState<DailySchedule | null>(null);
@@ -408,8 +403,7 @@ const RoomApp: React.FC = () => {
             const existingNotes = await DB.getRoomNotes(c.id);
             const existingSchedule = await DB.getDailySchedule(c.id, today);
             setTodaysTodo(existingTodo);
-            // 暮色 2026-07-17：setNotebookEntries 由 useRoomNotes hook 自动管理（c===char 时 hook 会反映）
-            void existingNotes; // 保留变量避免 lint，hook 自动同步
+            if (existingNotes) setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
             setRoomSchedule(existingSchedule);
 
             addToast('已恢复今日房间状态', 'info');
@@ -500,8 +494,7 @@ const RoomApp: React.FC = () => {
             let existingTodo = await DB.getRoomTodo(c.id, todayStr);
             const existingNotes = await DB.getRoomNotes(c.id);
             const existingSchedule = await DB.getDailySchedule(c.id, todayStr);
-            // 暮色 2026-07-17：setNotebookEntries 由 useRoomNotes hook 自动管理
-            void existingNotes; // 保留变量避免 lint，hook 自动同步
+            if (existingNotes) setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
             setRoomSchedule(existingSchedule);
             
             const shouldGenerateTodo = !existingTodo;
@@ -556,6 +549,14 @@ ${JSON.stringify(interactables)}
 ### 3. [OPTIONAL] 今日待办清单 (Daily To-Do)
 ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽略此项)` : `(系统: 请生成 3-5 条你今天打算做的事。)`}
 
+### 4. 记事簿随笔 (Notebook Entry)
+请在你的私密记事簿上写点什么。
+**要求**：
+1. **风格多变**：可以是刚写的歌词、随笔感悟、心情记录、或者是一首短诗、一份购物清单。
+2. **严禁代码**：**严禁**生成代码块(Code Blocks)或伪代码，除非你的核心设定明确是程序员。请像正常人写日记一样自然。
+3. **格式丰富**：请积极使用 **Markdown** 格式让排版更有趣。
+4. **内容新颖**：必须是新的内容，展示你作为独立个体的思考。
+
 ### 输出格式 (Strict JSON)
 {
   "actorStatus": "...",
@@ -564,6 +565,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     "item_id": { "description": "...", "reaction": "..." }
   },
   ${shouldGenerateTodo ? `"todoList": ["task 1", "task 2"],` : ''}
+  "notebookEntry": { "content": "markdown string...", "type": "thought" }
 }
 `;
             // DEBUG: Save prompt for inspection
@@ -639,8 +641,28 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     });
                 }
 
-                // 暮色 2026-07-17：移除"3. Handle Notebook"块（私密记事改由 useChatAI 在聊天时通过 [[PRIVATE_NOTE:...|type]] 主动写）
-                //   RoomApp 不再主动生成笔记内容
+                // 3. Handle Notebook
+                if (result.notebookEntry) {
+                    const msgContent = `[系统: ${c.name} 在记事本上写道: \n"${result.notebookEntry.content}"]`;
+
+                    const msgId = await DB.saveMessage({
+                        charId: c.id,
+                        role: 'system',
+                        type: 'text',
+                        content: msgContent
+                    });
+
+                    const newNote: RoomNote = {
+                        id: `note-${Date.now()}`,
+                        charId: c.id,
+                        timestamp: Date.now(),
+                        content: result.notebookEntry.content,
+                        type: 'thought',
+                        relatedMessageId: msgId
+                    };
+                    await DB.saveRoomNote(newNote);
+                    setNotebookEntries(prev => [newNote, ...prev]);
+                }
 
             } else { throw new Error(`API Error ${response.status}`); }
 
@@ -714,13 +736,12 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     };
 
     const handleDeleteNote = async (id: string) => {
-        // 暮色 2026-07-17：保留"删 note + 删关联 chat 消息"的业务逻辑，
-        //   RoomApp 特有的（旧数据有 relatedMessageId 字段），hook 只管删 note
         const note = notebookEntries.find(n => n.id === id);
         if (note && note.relatedMessageId) {
             await DB.deleteMessage(note.relatedMessageId);
         }
-        await deleteNoteBase(id);
+        await DB.deleteRoomNote(id);
+        setNotebookEntries(prev => prev.filter(n => n.id !== id));
         addToast('笔记已彻底粉碎 (相关记录已清除)', 'success');
     };
 

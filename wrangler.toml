@@ -1,0 +1,62 @@
+## 主动消息 2.0 · Cloudflare Worker 部署配置
+##
+## 暮色 8-6 部署流程：
+##   1. Cloudflare 仪表盘 Workers & Pages → Create Worker → sullyos
+##      - Production branch: preview（暮色 push preview 才会触发 deploy）
+##      - Builds for non-production branches: Enabled
+##      - Root directory: /
+##      - Build command: npm run build:worker:amsg
+##      - Deploy command: npx wrangler deploy
+##   2. Cloudflare 仪表盘 → Storage & databases → D1 → Create database
+##      - name 填 sully-amsg2 → 拿到 database_id（UUID 格式）
+##   3. sullyos 主页 → Bindings → Add → D1 database binding
+##      - Variable name: DB
+##      - D1 database: 选 sully-amsg2
+##      Cloudflare 仪表盘会自动把 database_id 同步到下面这个 wrangler.toml
+##      （**不要手填下面的 database_id 占位**）
+##   4. sullyos 主页 → Settings → Build → Variables and secrets
+##      - 加 4 个 Secret：MASTER_KEY / VAPID_EMAIL / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+##        VAPID 密钥对去 vapidkeys.com 生成
+##   5. Deployments → Retry build
+##   6. 拿到 worker URL（https://sullyos.<account>.workers.dev）→
+##      前端 Settings → 主动消息 2.0 → API base URL 填这个
+##
+## 注意：
+##   - 不要加 nodejs_compat flag（amsg-server/cloudflare 子路径用纯 Web Crypto）
+##   - 路由用 endsWith 匹配，所以前端 baseUrl 带不带 /api/v1 前缀都行
+##   - worker 入口必须 export default { fetch, scheduled }（module worker 格式，
+##     wrangler 4.x 严格模式），否则报 10021 "No event handlers were registered"
+
+name = "sullyos"
+main = "worker/amsg/worker.bundle.js"
+## compatibility_date 由 Cloudflare 仪表盘 remote 配置注入（2026-08-06）。
+## 不在 wrangler.toml 写，避免跟仪表盘 drift warning。
+## 仪表盘 deployment 里实际用的是 2026-08-06（仪表盘自动选今天的日期）。
+compatibility_date = "2026-08-06"
+compatibility_flags = []
+workers_dev = true
+preview_urls = true
+
+## D1 数据库绑定
+##   database_id 由 Cloudflare 仪表盘 Bindings → D1 database binding 同步过来
+##   留空 = 让 wrangler 4.x 读仪表盘 remote binding；不写这字段避免 drift warning
+##   如要手填：wrangler d1 create sully-amsg2
+[[d1_databases]]
+binding = "DB"
+database_name = "sully-amsg2"
+
+## Cron 触发器：每分钟扫一次到期任务
+## 主动消息 2.0 支持 minute 级精度（比 1.0 的 30 分钟细一截）
+[triggers]
+crons = ["* * * * *"]
+
+## 非敏感环境变量（明文可放这里）。密钥类走 Secret。
+##   - SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
+##     留空 = 不校验（生产环境必须设强随机串）
+##   - CORS_ALLOWED_ORIGIN：跨域白名单。填具体 origin（推荐），
+##     留空则按请求 origin 回显（开发模式）。
+##
+## MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL 走 Secret
+[vars]
+SERVER_TOKEN = ""
+CORS_ALLOWED_ORIGIN = "https://sully-os-git-preview-muse0909s-projects.vercel.app"

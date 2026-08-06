@@ -1031,7 +1031,7 @@ const processingLocks = new Set<string>();
 export interface PipelineResult {
     stored: number;
     skipped: number;
-    memories: { content: string; room: string; importance: number; mood: string; tags: string[] }[];
+    memories: { id: string; content: string; room: string; importance: number; mood: string; tags: string[] }[];
     batches: { index: number; total: number; extracted: number; ok: boolean; error?: string }[];
     /**
      * 自动归档建议（供 React 层调用 updateCharacter 应用到 char.memories + hideBeforeMessageId）。
@@ -1385,7 +1385,7 @@ export async function processNewMessages(
         const pipelineResult: PipelineResult = {
             stored: vectorResult.stored,
             skipped: vectorResult.skipped + exactDedupResult.skipped,
-            memories: storedMemories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
+            memories: storedMemories.map(m => ({ id: m.id, content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
             batches: batchResults,
             autoArchive,
         };

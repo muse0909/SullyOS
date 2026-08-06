@@ -33,8 +33,12 @@ export interface CallLLMResult {
 }
 
 /**
- * 暮色 2026-08-05：fetch 加硬超时的公共 helper。
+ * fetch 加硬超时的公共 helper。
  * 替代裸 fetch：超时自动 abort，避免 LLM 端 stall 永远不返回导致处理锁永远不释放。
+ *
+ * 跨域情况 fallback：青屿等中转站没给 sully-os 部署域名加 CORS 头，浏览器直连会
+ * 触发 OPTIONS 预检失败（net::ERR_FAILED 200 OK）。TypeError 命中时改走
+ * /api/proxy 服务端转发，原样回传上游 status / body，调用方 .ok / .json() 不动。
  */
 async function fetchWithTimeout(
     url: string,
@@ -52,10 +56,41 @@ async function fetchWithTimeout(
         if (e?.name === 'AbortError' || /aborted|abort/i.test(e?.message || '')) {
             throw new Error(`LightLLM ${protocolLabel} 超时（${timeoutMs}ms）— 副 API 无响应，请检查网络或换 key`);
         }
+        const isCorsLikely = e?.name === 'TypeError' && /load failed|failed to fetch|network/i.test(e?.message || '');
+        if (isCorsLikely) {
+            console.log(`[MemoryPalace/llmCall] ${protocolLabel} CORS blocked, retrying via /api/proxy...`);
+            try {
+                return await proxyFetch(url, init);
+            } catch (proxyErr: any) {
+                console.warn(`[MemoryPalace/llmCall] /api/proxy also failed:`, proxyErr?.message);
+                throw proxyErr;
+            }
+        }
         throw e;
     } finally {
         clearTimeout(timeoutHandle);
     }
+}
+
+/** 走 Vercel 服务端 /api/proxy 转发（POST + JSON），绕开浏览器 CORS。 */
+async function proxyFetch(targetUrl: string, init: RequestInit): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (init.headers) {
+        const h = init.headers as Record<string, string>;
+        for (const [k, v] of Object.entries(h)) {
+            headers[k] = v;
+        }
+    }
+    const { 'Content-Type': _, ...forwardHeaders } = headers;
+    return fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            targetUrl,
+            headers: forwardHeaders,
+            body: init.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : undefined,
+        }),
+    });
 }
 
 export async function callLLM(

@@ -1,0 +1,27 @@
+# 主动消息 2.0 · Cloudflare Worker 本地开发环境变量模板
+#
+# 用法：复制本文件为 .dev.vars，填入真实值，wrangler dev 会自动加载。
+# 真实部署时这些 KEY 走 `wrangler secret put` 设到 Cloudflare 控制台，
+# .dev.vars 只用于本地 wrangler dev 调试。
+#
+# 所有字段都是必填（SDK 启动时会检查），缺一个就抛错。
+
+# 用户消息加密 master key（base64 字符串，32 字节随机）
+# 生成：openssl rand -base64 32
+MASTER_KEY=
+
+# VAPID Web Push 密钥对（vapidkeys.com 生成）
+#  - public  可以公开，给前端 ReiClient 用
+#  - private 必须保密，worker 发 push 时签名用
+VAPID_EMAIL=mailto:your-email@example.com
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+
+# 客户端鉴权 token（前端 ReiClient 调任何受保护端点时通过 X-Client-Token 传）
+# 留空 = 不校验（生产环境必须设强随机串）
+# 生成：openssl rand -hex 32
+SERVER_TOKEN=
+
+# 跨域白名单 origin（生产环境建议填前端域名）
+# 留空 = 按请求 origin 回显
+CORS_ALLOWED_ORIGIN=https://sully-os-git-preview-muse0909s-projects.vercel.app

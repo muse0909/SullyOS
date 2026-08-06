@@ -53,6 +53,8 @@ export interface ForceVectorizeResult {
     errorMessage?: string;
     /** 累积的自动归档片段（用于上层 merge 进 char.memories） */
     accumulatedFragments: any[];
+    /** 5 轮累积提取出的记忆节点（用于"提取后确认/编辑"弹窗） */
+    allExtractedMemories: { id: string; content: string; room: string; importance: number; mood: string; tags: string[] }[];
     /** 最终 hideBeforeMessageId（用于上层写回 char） */
     latestHideBefore: number | undefined;
     /** 本次处理起始 hwm（用于上层判断"有没有动"） */
@@ -86,6 +88,7 @@ export async function runForceVectorizeForChar(
 
     const startHwm = getMemoryPalaceHighWaterMark(charId);
     let accumulatedFragments: any[] = [];
+    let allExtractedMemories: { id: string; content: string; room: string; importance: number; mood: string; tags: string[] }[] = [];
     let latestHideBefore: number | undefined = undefined;
     let totalProcessed = 0;
     let finishedNaturally = true;
@@ -149,6 +152,11 @@ export async function runForceVectorizeForChar(
             latestHideBefore = result.autoArchive.hideBeforeMessageId;
         }
 
+        // 累积本轮提取的记忆节点（用于提取后确认/编辑弹窗）
+        if (result?.memories?.length) {
+            allExtractedMemories = allExtractedMemories.concat(result.memories);
+        }
+
         // 检查 hwm 是否前进（如果没前进说明 LLM 提取失败）
         const newHwm = getMemoryPalaceHighWaterMark(charId);
         if (newHwm <= curHwm) {
@@ -177,6 +185,7 @@ export async function runForceVectorizeForChar(
         finishedNaturally,
         errorMessage,
         accumulatedFragments,
+        allExtractedMemories,
         latestHideBefore,
         startHwm,
         endHwm,

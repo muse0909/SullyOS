@@ -15,6 +15,8 @@ import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled a
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
+// 暮色 2026-08-06：主动消息 2.0 全局配置弹窗（接 Cloudflare Worker）
+import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import type { ApiPreset, APIConfig, Message, CharacterProfile } from '../types';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
@@ -316,6 +318,8 @@ const Settings: React.FC = () => {
   const [ppStatus, setPpStatus] = useState<string>('');
   const [ppBusy, setPpBusy] = useState(false);
   const [showPpConfirm, setShowPpConfirm] = useState(false);
+  // 暮色 2026-08-06：主动消息 2.0 全局配置弹窗（接 Cloudflare Worker）
+  const [showAmsg2Config, setShowAmsg2Config] = useState(false);
   const [ppDiag, setPpDiag] = useState<PushDiagnostics | null>(null);
   const [ppTestBusy, setPpTestBusy] = useState(false);
   const [ppResetBusy, setPpResetBusy] = useState(false);
@@ -2279,6 +2283,35 @@ const handleSaveTts = () => {
         )}
         </SettingsSection>
 
+        {/* 暮色 2026-08-06：主动消息 2.0 全局配置入口（接 Cloudflare Worker） */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-indigo-100/60 rounded-xl text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                        </svg>
+                    </div>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 2.0</h2>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 text-indigo-600">2.0 雏形</span>
+            </div>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                主动消息 2.0：角色可以给自己排下一个任务（"两小时后提醒你"），任务到点由云端 Worker 触发，不依赖你的设备在线。
+                需要 Cloudflare Worker + D1 数据库（<a href="https://github.com/qegj567-cloud/SullyOS" target="_blank" rel="noopener" className="text-indigo-600 underline">原作者教程</a>）。
+            </p>
+            <button
+                onClick={() => setShowAmsg2Config(true)}
+                className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-xs font-bold rounded-full active:scale-95 transition-transform"
+            >
+                配置主动消息 2.0（Worker URL / 租户）
+            </button>
+            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                没 Cloudflare 账号？点上面"原作者教程"链接——暮色 8-06 反馈"之前没弄过"。
+                v2 雏形已经能弹出来 + 报友好错误（不会白屏），但没 Worker 之前实际排程跑不通。
+            </p>
+        </section>
+
         {/* 11 - API 请求账本 */}
         <SettingsSection id="apiLog" icon="📋" title="API 请求账本" subtitle="本地调试日志·脱敏导出" isOpen={openSectionId === 'apiLog'} onToggle={toggleSection}>
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
@@ -2290,6 +2323,13 @@ const handleSaveTts = () => {
             v2.2 (Realtime Awareness)
         </div>
       </div>
+
+      {/* 暮色 2026-08-06：主动消息 2.0 全局配置弹窗 */}
+      <ActiveMsgGlobalSettingsModal
+          isOpen={showAmsg2Config}
+          onClose={() => setShowAmsg2Config(false)}
+          addToast={addToast}
+      />
 
       {/* 主动消息 Push 加速 · 启用前确认 */}
       <Modal

@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
     isOpen: boolean;
@@ -26,7 +27,11 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer,
 
     const cardHeightClass = adaptiveHeight ? 'max-h-[80vh]' : 'h-[80vh]';
 
-    return (
+    // 暮色 2026-08-07：createPortal 到 body 逃出 backdrop-filter 父级
+    //   之前 fixed inset-0 会被 backdrop-filter 父级"吃掉"（Chromium 完整实现 spec），
+    //   导致弹窗 z-index 跟父级同级、被盖住、点击穿透到父级
+    //   跟 2026-06-28 buff-popup-portal-fix 同款坑，但这次是项目级 Modal 组件
+    return createPortal(
         <div className="fixed inset-0 flex items-center justify-center p-6 animate-fade-in" style={{ zIndex }}>
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
             <div className={`relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up ${cardHeightClass} flex flex-col`}>
@@ -51,7 +56,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer,
                     </div>
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

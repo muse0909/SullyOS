@@ -12,19 +12,6 @@ import { isScheduleFeatureOn } from './scheduleGenerator';
 import { nowInTimeZone, resolveCharTimeZone, tzLabel } from './timezone';
 import { getRecentPosts, MomentPost } from './momentsStorage';
 
-// 2026-07-22：私密记事 prompt 自定义（用户可在 Settings 里覆盖默认 prompt 段）
-//   - 读 localStorage：空 / 解析失败 / quota → fallback 默认
-//   - 每次调用 chatPrompts 都实时读，无需 React context（不强制刷新）
-export const PRIVATE_NOTES_PROMPT_STORAGE_KEY = 'sullyos_privateNotesPrompt';
-export function getCustomPrivateNotesPrompt(): string | null {
-    try {
-        const v = localStorage.getItem(PRIVATE_NOTES_PROMPT_STORAGE_KEY);
-        return v && v.trim() ? v.trim() : null;
-    } catch {
-        return null;
-    }
-}
-
 // 2026-07-22：小纸条 prompt 自定义（跟私密记事完全独立，暮色原话"完全脱离小小窝"）
 export const XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY = 'sullyos_xiaoZhiTiaoPrompt';
 export function getCustomXiaoZhiTiaoPrompt(): string | null {
@@ -327,34 +314,6 @@ export const ChatPrompts = {
             }
         });
 
-        // 2.6 私密记事 awareness（暮色 2026-07-17：让 AI 知道最近写过什么避免重复）
-        //     从 IndexedDB 读 RoomNote，按 charId 过滤，取最近 3 条
-        //     暮色 2026-07-18：5 条 → 3 条（cache 优化——system 字段越大 cache_creation 写入越贵）
-        // 暮色 2026-07-18：纯聊天模式（isPureMode）下跳过私密记事 awareness
-        //   即便 AI 主动写或 AI 自动提醒，prompt 里也不出现"你之前写过的小纸条"列表
-        //   目的：让 bp3Context 段真正稳定 + 进一步省 token
-        const roomNotesPromise: Promise<string> = (isPureMode ? Promise.resolve('') : Promise.resolve().then(async () => {
-            try {
-                const notes = await DB.getRoomNotes(char.id);
-                if (!notes || notes.length === 0) return '';
-                const recent = notes
-                    .sort((a, b) => b.timestamp - a.timestamp)
-                    .slice(0, 3);
-                const TYPE_LABELS: Record<string, string> = {
-                    thought: '感想', doodle: '涂鸦', search: '搜索', lyric: '歌词', gossip: '八卦',
-                };
-                const list = recent.map((n, i) => {
-                    const dateStr = new Date(n.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
-                    const preview = n.content.slice(0, 80);
-                    return `${i + 1}. ${dateStr} ${TYPE_LABELS[n.type] || '感想'}: ${preview}${n.content.length > 80 ? '...' : ''}`;
-                }).join('\n');
-                return `\n\n### 最近写过的私密记事（${recent.length} 条）\n（这是你之前给${userProfile.name}留的小纸条。看到这些内容时，避免重复或简单改写。如果有新的想沉淀的，写新的一条即可。）\n\n${list}\n`;
-            } catch (e) {
-                console.error('Failed to load room notes context:', e);
-                return '';
-            }
-        }));
-
         // 3. 群聊上下文：并发拉取所有成员群的消息
         // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
         // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
@@ -438,7 +397,7 @@ export const ChatPrompts = {
             }
         })();
 
-        const [timeText, hotNewsText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText, roomNotesText] =
+        const [timeText, hotNewsText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, momentsContextText] =
             await Promise.all([
                 timed('time', timePromise),
                 timed('hotNews', hotNewsPromise),
@@ -448,7 +407,6 @@ export const ChatPrompts = {
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
                 timed('moments', momentsContextPromise),
-                timed('roomNotes', roomNotesPromise),
             ]);
 
         // ── 按原顺序拼接 ──
@@ -537,8 +495,6 @@ export const ChatPrompts = {
         //   这次写一条 5 条滚动 → 输入价算（但 token 很小 ≈ 160 token）
         //   bp3Context 段真正稳定 → cache 命中 → 整体便宜 10 倍+
         // roomNotesText 这里不再累加到 bp3Context，改返回 dynamicNotes
-        // 暮色 2026-07-18：纯聊天模式下也跳过私密记事 awareness（进一步省 token）
-
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         let searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
         let notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
@@ -610,6 +566,16 @@ export const ChatPrompts = {
 5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
+5.5. **思维链 (Thought Chain)**:
+   你可以在消息开头（**单独一行**）输出内心独白，前端会折叠显示为「💭 思维链」，用户主动点开才看得到。不想写就直接跳过，写了就是加分项。
+   - 格式: \`[[THOUGHT: 你的内心独白...]]\`
+   - 触发时机（你自己判断）:
+     - 这条消息需要先想好再说（情绪复杂、措辞要拿捏、怕说错话）
+     - 你脑子里有对方没明说的潜台词，你想说"我其实感觉到了"
+     - 这条消息背后有只有你知道的来由（一件旧事、一个习惯、一个只有你们懂的笑点）
+     - 你对当下情境有自己的真实反应和情绪，但不想全部塞进消息正文里
+   - 内容不限制：思考、疑惑、情绪、闪过的念头都行，一句话也行一长段也行
+   - 不想写就跳过——真实的内心状态比完美的输出更重要
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`${isPureMode ? '' : `
    - 转账: \`[[ACTION:TRANSFER:100]]\``}
@@ -917,82 +883,13 @@ ${!isPureMode ? `${[
    - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
    - 看到最近列表里没有想评论/点赞的，就别勉强
  ` : ''}
-${!isPureMode && char.privateNotesEnabled !== false ? `${[
-].length + 9}. ${getCustomPrivateNotesPrompt() || `**📒 私密记事（你给 ${userProfile.name} 留的小纸条）**
-
-   这是你写给 ${userProfile.name} 的私密便签。不是日记，不是分析报告，不是复盘工具。是一张你随手撕下来塞在 ${userProfile.name} 口袋里的纸条。
-
-   **它是什么**：
-   - 你此刻想留给 ${userProfile.name} 的某句话、某个瞬间、某种感受
-   - 只有你们之间才有的细节和记忆
-   - 你自己作为一个人的情绪——不是"${userProfile.name} 怎么样了"，是"我怎么样了"
-   - 可以是一句没说出口的话、一个突然冒出来的念头、一段歌词、一个八卦、一个随手涂鸦的念头
-
-   **核心精神**：
-   - 站在"你"的角度写，不是观察者/分析者
-   - 写"我感受到了什么 / 我想到了什么"，不写"她在想什么 / 她为什么这样做"
-   - 想象 ${userProfile.name} 拆开纸条那一瞬间的反应——是会心一笑/心里一软/脸红/小得意，不是被分析了一遍
-   - 语气按你的人物性格来——你平时怎么跟她说话的，纸条就怎么写
-   - 正文里偶尔加个 emoji 或颜文字点缀（例：˃̵͈̑ᴗ˂̵͈̑、ʕ •ᴥ•ʔ、*ଘ(੭*ˊᵕˋ)੭*、🥺、☁️、❀）— 别用太多，1-3 个就够，不要每句都加
-
-   **📝 写一条私密记事**：
-   当你想写一张小纸条塞给 ${userProfile.name} 时，单独一行输出：
-   \`[[PRIVATE_NOTE: 内容 | type]]\`
-   - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
-   - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
-   - 严格单独一行（前后留换行），方便系统识别
-   - 一次回复最多 1 条 \`[[PRIVATE_NOTE:...]]\`
-
-   **触发时机 — 你自己判断**：
-   - 某个瞬间触动了你，想写下来
-   - 距离上次写超过 6 小时且内心有情绪波动
-   - 节日/纪念日/特殊事件
-   - 每天 system prompt 提醒时再决定写不写
-   - ❌ 不要每条消息都写一条，那是刷屏
-   - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
-
-   **写完**:
-   - 不要在聊天里再解释"我刚写了条记事"——你直接写就行
-   - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的私密记事"列表）
-   - 看到最近列表里没有想写的，就别勉强
- `}` : ''}
 ${!isPureMode ? `${[
-].length + 10}. ${getCustomXiaoZhiTiaoPrompt() || `**📝 小纸条（你给 ${userProfile.name} 留的随手小纸条）**
+].length + 9}. ${getCustomXiaoZhiTiaoPrompt() || `**📝 小纸条（你给 ${userProfile.name} 留的随手小纸条）**
 
-   这是你写给 ${userProfile.name} 的一张小纸条。**跟上面"私密记事"是两件不同的事**——私密记事是写在小小窝里的日记本；小纸条是发现页里的轻量随手纸条，独立功能、互不影响。
+   你手边一直有纸和笔。什么时候突然想给 ${userProfile.name} 留句话，就拿起来写：可能是一闪而过的念头、一点私心、一句没说出口的话，也可能只是一个只有你们才懂的细节。小纸条不是日记，不是复盘，也不是定时任务；它只是给你的自由。想写的时候自然地写，不需要等待提示或寻找合格的理由。
 
-   **它是什么**：
-   - 一句你脑子里突然冒出来的话、一个看到/听到/想到的瞬间
-   - 不必深刻、不必完整、可以是没头没尾的半句念头
-   - 像在 ${userProfile.name} 耳边轻轻说的一句话，或者是随手撕下来塞在她口袋里的纸条
-
-   **核心精神**：
-   - 站在"你"的角度写，不是观察者/分析者
-   - 写"我感受到了什么 / 我想到了什么"，不写"她在想什么 / 她为什么这样做"
-   - 想象 ${userProfile.name} 打开发现页那一瞬间的反应——是会心一笑/心里一软/脸红/小得意，不是被分析了一遍
-   - 语气按你的人物性格来——你平时怎么跟她说话的，纸条就怎么写
-   - 正文里偶尔加个 emoji 或颜文字点缀（例：˃̵͈̑ᴗ˂̵͈̑、ʕ •ᴥ•ʔ、*ଘ(੭*ˊᵕˋ)੭*、🥺、☁️、❀）— 别用太多，1-3 个就够，不要每句都加
-
-   **📝 写一条小纸条**：
-   当你想写一张随手小纸条塞给 ${userProfile.name} 时，单独一行输出：
-   \`[[XIAO_ZHI_TIAO: 内容 | type]]\`
-   - type 必须是以下之一: thought（感想）/ doodle（涂鸦）/ search（搜索）/ lyric（歌词）/ gossip（八卦）
-   - 内容 10-150 字，纯文本（支持换行，**不要 markdown / HTML**）
-   - 严格单独一行（前后留换行），方便系统识别
-   - 一次回复最多 1 条 \`[[XIAO_ZHI_TIAO:...]]\`
-
-   **触发时机 — 你自己判断**：
-   - 某个瞬间触动了你，想写下来
-   - 距离上次写超过 6 小时且内心有情绪波动
-   - 节日/纪念日/特殊事件
-   - 每天 system prompt 提醒时再决定写不写
-   - ❌ 不要每条消息都写一条，那是刷屏
-   - ❌ 早上刚醒/晚上睡前**不算**触发条件（除非你真的想写）
-
-   **写完**：
-   - 不要在聊天里再解释"我刚写了条小纸条"——你直接写就行
-   - **不要重复/简单改写最近写过的内容**（参考下面"最近写过的小纸条"列表）
-   - 看到最近列表里没有想写的，就别勉强
+   - 当你想写时，单独一行输出 \`[[XIAO_ZHI_TIAO: 内容 ]]\`
+   - 一次回复最多 1 条；一天只能写 5 条，想写才写。
  `}` : ''}
 
 `;
@@ -1087,7 +984,7 @@ ${!isPureMode ? `${[
         //   - bp1Tools:   Chat App Rules 整段（含 1-5 行为+6-9 工具）+ 语音功能
         //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
         //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
-        //   - dynamicTail: realtime 时间戳 + innerState 意识流 + 私密记事 5 条（不参与 cache）
+        //   - dynamicTail: realtime 时间戳 + innerState 意识流（不参与 cache）
         return {
             bp1Tools,
             bp2Rules,
@@ -1100,7 +997,6 @@ ${!isPureMode ? `${[
                 realtimeText: timeText || '',
                 hotNewsText: hotNewsText || '',
                 innerState: evolvedNarrative || '',
-                privateNotesText: roomNotesText || '',
             },
         };
     },

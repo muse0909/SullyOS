@@ -31,6 +31,7 @@ import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatC
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
+import MemoryReviewModal from '../components/chat/MemoryReviewModal';
 import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer';
 import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
@@ -53,7 +54,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -147,6 +148,7 @@ const Chat: React.FC = () => {
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
+    const [vectorizeProgress, setVectorizeProgress] = useState<{ round: number; maxRounds: number; processed: number; remaining: number } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
 
     // 暮色 2026-08-05：清空聊天前的安全确认弹窗（路 3 弹窗，替代浏览器原生 confirm）
@@ -1960,7 +1962,6 @@ if (keepN > 0) {
 
         setIsVectorizing(true);
         setModalType('none');
-        addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
             // 暮色 2026-08-05：改用统一入口 runForceVectorizeForChar
@@ -1972,6 +1973,11 @@ if (keepN > 0) {
             // 写回 char.memories 仍在 UI 层做（避免 forceVectorize 依赖 OSContext）
             const { runForceVectorizeForChar } = await import('../utils/memoryPalace/forceVectorize');
             const { mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+            // 启动时先算一次总未处理数，进度胶囊能算出准确百分比
+            const startHwmForUi = await getMemoryPalaceHWM(char.id);
+            const allMsgsForUi = await DB.getMessagesByCharId(char.id, true);
+            const startRemaining = allMsgsForUi.filter(m => m.id > startHwmForUi).length;
+            setVectorizeProgress({ round: 0, maxRounds: 5, processed: 0, remaining: startRemaining });
             const result = await runForceVectorizeForChar({
                 charId: char.id,
                 charName: char.name,
@@ -1980,7 +1986,7 @@ if (keepN > 0) {
                 userName: userProfile?.name || '',
                 maxRounds: 5, // 暮色 2026-08-05 拍板：1-2 分钟内可跑完
                 onProgress: ({ round, processed, remaining }) => {
-                    console.log(`🏰 [ForceVectorize/Chat] 进度：第 ${round}/5 轮 / 累计处理 ${processed} / 还剩 ${remaining}`);
+                    setVectorizeProgress({ round, maxRounds: 5, processed, remaining });
                 },
             });
 
@@ -2016,11 +2022,78 @@ if (keepN > 0) {
             } else {
                 addToast(`❌ 第 ${result.rounds} 轮中断：${result.errorMessage}（已处理 ${result.processed} 条 / 还剩 ${result.remaining} 条）`, 'error');
             }
+
+            // 暮色 2026-08-07：成功后弹"提取后确认"弹窗（沿用 memoryPalaceResult 弹窗）
+            //   自动提取（useChatAI.ts:4401）也走同一个弹窗 —— 两路复用同一 UI
+            //   D7 方案：已落库 + 可编辑/删除（点"确认"才提交变更）
+            if (result.rounds > 0 && result.allExtractedMemories.length > 0) {
+                setMemoryPalaceResult({
+                    stored: result.processed,
+                    skipped: 0,
+                    memories: result.allExtractedMemories,
+                    batches: result.allExtractedMemories.length > 0
+                        ? [{ index: 1, total: result.rounds, extracted: result.allExtractedMemories.length, ok: result.finishedNaturally }]
+                        : [],
+                    autoArchive: null,
+                });
+            }
         } catch (e: any) {
             addToast(`❌ 向量化失败：${e.message}`, 'error');
         } finally {
             setIsVectorizing(false);
+            setVectorizeProgress(null);
         }
+    };
+
+    // 暮色 2026-08-07：MemoryReviewModal 编辑/删除 handler（D7 方案）
+    //   - 编辑：照搬 MemoryPalaceApp.handleSaveEdit 的范本（标 embedded=false + 异步重跑 embedding）
+    //   - 删除：照搬 DedupeView.handleBatchCleanDelete 的清理（解绑 box + 清 vec + 清 links + 删 node）
+    const handleReviewEdit = async (memoryId: string, newContent: string) => {
+        const { MemoryNodeDB, vectorizeAndStore } = await import('../utils/memoryPalace');
+        const node = await MemoryNodeDB.getById(memoryId);
+        if (!node) {
+            addToast('记忆已不存在', 'error');
+            return;
+        }
+        const trimmed = newContent.trim();
+        if (!trimmed || trimmed === node.content) return;
+        const wasEmbedded = !!node.embedded;
+        node.content = trimmed;
+        node.embedded = wasEmbedded ? false : node.embedded;
+        node.lastAccessedAt = Date.now();
+        await MemoryNodeDB.save(node);
+        if (wasEmbedded) {
+            const mpEmb = memoryPalaceConfig?.embedding;
+            if (!mpEmb?.baseUrl || !mpEmb?.apiKey) {
+                addToast('已编辑，未配置 Embedding API 跳过重跑', 'info');
+                return;
+            }
+            try {
+                const result = await vectorizeAndStore([node], mpEmb, remoteVectorConfig, { skipDedup: true });
+                if (result.stored > 0) {
+                    node.embedded = true;
+                    await MemoryNodeDB.save(node);
+                }
+            } catch (e: any) {
+                addToast('编辑已保存，重跑 embedding 失败：' + (e?.message || e), 'error');
+                return;
+            }
+        }
+        addToast('已编辑并重跑 embedding', 'success');
+    };
+
+    const handleReviewDelete = async (memoryId: string) => {
+        const { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, removeMemoryFromBox } = await import('../utils/memoryPalace');
+        try { await removeMemoryFromBox(memoryId); } catch { /* 可能没绑 box */ }
+        try { await MemoryVectorDB.delete(memoryId); } catch { /* 可能没向量 */ }
+        try {
+            const links = await MemoryLinkDB.getByNodeId(memoryId);
+            for (const l of links) {
+                try { await MemoryLinkDB.delete(l.id); } catch { /* ignore */ }
+            }
+        } catch { /* ignore */ }
+        await MemoryNodeDB.delete(memoryId);
+        addToast('已删除', 'success');
     };
 
     const handleSetHistoryStart = (messageId: number | undefined) => {
@@ -2657,115 +2730,63 @@ if (keepN > 0) {
                  </div>
              )}
 
-
-             {/* 记忆整理结果 — 弹窗（高级感） */}
-             {memoryPalaceResult && (
-                 <div
-                     className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
-                     style={{
-                         pointerEvents: 'all',
-                         background: 'rgba(15,23,42,0.55)',
-                     }}
-                     onClick={() => setMemoryPalaceResult(null)}
-                 >
+             {/* 一键向量化进度 — 顶部胶囊（带轮次/数字/进度条，z-150 与记忆整理中同位置） */}
+             {vectorizeProgress && (() => {
+                 const total = Math.max(vectorizeProgress.processed + vectorizeProgress.remaining, 1);
+                 const pct = Math.min(100, Math.round((vectorizeProgress.processed / total) * 100));
+                 return (
                      <div
-                         className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
+                         className="absolute top-[76px] left-1/2 z-[150] animate-fade-in"
                          style={{
-                             background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
-                             borderRadius: 28,
-                             border: '1px solid rgba(148,163,184,0.18)',
-                             boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
+                             transform: 'translateX(-50%)',
+                             pointerEvents: 'none',
+                             willChange: 'transform, opacity',
                          }}
-                         onClick={(e) => e.stopPropagation()}
                      >
                          <div
-                             className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
-                             style={{ background: 'linear-gradient(90deg, transparent, #6366f1, #a5b4fc, #6366f1, transparent)' }}
-                         />
-                         <div className="px-6 pt-7 pb-4 text-center">
-                             <div
-                                 className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
-                                 style={{
-                                     background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
-                                     border: '1px solid rgba(99,102,241,0.15)',
-                                 }}
-                             >
-                                 <span style={{ fontSize: 26 }}>🗂️</span>
+                             className="flex flex-col gap-1.5 pl-3.5 pr-4 py-2.5 min-w-[16rem]"
+                             style={{
+                                 background: 'rgba(255,255,255,0.92)',
+                                 borderRadius: 18,
+                                 border: '1px solid rgba(16,185,129,0.22)',
+                                 boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                             }}
+                         >
+                             <div className="flex items-center gap-2.5">
+                                 <span
+                                     className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-200 animate-spin"
+                                     style={{ borderTopColor: '#10b981', animationDuration: '0.9s' }}
+                                 />
+                                 <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                                     一键向量化中
+                                 </span>
+                                 <span className="text-[10px] text-slate-500 tabular-nums">
+                                     第 {vectorizeProgress.round}/{vectorizeProgress.maxRounds} 轮
+                                 </span>
+                                 <span className="text-[10px] text-slate-400 tabular-nums ml-auto">
+                                     已处理 {vectorizeProgress.processed} · 剩 {vectorizeProgress.remaining}
+                                 </span>
                              </div>
-                             <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#6366f1' }}>Memory Palace</div>
-                             <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
-                             <p className="text-[11px] text-slate-400 mt-1">
-                                 新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
-                                 {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
-                             </p>
-                             {memoryPalaceResult.batches.some(b => !b.ok) && (
-                                 <p className="text-[10px] text-red-500 mt-1">
-                                     {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `batch ${b.index} 失败`).join(', ')}
-                                 </p>
-                             )}
-                         </div>
-                         <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2 no-scrollbar">
-                             {memoryPalaceResult.memories.map((m, i) => {
-                                 const roomMeta: Record<string, { label: string; color: string }> = {
-                                     living_room: { label: '客厅', color: '#f59e0b' },
-                                     bedroom: { label: '卧室', color: '#8b5cf6' },
-                                     study: { label: '书房', color: '#0ea5e9' },
-                                     user_room: { label: '用户房间', color: '#ec4899' },
-                                     self_room: { label: '自我房间', color: '#10b981' },
-                                     attic: { label: '阁楼', color: '#6366f1' },
-                                     windowsill: { label: '窗台', color: '#14b8a6' },
-                                 };
-                                 const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
-                                 return (
-                                     <div
-                                         key={i}
-                                         className="p-3 rounded-2xl"
-                                         style={{
-                                             background: 'rgba(255,255,255,0.75)',
-                                             border: `1px solid ${meta.color}22`,
-                                             boxShadow: `0 2px 8px ${meta.color}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
-                                         }}
-                                     >
-                                         <div className="flex items-center gap-2 mb-1.5">
-                                             <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                                                 style={{ background: `${meta.color}18`, color: meta.color }}
-                                             >
-                                                 {meta.label}
-                                             </span>
-                                             <span className="text-[10px] text-slate-400">{m.mood}</span>
-                                             <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>{'★'.repeat(Math.min(m.importance, 5))}</span>
-                                         </div>
-                                         <p className="text-[12px] text-slate-700 leading-relaxed">{m.content}</p>
-                                         {m.tags.length > 0 && (
-                                             <div className="flex gap-1 mt-2 flex-wrap">
-                                                 {m.tags.map((t, j) => (
-                                                     <span key={j} className="text-[9px] px-1.5 py-0.5 rounded-full"
-                                                         style={{ background: 'rgba(148,163,184,0.15)', color: '#64748b' }}
-                                                     >{t}</span>
-                                                 ))}
-                                             </div>
-                                         )}
-                                     </div>
-                                 );
-                             })}
-                             {memoryPalaceResult.memories.length === 0 && (
-                                 <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
-                             )}
-                         </div>
-                         <div className="px-6 pb-6 pt-2">
-                             <button
-                                 onClick={() => setMemoryPalaceResult(null)}
-                                 className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
-                                 style={{
-                                     background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                                     boxShadow: '0 6px 18px -6px rgba(79,70,229,0.5)',
-                                 }}
-                             >
-                                 确认
-                             </button>
+                             <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'rgba(16,185,129,0.12)' }}>
+                                 <div
+                                     className="h-full transition-all duration-300"
+                                     style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #10b981, #14b8a6)' }}
+                                 />
+                             </div>
                          </div>
                      </div>
-                 </div>
+                 );
+             })()}
+
+
+             {/* 记忆整理结果 — 弹窗（暮色 2026-08-07 升级为可编辑/删除） */}
+             {memoryPalaceResult && (
+                 <MemoryReviewModal
+                     result={memoryPalaceResult}
+                     onClose={() => setMemoryPalaceResult(null)}
+                     onEditMemory={handleReviewEdit}
+                     onDeleteMemory={handleReviewDelete}
+                 />
              )}
 
             <ChatModals
@@ -2891,6 +2912,9 @@ if (keepN > 0) {
                 onToggleEmotion={handleToggleEmotion}
                 contextLimit={char.contextLimit || 500}
                 onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
+                // 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国）
+                customTimezone={char.customTimezone || ''}
+                onSetCustomTimezone={(tz) => updateCharacter(char.id, { customTimezone: tz, customTimezoneEnabled: !!tz } as any)}
                 // 暮色 2026-07-18：纯聊天模式开关
                 chatMode={char.chatMode || 'full'}
                 onSetChatMode={(mode) => updateCharacter(char.id, { chatMode: mode } as any)}
@@ -3252,7 +3276,10 @@ if (keepN > 0) {
                     onSave={(config) => {
                         updateCharacter(char.id, { proactiveConfig: config });
                         if (config.enabled) {
-                            startProactiveChat(config.intervalMinutes);
+                            // 暮色 2026-08-06 21:35：传整个新 config，让 startProactiveChat 内部用 config.enabled 判断
+                            //   之前传 config.intervalMinutes + 闭包内 char.proactiveConfig.enabled，会用老 ref
+                            //   → 老 ref 可能是 {enabled:false} → 误判 → schedule 没起
+                            startProactiveChat(config);
                             addToast(`已启动主动消息，用户安静满 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}后才会主动发`, 'success');
                         } else {
                             stopProactiveChat();

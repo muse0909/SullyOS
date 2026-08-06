@@ -26,3 +26,9 @@ dist-ssr
 
 # xiaohongshu-skills (cloned dependency)
 xiaohongshu-skills/
+
+# Cloudflare Workers — build output + 本地密钥
+worker/amsg/worker.bundle.js
+worker/proactive-push/worker.bundle.js
+.dev.vars
+.wrangler/

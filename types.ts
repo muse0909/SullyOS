@@ -393,22 +393,8 @@ export interface RoomNote {
     charId: string;
     timestamp: number;
     content: string;
-    type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
+    type: 'thought';
     relatedMessageId?: number;
-    // ── 暮色 2026-07-17：私密记事独立成发现页子页，加 replies 字段
-    //   用户对 AI 写的便签的回复（最多几十条，存进 RoomNote 一起拉，不用单独建表）
-    replies?: NoteReply[];
-    // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
-    //   暮色说"四周有图那种" — 文字居中 + 内容 padding 加大避免盖到四周装饰
-    styleImageUrl?: string;
-}
-
-export interface NoteReply {
-    id: string;
-    parentNoteId: string;
-    author: 'user' | 'character';   // 用户回复 / AI 后续追加
-    content: string;                 // 纯文本
-    timestamp: number;
 }
 
 // ─── 2026-07-31：情侣空间（CoupleSpace）
@@ -517,7 +503,6 @@ export interface XiaoZhiTiao {
     charId: string;
     timestamp: number;
     content: string;
-    type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
     // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
     styleImageUrl?: string;
     replies?: XiaoZhiTiaoReply[];
@@ -2494,33 +2479,13 @@ export interface VRApiCall {
 }
 
 // ============================================================================
-// 暮色 2026-08-05：主动消息 2.0 类型（从原作者 feat/amsg2-multitask-gate fork）
-// Phase 1 阶段：只 cherry-pick 类型定义，不动其他类型（避免破坏主程序）
+// 暮色 2026-08-06：主动消息 2.0 类型（cherry-pick from 原作者 feat/amsg2-multitask-gate）
+// 修前：之前 cherry-pick 了一整个 10 个类型的 block，但其中 ActiveMsg2GlobalConfig
+//   跟暮色原版（D1 driver 详细版）重复声明——TS 用最后声明，原作者简化版会覆盖
+//   暮色原版，丢 6 个字段（driver/databaseUrl/initSecret/tenantId/cronToken/...）
+// 修后：删整块，只 cherry-pick 暮色原版缺的 6 个（ExpirePolicy/TaskSource/TaskStatus/
+//   TaskRecord/ExpiredNoticeRecord/InboxMessage），不重复定义 GlobalConfig/CharacterConfig
 // ============================================================================
-
-/** 主动消息模式：固定文案 / 自由发挥 / 提示后决定 */
-export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
-
-/** 任务重复类型：不重复 / 每天 / 每周 */
-export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
-
-/** 主动消息 2.0 副 API 配置（用于主动消息的便宜模型） */
-export interface ActiveMsg2ApiConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
-/** 全局主动消息 2.0 配置：worker 地址 + 凭据 */
-export interface ActiveMsg2GlobalConfig {
-  userId: string;
-  /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
-  workerUrl: string;
-  /** 与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token */
-  serverToken?: string;
-  initializedAt?: number;
-  updatedAt?: number;
-}
 
 /** 任务过期策略：到期让路 / 强制触发 */
 export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
@@ -2546,17 +2511,6 @@ export interface ActiveMsg2TaskRecord {
   source: ActiveMsg2TaskSource;
   status: ActiveMsg2TaskStatus;
   createdAt: number;
-  lastError?: string;
-}
-
-/** 单个角色的主动消息 2.0 配置：任务清单 + 副 API */
-export interface ActiveMsg2CharacterConfig {
-  enabled: boolean;
-  tasks?: ActiveMsg2TaskRecord[];
-  maxTokens?: number;
-  useSecondaryApi?: boolean;
-  secondaryApi?: ActiveMsg2ApiConfig;
-  lastSyncedAt?: number;
   lastError?: string;
 }
 

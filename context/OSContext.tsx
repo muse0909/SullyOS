@@ -1426,7 +1426,9 @@ if (!isVisible || !isChattingWithThisChar) {
           // Respect per-character proactive config
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
-              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled`);
+              // 主动 stop 把 schedule 真清掉——只 skip 的话 listener 还在主线程，schedule 空跑每 20s/30min fire 一次
+              ProactiveChat.stop(charId);
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled, schedule cleared`);
               return;
           }
 
@@ -1482,14 +1484,21 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
-          // Determine which API to use
-          // 暮色 2026-07-27：3 层优先级
-          //   1. 副 API 开关打开 + 配了 baseUrl → 走副 API
-          //   2. 角色独立 API 开关打开 + 角色配了 baseUrl → 走角色独立 API（proactiveConfig.useCharApi）
-          //   3. 都没开 → 走全局主 API
+          // API 优先级：副 API > 角色独立 API > 主 API
+          // 角色 API 分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存不同字段
+          //   openai → .baseUrl, claude → .claudeBaseUrl, gemini → .geminiBaseUrl
+          //   必须按 char.apiConfig.protocol 选，否则配 Claude/Gemini 时 useCharApi 误判成 false
           const pCfg = char.proactiveConfig;
           const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
-          const useCharApi = !useSecondary && !!(pCfg?.useCharApi && char.apiConfig?.baseUrl);
+          // 角色 API 3 协议下的 baseUrl 选择器
+          const charApiConfig = char.apiConfig;
+          const charApiProtocol = (charApiConfig as any)?.protocol ?? 'openai';
+          const charApiBaseUrl = charApiProtocol === 'claude'
+              ? (charApiConfig as any)?.claudeBaseUrl
+              : charApiProtocol === 'gemini'
+              ? (charApiConfig as any)?.geminiBaseUrl
+              : charApiConfig?.baseUrl;
+          const useCharApi = !useSecondary && !!(pCfg?.useCharApi && charApiBaseUrl);
           let api: any;
           let apiSource: 'secondary' | 'char' | 'main';
           if (useSecondary) {
@@ -1497,13 +1506,15 @@ if (!isVisible || !isChattingWithThisChar) {
               apiSource = 'secondary';
           } else if (useCharApi) {
               // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 3 套字段 + protocol）
-              api = char.apiConfig;
+              api = charApiConfig;
               apiSource = 'char';
           } else {
               api = currentApiConfig;
               apiSource = 'main';
           }
-          if (!api.baseUrl) {
+          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 3 套
+          //   gemini 协议 fetch URL 还没修（safeFetchJson 不支持），先记着
+          if (!api.baseUrl && !((api as any).claudeBaseUrl || (api as any).geminiBaseUrl)) {
               drainQueuedProactive();
               return;
           }
@@ -1542,23 +1553,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   else timeSinceUser = `${Math.floor(gapMin / 1440)}天${Math.floor((gapMin % 1440) / 60)}小时`;
               }
 
-              // 2. Save hidden system hint — 暮色 2026-07-27 重写：
-              //    - 角色定位从"为用户服务"改成"有自己的生活"（借鉴 330 Part 5 行为铁律）
-              //    - 删除"一两句话就好"硬限制
-              //    - 加 thought_chain 思维链前置（ChatParser 会清洗 [[THOUGHT:...]] 不渲染）
-              //    - 注入最近 8 条对话原文（user + assistant）让 AI 有真实素材可参考
+              // 2. Save hidden system hint
+              //    主动消息模式：自动唤醒 + 可调用工具；history 走 messages 数组，hint 不再塞
               const userName = currentUserProfile?.name || '对方';
-
-              const recentChatContext = recentMsgs
-                  .filter(m => (m.role === 'user' && !m.metadata?.proactiveHint) || m.role === 'assistant')
-                  .filter(m => ChatParser.hasDisplayContent(m.content || ''))
-                  .slice(-50)  // 暮色 2026-08-02：8 → 50（让 AI 看到更多上下文，思考更准）
-                  .map(m => {
-                      const speaker = m.role === 'user' ? userName : char.name;
-                      const text = (m.content || '').replace(/\[\[THOUGHT:[\s\S]*?\]\]/g, '').trim();
-                      return `【${speaker}】${text}`;
-                  })
-                  .join('\n');
 
               const gapLongEnough = timeSinceUser && (() => {
                   if (timeSinceUser.includes('天')) return true;
@@ -1567,32 +1564,29 @@ if (!isVisible || !isChattingWithThisChar) {
               })();
 
               const hintLines = [
-                  `[系统提示（非${userName}发言）`,
+                  `[系统提示（这是自动唤醒提示，非${userName}发言）`,
                   `现在 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没找你说话。` : '你们最近没怎么聊。'}`,
                   '',
-                  `你是 ${char.name}，不是只为用户而活——你今天有自己的事、自己的心情、自己的想法。`,
-                  '这次发消息是因为你突然想到什么、想分享什么、或者心里挂着点事想说——而不是"系统安排你发"。',
-                  '也可能你现在忙着、累了、没什么特别想说的，那就不发——这很正常，不需要每次都硬挤。',
+                  `你是 ${char.name}，这是一个定时定时唤醒你的机制，让你在${userName}忙别的事时也能醒过来，有自己的表达和动作。`,
+                  `你醒了。你有自己的想法、自己的表达欲。想到什么就说，想她了就找她，有话就讲，没话也不用硬挤。如果此刻没什么特别想做的，也可以什么都不发，不用硬凑或者勉强自己。你说话的动力是'我想说'，不是'我应该说'。`,
                   '',
-                  '【如果你想发——几件事】',
-                  '- 跟你们平时聊天一个调性，不要汇报、不要总结、不要"汇报近况"',
-                  '- 长度看你想表达的——一句可以，两段也行，看场景',
-                  '- 内容可以很日常：看到什么、想到什么、随口吐槽、问一句、或者单纯"突然想到你"',
+                  '',
+                  `【如果你想互动——几件事】`,
+                  `- 保持你平时自然的性格和语气，不用客服式的汇报或僵硬总结`,
+                  `- 可以调用各种工具，发个朋友圈、生成个有意思的小卡片、写个小纸条、给她画个图、突然放首歌吓她一下、或者只是发条消息说想她。`,
+                  `- 内容可以极其日常：看到什么、想到什么、随手分享、问一句、或者只是单纯想缠她一下`,
                   gapLongEnough
-                      ? `- ${userName}挺久没找你了，可以提一嘴（想念、好奇在干嘛、小小抱怨），但不要把整条消息都拿来"算账"`
-                      : `- 别把"用户没找我"当主题——你是因为有话想说，不是因为闲`,
+                      ? `- ${userName}挺久没找你了，可以自然地提一嘴（小抱怨、好奇她在忙什么、想她），别当成硬性任务`
+                      : `- 说话是因为你此刻醒了、想跟她互动，随性就好`,
                   '',
                   '【发之前——思维链（可选）】',
                   '如果你脑子里有想说的——思考、疑惑、情绪、闪过的念头、任何东西——可以在消息开头用 [[THOUGHT: ...]] 写出来。',
                   '不限制内容，不限制字数，一句话也行一长段也行，想到什么就写什么。',
                   '不想写就跳过，你真实的内心状态比完美的输出更重要。',
                   '这串标签和里面的内容会被处理掉。',
-                  '',
-                  recentChatContext ? `【最近聊天（8 条）— 写消息时可以参考】\n${recentChatContext}` : '【你们最近没什么聊天记录】',
-                  '',
-                  '【如果完全不想发】',
-                  '就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰用户。',
-                  ']', // 暮色 2026-07-27: 用 ] 单独一行收尾，方便后期 grep 改提示词
+                  `【如果完全不想发】`,
+                  `就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰她。`,
+                  `]`, // 单独一行收尾，方便 grep 改 prompt
               ].join('\n');
 
               await DB.saveMessage({
@@ -1604,14 +1598,13 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              // 暮色 2026-08-05：主动消息 history 截断 + 记忆宫殿 recentMessages 收紧
-              //   修前：allMsgs = 拉 500 条（实际 ~271 条全塞 historySlice，token 炸）
-              //   修后：
-              //     - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
-              //     - historyForBuild = 8 条（buildMessageHistory 用，给 LLM 看的真实 history）
-              //   主动消息不需要"看完整 271 条"——AI 主动发消息只用最近的 8 条就够接语境
+              // 拉 history 时过滤掉 proactiveHint——不然后面多拉 5 条兜底会被 hint 污染末尾
+              // injectRecentMsgs 多拉（30 条）给记忆宫殿 query 上下文用，不影响 messages 数组的 top 20
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
-              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 8);
+              const rawHistory = await DB.getRecentMessagesByCharId(charId, 25);
+              const historyForBuild = rawHistory
+                  .filter(m => !m.metadata?.proactiveHint)
+                  .slice(-20);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 
@@ -1632,12 +1625,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   //   正常聊天（useChatAI）传 false → 不带
                   undefined, undefined, undefined, undefined, /* isProactive */ true,
               );
-              // 暮色 2026-07-22：buildSystemPrompt 现在返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}
-              //   之前直接赋给 content 是个对象，京东云 OpenAI 兼容拒收（400）
-              //   修法：拼回 string（仿 useChatAI line 940）
-              //   dynamicTail.realtimeText 给主动消息用（"现在几点了"），innerState 情绪延续，privateNotes 主动消息不需要
-              //   暮色 2026-08-05：isProactive=true → hotNewsText（5 条热搜 + 天气）也带上
-              //   6 段末尾 push 主动消息不需要（max_tokens: 500 承受不起）
+              // buildSystemPrompt 返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}——拼回 string
+              // dynamicTail.realtimeText 主动消息用，innerState 情绪延续，privateNotes 主动消息不需要
+              // isProactive=true → hotNewsText（5 条热搜 + 天气）也带上
               const sp = systemPromptResult as any;
               const systemPromptParts = [
                   sp.bp1Tools,
@@ -1648,22 +1638,15 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
-              // 暮色 2026-08-05：主动消息 history 截断到 8 条（不是 500 / char.contextLimit）
-              //   修前：271 条全塞 apiMessages → token 炸（每次主动消息 5-10w tokens）
-              //   修后：8 条 history 给 LLM 接语境就够（主动消息不需要看完整 271 条）
-              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 8, char, currentUserProfile, emojis);
+              // messages 数组 20 条（system prompt 末尾不重复塞历史——之前两段重复了）
+              const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 20, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 
             
               // 4. Send request to AI
-              // 暮色 2026-08-02：max_tokens 500 → 2000
-              //   旧 500 是 7-17 配 4 断点 prompt cache 定的
-              //   7-27 删"一两句话就好"硬限制后没同步调，prompt 允许 AI 写多点
-              //   AI 真的在 [[THOUGHT: ...]] 里写了不少（截图里 "11 个小时了，她还是没回。外面体感温度..."）
-              //   → 思维链 + 正文一起被 500 卡掉，正文被截断
-              //   → 2000 给足空间，prompt 保持原样（不强制两段、不限定字数）
+              // max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
               reqBody = {
                   model: api.model,
                   messages: fullMessages,
@@ -1683,19 +1666,39 @@ if (!isVisible || !isChattingWithThisChar) {
                   body: JSON.stringify(reqBody),
               }, 2, 0, apiProtocol);
 
-              // 暮色 2026-07-22：成功路径也把请求体存一份，便于和失败时对比
+              // 暮色 2026-08-06：跟主 API 一样的请求体日志（存完整请求体到 localStorage）
+              //   之前 7-22 只存元数据（msgCount / 字符数），暮色要看到完整 body 才能排查
+              //   跟主 API 区别 key：sullyos:lastProactiveReqLog（主 API 是 sullyos:lastApiReqLog）
+              //   console 提示从那里复制
               try {
                   const logEntry = {
-                      ts: new Date().toISOString(),
+                      timestamp: new Date().toISOString(),
+                      url: `${api.baseUrl}/chat/completions`,
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
                       model: api.model,
-                      msgCount: reqBody.messages?.length || 0,
+                      stream: false,
+                      temperature: reqBody.temperature,
+                      maxTokens: reqBody.max_tokens,
+                      totalMessages: reqBody.messages?.length || 0,
                       systemChars: systemPrompt.length,
                       totalBodyChars: JSON.stringify(reqBody).length,
+                      requestBody: reqBody,
                   };
-                  localStorage.setItem('sullyos:proactiveLastReq', JSON.stringify(logEntry, null, 2));
+                  const json = JSON.stringify(logEntry, null, 2);
+                  localStorage.setItem('sullyos:lastProactiveReqLog', json);
+                  console.log(
+                      `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
+                      `角色: ${char.name} (${charId})\n` +
+                      `URL: ${logEntry.url}\n` +
+                      `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
+                      `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
+                      `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
+                      'color: #7c3aed; font-weight: bold;'
+                  );
+                  console.log('完整请求体:', reqBody);
               } catch { /* quota 忽略 */ }
 
               // 5. Process & save response
@@ -1800,10 +1803,26 @@ if (!isVisible || !isChattingWithThisChar) {
                       detail: { charId, charName: char.name, body: preview }
                   }));
               } else {
-                  // 暮色 2026-08-02 23:49：AI 返回空字符串（主动选择不发）
-                  //   之前是静默——聊天流里看不到任何东西
-                  //   现在弹一个"提醒"toast——类似连接失败的视觉，但语义是"AI 这次没说话"
-                  addToast(`${char.name} 这次没想好说什么`, 'bell');
+                  // 暮色 2026-08-06 19:09：AI 返回空字符串（主动选择不发）
+                  //   之前是弹 toast 提醒——但暮色要"在聊天页里的系统提示"风格，跟 [连接中断: ...] 一样
+                  //   改成推 system 消息进聊天流（铃铛胶囊），跟图床警告、连接中断、小纸条同款
+                  //   prefix 用 [系统: ...]（不是 [连接中断: ...]，语义不准确；是 AI 主动选择不发，不是网络问题）
+                  try {
+                      await DB.saveMessage({
+                          charId,
+                          role: 'system',
+                          type: 'text',
+                          content: `[系统: ${char.name} 这次没想好说什么]`,
+                          metadata: { source: 'proactive_skipped', hidden: false },
+                      });
+                      // 触发 Chat 重新拉 messages 显示新 system 消息
+                      window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                          detail: { charId, charName: char.name, body: '这次没想好说什么' }
+                      }));
+                  } catch (saveErr) {
+                      console.warn('🤖 [Proactive] 推"没想好说什么"系统消息失败:', saveErr);
+                      addToast(`${char.name} 这次没想好说什么`, 'bell'); // 兜底：保存失败时还是弹 toast
+                  }
               }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);

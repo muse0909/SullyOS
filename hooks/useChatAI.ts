@@ -4236,6 +4236,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // Clean all quote tag variants from content
             aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
 
+            // 暮色 2026-08-06：先提取 [[THOUGHT: ...]] 思维链存到 metadata.thought
+            //   跟 OSContext.runProactive 主动消息路径同款机制（line 1726-1730）
+            //   之前 chatParser.sanitize 会 strip 掉 THOUGHT 标签（chatParser.ts:316）
+            //   现在先提取再 sanitize：metadata.thought 存原文，content 保持干净
+            //   MessageItem 渲染时读 metadata.thought 显示折叠的"💭 思维链"
+            let thoughtContent = '';
+            const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+            if (thoughtMatch) {
+                thoughtContent = thoughtMatch[1].trim();
+            }
+
             // 8. Split and Stream (Simulate Typing)
             // Note: SEND_EMOJI tags are preserved through sanitize so splitResponse can interleave them with text
 
@@ -4256,6 +4267,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
 
                 let globalMsgIndex = 0;
+
+                // 暮色 2026-08-06：思维链挂到本轮首条消息的 metadata
+                //   跟 OSContext.runProactive 主动消息同款机制（line 1774 挂到轮首）
+                //   正常聊天没有"轮"概念，简单点：每轮只挂到第一条 assistant 消息
+                //   后续 chunk（globalMsgIndex > 0）不挂 thought，避免重复显示
+                const buildChunkMeta = () => {
+                    if (globalMsgIndex === 0 && thoughtContent) {
+                        return { ...(mcdInheritMeta || {}), thought: thoughtContent };
+                    }
+                    return mcdInheritMeta;
+                };
 
                 if (hasTranslationTags) {
                     // ─── New bilingual format: each <翻译> block = one bubble ───
@@ -4283,7 +4305,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     if (!chunk) continue;
                                     const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                     await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                     setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                     globalMsgIndex++;
                                 }
@@ -4299,7 +4321,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 : (originalText || translatedText);
                             const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                             await new Promise(r => setTimeout(r, Math.min(Math.max(biContent.length * 30, 400), 2000)));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: buildChunkMeta() } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             globalMsgIndex++;
                         }
@@ -4318,7 +4340,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (!chunk) continue;
                                 const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                                 await new Promise(r => setTimeout(r, Math.min(Math.max(chunk.length * 50, 500), 2000)));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                 globalMsgIndex++;
                             }
@@ -4330,7 +4352,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         const foundEmoji = emojis.find(e => e.name === emojiName);
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         }
                     }
@@ -4345,7 +4367,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const foundEmoji = emojis.find(e => e.name === part.content);
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mcdInheritMeta } as any);
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             }
                         } else {
@@ -4382,7 +4404,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 if (ChatParser.hasDisplayContent(chunk)) {
                                     const cleanChunk = ChatParser.sanitize(chunk);
                                     if (cleanChunk) {
-                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: mcdInheritMeta } as any);
+                                        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: buildChunkMeta() } as any);
                                         setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                                         globalMsgIndex++;
                                     }

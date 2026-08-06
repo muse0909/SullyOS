@@ -1492,9 +1492,25 @@ if (!isVisible || !isChattingWithThisChar) {
           //   1. 副 API 开关打开 + 配了 baseUrl → 走副 API
           //   2. 角色独立 API 开关打开 + 角色配了 baseUrl → 走角色独立 API（proactiveConfig.useCharApi）
           //   3. 都没开 → 走全局主 API
+          // 暮色 2026-08-06：修角色独立 API 走主 API 的 bug
+          //   之前 useCharApi 检查 `char.apiConfig?.baseUrl`（openai 套），
+          //   但角色 API 现在分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存到不同字段：
+          //     - openai 协议: char.apiConfig.baseUrl
+          //     - claude 协议: char.apiConfig.claudeBaseUrl
+          //     - gemini 协议: char.apiConfig.geminiBaseUrl
+          //   之前只看 openai 套 baseUrl → 配 Claude/Gemini 协议时 openai 套是空 → 误判 useCharApi=false → 走主 API
+          //   修法：按 char.apiConfig.protocol 选对应那套的 baseUrl/apiKey/model
           const pCfg = char.proactiveConfig;
           const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
-          const useCharApi = !useSecondary && !!(pCfg?.useCharApi && char.apiConfig?.baseUrl);
+          // 角色 API 3 协议下的 baseUrl 选择器
+          const charApiConfig = char.apiConfig;
+          const charApiProtocol = (charApiConfig as any)?.protocol ?? 'openai';
+          const charApiBaseUrl = charApiProtocol === 'claude'
+              ? (charApiConfig as any)?.claudeBaseUrl
+              : charApiProtocol === 'gemini'
+              ? (charApiConfig as any)?.geminiBaseUrl
+              : charApiConfig?.baseUrl;
+          const useCharApi = !useSecondary && !!(pCfg?.useCharApi && charApiBaseUrl);
           let api: any;
           let apiSource: 'secondary' | 'char' | 'main';
           if (useSecondary) {
@@ -1502,13 +1518,16 @@ if (!isVisible || !isChattingWithThisChar) {
               apiSource = 'secondary';
           } else if (useCharApi) {
               // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 3 套字段 + protocol）
-              api = char.apiConfig;
+              api = charApiConfig;
               apiSource = 'char';
           } else {
               api = currentApiConfig;
               apiSource = 'main';
           }
-          if (!api.baseUrl) {
+          // 暮色 2026-08-06：api.baseUrl 也要按 protocol 选（之前硬读 api.baseUrl 不对，claude/gemini 协议是 api.claudeBaseUrl/api.geminiBaseUrl）
+          //   注意：副 API 没用 3 套协议分支，pCfg.secondaryApi 保持只有 baseUrl
+          //   角色 API：api 整个对象，fetch 时按 protocol 走对应 endpoint（safeFetchJson 内部会处理 openai/claude，gemini 待补）
+          if (!api.baseUrl && !((api as any).claudeBaseUrl || (api as any).geminiBaseUrl)) {
               drainQueuedProactive();
               return;
           }
@@ -1576,7 +1595,12 @@ if (!isVisible || !isChattingWithThisChar) {
                   gapLongEnough
                       ? `- ${userName}挺久没找你了，可以自然地提一嘴（小抱怨、好奇她在忙什么、想她），别当成硬性任务`
                       : `- 说话是因为你此刻醒了、想跟她互动，随性就好`,
-                  `【如果完全不想发】`,
+                  '',
+                  '【发之前——思维链（可选，暮色 8-6 加回）】',
+                  '如果这条消息需要先想好再说、或者你脑子里有什么对方没明说的潜台词、或者有只有你知道的来由——',
+                  '可以在消息开头单独一行写：[[THOUGHT: 你的内心独白...]]，前端会折叠成"💭 思维链"显示，用户主动点开才看得到。',
+                  '不想写就跳过，不影响你正常发消息。',
+                  '【如果完全不想发】',
                   `就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰她。`,
                   `]`, // 暮色 2026-07-27 起的惯例：] 单独一行收尾，方便 grep 改 prompt
               ].join('\n');

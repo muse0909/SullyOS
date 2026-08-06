@@ -147,6 +147,7 @@ const Chat: React.FC = () => {
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
+    const [vectorizeProgress, setVectorizeProgress] = useState<{ round: number; maxRounds: number; processed: number; remaining: number } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
 
     // 暮色 2026-08-05：清空聊天前的安全确认弹窗（路 3 弹窗，替代浏览器原生 confirm）
@@ -1960,7 +1961,6 @@ if (keepN > 0) {
 
         setIsVectorizing(true);
         setModalType('none');
-        addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
             // 暮色 2026-08-05：改用统一入口 runForceVectorizeForChar
@@ -1972,6 +1972,11 @@ if (keepN > 0) {
             // 写回 char.memories 仍在 UI 层做（避免 forceVectorize 依赖 OSContext）
             const { runForceVectorizeForChar } = await import('../utils/memoryPalace/forceVectorize');
             const { mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+            // 启动时先算一次总未处理数，进度胶囊能算出准确百分比
+            const startHwmForUi = await getMemoryPalaceHWM(char.id);
+            const allMsgsForUi = await DB.getMessagesByCharId(char.id, true);
+            const startRemaining = allMsgsForUi.filter(m => m.id > startHwmForUi).length;
+            setVectorizeProgress({ round: 0, maxRounds: 5, processed: 0, remaining: startRemaining });
             const result = await runForceVectorizeForChar({
                 charId: char.id,
                 charName: char.name,
@@ -1980,7 +1985,7 @@ if (keepN > 0) {
                 userName: userProfile?.name || '',
                 maxRounds: 5, // 暮色 2026-08-05 拍板：1-2 分钟内可跑完
                 onProgress: ({ round, processed, remaining }) => {
-                    console.log(`🏰 [ForceVectorize/Chat] 进度：第 ${round}/5 轮 / 累计处理 ${processed} / 还剩 ${remaining}`);
+                    setVectorizeProgress({ round, maxRounds: 5, processed, remaining });
                 },
             });
 
@@ -2020,6 +2025,7 @@ if (keepN > 0) {
             addToast(`❌ 向量化失败：${e.message}`, 'error');
         } finally {
             setIsVectorizing(false);
+            setVectorizeProgress(null);
         }
     };
 
@@ -2656,6 +2662,54 @@ if (keepN > 0) {
                      </div>
                  </div>
              )}
+
+             {/* 一键向量化进度 — 顶部胶囊（带轮次/数字/进度条，z-150 与记忆整理中同位置） */}
+             {vectorizeProgress && (() => {
+                 const total = Math.max(vectorizeProgress.processed + vectorizeProgress.remaining, 1);
+                 const pct = Math.min(100, Math.round((vectorizeProgress.processed / total) * 100));
+                 return (
+                     <div
+                         className="absolute top-[76px] left-1/2 z-[150] animate-fade-in"
+                         style={{
+                             transform: 'translateX(-50%)',
+                             pointerEvents: 'none',
+                             willChange: 'transform, opacity',
+                         }}
+                     >
+                         <div
+                             className="flex flex-col gap-1.5 pl-3.5 pr-4 py-2.5 min-w-[16rem]"
+                             style={{
+                                 background: 'rgba(255,255,255,0.92)',
+                                 borderRadius: 18,
+                                 border: '1px solid rgba(16,185,129,0.22)',
+                                 boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                             }}
+                         >
+                             <div className="flex items-center gap-2.5">
+                                 <span
+                                     className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-200 animate-spin"
+                                     style={{ borderTopColor: '#10b981', animationDuration: '0.9s' }}
+                                 />
+                                 <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                                     一键向量化中
+                                 </span>
+                                 <span className="text-[10px] text-slate-500 tabular-nums">
+                                     第 {vectorizeProgress.round}/{vectorizeProgress.maxRounds} 轮
+                                 </span>
+                                 <span className="text-[10px] text-slate-400 tabular-nums ml-auto">
+                                     已处理 {vectorizeProgress.processed} · 剩 {vectorizeProgress.remaining}
+                                 </span>
+                             </div>
+                             <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'rgba(16,185,129,0.12)' }}>
+                                 <div
+                                     className="h-full transition-all duration-300"
+                                     style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #10b981, #14b8a6)' }}
+                                 />
+                             </div>
+                         </div>
+                     </div>
+                 );
+             })()}
 
 
              {/* 记忆整理结果 — 弹窗（高级感） */}

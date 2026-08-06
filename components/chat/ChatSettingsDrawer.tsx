@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { X, Trash, MagnifyingGlass } from '@phosphor-icons/react';
 import { CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
+import Modal from '../os/Modal';
 // 暮色 2026-08-05：角色时区列表（异国恋 / 角色身处异国）
 import { COMMON_TIMEZONES } from '../../utils/timezone';
 import { isMessageSemanticallyRelevant } from '../../utils/messageFormat';
@@ -165,6 +166,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     //   "未向量化条数" = DB 里 id > hwm 且真正会进记忆宫殿的消息数
     //   查这个数 0 token 消耗（纯 localStorage + IndexedDB 客户端查询）
     const [unvectorizedCount, setUnvectorizedCount] = useState<number | null>(null);
+    const [showVectorizeConfirm, setShowVectorizeConfirm] = useState(false);
     useEffect(() => {
         if (!isOpen || !activeCharacter?.id) return;
         let cancelled = false;
@@ -200,7 +202,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
 
     if (!isOpen) return null;
 
-    return createPortal(
+    const drawerNode = createPortal(
         <div
             className="fixed inset-0 z-[200] bg-slate-900/45 backdrop-blur-[1px] animate-fade-in"
             onClick={onClose}
@@ -656,7 +658,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                     {isMemoryPalaceEnabled && (
                         <section className="pt-2 border-t border-slate-100">
                             <button
-                                onClick={onForceVectorize}
+                                onClick={() => setShowVectorizeConfirm(true)}
                                 disabled={isVectorizing}
                                 className="w-full py-3 bg-emerald-50 text-emerald-600 font-bold rounded-2xl border border-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
                             >
@@ -698,6 +700,75 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
             </div>
         </div>,
         document.body
+    );
+    // 上面是 createPortal(抽屉 UI) → drawerNode
+    // 下面再 return 抽屉 + Modal 一起
+
+    return (
+        <>
+            {drawerNode}
+            <Modal
+                isOpen={showVectorizeConfirm}
+                title="一键向量化所有聊天记录"
+                onClose={() => setShowVectorizeConfirm(false)}
+                zIndex={210}
+                footer={
+                    unvectorizedCount === 0 ? (
+                        <button
+                            onClick={() => setShowVectorizeConfirm(false)}
+                            className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >
+                            关闭
+                        </button>
+                    ) : (
+                        <>
+                            <button
+                                onClick={() => setShowVectorizeConfirm(false)}
+                                className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowVectorizeConfirm(false);
+                                    onForceVectorize();
+                                }}
+                                className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold rounded-2xl active:scale-95 transition-transform"
+                            >
+                                开始向量化
+                            </button>
+                        </>
+                    )
+                }
+            >
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-600">
+                        <span className="text-base">🏰</span>
+                        <span className="text-xs font-bold">记忆宫殿</span>
+                    </div>
+                    {unvectorizedCount === null ? (
+                        <p className="text-sm text-slate-500 text-center py-3">正在统计未处理消息...</p>
+                    ) : unvectorizedCount === 0 ? (
+                        <p className="text-sm text-slate-700 text-center leading-relaxed">
+                            所有聊天记录都已处理完毕，无需操作 🎉
+                        </p>
+                    ) : (
+                        <>
+                            <p className="text-sm text-slate-700 leading-relaxed">
+                                当前有 <span className="font-bold text-emerald-600">{unvectorizedCount}</span> 条聊天记录未向量化。
+                            </p>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                                AI 会按 170 条 / 轮、最多跑 5 轮（约 1-2 分钟），过程中会消耗 Embedding 和轻量模型调用。
+                            </p>
+                            <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 leading-relaxed space-y-1">
+                                <p>• 跑完后可以来记忆宫殿查看提取出的记忆</p>
+                                <p>• 也可以先预览，不想要的内容直接删除</p>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </Modal>
+        </>
     );
 };
 

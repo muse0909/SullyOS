@@ -105,4 +105,14 @@ const { fetch, scheduled } = createSingleUserCloudflareWorker(
   },
 );
 
+/**
+ * wrangler 4.x 默认按 "module worker" 格式处理 worker 入口。
+ * module worker 必须有 `export default { fetch, scheduled }` 形式。
+ * 之前只 `export { fetch, scheduled }` (named export) 会让 wrangler 4.x
+ * fallback 到 "service-worker" 格式，触发 Cloudflare API 10021 错误：
+ *   "No event handlers were registered. This script does nothing."
+ *
+ * 加 default export 就解决了。
+ */
 export { fetch, scheduled };
+export default { fetch, scheduled };

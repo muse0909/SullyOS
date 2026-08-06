@@ -1,139 +1,159 @@
-# 主动消息 2.0 · Cloudflare Worker 部署脚手架
+# 主动消息 2.0 · Cloudflare Worker 部署 + 端到端联调
 
 **日期**：2026-08-06
-**涉及 commit**：(本任务)
+**涉及 commit**：`d52f7c3` `e0fed1e` `8f8b42a` `54f745f` (本任务) + 后续 Vercel env var + Redeploy 等新窗口
 
 ## 改了什么
 
-主动消息 2.0（amsg2）前端 `components/settings/ActiveMsgGlobalSettingsModal.tsx` + `utils/activeMsgClient.ts` 暮色 8-5 已经接好，但**部署端的 Cloudflare Worker 还是空白**——暮色今晚准备在 Cloudflare Workers 上把这个跑起来。
+主动消息 2.0（amsg2）前端 `components/settings/ActiveMsgGlobalSettingsModal.tsx` + `utils/activeMsgClient.ts` 暮色 8-5 已经接好，**部署端的 Cloudflare Worker 还是空白**——暮色 8-6 下午在 Cloudflare Workers 上把这个跑起来。**今晚完成服务端部署 + 端到端鉴权配置**，浏览器访问 `/capabilities` 端点返回 200 + 完整 27 features 列表，**服务端就绪**。剩下端到端 push 验证（前端 Vercel env + 跑 init-tenant + 手机开 Web Push 权限）等新窗口。
 
-调研后决定**不 fork 原作者 worker 源码**：原作者 `@rei-standard/amsg-server`（v2.6.0-next.12）已经把 Cloudflare Worker 入口做成了 SDK 导出 `./cloudflare` 子路径，提供 `createSingleUserCloudflareWorker(buildConfig)` 工厂 + `createWebCryptoWebPush(vapid)` 推发器。worker 入口只是 5 行的 env 注入胶水代码。
-
-**新加的部署脚手架**：
-
-| 文件 | 作用 |
-|---|---|
-| `worker/amsg/src/index.ts` | Cloudflare Worker 入口（~80 行），把 `env.MASTER_KEY / VAPID_* / DB` 注入 SDK 工厂 |
-| `worker/amsg/worker.bundle.js` | esbuild 打包输出（gitignore，每次 build 重新出），约 95KB |
-| `scripts/build-workers.mjs` | 统一打 amsg + proactive-push 两个 worker（esbuild ESM / minify / target es2022） |
-| `wrangler.toml` | Cloudflare 部署配置（D1 binding + 每分钟 cron + 非敏感 vars） |
-| `.dev.vars.example` | 本地 wrangler dev 环境变量模板（密钥类走 wrangler secret put） |
-| `package.json` scripts | `build:workers` / `build:worker:amsg` / `deploy:worker:amsg` |
+调研后决定**不 fork 原作者 worker 源码**：原作者 `@rei-standard/amsg-server`（v2.6.0-next.12）已经把 Cloudflare Worker 入口做成了 SDK 导出 `./cloudflare` 子路径，提供 `createSingleUserCloudflareWorker(buildConfig)` 工厂 + `createWebCryptoWebPush(vapid)` 推发器。worker 入口只是 ~80 行的 env 注入胶水代码。
 
 ## 动了哪些文件
 
-- `worker/amsg/src/index.ts` —— 新建。worker 入口，export `{ fetch, scheduled }`
-- `worker/amsg/worker.bundle.js` —— 新建（gitignored）。esbuild 打包产物
-- `scripts/build-workers.mjs` —— 新建。统一构建脚本
-- `wrangler.toml` —— 新建（仓库根）。D1 binding + cron triggers + vars
-- `.dev.vars.example` —— 新建。密钥类环境变量模板
-- `package.json` —— 加 4 个 scripts：`build:workers` / `build:worker:amsg` / `build:worker:proactive-push` / `deploy:worker:amsg`
-- `.gitignore` —— 加 4 条：`worker/amsg/worker.bundle.js` / `worker/proactive-push/worker.bundle.js` / `.dev.vars` / `.wrangler/`
+| 文件 | 作用 |
+|---|---|
+| `worker/amsg/src/index.ts` | Cloudflare Worker 入口（~80 行），env 注入 → SDK 工厂；**`export { fetch, scheduled }` + `export default { fetch, scheduled }`**（module worker 格式） |
+| `worker/amsg/worker.bundle.js` | esbuild 打包输出（gitignored），约 95KB |
+| `scripts/build-workers.mjs` | 统一打 amsg + proactive-push 两个 worker |
+| `wrangler.toml` | Cloudflare 部署配置（name=`sullyos` + D1 binding 由仪表盘管 + 每分钟 cron + 非敏感 vars） |
+| `.dev.vars.example` | 本地 wrangler dev 密钥类环境变量模板 |
+| `package.json` | 加 4 个 scripts：`build:workers` / `build:worker:amsg` / `build:worker:proactive-push` / `deploy:worker:amsg` |
+| `.gitignore` | 加 4 条：`worker/amsg/worker.bundle.js` / `worker/proactive-push/worker.bundle.js` / `.dev.vars` / `.wrangler/` |
 
-## 踩坑 / 需要知道的（重要）
+## 暮色今天真实走过的部署流程（含 4 个大坑）
 
-### 1. 原作者把 Worker 入口做成了 SDK 导出
-**不要 fork `worker/amsg/src/*.ts`**！原 `@rei-standard/amsg-server/cloudflare` 子路径已经打包好 Cloudflare Worker 适配（dist/cloudflare.mjs + D1 adapter + Web Crypto Web Push 实现 + cron tick）。我们要做的只是写 5 行 env 注入 + 调用工厂函数。
+### 0. Cloudflare 仪表盘 → Workers & Pages → Create application
+- Select a method: **Import from Git**
+- Repository: `muse0909/SullyOS`（**没有"选分支"步骤**——Cloudflare 自动监控所有分支）
+- Project name: `sullyos`（这个**覆盖** wrangler.toml 里的 `name`，最终 URL = `sullyos.<account>.workers.dev`）
+- Build command: `npm run build:worker:amsg`（**不能留空**也不能用默认 `npm run build`，那打的是 vite 前端）
+- Deploy command: `npx wrangler deploy`（默认）
+- ✅ 勾 "Builds for non-production branches"（让 preview 分支 push 自动部署）
 
-子路径的核心导出：
-- `createSingleUserCloudflareWorker(buildConfig)` — 返回 `{ fetch, scheduled }`，buildConfig 接受 env，返回 `{ masterKey, vapid, serverToken, webpush, cors }`
-- `createWebCryptoWebPush(vapid)` — 纯 Web Crypto 实现的 Web Push 发送器（不需要 `web-push` npm 包，不需要 `nodejs_compat` flag）
-- `createD1Adapter(env.DB)` — D1 适配器（worker 工厂内部自动调用）
+### 1. ⚠️ Root directory 必填 `/`（不是 `/amsg`）
+Cloudflare 仪表盘自动填了 `/amsg`（探测到 `amsg` 相关代码）—— **错的**。`wrangler.toml` 在仓库根，`npm install` 也要在仓库根。
+- 修法：Settings → Build → Build configuration 旁边 **✏️ 铅笔图标** → Root directory 改 `/`
 
-### 2. 路由用 endsWith 匹配，所以 baseUrl 带不带 `/api/v1` 前缀都行
-SDK 的 fetch handler 是 `pathname.endsWith('/capabilities')` 这种匹配，意味着：
-- 调 `https://sully-amsg2-worker.workers.dev/capabilities` → 200
-- 调 `https://sully-amsg2-worker.workers.dev/api/v1/capabilities` → 也 200
+### 2. ⚠️ Production branch 必填 `preview`（不是 master）
+暮色 8-5/06 写的 4 个新 commit 都在 `preview` 分支，但 Cloudflare 默认 production branch 是 `master`——push preview **不会触发 deploy**。Build log 显示 "Manually deployed" + "preview" 标签，但实际只走 `master` 分支。
+- 修法：Settings → Build → Branch control 旁边 **✏️ 铅笔图标** → Production branch 改 `preview`
 
-暮色旧部署的 client 代码 `normalizeActiveMsgApiBase` 强制把 baseUrl 后面补 `/api/v1`——这在 worker 域名下**也能跑**，不用改前端代码。worker 路由天然兼容。
+### 3. ⚠️ D1 binding 必须在仪表盘 Bindings 加
+不能手填 `wrangler.toml` 的 `[[d1_databases]] database_id = "..."`（手填 ID 容易拼错 / 被 transfer），**最稳是让仪表盘管**：
+- Bindings → Add binding → D1 database binding
+- Variable name: `DB`（**必须**跟 worker 入口代码里 `env.DB` 一致）
+- D1 database: 选已经建好的 `sully-amsg2` 库
+- Cloudflare 仪表盘自动把 database_id 同步进 wrangler.toml
+- **所以 `wrangler.toml` 里不写 `database_id` 字段**（避免 drift warning）
 
-### 3. 不需要 `nodejs_compat` flag
-- `web-push` npm 包（依赖 `crypto.createHmac`）只在多租户 server 里用，单用户 cloudflare 子路径不引
-- VAPID JWT 签名用 `crypto.subtle`（Web Crypto API），Workers 原生支持
-- SQL 走 D1 binding（不是 node-postgres）
+### 4. ⚠️ wrangler 4.x module worker 必须有 `export default`
+只写 `export { fetch, scheduled }`（named export）—— wrangler 4.x 默认按 module worker 格式处理，缺 default export 就 fallback 到 service-worker 格式，触发 Cloudflare API **10021 错误 "No event handlers were registered"**。
+- 修法：worker 入口**同时**加 `export default { fetch, scheduled }`（保持 named export 也行）
 
-所以 `compatibility_flags = []` 就够了，加了 `nodejs_compat` 反而会拖慢冷启动。
+### 5. ⚠️ wrangler.toml 的 `name` 必须跟仪表盘 Project name 一致
+暮色仪表盘填了 `sullyos`，wrangler.toml 写 `sully-amsg2-worker` —— Cloudflare 弹黄色警告要求统一。改 wrangler.toml `name = "sullyos"` 后 warning 消失。
 
-### 4. 密钥分层
-| 变量 | 放在哪 | 备注 |
+### 6. Settings → Variables and secrets 加 4 个 Secret
+**注意区分**：
+- **Build → Variables and secrets**（页面）= build 时变量（给 `npm run build` 用），wrangler deploy **不读**——这个位置加 D1_DATABASE_ID 没用
+- **Settings → Variables and secrets**（右侧菜单独立 tab）= **worker runtime** 变量——这个位置加 MASTER_KEY / VAPID_* 才对
+
+4 个 secret 加完**自动触发 deploy**（不用手动点 Retry）：
+
+| Type | Variable name | Value |
 |---|---|---|
-| `MASTER_KEY` | `wrangler secret put` | 32 字节 base64，openssl rand 生成；用于加密用户消息 |
-| `VAPID_PRIVATE_KEY` | `wrangler secret put` | vapidkeys.com 生成；推发签名 |
-| `VAPID_PUBLIC_KEY` | `wrangler secret put`（或 vars） | 公钥前端用，但其实**前端 ReiClient 调 `/vapid-public-key` 端点拉**，所以也走 secret 即可 |
-| `VAPID_EMAIL` | `wrangler secret put` | `mailto:xxx@example.com` 格式 |
-| `SERVER_TOKEN` | `[vars]` | 客户端 X-Client-Token 鉴权。生产环境设强随机 |
-| `CORS_ALLOWED_ORIGIN` | `[vars]` | 跨域白名单。默认填了 Vercel 预览域名 |
-| D1 `database_id` | `[[d1_databases]]` | `wrangler d1 create sully-amsg2` 后填 |
+| Secret | `MASTER_KEY` | `openssl rand -base64 32` 生成（32 字节 base64） |
+| Secret | `VAPID_EMAIL` | `mailto:你的邮箱` |
+| Secret | `VAPID_PUBLIC_KEY` | vapidkeys.com 公钥（87 字符左右 base64url） |
+| Secret | `VAPID_PRIVATE_KEY` | vapidkeys.com 私钥（43 字符 base64url） |
 
-### 5. D1 schema 自动化
-worker 第一次调 `init-tenant` 端点时 SDK 会自动 `CREATE TABLE IF NOT EXISTS`（scheduled_messages / push_subscriptions / client_state 等），**不需要手动跑 migration**。如果手动维护，看 `node_modules/@rei-standard/amsg-server/examples/cloudflare-single-user/schema.sql`（暮色要查直接看 node_modules，不用重装）。
+### 7. 浏览器验 worker 启动
+打开 `https://sullyos.<account>.workers.dev/capabilities`：
+- 期望 JSON `{"success":true,"serverVersion":"2.6.0-next.12","features":[27个]}` → 启动成功 ✓
+- 30 invocations / 30 errors 之前是因为没设 secret，buildConfig 抛 `[amsg2-worker] MASTER_KEY is required` → catch → 500
 
-### 6. cron 触发器
+## 路由设计
+
+SDK fetch handler 用 `pathname.endsWith()` 匹配，所以 baseUrl 带不带 `/api/v1` 前缀都行：
+- `https://sullyos.<account>.workers.dev/capabilities` → 200
+- `https://sullyos.<account>.workers.dev/api/v1/capabilities` → 也 200
+
+`utils/activeMsgClient.ts` 默认 `baseUrl = window.location.origin + '/api/v1/'`，Cloudflare worker 域名下天然兼容。
+
+## worker 入口必填 4 个值
+
+- `MASTER_KEY`：32 字节 base64（`openssl rand -base64 32`）
+- `VAPID_EMAIL`：`mailto:你的邮箱` 格式
+- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`：vapidkeys.com 一次生成
+
+**全部走 Secret**（加密存），wrangler.toml 不存任何密钥。
+
+## D1 schema 自动化
+
+worker 第一次调 `init-tenant` 端点时 SDK 会自动 `CREATE TABLE IF NOT EXISTS`（scheduled_messages / push_subscriptions / client_state 等），**不需要手动跑 migration**。
+
+## Cron 触发器
+
 ```toml
 [triggers]
 crons = ["* * * * *"]
 ```
-主动消息 2.0 支持 minute 级精度（比 1.0 的 30 分钟细一截）。D1 binding + cron 触发器都是 Cloudflare 免费层支持的——`Workers Free` 每天 10 万次请求，足够个人用。
 
-### 7. build script 同时打两个 worker
-`scripts/build-workers.mjs` 里 `WORKERS` 数组写了 amsg + proactive-push 两条：
-- amsg：暮色 8-5/06 主动消息 2.0
-- proactive-push：暮色 6-6 主动消息 1.0 push 加速器（之前是手写 paste 进 Cloudflare 面板的，现在纳入构建）
+主动消息 2.0 支持 minute 级精度（比 1.0 的 30 分钟细一截）。Workers Free 每天 10 万次请求，足够个人用。
 
-**好处**：以后改 proactive-push 也走 `npm run build:worker:proactive-push` 出新 bundle，不用手动维护。**proactive-push 这次没改源码**，只是让构建脚本支持它。
+## 踩坑（按出现顺序）
 
-## 部署步骤（暮色在 Cloudflare 仪表盘走一遍）
+### 坑 1：原作者把 Worker 入口做成了 SDK 导出
+**不要 fork `worker/amsg/src/*.ts`**！原 `@rei-standard/amsg-server/cloudflare` 子路径已经打包好 Worker 适配（dist/cloudflare.mjs + D1 adapter + Web Crypto Web Push 实现 + cron tick）。只写 env 注入 + 调工厂函数。
 
-**先做第 0 步再建 Worker**（否则 deploy 会卡 database_id）：
+### 坑 2：仪表盘 Build settings 4 个字段
+Root directory `/` / Production branch `preview` / Build command `npm run build:worker:amsg` / Deploy command `npx wrangler deploy` —— 缺一个都跑不通。
 
-0. **D1 数据库**：Cloudflare 仪表盘 D1 → Create database → name 填 `sully-amsg2` → 拿到 `database_id` → 填进 `wrangler.toml` 的 `[[d1_databases]]` 块（替换 `REPLACE_WITH_D1_ID_AFTER_wrangler_d1_create`）→ 推一次 preview。
+### 坑 3：drift warning 是 wrangler 4.x 的常态
+`compatibility_date` / `workers_dev` / `preview_urls` 在仪表盘和 wrangler.toml 都有，drift warning 不影响 deploy（只是警告）。`database_id` 这个字段如果手填跟仪表盘不一致，**deploy 会被 remote binding 覆盖**——所以留空让仪表盘管最稳。
 
-1. **Cloudflare 仪表盘** → Workers & Pages → Create application → Create Worker
-   - **Select a method**: Import from Git（选这个，不是 "Create from scratch"）
-   - **Select a repository**: 选 `muse0909/SullyOS`（**没有"选分支"的下一步**——Cloudflare 自动监控所有分支；preview 分支 push 会自动触发 deploy，不用手选）
-   - **Set up your application**（"Create and deploy" 那一步）：
-     - **Project name**: 随便起（暮色填了 `sullyos`，可以）——这个**覆盖** `wrangler.toml` 里的 `name`，最终 URL 是 `sullyos.<account>.workers.dev`
-     - **Build command**: `npm run build:worker:amsg`（**不能留空**也不能用默认的 `npm run build`，那打的是 vite 前端不是 worker）
-     - **Deploy command**: `npx wrangler deploy`（默认就是这样，不用改）
-     - **"Builds for non-production branches"**：**勾上**（这样 `preview` 分支 push 自动部署）
-   - **没看到 Path 字段？** 正常。Workers 模式没有这字段（我之前 changelog 写错了，是把 Pages 跟 Workers 搞混了）。
-   - **没看到"选分支"的下拉？** 正常。Cloudflare Workers 部署自动监控所有分支，不需要手动指定。
+### 坑 4：module worker 必须 `export default`
+wrangler 4.x 默认按 module worker 格式，缺 default export 触发 10021 错误。
 
-2. **设密钥**（Deploy 成功后，worker 面板 → Settings → Variables and Secrets）：
-   ```bash
-   wrangler secret put MASTER_KEY
-   wrangler secret put VAPID_EMAIL
-   wrangler secret put VAPID_PUBLIC_KEY
-   wrangler secret put VAPID_PRIVATE_KEY
-   ```
-   VAPID 密钥对去 vapidkeys.com 生成（公私钥都返回）。或者在仪表盘 Settings → Variables and Secrets → Add 手动加。
+### 坑 5：Build 时变量 vs Runtime 变量
+`Build → Variables and secrets` ≠ `Settings → Variables and secrets` —— 前者是 build 时（wrangler deploy 不读），后者是 worker runtime（启动时读）。暮色中间一度把 D1_DATABASE_ID 加到了 Build 那个位置，**根本没用**。
 
-3. **触发部署**：仪表盘 Deploy 按钮 / `git push origin preview`（自动）/`npm run deploy:worker:amsg`（本地手动）。
-
-4. **拿到 worker URL**（如 `https://sullyos.<account>.workers.dev`），前端 Settings → 主动消息 2.0 → API base URL 填这个。
+### 坑 6：Vite env 嵌入 vs Worker secret
+前端 `VITE_AMSG_API_BASE_URL` 和 `VITE_AMSG_VAPID_PUBLIC_KEY` 是 **Vite build 时**通过 `import.meta.env` 嵌入 bundle 的（**不是** Vercel runtime env）。要改前端连的 worker URL，必须在 Vercel 仪表盘加 env var + Redeploy 重新 build。
 
 ## 备注
 
-### bundle 大小
-- amsg: 95.3KB（minify + tree-shake + Web Crypto 内联）
-- 对比 amsg-server node_modules dist 体积（~210KB），bundle 砍了一半
-
-### 路由不需要改前端
-`utils/activeMsgClient.ts` 默认 `baseUrl = window.location.origin + '/api/v1/'`，但 worker 路由 endsWith 匹配 + `VITE_AMSG_API_BASE_URL` env 覆盖机制都兼容 Cloudflare worker 域名。**Settings 弹窗只让用户填 base URL，不强制带 `/api/v1`**。
-
-### 为什么没装 wrangler npm 包
-暮色在 Cloudflare 仪表盘走的是 `npx wrangler deploy`（自动拉最新 wrangler 3.x），本地手动部署也是 npx 拉。**不**写到 devDependencies 里避免每次 `npm install` 拉一次 wrangler 3.70+（冷启动 3-5s）。生产 CI 环境 Cloudflare 仪表盘会自动跑 `npm install` + `npx wrangler deploy`。
-
-### Worker 调试
-- `wrangler dev` 跑本地 D1 模拟器（要 miniflare，老 wrangler 自带，新 wrangler 拆出去了）
-- `wrangler tail` 实时看 worker 日志（生产环境问题排查用）
-- `wrangler d1 execute sully-amsg2 --command "SELECT * FROM scheduled_messages LIMIT 10"` 直接查 D1 数据
-
-### 下一步（暮色 8-06 之后可能要做）
-- 拿到 worker URL 后跑一次 `init-tenant`（前端 ActiveMsgGlobalSettingsModal 已经有"初始化租户"按钮）
-- 测 schedule-message → 几分钟内能不能收到 push（手机上要给网站通知权限）
-- 测 cron scheduled：暮色设一个 1 分钟后的 firstSendTime，看 `* * * * *` 触发后 push 能不能到
-
-### 暮色之前留下的活（**不**属于本 commit）
+### 暮色今天 8-5/06 留的活（不属于本 commit）
 - `apps/DateApp.tsx` + `components/date/DateSession.tsx` 改动 + `changelogs/2026-08-04-dateapp-3mode-prompt-split.md` + `thought-display-options.html` + `timestamp-position-options.html` 是暮色 8-4 自己的 3 模式 prompt 拆分工作，**等他 commit**。
 - 3 个未推 master 的 commit（`8ede348` 时区 UI / `4f38e7c` 删重复声明 / `82a4a74` 全局配置入口）等 worker 部署验证后一起推。
+
+### 端到端 push 验证（新窗口继续）
+1. **Vercel dashboard** → Settings → Environment Variables → Add 2 个 var：
+   - `VITE_AMSG_API_BASE_URL` = `https://sullyos.<account>.workers.dev`
+   - `VITE_AMSG_VAPID_PUBLIC_KEY` = vapidkeys 公钥
+   - 三个环境（Production / Preview / Development）都勾上
+2. **Redeploy** Vercel（让新 env 嵌入 bundle）
+3. **手机**给网站开 Web Push 通知权限
+4. **前端 Settings → 主动消息 2.0 全局配置**：
+   - 点 "检查用户密钥" → 验证 base URL 通
+   - 点 "连接并启用" → 跑 init-tenant（SDK 自动在 D1 建表）
+   - 点 "开启通知与推送" → 申请浏览器 push 订阅
+5. **角色页**：给麦麦 / 江澈 **启用用主动消息 2.0** + 设 firstSendTime = 当前时间 + 1 分钟
+6. **等 1-2 分钟** → 手机应该收到 Web Push 通知
+7. **没收到**：Cloudflare 仪表盘 Settings → Observability → Logs = Enable，看 worker 日志排查
+
+### 给未来 330 / miya 复用的部署 checklist
+1. **不 fork** 原作者 worker 源码——直接用 SDK 导出
+2. 仓库根加 `wrangler.toml` + `worker/<name>/src/index.ts`（80 行 env 注入）+ `scripts/build-workers.mjs`
+3. Cloudflare 仪表盘：Create Worker → Build settings 4 字段全对（Root `/` / Branch `preview` / Build `npm run build:worker:<name>` / Deploy `npx wrangler deploy`）
+4. Bindings → Add D1 database binding（**Variable name 必须跟 env.DB / env.<name> 一致**）
+5. Settings → Variables and secrets → Add 4 个 Secret（MASTER_KEY / VAPID_*）
+6. 浏览器 `/capabilities` 验启动
+7. Vercel env var（VITE_AMSG_API_BASE_URL / VITE_AMSG_VAPID_PUBLIC_KEY）+ Redeploy
+8. 前端 Settings → 主动消息 2.0 → 跑 init-tenant + 启 Web Push 权限
+
+### Worker 调试命令
+- `wrangler dev` 跑本地 D1 模拟器
+- `wrangler tail` 实时看 worker 日志
+- `wrangler d1 execute sully-amsg2 --command "SELECT * FROM scheduled_messages LIMIT 10"` 直接查 D1

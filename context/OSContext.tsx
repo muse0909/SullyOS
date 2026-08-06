@@ -1600,15 +1600,19 @@ if (!isVisible || !isChattingWithThisChar) {
               });
 
               // 3. Build prompt & message history
-              // 暮色 2026-08-06：messages 数组 history 跟 system prompt 末尾"最近聊天"段不重复，用途不同
-              //   - messages 数组 history（user/assistant role）= 对话流，让 LLM 接续上一句
-              //   - system prompt 末尾"最近聊天（10 轮）"段 = 写作素材，文本格式"【江澈】...【暮色】..."
-              //   之前 1171c6fc commit 我误删了 messages history，暮色 8-6 反馈"正文全没了"，回滚到 8 条
+              // 暮色 2026-08-06 19:42：messages 数组 history 跟 system prompt 末尾"最近聊天"段不重复，用途不同
+              // 暮色 2026-08-06 20:09：拉 history 时过滤掉 proactiveHint 消息
+              //   之前 line 1594-1600 把 system hint 以 role:'user' 存到 IDB（伪装成 user 消息）
+              //   拉 20 条时这条 hint 进了 messages 数组末尾 → AI 看到"暮色已经 10分钟没找你说话...
+              //   你今天有自己的事"，**不接 history 末尾的"重写一版"话题**（暮色实测断裂）
+              //   修法：多拉 5 条兜底，过滤掉 proactiveHint 后再 slice(-20)
               // 记忆宫殿 recentMessages 收紧逻辑保留（不影响）：
               //   - injectRecentMsgs = 30 条（记忆宫殿 query 上下文用，不影响 top 5 结果）
               const injectRecentMsgs = await DB.getRecentMessagesByCharId(charId, 30);
-              // 暮色 2026-08-06：history 8 → 20 条（system prompt 末尾"最近聊天"段去掉了，唯一上下文来源）
-              const historyForBuild = await DB.getRecentMessagesByCharId(charId, 20);
+              const rawHistory = await DB.getRecentMessagesByCharId(charId, 25);
+              const historyForBuild = rawHistory
+                  .filter(m => !m.metadata?.proactiveHint)
+                  .slice(-20);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
 

@@ -3255,7 +3255,10 @@ if (keepN > 0) {
                     onSave={(config) => {
                         updateCharacter(char.id, { proactiveConfig: config });
                         if (config.enabled) {
-                            startProactiveChat(config.intervalMinutes);
+                            // 暮色 2026-08-06 21:35：传整个新 config，让 startProactiveChat 内部用 config.enabled 判断
+                            //   之前传 config.intervalMinutes + 闭包内 char.proactiveConfig.enabled，会用老 ref
+                            //   → 老 ref 可能是 {enabled:false} → 误判 → schedule 没起
+                            startProactiveChat(config);
                             addToast(`已启动主动消息，用户安静满 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}后才会主动发`, 'success');
                         } else {
                             stopProactiveChat();

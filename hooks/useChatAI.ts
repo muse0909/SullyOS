@@ -4510,16 +4510,23 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
     // NOTE: The actual proactive trigger handler is registered globally in OSContext
     // so it works even when Chat is not open. These are just start/stop helpers.
 
-    const startProactiveChat = (intervalMinutes: number) => {
+    // 暮色 2026-08-06：修角色隔离 bug — config.enabled=false 时不 start
+    //   之前 start 调了但 enabled=false，ProactiveChat 里有 schedule → runProactive 每次 fire 都 skip
+    //   用户感觉"关了还触发"——其实是 schedule 在空跑
+    //
+    // 暮色 2026-08-06 21:35：必须用新传进来的 config.enabled，不能用闭包里的 char.proactiveConfig.enabled
+    //   关键：updateCharacter 是异步的（setCharacters 调度了，但没真更新），startProactiveChat 紧跟着同步调
+    //   → 闭包里的 char 还是老 ref，char.proactiveConfig.enabled 还是 false（如果角色之前关过）
+    //   → 误判 enabled=false → schedule 没起 → toast 还照常弹"已启动" → 用户看到"弹窗没了，已开启，实际没开启"
+    //   → 第二次点能成功是因为第一次的 updateCharacter 已经把 enabled:true 写进 IDB，老 ref 刷新成新值了
+    //   修法：把新 config 整个传进来，用新 config 的 enabled 做判断（不再读闭包里的 char.proactiveConfig）
+    const startProactiveChat = (config: NonNullable<CharacterProfile['proactiveConfig']>) => {
         if (!char) return;
-        // 暮色 2026-08-06：修角色隔离 bug — char.proactiveConfig.enabled=false 时不 start
-        //   之前 start 调了但 enabled=false，ProactiveChat 里有 schedule → runProactive 每次 fire 都 skip
-        //   用户感觉"关了还触发"——其实是 schedule 在空跑
-        if (char.proactiveConfig && char.proactiveConfig.enabled === false) {
-            console.log(`[ChatAI] startProactiveChat skipped: ${char.name} has proactiveConfig.enabled=false`);
+        if (config.enabled === false) {
+            console.log(`[ChatAI] startProactiveChat skipped: ${char.name} config.enabled=false`);
             return;
         }
-        ProactiveChat.start(char.id, intervalMinutes);
+        ProactiveChat.start(char.id, config.intervalMinutes);
     };
 
     const stopProactiveChat = () => {

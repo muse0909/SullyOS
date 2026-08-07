@@ -36,7 +36,12 @@
 
 ### Bug 5：主动消息系统提示没发给角色
 - 根因：之前 fix（8-6）矫枉过正——`runProactive` 把 hint 以 `role:user, metadata:proactiveHint` 存 IDB，但拉 history 时**过滤**掉，AI 看到 messages 末尾是空的 user role
-- 修法：`OSContext.systemPromptParts` 数组末尾加 `hintLines`——hint 仍存 IDB（保持时间戳计算），但同时作为 system 字段发给 AI
+- 第一版修法（8-7 17:51 commit `15da1b1`）：`OSContext.systemPromptParts` 数组末尾加 `hintLines`——hint 仍存 IDB（保持时间戳计算），但同时作为 system 字段发给 AI
+- **第二版修法**（8-7 19:14 暮色反馈后改）：从 system prompt 末尾挪到 **messages 数组最后一条**（紧贴 history 末尾），role='system'
+  - 暮色原话："指令的权威性和存在感最强。AI刚读完这条提示，紧接着就要输出文字"
+  - 之前在 system prompt 末尾 → AI 读 system 后还要读 20 条 history，hint 容易被淹没
+  - 挪到 messages 末尾 → AI 读完最后一条 history 立刻看到 hint，紧接着输出
+  - role='system'（不是 user）→ 不会被 LLM 误当成"用户最新说的话"
 - 主动消息本来就是动态内容，5 分钟 cache 没关系，暮色已确认 cache 命中不需考虑
 
 ## 动了哪些文件
@@ -85,4 +90,5 @@
 - 主动消息的小纸条 prompt 跟正常聊天共用同一段，**没有**专门区分——暮色确认这个 OK
 - 这次改完小纸条功能**整体行为变了**：之前是"AI 任何时候都可能写"，现在是"AI 想她 / 有话没说出口时才写"——语义上更贴"小纸条"这个名字
 - 之前存的 system 消息 `[系统: ${char.name} 给你塞了张小纸条: ...]` 历史数据**不会自动清理**——新规则生效后新写的不再进聊天流，老的还在。要清理的话得跑一次 migration（暂不做）
-- 主动消息现在每次触发都会把 hintLines 拼到 system prompt 末尾——prompt 会略长（hint 段 ~700 chars），但 cache 命中不受影响（5 分钟 TTL，hint 内容每次不同本来就不缓存）
+- 主动消息现在每次触发都会把 hintLines 作为 messages 数组最后一条（role='system'）发给 LLM——比在 system prompt 末尾更显眼，AI 读完 history 立刻看到要"主动发消息"
+- 8-6 fix 的 hint 仍然存 IDB 是不变的（保证时间戳计算 + Chat.tsx 拉 messages 时知道有 hint）——只是 messages 数组末尾再加一条 role='system' 的 hint 副本发给 LLM

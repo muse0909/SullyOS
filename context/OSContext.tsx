@@ -1638,14 +1638,20 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.realtimeText,
                   sp.dynamicTail?.hotNewsText,  // 暮色 2026-08-05：热搜+天气（仅主动消息 / 早晚推）
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
-                  // 暮色 2026-08-07：把 hintLines 拼到 system prompt 末尾，让 AI 知道"我是主动发消息"场景
-                  //   hint 仍以 proactiveHint 形式存 IDB（保证时间戳计算），但 messages 数组里不出现
-                  hintLines,
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
               // messages 数组 20 条（system prompt 末尾不重复塞历史——之前两段重复了）
               const { apiMessages } = ChatPrompts.buildMessageHistory(historyForBuild, 20, char, currentUserProfile, emojis);
-              const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
+              // 暮色 2026-08-07 19:14：hint 从 system prompt 末尾挪到 messages 数组最末（紧贴最后一条消息之前）
+              //   暮色原话："指令的权威性和存在感最强。AI刚读完这条提示，紧接着就要输出文字"
+              //   之前在 system prompt 末尾 → AI 读 system 后还要读 20 条 history，hint 容易被淹没
+              //   挪到 messages 末尾 → AI 读完最后一条 history 立刻看到 hint，紧接着输出
+              //   role:'system'（不是 user）→ 不会被 LLM 误当成"用户最新说的话"
+              const fullMessages = [
+                  { role: 'system', content: systemPrompt },
+                  ...apiMessages,
+                  { role: 'system', content: hintLines },
+              ];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 

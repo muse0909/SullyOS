@@ -11,6 +11,10 @@ import { isScheduleFeatureOn } from './scheduleGenerator';
 // 暮色 2026-08-05 Phase 3：角色时区格式化
 import { nowInTimeZone, resolveCharTimeZone, tzLabel } from './timezone';
 import { getRecentPosts, MomentPost } from './momentsStorage';
+// 暮色 2026-08-07：朋友圈 awareness 收窄到"只带新发朋友圈"
+import { getNewPostsForAwareness, markMomentsSeen } from './momentsAwarenessState';
+// 暮色 2026-08-07：真实世界感知按"早/晚窗口"判断（恢复 8-5 commit message 原意）
+import { shouldNotifyRealtime, markRealtimeNotified } from './realtimeNotified';
 
 // 2026-07-22：小纸条 prompt 自定义（跟私密记事完全独立，暮色原话"完全脱离小小窝"）
 export const XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY = 'sullyos_xiaoZhiTiaoPrompt';
@@ -183,8 +187,11 @@ export const ChatPrompts = {
 
         // 暮色 2026-07-18：纯聊天模式判定（undefined 兼容老角色 = 完整模式）
         const isPureMode = (chatMode ?? char.chatMode ?? 'full') === 'pure';
-        // 暮色 2026-08-05：主动消息判定（默认 false = 正常聊天不带实时世界感知）
-        const shouldInjectRealtime = !!isProactive;
+        // 暮色 2026-08-07：恢复 8-5 commit 8228f95 原意 — 新闻/天气只在"早/晚窗口 + 当日未通知"才带
+        //   之前 8228f95 commit message 写了三个场景分开（正常聊天 / 主动消息 / 早晚各一次主动推）
+        //   但代码简化成 shouldInjectRealtime = !!isProactive — 所有主动消息都带
+        //   这次补回早 5-9 / 晚 17-21 窗口判断 + 当日去重（避免 30 分钟一次主动消息里反复塞热搜）
+        const shouldInjectRealtime = !!isProactive && shouldNotifyRealtime();
 
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         const coreT0 = performance.now();
@@ -281,11 +288,16 @@ export const ChatPrompts = {
             };
         }
         const hotNewsPromise: Promise<string> = (async () => {
-            // shouldInjectRealtime = isProactive：只有主动消息 / 早晚推才带热搜 + 天气
+            // 暮色 2026-08-07：shouldInjectRealtime = isProactive AND (早/晚窗口 AND 当日未通知)
+            //   正常聊天：永远不带（isProactive=false）
+            //   主动消息：早 5-9 / 晚 17-21 窗口内才带 + 同窗口当天已带过则跳过
             if (!shouldInjectRealtime) return '';
             if (!config.weatherEnabled && !config.newsEnabled) return '';
             try {
-                return await RealtimeContextManager.buildFullContext(config);
+                const result = await RealtimeContextManager.buildFullContext(config);
+                // 同步：成功返回后立刻 mark，避免下次同窗口重复
+                markRealtimeNotified();
+                return result;
             } catch (e) {
                 console.error('Failed to inject hot news context:', e);
                 return '';
@@ -302,12 +314,20 @@ export const ChatPrompts = {
             })
             : Promise.resolve(null);
 
-        // 2.5 朋友圈 awareness（暮色 2026-07-04：参考 330 ai-response.js 注入最近 5 条 post + 评论）
-        //     同步 localStorage 读，0 延迟，几乎不阻塞。posts 为空时返回空字符串。
+        // 2.5 朋友圈 awareness（暮色 2026-08-07：只带新发朋友圈，不重复塞老的）
+        //     之前：每次都把最近 5 条 post 全塞进 prompt → 太长 + 每次都重复
+        //     改后：getNewPostsForAwareness 按 charId 持久化"已看到的最新 createdAt" → 只返回 createdAt > lastSeen 的
+        //           没新发朋友圈时返回空数组 → awareness 段不出现（节省 token）
+        //     同步 localStorage 读，0 延迟，几乎不阻塞。
         const momentsContextPromise: Promise<string> = Promise.resolve().then(() => {
             try {
-                const posts = getRecentPosts(5);
-                return ChatPrompts.buildMomentsAwareness(char, userProfile, posts);
+                const allPosts = getRecentPosts(5);
+                const newPosts = getNewPostsForAwareness(char.id, allPosts);
+                if (newPosts.length > 0) {
+                    // 持久化这次看到的最新朋友圈（下次只带比这更新的）
+                    markMomentsSeen(char.id, newPosts);
+                }
+                return ChatPrompts.buildMomentsAwareness(char, userProfile, newPosts);
             } catch (e) {
                 console.error('Failed to load moments context:', e);
                 return '';

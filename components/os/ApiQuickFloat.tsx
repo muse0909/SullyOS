@@ -211,20 +211,14 @@ const ApiQuickFloat: React.FC = () => {
     setSysOperation,
   } = useOS();
 
+  // 暮色 2026-08-07：默认归位到右上角（跟星星按钮并排），不读 localStorage
+  //   之前从 localStorage 读老位置，宽屏存的值到窄屏加载会跑出视口
+  //   每次 cold start 都用 window.innerWidth 算相对右边的位置 — 屏幕窄时自动靠左
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
-    try {
-      const raw = localStorage.getItem(POS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-          return parsed;
-        }
-      }
-    } catch {}
     if (typeof window !== 'undefined') {
-      return { x: window.innerWidth - BALL_SIZE - 12, y: 80 };
+      return { x: window.innerWidth - BALL_SIZE - 28, y: 76 };
     }
-    return { x: 320, y: 80 };
+    return { x: 320, y: 76 };
   });
 
   const [dragging, setDragging] = useState(false);
@@ -466,11 +460,7 @@ const ApiQuickFloat: React.FC = () => {
     try {
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {}
-    if (dragRef.current.moved) {
-      try {
-        localStorage.setItem(POS_KEY, JSON.stringify(pos));
-      } catch {}
-    }
+    // 暮色 2026-08-07：不写 localStorage — 每次刷新默认归位到右上角
   };
 
   const onClick = (e: React.MouseEvent) => {

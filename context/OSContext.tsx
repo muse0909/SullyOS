@@ -516,9 +516,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
-  const [isLocked, setIsLocked] = useState(() => {
-    try { return localStorage.getItem('sullyos_unlocked') !== 'true'; } catch { return true; }
-  });
+  const [isLocked, setIsLocked] = useState(true);
   
   const getRealTime = (): VirtualTime => {
       const now = new Date();
@@ -3609,10 +3607,7 @@ if (!isVisible || !isChattingWithThisChar) {
   const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
-  const unlock = () => {
-    try { localStorage.setItem('sullyos_unlocked', 'true'); } catch {}
-    setIsLocked(false);
-  };
+  const unlock = () => setIsLocked(false);
 
   // Direct chat jump — 设一次性 pending flag + direct entry 标记，WeChat mount 时 consume
   // 用 ref 而非 state 避免触发 re-render

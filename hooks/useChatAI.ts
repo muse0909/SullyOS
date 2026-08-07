@@ -749,6 +749,10 @@ export const useChatAI = ({
 
     const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }) => {
         if (isTyping || !char) return;
+        // 暮色 2026-08-07：触发路径收窄——小纸条只在"主路径"（主动消息 + 正常聊天）解析
+        //   5 个递归路径（read-note / search / diary / read-diary / fs-diary / fs-read-diary）的 LLM 调用前会临时设 false
+        //   即使 LLM 偶尔从 history 学到模式输出 [[XIAO_ZHI_TIAO:...]] 也不会被保存
+        let allowXiaoZhiTiaoParse = true;
         // 角色级 API 优先：char.apiConfig 设了 baseUrl/apiKey/model 就用角色的（暮色 2026-07-24）
         // 协议、minimaxRegion、visionBaseUrl/R2/image* 等仍走全局
         // 暮色 2026-07-31 修：3 tab 协议下，角色 API 可能在 claude*/gemini* 而不是 baseUrl
@@ -2347,6 +2351,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete failBody.tools;
             delete failBody.tool_choice;
 
+            allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：生图失败 followup 不解析小纸条
             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
@@ -2374,6 +2379,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete followBody.tools;
             delete followBody.tool_choice;
 
+            allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：生图成功 followup 不解析小纸条
             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
@@ -2486,6 +2492,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete followBody.tools;
             delete followBody.tool_choice;
 
+            allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：play_song 失败 followup 是工具调用的二次 fetch，不解析小纸条
             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
@@ -2649,6 +2656,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             { role: 'user', content: `[系统: 搜索完成！以下是关于"${searchQuery}"的搜索结果]\n\n${resultsStr}\n\n[系统: 现在请根据这些真实信息回复用户。用自然的语气分享，比如"我刚搜了一下发现..."、"诶我看到说..."。不要再输出[[SEARCH:...]]了。]` }
                         ];
 
+                        allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                         data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                             method: 'POST', headers,
                             body: JSON.stringify({ model: effectiveApi.model, messages: searchMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -2773,6 +2781,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     { role: 'user', content: `[系统: ${reason}。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 可以自然地提一下，比如"日记好像打不开诶"、"嗯...好像没找到"\n3. 继续正常聊天，用多条消息回复\n4. 严禁再输出[[READ_DIARY:...]]或[[FS_READ_DIARY:...]]标记]` }
                 ];
                 try {
+                    allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify({ model: effectiveApi.model, messages: msgs, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -2845,6 +2854,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                         { role: 'user', content: `[系统: 你翻开了自己 ${targetDate} 的日记，以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[READ_DIARY:...]]标记]` }
                                     ];
 
+                                    allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                         method: 'POST', headers,
                                         body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -2867,6 +2877,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     { role: 'user', content: `[系统: 你翻了翻日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[READ_DIARY:...]]标记]` }
                                 ];
 
+                                allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
                                     body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -3008,6 +3019,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                         { role: 'user', content: `[系统: 你翻开了自己 ${targetDate} 的日记（飞书），以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
                                     ];
 
+                                    allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                         method: 'POST', headers,
                                         body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -3029,6 +3041,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     { role: 'user', content: `[系统: 你翻了翻飞书日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
                                 ];
 
+                                allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
                                     body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -3098,6 +3111,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     { role: 'user', content: `[系统: 你翻阅了${userProfile.name}的笔记，以下是内容:\n\n${noteText}\n\n请你：\n1. 先正常回应用户刚才说的话\n2. 自然地提到你看到的笔记内容，语气温馨，像不经意间看到的\n3. 可以对内容表示好奇、关心或共鸣\n4. 用多条消息回复，保持对话自然\n5. 严禁再输出[[READ_NOTE:...]]标记]` }
                                 ];
 
+                                allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
                                     body: JSON.stringify({ model: effectiveApi.model, messages: noteMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -3120,6 +3134,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 { role: 'user', content: `[系统: 你想看${userProfile.name}关于"${keyword}"的笔记，但没有找到。请你：\n1. 先正常回应用户刚才说的话\n2. 可以自然地提一下，比如"嗯，好像没找到那篇笔记"\n3. 继续正常聊天\n4. 严禁再输出[[READ_NOTE:...]]标记]` }
                             ];
 
+                            allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：递归路径不解析小纸条
                             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                 method: 'POST', headers,
                                 body: JSON.stringify({ model: effectiveApi.model, messages: nonoteMessages, temperature: 0.8, max_tokens: 8000, stream: false })
@@ -3221,9 +3236,14 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
             // 暮色 2026-08-07：去掉 type 字段（type 没用），token 简化为 [[XIAO_ZHI_TIAO: 内容 ]]
             // 暮色 2026-08-07：每天最多 5 条 — 系统硬限制（即使 prompt 写了，AI 仍可能超）
-            try {
+            // 暮色 2026-08-07：触发路径收窄到"主动消息 + 正常聊天"——其余 5 个递归路径（read-note / search / diary / read-diary / fs-diary / fs-read-diary）不解析
+            //   allowXiaoZhiTiaoParse 闭包 flag 由各递归路径自己设 false
+            if (!allowXiaoZhiTiaoParse) {
+                aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
+            } else try {
                 const todayStart = new Date();
                 todayStart.setHours(0, 0, 0, 0);
+                const oneHourAgo = Date.now() - 60 * 60 * 1000;
                 const todaysXZT = (await DB.getXiaoZhiTiaos(char.id))
                     .filter(n => n.timestamp >= todayStart.getTime());
                 if (todaysXZT.length >= 5) {
@@ -3233,7 +3253,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     if (xztMatches.length > 0) {
                         const m = xztMatches[0];
                         const content = m[1].trim();
-                        if (content) {
+                        // 暮色 2026-08-07：1h 内已写过相同内容 → 跳过（兜底，主要靠路径收窄）
+                        const recentDuplicate = todaysXZT.find(n =>
+                            n.timestamp >= oneHourAgo && n.content === content
+                        );
+                        if (recentDuplicate) {
+                            console.log(`📝 [XiaoZhiTiao] 1h 内已写过相同内容，跳过`);
+                        } else if (content) {
                             const newNote: XiaoZhiTiao = {
                                 id: `xzt-${Date.now()}`,
                                 charId: char.id,
@@ -3243,14 +3269,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             };
                             await DB.saveXiaoZhiTiao(newNote);
                             console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
-                            await DB.saveMessage({
-                                charId: char.id,
-                                role: 'system',
-                                type: 'text',
-                                content: `[系统: ${char.name} 给你塞了张小纸条: \n"${content}"]`,
-                            });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                            addToast(`📝 ${char.name} 写了一条小纸条`, 'success', 2500);
+                            // 暮色 2026-08-07：提醒改成顶部弹窗（不显示内容详情）
+                            addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
                         }
                     }
                 }
@@ -4187,10 +4207,16 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 先提取 [[THOUGHT: ...]] 存 metadata.thought
             //   必须在 sanitize 之前提取——sanitize 会 strip 掉 THOUGHT 标签
             //   MessageItem 渲染时读 metadata.thought 显示折叠的"💭 思维链"
+            // 暮色 2026-08-07：兼容 streaming 切片边界残留的 `THOUGHT: ...]]`（缺 [[）和 `[[THOUGHT: ...`（缺 ]]）
             let thoughtContent = '';
-            const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
-            if (thoughtMatch) {
-                thoughtContent = thoughtMatch[1].trim();
+            // 1. 完整格式 [[THOUGHT: ...]]
+            let thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+            // 2. 缺 [[ 前缀：THOUGHT: ...]]
+            if (!thoughtMatch) thoughtMatch = aiContent.match(/(?:^|\n)\s*THOUGHT\s*:\s*([\s\S]*?)\]\]/);
+            // 3. 缺 ]] 后缀：[[THOUGHT: ... 到行尾
+            if (!thoughtMatch) thoughtMatch = aiContent.match(/\[\[\s*THOUGHT\s*:\s*([\s\S]+?)$/m);
+            if (thoughtMatch && thoughtMatch[1] && thoughtMatch[1].trim()) {
+                thoughtContent = thoughtMatch[1].replace(/\]\s*$/, '').trim();
             }
 
             // 8. Split and Stream (Simulate Typing)
@@ -4295,7 +4321,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         const foundEmoji = emojis.find(e => e.name === emojiName);
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
+                            // 暮色 2026-08-07：emoji chunk 不挂 thought（避免一条消息显示两个思维链）
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: { ...(mcdInheritMeta || {}) } } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         }
                     }
@@ -4310,7 +4337,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const foundEmoji = emojis.find(e => e.name === part.content);
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: buildChunkMeta() } as any);
+                                // 暮色 2026-08-07：emoji chunk 不挂 thought（避免一条消息显示两个思维链）
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: { ...(mcdInheritMeta || {}) } } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             }
                         } else {

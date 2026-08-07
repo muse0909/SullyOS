@@ -12,6 +12,8 @@ import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
+import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
+import type { XiaoZhiTiao } from '../types';
 // 暮色 2026-08-01：情侣空间 AI 主动打卡接 runProactive
 import { shouldTriggerAiCheckin, pickRandomTask, addCheckin } from '../utils/coupleSpaceStorage';
 // 暮色 2026-07-22：每月自动跑一次记忆关系网修剪（30 天间隔，避免节点关联数缓慢增长）
@@ -1636,6 +1638,9 @@ if (!isVisible || !isChattingWithThisChar) {
                   sp.dynamicTail?.realtimeText,
                   sp.dynamicTail?.hotNewsText,  // 暮色 2026-08-05：热搜+天气（仅主动消息 / 早晚推）
                   sp.dynamicTail?.innerState ? `[当前意识流] ${sp.dynamicTail.innerState}` : '',
+                  // 暮色 2026-08-07：把 hintLines 拼到 system prompt 末尾，让 AI 知道"我是主动发消息"场景
+                  //   hint 仍以 proactiveHint 形式存 IDB（保证时间戳计算），但 messages 数组里不出现
+                  hintLines,
               ].filter((p: string) => p && p.trim());
               systemPrompt = systemPromptParts.join('\n\n'); // 写回外层变量，catch 块能拿到
               // messages 数组 20 条（system prompt 末尾不重复塞历史——之前两段重复了）
@@ -1712,14 +1717,57 @@ if (!isVisible || !isChattingWithThisChar) {
               //   之前 sanitize 之后 THOUGHT 标签被 chatParser.sanitize 直接 strip 掉（line 316）
               //   现在先提取再 sanitize：metadata.thought 存原文，content 保持干净
               //   暮色想看思维链——前端 MessageItem 渲染时读 metadata.thought
+              // 暮色 2026-08-07：兼容 streaming 切片边界残留的 `THOUGHT: ...]]`（缺 [[）和 `[[THOUGHT: ...`（缺 ]]）
               let thoughtContent = '';
-              const thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
-              if (thoughtMatch) {
-                  thoughtContent = thoughtMatch[1].trim();
+              let thoughtMatch = aiContent.match(/\[\[THOUGHT:\s*([\s\S]*?)\]\]/);
+              if (!thoughtMatch) thoughtMatch = aiContent.match(/(?:^|\n)\s*THOUGHT\s*:\s*([\s\S]*?)\]\]/);
+              if (!thoughtMatch) thoughtMatch = aiContent.match(/\[\[\s*THOUGHT\s*:\s*([\s\S]+?)$/m);
+              if (thoughtMatch && thoughtMatch[1] && thoughtMatch[1].trim()) {
+                  thoughtContent = thoughtMatch[1].replace(/\]\s*$/, '').trim();
               }
 
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
+
+              // 暮色 2026-08-07：主动消息路径解析 [[XIAO_ZHI_TIAO: ...]]（收窄后唯一两条路径之一）
+              //   跟 useChatAI 同步：1 天最多 5 条 + 1 小时内相同内容跳过
+              //   提醒走 addToast 顶部弹窗（不显示内容详情）
+              try {
+                  const todayStart = new Date();
+                  todayStart.setHours(0, 0, 0, 0);
+                  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+                  const todaysXZT = (await DB.getXiaoZhiTiaos(charId))
+                      .filter(n => n.timestamp >= todayStart.getTime());
+                  if (todaysXZT.length >= 5) {
+                      console.log(`📝 [XiaoZhiTiao/Proactive] 今天已写 ${todaysXZT.length} 条，跳过`);
+                  } else {
+                      const xztMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
+                      if (xztMatch) {
+                          const content = xztMatch[1].trim();
+                          const recentDuplicate = todaysXZT.find(n =>
+                              n.timestamp >= oneHourAgo && n.content === content
+                          );
+                          if (recentDuplicate) {
+                              console.log(`📝 [XiaoZhiTiao/Proactive] 1h 内已写过相同内容，跳过`);
+                          } else if (content) {
+                              const newNote: XiaoZhiTiao = {
+                                  id: `xzt-${Date.now()}`,
+                                  charId,
+                                  timestamp: Date.now(),
+                                  content,
+                                  styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                              };
+                              await DB.saveXiaoZhiTiao(newNote);
+                              console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
+                              addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                          }
+                      }
+                      // 主动消息里把 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
+                      aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
+                  }
+              } catch (e) {
+                  console.warn('📝 [XiaoZhiTiao/Proactive] 解析失败:', e);
+              }
 
               if (aiContent) {
                   const responseParts = ChatParser.splitResponse(aiContent);
@@ -1736,6 +1784,7 @@ if (!isVisible || !isChattingWithThisChar) {
                       if (part.type === 'emoji') {
                           const foundEmoji = emojis.find(e => e.name === part.content);
                           if (foundEmoji?.url) {
+                              // 暮色 2026-08-07：emoji chunk 不挂 thought（避免一条消息显示两个思维链）
                               await DB.saveMessage({
                                   charId,
                                   role: 'assistant',

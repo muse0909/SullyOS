@@ -749,8 +749,8 @@ const MessageItem = React.memo(({
                     Added explicit margins to clear absolute avatars.
                 */}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
-                    {/* metadata.thought 有值就显示，OSContext 主动消息 + useChatAI 正常聊天都会写 */}
-                    {!isUser && (m as any).metadata?.thought && (
+                    {/* 暮色 2026-08-07：emoji / image 类型不显示 ThoughtFold（用户看不到正文，思维链折叠没意义，且 emoji chunk 也会被 buildChunkMeta 挂上 thought，导致一条消息两个思维链） */}
+                    {!isUser && m.type !== 'emoji' && m.type !== 'image' && (m as any).metadata?.thought && (
                         <ThoughtFold thought={(m as any).metadata.thought} />
                     )}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>

@@ -314,6 +314,9 @@ export const ChatParser = {
             // Strip residual action/system tags that weren't caught earlier
             // 暮色 2026-07-27：加 THOUGHT — 主动消息的思维链前置 token，写在消息开头，用户看不到
             .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|THOUGHT)[:\s][\s\S]*?\]\]/g, '')
+            // 暮色 2026-08-07：兜底 strip streaming 切片残留的 THOUGHT（缺 [[ 或缺 ]]）
+            .replace(/(?:^|\n)\s*THOUGHT\s*:\s*[\s\S]*?]]/g, '')
+            .replace(/\[\[\s*THOUGHT\s*:[\s\S]*?(?=\n\n|$)/gm, '')
             .replace(/\[schedule_message[^\]]*\]/g, '')
             .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')

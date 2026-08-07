@@ -311,6 +311,9 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-08-06 | 主动消息 hint 删掉加回的思维链段（按暮色 8-6 22:13 反馈："为什么要写我加的？这些没用的就删掉"） | [`changelogs/2026-08-06-proactive-hint-remove-thought-block.md`](./changelogs/2026-08-06-proactive-hint-remove-thought-block.md) |
 | 2026-08-06 | 清理来源 / 改写历史型注释（暮色 8-6 22:27 吐槽"加了多少标题"——清 8-6 这一轮我加的注释，保留技术解释型） | [`changelogs/2026-08-06-cleanup-source-attribution-comments.md`](./changelogs/2026-08-06-cleanup-source-attribution-comments.md) |
 | 2026-08-07 | 小纸条拼写 bug（DB.getXiaoZhiTiao 少 s）+ 记忆宫殿副 LLM 加 CORS fallback（修青屿等中转站 CORS 拦截"没回复"） | [`changelogs/2026-08-07-xiaozhitiao-typo-and-memory-cors-fallback.md`](./changelogs/2026-08-07-xiaozhitiao-typo-and-memory-cors-fallback.md) |
+| 2026-08-07 | 5 个聊天 bug 一次性修（小纸条 / 戳一戳 / 思维链 / 主动消息） | [`changelogs/2026-08-07-five-bugs-chat-polish.md`](./changelogs/2026-08-07-five-bugs-chat-polish.md) |
+| 2026-08-07 | 主动消息 hint 位置调整：messages 数组最末（紧贴 history 末尾） | [`changelogs/2026-08-07-proactive-hint-messages-tail.md`](./changelogs/2026-08-07-proactive-hint-messages-tail.md) |
+| 2026-08-07 | 朋友圈 awareness + 真实世界感知窗口收窄（只带新朋友圈 + 早/晚窗口通知） | [`changelogs/2026-08-07-moments-realtime-window.md`](./changelogs/2026-08-07-moments-realtime-window.md) |
 | 2026-08-03 | 主动消息诊断 log ReferenceError — systemPrompt 挪到 try 块外 | [`changelogs/2026-08-03-proactive-diagnos-log-referenceerror.md`](./changelogs/2026-08-03-proactive-diagnos-log-referenceerror.md) |
 | 2026-08-04 | Gemini 直连 key 池 — 多 key 轮询 + 健康状态自动切换 | [`changelogs/2026-08-04-gemini-key-pool.md`](./changelogs/2026-08-04-gemini-key-pool.md) |
 | 2026-08-02 | 悬浮窗 useOS 漏解构 addApiPreset 致 ReferenceError + 副 API 保存跳回 OpenAI 协议（syncEmotionApiToAllCharacters 丢字段） | [`changelogs/2026-08-02-add-api-preset-reference-error.md`](./changelogs/2026-08-02-add-api-preset-reference-error.md) |

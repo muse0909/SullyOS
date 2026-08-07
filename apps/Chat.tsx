@@ -3126,6 +3126,10 @@ if (keepN > 0) {
                         if (!neighbor) return true;
                         if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
                         if (neighbor.role !== cur.role) return true;  // role 切换 = 轮边界
+                        // 暮色 2026-08-07：type 不同也算 break
+                        //   戳一戳（type='interaction'）消息跟普通 text 消息 role 相同但语义不同
+                        //   不并入 group → 下一条 AI 回复的 isFirstInGroup=true → 带头像
+                        if (neighbor.type !== cur.type) return true;
                         const curProactive = !!cur.metadata?.isProactive;
                         const neighborProactive = !!neighbor.metadata?.isProactive;
                         // 主动消息 vs 正常消息：永远独立 group

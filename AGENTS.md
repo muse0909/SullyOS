@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-08-09 | 主动消息 2.0 隔离(第一步)— AMSG2_ENABLED=false 短路 4 处接入点 | [`changelogs/2026-08-09-amsg2-pause.md`](./changelogs/2026-08-09-amsg2-pause.md) |
 | 2026-07-31 | 彼方 saveVRNovel 漏写 — 上传小说 TypeError | [`changelogs/2026-07-31-vrworld-savevrnovel.md`](./changelogs/2026-07-31-vrworld-savevrnovel.md) |
 | 2026-07-31 | 情侣空间接受/拒绝 UI 反馈 + 邀请卡状态视觉区分 | [`changelogs/2026-07-31-couple-space-accept-feedback.md`](./changelogs/2026-07-31-couple-space-accept-feedback.md) |
 | 2026-07-31 | 紧急修复：聊天页 TDZ 崩溃（coupleSpaceInviteResolved useEffect 位置错） | [`changelogs/2026-07-31-chat-tdz-after-couple-space.md`](./changelogs/2026-07-31-chat-tdz-after-couple-space.md) |

@@ -24,6 +24,7 @@ import {
   startHeartbeat,
   stopHeartbeat,
 } from './proactivePushConfig';
+import { AMSG2_ENABLED } from './activeMsgFeatureFlag';
 // 暮色 2026-08-05 Phase 3：聊天在场状态存储（跟 amsgChatPresence 配对）
 import { markUserChatPresence as _markUserChatPresence } from './chatPresenceStorage';
 
@@ -323,7 +324,8 @@ export const ProactiveChat = {
     attachListeners();
 
     // Cloud accelerator — fire-and-forget; if not configured, this no-ops.
-    if (isPushConfigReady(loadPushConfig())) {
+    // 暮色 2026-08-09:2.0 暂停 — 4 处接入点全部短路,1.0 唯一入口
+    if (AMSG2_ENABLED && isPushConfigReady(loadPushConfig())) {
       void registerScheduleOnWorker(charId, intervalMs);
       startHeartbeat();
     }
@@ -341,7 +343,7 @@ export const ProactiveChat = {
     syncSchedulesToSW();
     postToSW({ type: 'proactive-reset', charId });
 
-    if (isPushConfigReady(loadPushConfig())) {
+    if (AMSG2_ENABLED && isPushConfigReady(loadPushConfig())) {
       const schedule = loadSchedules()[charId];
       if (schedule) void registerScheduleOnWorker(charId, schedule.intervalMs);
     }
@@ -360,7 +362,7 @@ export const ProactiveChat = {
     removeLastFireTime(charId);
     syncSchedulesToSW();
 
-    if (isPushConfigReady(loadPushConfig())) {
+    if (AMSG2_ENABLED && isPushConfigReady(loadPushConfig())) {
       void unregisterScheduleOnWorker(charId);
     }
 
@@ -389,7 +391,7 @@ export const ProactiveChat = {
     // Re-register schedules on the Worker in case the client token, VAPID
     // key, or push subscription has rotated since last run.  Also restart
     // the heartbeat loop.
-    if (isPushConfigReady(loadPushConfig())) {
+    if (AMSG2_ENABLED && isPushConfigReady(loadPushConfig())) {
       for (const schedule of schedules) {
         void registerScheduleOnWorker(schedule.charId, schedule.intervalMs);
       }

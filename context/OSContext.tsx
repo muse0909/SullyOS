@@ -4,6 +4,8 @@ import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, To
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
+// 暮色 2026-08-09:2.0 暂停开关
+import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
 // 暮色 2026-08-05 Phase 3：聊天在场状态（主动消息撞车闸）
 import { isUserCurrentlyChatting, clearUserChatPresence } from '../utils/chatPresenceStorage';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -1299,6 +1301,8 @@ if (!isVisible || !isChattingWithThisChar) {
   // ─── Global Proactive Message Handler ───
   // Registered at OS level so it works even when Chat is not open.
   useEffect(() => {
+      // 暮色 2026-08-09:2.0 暂停 — 整个 useEffect body 短路,1.0 唯一入口
+      if (!AMSG2_ENABLED) return;
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {

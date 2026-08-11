@@ -16,6 +16,8 @@ import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from 
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 // 暮色 2026-08-06：主动消息 2.0 全局配置弹窗（接 Cloudflare Worker）
+// 暮色 2026-08-09:2.0 暂停 — 入口用 AMSG2_ENABLED 包,import 保留供后续开启
+import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
 import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import type { ApiPreset, APIConfig, Message, CharacterProfile } from '../types';
 
@@ -2283,7 +2285,8 @@ const handleSaveTts = () => {
         )}
         </SettingsSection>
 
-        {/* 暮色 2026-08-06：主动消息 2.0 全局配置入口（接 Cloudflare Worker） */}
+        {/* 暮色 2026-08-06：主动消息 2.0 全局配置入口（接 Cloudflare Worker） — 暮色 2026-08-09 暂停,AMSG2_ENABLED=false 不渲染 */}
+        {AMSG2_ENABLED && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -2311,6 +2314,7 @@ const handleSaveTts = () => {
                 v2 雏形已经能弹出来 + 报友好错误（不会白屏），但没 Worker 之前实际排程跑不通。
             </p>
         </section>
+        )}
 
         {/* 11 - API 请求账本 */}
         <SettingsSection id="apiLog" icon="📋" title="API 请求账本" subtitle="本地调试日志·脱敏导出" isOpen={openSectionId === 'apiLog'} onToggle={toggleSection}>
@@ -2324,12 +2328,14 @@ const handleSaveTts = () => {
         </div>
       </div>
 
-      {/* 暮色 2026-08-06：主动消息 2.0 全局配置弹窗 */}
+      {/* 暮色 2026-08-06：主动消息 2.0 全局配置弹窗 — 暮色 2026-08-09 暂停,AMSG2_ENABLED=false 不渲染 */}
+      {AMSG2_ENABLED && (
       <ActiveMsgGlobalSettingsModal
           isOpen={showAmsg2Config}
           onClose={() => setShowAmsg2Config(false)}
           addToast={addToast}
       />
+      )}
 
       {/* 主动消息 Push 加速 · 启用前确认 */}
       <Modal

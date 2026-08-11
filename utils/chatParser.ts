@@ -264,12 +264,15 @@ export const ChatParser = {
         }
 
         // SCHEDULE
+        // 2026-08-11 暮色：诊断日志起点。不改保存逻辑、不截断、不合并。
         const scheduleRegex = /\[schedule_message \| (.*?) \| fixed \| (.*?)\]/g;
+        const parsedSchedules: { timeStr: string; dueTime: number; contentPreview: string; saved: boolean }[] = [];
         let match;
         while ((match = scheduleRegex.exec(content)) !== null) {
             const timeStr = match[1].trim();
             const msgContent = match[2].trim();
             const dueTime = new Date(timeStr).getTime();
+            let saved = false;
             if (!isNaN(dueTime) && dueTime > Date.now()) {
                 await DB.saveScheduledMessage({ id: `sched-${Date.now()}-${Math.random()}`, charId, content: msgContent, dueAt: dueTime, createdAt: Date.now() });
                 try {
@@ -279,6 +282,34 @@ export const ChatParser = {
                     }
                 } catch (e) { console.log("Notification schedule skipped (web mode)"); }
                 addToast(`${charName} 似乎打算一会儿找你...`, 'info');
+                saved = true;
+            }
+            parsedSchedules.push({
+                timeStr,
+                dueTime,
+                contentPreview: msgContent.length > 40 ? msgContent.slice(0, 40) + '…' : msgContent,
+                saved,
+            });
+        }
+        // 2026-08-11 诊断报告：记录本次 AI 回复解析出的提醒数量 + dueAt + 脱敏 content 摘要
+        if (parsedSchedules.length > 0) {
+            console.log(`📅 [schedule_message] parsed ${parsedSchedules.length} reminder(s) for charId=${charId}, aiContent.length=${content.length}`);
+            parsedSchedules.forEach((m, i) => {
+                const dueIso = isNaN(m.dueTime) ? 'INVALID' : new Date(m.dueTime).toISOString();
+                const savedMark = m.saved ? 'saved' : 'skipped(dueAt<=now)';
+                console.log(`  [${i + 1}/${parsedSchedules.length}] dueAt=${dueIso} ${savedMark} content="${m.contentPreview}"`);
+            });
+            if (parsedSchedules.length > 1) {
+                const byDue = parsedSchedules.reduce((acc, m) => {
+                    (acc[m.timeStr] = acc[m.timeStr] || []).push(m.contentPreview);
+                    return acc;
+                }, {} as Record<string, string[]>);
+                Object.entries(byDue).forEach(([t, contents]) => {
+                    if (contents.length > 1) {
+                        console.warn(`⚠️ [schedule_message] dueAt=${t} 同时间含 ${contents.length} 条(可能重复措辞或同时间多事项,需要人工确认):`);
+                        contents.forEach((c, i) => console.warn(`    [${i + 1}] "${c}"`));
+                    }
+                });
             }
         }
         content = content.replace(scheduleRegex, '').trim();

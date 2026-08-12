@@ -11,6 +11,7 @@ import { isUserCurrentlyChatting, clearUserChatPresence } from '../utils/chatPre
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
+import { extractGeminiKeys, pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, shortKey } from '../utils/geminiKeyPool';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
@@ -38,6 +39,17 @@ const normalizeProactiveAiContent = (raw: string): string => {
     (_match, lineStart: string, emojiName: string) => `${lineStart}[[SEND_EMOJI: ${emojiName.trim()}]]`
   );
   return cleaned;
+};
+
+// 任务 1：baseUrl 缺 /v1 时自动补，防止打到中转站根路径 404。
+//   useChatAI 行 41-46 的同款函数逻辑写反了（! 写错）——这里写对版：
+//   - 不以 /v1 /v2 结尾 → 补 /v1
+//   - 已经以 /v1 结尾 → 原样
+const normalizeApiUrl = (url?: string): string => {
+    const raw = (url || '').trim().replace(/\/+$/, '');
+    if (!raw) return '';
+    if (/\/v\d+$/i.test(raw)) return raw;
+    return `${raw}/v1`;
 };
 
 
@@ -1541,6 +1553,23 @@ if (!isVisible || !isChattingWithThisChar) {
           let reqBody: any = null;
           let systemPrompt: string = '';
 
+          // 任务 1：按 apiProtocol 选 baseUrl/apiKey/model
+          //   修复前：永远只读 api.baseUrl/apiKey/model（OpenAI 字段），用户切到 Gemini 协议时
+          //          主动消息仍打到旧 OpenAI 地址 → 中转站 404/405
+          //   修后：OpenAI 走主字段；Gemini 走 gemini* 字段；其它（含 Claude / 缺省）回落主字段
+          //   跟 useChatAI 行 794-808 protoResolved 同款结构，但本任务范围只支持 OpenAI/Gemini
+          //   注意：api 是引用 React state（charApiConfig / currentApiConfig）—— 不能 mutate
+          //         否则会污染 state。改用临时 activeApi 变量承载本轮生效的 baseUrl/apiKey/model
+          const activeApi: any = apiProtocol === 'gemini' ? {
+              ...api,
+              baseUrl: (api as any).geminiBaseUrl || api.baseUrl,
+              apiKey: (api as any).geminiApiKey || api.apiKey,
+              model: (api as any).geminiModel || api.model,
+          } : { ...api };
+          if (apiProtocol === 'openai') {
+              activeApi.baseUrl = normalizeApiUrl(activeApi.baseUrl);
+          }
+
           try {
               // 1. Calculate time gap
               const recentMsgs = await DB.getRecentMessagesByCharId(charId, 200);
@@ -1659,44 +1688,153 @@ if (!isVisible || !isChattingWithThisChar) {
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 
-            
-              // 4. Send request to AI
-              // max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
-              reqBody = {
-                  model: api.model,
-                  messages: fullMessages,
-                  temperature: 0.8,
-                  max_tokens: 2000,
-              };
 
-              // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
-              // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
-              // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
-              const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
-                  method: 'POST',
-                  headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${api.apiKey}`,
-                  },
-                  body: JSON.stringify(reqBody),
-              }, 2, 0, apiProtocol);
+              // 4. Send request to AI
+              // 任务 1：按协议分支构造请求体 + fetch
+              //   OpenAI 协议：messages 数组 + safeFetchJson（带 CORS fallback / 重试）
+              //   Gemini 协议：contents + systemInstruction + key 走 URL 参数 + 手动 key 池轮询
+              //                  （跟 useChatAI 行 1900+ 同款结构；不挂 Authorization header）
+              //   max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
+              const useGeminiProtocolProactive = apiProtocol === 'gemini';
+              if (useGeminiProtocolProactive) {
+                  const systemText = systemPrompt;
+                  const contents = fullMessages
+                      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+                      .map((m: any) => {
+                          const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                          return {
+                              role: m.role === 'assistant' ? 'model' : 'user',
+                              parts: [{ text: text.slice(0, 30000) }],
+                          };
+                      });
+                  if (contents.length === 0 || contents[0].role !== 'user') {
+                      contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
+                  }
+                  reqBody = {
+                      contents,
+                      systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                      generationConfig: { temperature: 0.8, maxOutputTokens: 2000 },
+                  };
+              } else {
+                  reqBody = {
+                      model: activeApi.model,
+                      messages: fullMessages,
+                      temperature: 0.8,
+                      max_tokens: 2000,
+                  };
+              }
+
+              let data: any;
+              if (useGeminiProtocolProactive) {
+                  // 任务 1：Gemini 协议主动消息 — key 池轮询 + 失败切下一个（跟 useChatAI 行 1900+ 同款）
+                  const mainGeminiKeys = extractGeminiKeys(activeApi, 'geminiApiKey', 'geminiApiKeys');
+                  const picked = pickGeminiKey('main', mainGeminiKeys);
+                  if (!picked) {
+                      throw new Error('主动消息 Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
+                  }
+                  const cleanBase = (activeApi.baseUrl || '').replace(/\/+$/, '');
+                  let lastErr: Error | null = null;
+                  let lastStatus = 0;
+                  let lastErrText = '';
+                  let succeeded = false;
+                  for (let attempt = 0; attempt < 3; attempt++) {
+                      const currentPicked = (() => {
+                          if (attempt === 0) {
+                              return { keyIndex: picked.keyIndex, key: picked.key };
+                          }
+                          const np = pickGeminiKey('main', mainGeminiKeys);
+                          if (!np) return null;
+                          return { keyIndex: np.keyIndex, key: np.key };
+                      })();
+                      if (!currentPicked) {
+                          lastErr = new Error('主动消息 Gemini 协议：key 池里所有 key 都不可用（失效/限流中）');
+                          break;
+                      }
+                      const tryKey = currentPicked.key;
+                      const tryUrl = `${cleanBase}/models/${encodeURIComponent(activeApi.model)}:generateContent?key=${encodeURIComponent(tryKey)}`;
+                      const geminiRes = await fetch(tryUrl, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                              contents: reqBody.contents,
+                              systemInstruction: reqBody.systemInstruction,
+                              generationConfig: reqBody.generationConfig,
+                          }),
+                      });
+                      if (!geminiRes.ok) {
+                          const errText = await geminiRes.text().catch(() => '');
+                          lastStatus = geminiRes.status;
+                          lastErrText = errText;
+                          const verdict = reportGeminiFailure('main', currentPicked.keyIndex, geminiRes.status, errText);
+                          if (verdict === 'fail-permanent') {
+                              lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                              break;
+                          }
+                          if (verdict === 'fail-recoverable') {
+                              lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                              break;
+                          }
+                          console.warn(`🌐 [Proactive/Gemini] 池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length} ${geminiRes.status}，切下一个重试`);
+                          lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                          continue;
+                      }
+                      reportGeminiSuccess('main', currentPicked.keyIndex);
+                      const geminiJson: any = await geminiRes.json();
+                      const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                      const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                      data = {
+                          choices: [{
+                              message: { role: 'assistant', content: geminiText },
+                              finish_reason: geminiFinish,
+                          }],
+                          usage: geminiJson?.usageMetadata ? {
+                              prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
+                              completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
+                              total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
+                          } : undefined,
+                      };
+                      console.log(`🌐 [Proactive/Gemini] 响应 ${geminiText.length} 字 (池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length}: ${shortKey(tryKey)})`);
+                      succeeded = true;
+                      break;
+                  }
+                  if (!succeeded) {
+                      throw lastErr || new Error(`主动消息 Gemini 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
+                  }
+              } else {
+                  // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
+                  // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
+                  // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
+                  data = await safeFetchJson(`${activeApi.baseUrl}/chat/completions`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${activeApi.apiKey}`,
+                      },
+                      body: JSON.stringify(reqBody),
+                  }, 2, 0, apiProtocol);
+              }
 
               // 暮色 2026-08-06：跟主 API 一样的请求体日志（存完整请求体到 localStorage）
               //   之前 7-22 只存元数据（msgCount / 字符数），暮色要看到完整 body 才能排查
               //   跟主 API 区别 key：sullyos:lastProactiveReqLog（主 API 是 sullyos:lastApiReqLog）
               //   console 提示从那里复制
               try {
+                  // 任务 1：Gemini 协议下 url 是 /models/...:generateContent，不是 /chat/completions
+                  //   reqBody 里没 temperature/max_tokens/messages 字段——按协议取
+                  const geminiLogBase = (activeApi.baseUrl || '').replace(/\/+$/, '');
                   const logEntry = {
                       timestamp: new Date().toISOString(),
-                      url: `${api.baseUrl}/chat/completions`,
+                      url: useGeminiProtocolProactive
+                          ? `${geminiLogBase}/models/${encodeURIComponent(activeApi.model)}:generateContent?key=***`
+                          : `${activeApi.baseUrl}/chat/completions`,
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
-                      model: api.model,
+                      model: activeApi.model,
                       stream: false,
-                      temperature: reqBody.temperature,
-                      maxTokens: reqBody.max_tokens,
-                      totalMessages: reqBody.messages?.length || 0,
+                      temperature: useGeminiProtocolProactive ? reqBody.generationConfig?.temperature : reqBody.temperature,
+                      maxTokens: useGeminiProtocolProactive ? reqBody.generationConfig?.maxOutputTokens : reqBody.max_tokens,
+                      totalMessages: useGeminiProtocolProactive ? (reqBody.contents?.length || 0) : (reqBody.messages?.length || 0),
                       systemChars: systemPrompt.length,
                       totalBodyChars: JSON.stringify(reqBody).length,
                       requestBody: reqBody,
@@ -1896,17 +2034,25 @@ if (!isVisible || !isChattingWithThisChar) {
               //   但 JSON.stringify(errLog) / reqBody.messages? 访问可能炸（reqBody=null 时）
               //   → catch 块本身就炸了 → 推系统消息进聊天也走不到
               try {
+                  // 任务 1：catch 块也用 activeApi（更准确反映实际请求的 model）
+                  //   Gemini 协议时 api.model 还是 OpenAI 字段旧值，会误导排查
                   const errLog = {
                       ts: new Date().toISOString(),
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
-                      model: api.model,
-                      msgCount: reqBody?.messages?.length || 0,
+                      model: activeApi.model,
+                      msgCount: useGeminiProtocolProactive
+                          ? (reqBody?.contents?.length || 0)
+                          : (reqBody?.messages?.length || 0),
                       systemChars: systemPrompt.length,  // 暮色 2026-08-03：挪到 try 块外声明的 let，catch 也能拿到
                       totalBodyChars,
-                      firstMsgRole: reqBody?.messages?.[0]?.role,
-                      lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
+                      firstMsgRole: useGeminiProtocolProactive
+                          ? reqBody?.contents?.[0]?.role
+                          : reqBody?.messages?.[0]?.role,
+                      lastMsgRole: useGeminiProtocolProactive
+                          ? reqBody?.contents?.[reqBody?.contents?.length - 1]?.role
+                          : reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
                       errMessage,
                       errStack: (err as Error)?.stack?.slice(0, 600),
                       reqBody,  // 完整 body

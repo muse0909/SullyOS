@@ -1725,6 +1725,14 @@ if (!isVisible || !isChattingWithThisChar) {
                   if (contents.length === 0 || contents[0].role !== 'user') {
                       contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
                   }
+                  // 修复 4：主动消息系统提示词（hintLines）追加到 contents 末尾
+                  //   暮色 8-12 21:07 反馈：Gemini 协议 contents 末尾停留在 'model' role，
+                  //   触发 Gemini "last message must be user" 400 校验失败。
+                  //   OpenAI 协议走 messages 数组时把 hintLines 作为末尾 system 消息发出去，
+                  //   Gemini 分支没做这步 → 两边行为不一致。
+                  //   修：Gemini 分支拼完历史 records 后，append 一条 user role 的 proactivePrompt。
+                  //   顺便解决两个问题：①唤醒提示没发给模型 ②Gemini 协议强制最后一条是 user。
+                  contents.push({ role: 'user', parts: [{ text: hintLines }] });
                   reqBody = {
                       contents,
                       systemInstruction: { role: 'system', parts: [{ text: systemText }] },

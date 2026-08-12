@@ -243,17 +243,9 @@ const ApiQuickFloat: React.FC = () => {
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
-  const [localImageProtocol, setLocalImageProtocol] = useState<ApiProtocol>(
-    (apiConfig.imageProtocol as ApiProtocol) || 'openai'
-  );
-  const [localImageClaudeUrl, setLocalImageClaudeUrl] = useState(apiConfig.imageClaudeBaseUrl || '');
-  const [localImageClaudeKey, setLocalImageClaudeKey] = useState(apiConfig.imageClaudeApiKey || '');
-  const [localImageClaudeModel, setLocalImageClaudeModel] = useState(apiConfig.imageClaudeModel || '');
-  const [localImageGeminiUrl, setLocalImageGeminiUrl] = useState(
-    apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
-  );
-  const [localImageGeminiKey, setLocalImageGeminiKey] = useState(apiConfig.imageGeminiApiKey || '');
-  const [localImageGeminiModel, setLocalImageGeminiModel] = useState(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
+  // 任务 3：删 localImageProtocol / localImageClaude* / localImageGemini* state
+  //   生图只走 OpenAI 协议（useChatAI.ts 行 2198+ 写死 imageBaseUrl/Key/Model）
+  //   单一组 imageBaseUrl/imageApiKey/imageModel 即可
   // 暮色 2026-07-15：删 localImageGenProvider / comfyui* state — 生图只走 OpenAI 兼容
 
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
@@ -349,13 +341,7 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
-    setLocalImageProtocol((apiConfig.imageProtocol as ApiProtocol) || 'openai');
-    setLocalImageClaudeUrl(apiConfig.imageClaudeBaseUrl || '');
-    setLocalImageClaudeKey(apiConfig.imageClaudeApiKey || '');
-    setLocalImageClaudeModel(apiConfig.imageClaudeModel || '');
-    setLocalImageGeminiUrl(apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-    setLocalImageGeminiKey(apiConfig.imageGeminiApiKey || '');
-    setLocalImageGeminiModel(apiConfig.imageGeminiModel || 'gemini-2.0-flash');
+    // 任务 3：删 setLocalImageProtocol / setLocalImageClaude* / setLocalImageGemini* 同步
     // 暮色 2026-07-15：删 localImageGenProvider / localComfyuiSelectedModel 同步
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
@@ -387,13 +373,7 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.imageBaseUrl,
     apiConfig.imageApiKey,
     apiConfig.imageModel,
-    apiConfig.imageProtocol,
-    apiConfig.imageClaudeBaseUrl,
-    apiConfig.imageClaudeApiKey,
-    apiConfig.imageClaudeModel,
-    apiConfig.imageGeminiBaseUrl,
-    apiConfig.imageGeminiApiKey,
-    apiConfig.imageGeminiModel,
+    // 任务 3：删 apiConfig.imageProtocol / imageClaude* / imageGemini* deps
     // 暮色 2026-07-15：删 imageGenProvider — 永远 openai
     apiConfig.visionBaseUrl,
     apiConfig.visionApiKey,
@@ -560,36 +540,11 @@ const ApiQuickFloat: React.FC = () => {
     setLocalProtocol(newProtocol);
   };
 
-  // 暮色 2026-07-28：生图卡片 UI 也对齐 3 tab；底层生图仍走 OpenAI 兼容，先保证配置页不崩、不挤。
-  const switchImageProtocol = (newProtocol: ApiProtocol) => {
-    if (newProtocol === localImageProtocol) return;
-    if (localImageProtocol === 'claude') {
-      setLocalImageClaudeUrl(localImageUrl);
-      setLocalImageClaudeKey(localImageKey);
-      setLocalImageClaudeModel(localImageModel);
-    } else if (localImageProtocol === 'gemini') {
-      setLocalImageGeminiUrl(localImageUrl);
-      setLocalImageGeminiKey(localImageKey);
-      setLocalImageGeminiModel(localImageModel);
-    }
-    if (newProtocol === 'openai') {
-      setLocalImageUrl(apiConfig.imageBaseUrl || '');
-      setLocalImageKey(apiConfig.imageApiKey || '');
-      setLocalImageModel(apiConfig.imageModel || '');
-    } else if (newProtocol === 'claude') {
-      setLocalImageUrl(localImageClaudeUrl || apiConfig.imageClaudeBaseUrl || '');
-      setLocalImageKey(localImageClaudeKey || apiConfig.imageClaudeApiKey || '');
-      setLocalImageModel(localImageClaudeModel || apiConfig.imageClaudeModel || '');
-    } else {
-      setLocalImageUrl(localImageGeminiUrl || apiConfig.imageGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-      setLocalImageKey(localImageGeminiKey || apiConfig.imageGeminiApiKey || '');
-      setLocalImageModel(localImageGeminiModel || apiConfig.imageGeminiModel || 'gemini-2.0-flash');
-    }
-    setLocalImageProtocol(newProtocol);
-  };
+  // 任务 3：删 switchImageProtocol —— 生图只走 OpenAI 协议，没有协议切换
+
 
   // 任务 2：删 Claude 协议 —— handleSaveAndClose 不再存 claudeBaseUrl/claudeApiKey/claudeModel
-  //   任务 3 范围：imageProtocol/imageClaude*/imageGemini* 暂时保留（不在本任务范围）
+  // 任务 3：删生图 imageProtocol/imageClaude*/imageGemini* —— 只存 imageBaseUrl/Key/Model
   const handleSaveAndClose = () => {
     // 暮色 2026-07-15：删 ComfyUI / NAI 分支，只剩 OpenAI 兼容
     // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套，切回 tab 不丢
@@ -613,17 +568,12 @@ const ApiQuickFloat: React.FC = () => {
       visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : localVisionGeminiKey,
       visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : localVisionGeminiModel,
     };
+    // 任务 3：删 imageProtocol / imageClaude* / imageGemini* 字段保存
+    //   生图只走 OpenAI 协议，保存 imageBaseUrl/imageApiKey/imageModel 即可
     const imageUpdates: any = {
-      imageProtocol: localImageProtocol,
-      imageBaseUrl: localImageProtocol === 'openai' ? localImageUrl : (apiConfig.imageBaseUrl || ''),
-      imageApiKey: localImageProtocol === 'openai' ? localImageKey : (apiConfig.imageApiKey || ''),
-      imageModel: localImageProtocol === 'openai' ? localImageModel : (apiConfig.imageModel || ''),
-      imageClaudeBaseUrl: localImageProtocol === 'claude' ? localImageUrl : localImageClaudeUrl,
-      imageClaudeApiKey: localImageProtocol === 'claude' ? localImageKey : localImageClaudeKey,
-      imageClaudeModel: localImageProtocol === 'claude' ? localImageModel : localImageClaudeModel,
-      imageGeminiBaseUrl: localImageProtocol === 'gemini' ? localImageUrl : localImageGeminiUrl,
-      imageGeminiApiKey: localImageProtocol === 'gemini' ? localImageKey : localImageGeminiKey,
-      imageGeminiModel: localImageProtocol === 'gemini' ? localImageModel : localImageGeminiModel,
+      imageBaseUrl: localImageUrl,
+      imageApiKey: localImageKey,
+      imageModel: localImageModel,
     };
     updateApiConfig({
       ...apiConfig,
@@ -709,17 +659,11 @@ const ApiQuickFloat: React.FC = () => {
         geminiModel: localProtocol === 'gemini' ? localModel.trim() : localGeminiModel,
       } as any, 'main');
     } else if (target === 'image') {
+      // 任务 3：删 imageProtocol / imageClaude* / imageGemini* —— 生图只存 OpenAI 字段
       addApiPreset(name, {
         imageBaseUrl: localImageUrl.trim(),
         imageApiKey: localImageKey.trim(),
         imageModel: localImageModel.trim(),
-        imageProtocol: localImageProtocol,
-        imageClaudeBaseUrl: localImageProtocol === 'claude' ? localImageUrl.trim() : localImageClaudeUrl,
-        imageClaudeApiKey: localImageProtocol === 'claude' ? localImageKey.trim() : localImageClaudeKey,
-        imageClaudeModel: localImageProtocol === 'claude' ? localImageModel.trim() : localImageClaudeModel,
-        imageGeminiBaseUrl: localImageProtocol === 'gemini' ? localImageUrl.trim() : localImageGeminiUrl,
-        imageGeminiApiKey: localImageProtocol === 'gemini' ? localImageKey.trim() : localImageGeminiKey,
-        imageGeminiModel: localImageProtocol === 'gemini' ? localImageModel.trim() : localImageGeminiModel,
       } as any, 'image');
     } else if (target === 'vision') {
       // 任务 2：删 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
@@ -867,36 +811,11 @@ const ApiQuickFloat: React.FC = () => {
   const loadPreset = (preset: ApiPreset, kind: QuickPresetKind) => {
     const c = preset.config;
     if (kind === 'image') {
-      const iProto: ApiProtocol = (c as any).imageProtocol || 'openai';
-      switchImageProtocol(iProto);
-      if (iProto === 'claude') {
-        const url = (c as any).imageClaudeBaseUrl || c.imageBaseUrl || '';
-        const key = (c as any).imageClaudeApiKey || c.imageApiKey || '';
-        const model = (c as any).imageClaudeModel || c.imageModel || '';
-        setLocalImageClaudeUrl(url);
-        setLocalImageClaudeKey(key);
-        setLocalImageClaudeModel(model);
-        setLocalImageUrl(url);
-        setLocalImageKey(key);
-        setLocalImageModel(model);
-      } else if (iProto === 'gemini') {
-        const url = (c as any).imageGeminiBaseUrl || c.imageBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
-        const key = (c as any).imageGeminiApiKey || c.imageApiKey || '';
-        const model = (c as any).imageGeminiModel || c.imageModel || 'gemini-2.0-flash';
-        setLocalImageGeminiUrl(url);
-        setLocalImageGeminiKey(key);
-        setLocalImageGeminiModel(model);
-        setLocalImageUrl(url);
-        setLocalImageKey(key);
-        setLocalImageModel(model);
-      } else {
-        setLocalImageUrl(c.imageBaseUrl || '');
-        setLocalImageKey(c.imageApiKey || '');
-        setLocalImageModel(c.imageModel || '');
-      }
-      setLocalImageProtocol(iProto);
-      // 暮色 2026-07-15：删 setLocalImageGenProvider — 生图只走 OpenAI 兼容
-      addToast(`已加载生图预设: ${preset.name} (${iProto === 'claude' ? 'Claude' : iProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
+      // 任务 3：生图只走 OpenAI 协议 —— 直接读 imageBaseUrl/imageApiKey/imageModel
+      setLocalImageUrl(c.imageBaseUrl || '');
+      setLocalImageKey(c.imageApiKey || '');
+      setLocalImageModel(c.imageModel || '');
+      addToast(`已加载生图预设: ${preset.name}`, 'info');
       return;
     }
     if (kind === 'vision') {
@@ -1016,21 +935,11 @@ const ApiQuickFloat: React.FC = () => {
   const isPresetActive = (preset: ApiPreset, kind: QuickPresetKind) => {
     const c: any = preset.config;
     if (kind === 'image') {
-      const iProto: ApiProtocol = c.imageProtocol || 'openai';
-      const iUrl = iProto === 'claude' ? c.imageClaudeBaseUrl
-        : iProto === 'gemini' ? c.imageGeminiBaseUrl
-        : c.imageBaseUrl;
-      const iKey = iProto === 'claude' ? c.imageClaudeApiKey
-        : iProto === 'gemini' ? c.imageGeminiApiKey
-        : c.imageApiKey;
-      const iModel = iProto === 'claude' ? c.imageClaudeModel
-        : iProto === 'gemini' ? c.imageGeminiModel
-        : c.imageModel;
+      // 任务 3：生图只走 OpenAI 协议 —— 只比 imageBaseUrl/imageApiKey/imageModel
       return (
-        localImageProtocol === iProto &&
-        (iUrl || '') === localImageUrl &&
-        (iKey || '') === localImageKey &&
-        (iModel || '') === localImageModel
+        (c.imageBaseUrl || '') === localImageUrl &&
+        (c.imageApiKey || '') === localImageKey &&
+        (c.imageModel || '') === localImageModel
       );
     }
     if (kind === 'vision') {
@@ -1357,7 +1266,7 @@ const ApiQuickFloat: React.FC = () => {
                 onToggle={() => toggleSection('image')}
               >
                 <section className="bg-violet-50/80 rounded-3xl p-4 shadow-sm border border-violet-100/80 space-y-4">
-                  <ProtocolTabs value={localImageProtocol} onChange={switchImageProtocol} />
+                  {/* 任务 3：删生图 ProtocolTabs —— 生图只走 OpenAI 协议 */}
 
                   <div>
                     <PresetHeader

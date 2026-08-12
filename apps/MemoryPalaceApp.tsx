@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
@@ -399,7 +399,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, removeApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     // ─── 云端同步：拉到云端新记忆后存到本地 IndexedDB ────────────
@@ -745,6 +745,71 @@ export default function MemoryPalaceApp() {
     const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
     const hasLightApi = !!(memoryPalaceConfig.lightLLM.baseUrl && memoryPalaceConfig.lightLLM.apiKey);
     const lightPresets = apiPresets.filter(preset => preset.kind === 'memoryPalaceLight');
+
+    // 任务 4：副 API 预设长按删除（跟 ApiQuickFloat 的 PresetChip 行为一致）
+    //   复制 PresetChip 组件：550ms 长按触发 onRequestDelete；短按触发 onLoad
+    //   为什么不直接 import ApiQuickFloat.PresetChip：那个组件是 ApiQuickFloat 内部 const（没 export）
+    //   重构抽公共组件是任务 4 之后的事，本任务按"行为一致"做最小改动
+    const PRESET_LONG_PRESS_MS = 550;
+    const [lightPresetPendingDelete, setLightPresetPendingDelete] = useState<any | null>(null);
+
+    // 任务 4：长按删除按钮组件（行为跟 ApiQuickFloat.PresetChip 一致）
+    const LightPresetChip: React.FC<{
+        name: string;
+        active: boolean;
+        title: string;
+        onLoad: () => void;
+        onRequestDelete: () => void;
+    }> = ({ name, active, title, onLoad, onRequestDelete }) => {
+        const timerRef = useRef<number | null>(null);
+        const longPressedRef = useRef(false);
+        const [pressing, setPressing] = useState(false);
+        const clearPress = () => {
+            if (timerRef.current !== null) {
+                window.clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            setPressing(false);
+        };
+        useEffect(() => () => clearPress(), []);
+        return (
+            <button
+                type="button"
+                title="点击加载，长按删除"
+                onPointerDown={() => {
+                    clearPress();
+                    longPressedRef.current = false;
+                    setPressing(true);
+                    timerRef.current = window.setTimeout(() => {
+                        longPressedRef.current = true;
+                        setPressing(false);
+                        onRequestDelete();
+                    }, PRESET_LONG_PRESS_MS);
+                }}
+                onPointerUp={clearPress}
+                onPointerLeave={clearPress}
+                onPointerCancel={clearPress}
+                onClick={() => {
+                    if (longPressedRef.current) {
+                        longPressedRef.current = false;
+                        return;
+                    }
+                    onLoad();
+                }}
+                style={{
+                    padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    border: active ? '1px solid #10b981' : '1px solid #bbf7d0',
+                    background: active ? '#d1fae5' : 'white',
+                    color: active ? '#065f46' : '#166534',
+                    cursor: 'pointer',
+                    transform: pressing ? 'scale(0.98)' : 'scale(1)',
+                    transition: 'transform 0.1s',
+                }}
+            >
+                {title || name}
+            </button>
+        );
+    };
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -2283,9 +2348,13 @@ export default function MemoryPalaceApp() {
                                         && lightKey === activeKey
                                         && lightModel === activeModel;
                                     return (
-                                        <button
+                                        // 任务 4：换成 LightPresetChip —— 长按 550ms 触发删除确认弹窗
+                                        <LightPresetChip
                                             key={p.id}
-                                            onClick={() => {
+                                            name={p.name}
+                                            active={active}
+                                            title={`${proto} · ${activeUrl || ''}\n点击加载，长按删除`}
+                                            onLoad={() => {
                                                 // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
                                                 // 暮色 2026-08-02 18:10 修：原代码 OpenAI 协议分支什么都没做，
                                                 //   导致点了 OpenAI 预设没反应。补上 setLightUrl/Key/Model。
@@ -2326,22 +2395,62 @@ export default function MemoryPalaceApp() {
                                                 }
                                                 setLightTestResult(null);
                                             }}
-                                            style={{
-                                                padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                                border: active ? '1px solid #10b981' : '1px solid #bbf7d0',
-                                                background: active ? '#d1fae5' : 'white',
-                                                color: active ? '#065f46' : '#166534',
-                                                cursor: 'pointer',
-                                            }}
-                                            title={`${proto} · ${activeUrl || ''}`}
-                                        >
-                                            {p.name}{active ? ' ✓' : ''}
-                                        </button>
+                                            onRequestDelete={() => setLightPresetPendingDelete(p)}
+                                        />
                                     );
                                 })}
                             </div>
                         </div>
                     )}
+
+                    {/* 任务 4：副 API 预设长按删除确认弹窗（跟 ApiQuickFloat 行为一致） */}
+                    {lightPresetPendingDelete ? (
+                        <div
+                            onClick={() => setLightPresetPendingDelete(null)}
+                            style={{
+                                position: 'fixed', inset: 0, zIndex: 120,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                padding: 16,
+                            }}
+                        >
+                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)' }} />
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    position: 'relative', width: '100%', maxWidth: 384,
+                                    borderRadius: 24, background: 'white', padding: 20,
+                                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                                }}
+                            >
+                                <div style={{ fontSize: 16, fontWeight: 700, color: '#334155' }}>删除预设</div>
+                                <div style={{ marginTop: 8, fontSize: 14, color: '#64748b' }}>
+                                    确认删除预设"{lightPresetPendingDelete.name}"？
+                                </div>
+                                <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                    <button
+                                        onClick={() => setLightPresetPendingDelete(null)}
+                                        style={{
+                                            width: '100%', padding: '12px 0', borderRadius: 9999,
+                                            background: '#f1f5f9', color: '#475569', fontWeight: 700,
+                                            border: 'none', cursor: 'pointer',
+                                        }}
+                                    >取消</button>
+                                    <button
+                                        onClick={() => {
+                                            removeApiPreset(lightPresetPendingDelete.id);
+                                            addToast(`已删除预设: ${lightPresetPendingDelete.name}`, 'success');
+                                            setLightPresetPendingDelete(null);
+                                        }}
+                                        style={{
+                                            width: '100%', padding: '12px 0', borderRadius: 9999,
+                                            background: '#ef4444', color: 'white', fontWeight: 700,
+                                            border: 'none', cursor: 'pointer',
+                                        }}
+                                    >删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
 
                     {/* 暮色 2026-07-27：副 API 3 tab 协议切换（OpenAI / Claude / Gemini） */}
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>

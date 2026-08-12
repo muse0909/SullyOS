@@ -1503,17 +1503,15 @@ if (!isVisible || !isChattingWithThisChar) {
           }
 
           // API 优先级：副 API > 角色独立 API > 主 API
-          // 角色 API 分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存不同字段
-          //   openai → .baseUrl, claude → .claudeBaseUrl, gemini → .geminiBaseUrl
-          //   必须按 char.apiConfig.protocol 选，否则配 Claude/Gemini 时 useCharApi 误判成 false
+          // 任务 2：角色 API 协议只支持 OpenAI/Gemini（删 Claude）—— baseUrl 按 protocol 选
+          //   openai → .baseUrl, gemini → .geminiBaseUrl
+          //   必须按 char.apiConfig.protocol 选，否则配 Gemini 时 useCharApi 误判成 false
           const pCfg = char.proactiveConfig;
           const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
-          // 角色 API 3 协议下的 baseUrl 选择器
+          // 角色 API 2 协议下的 baseUrl 选择器（任务 2：删 Claude）
           const charApiConfig = char.apiConfig;
           const charApiProtocol = (charApiConfig as any)?.protocol ?? 'openai';
-          const charApiBaseUrl = charApiProtocol === 'claude'
-              ? (charApiConfig as any)?.claudeBaseUrl
-              : charApiProtocol === 'gemini'
+          const charApiBaseUrl = charApiProtocol === 'gemini'
               ? (charApiConfig as any)?.geminiBaseUrl
               : charApiConfig?.baseUrl;
           const useCharApi = !useSecondary && !!(pCfg?.useCharApi && charApiBaseUrl);
@@ -1523,16 +1521,16 @@ if (!isVisible || !isChattingWithThisChar) {
               api = pCfg!.secondaryApi!;
               apiSource = 'secondary';
           } else if (useCharApi) {
-              // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 3 套字段 + protocol）
+              // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 2 套字段 + protocol）
               api = charApiConfig;
               apiSource = 'char';
           } else {
               api = currentApiConfig;
               apiSource = 'main';
           }
-          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 3 套
-          //   gemini 协议 fetch URL 还没修（safeFetchJson 不支持），先记着
-          if (!api.baseUrl && !((api as any).claudeBaseUrl || (api as any).geminiBaseUrl)) {
+          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 2 套
+          // 任务 1 修：Gemini 协议 fetch URL 走自定义分支（见下面）
+          if (!api.baseUrl && !((api as any).geminiBaseUrl)) {
               drainQueuedProactive();
               return;
           }

@@ -200,19 +200,14 @@ export interface APIConfig {
   temperature?: number;
   // 暮色 2026-07-17 → 2026-07-27：API 协议类型
   //   - 'openai' (默认): 发到 /v1/chat/completions，按 OpenAI 协议
-  //   - 'claude':         发到 /v1/messages，按 Claude 协议（Anthropic）
   //   - 'gemini':         发到 /v1beta/models/{model}:generateContent，按 Google 官方 Gemini 协议
   //   Missing → 'openai'（向后兼容老用户）
-  //   UI 上 3 个 tab 平等切换（OpenAI / Claude / Gemini），每个 tab 用自己独立的 URL/Key/Model
-  protocol?: 'openai' | 'claude' | 'gemini';
-  // 暮色 2026-07-27：主 API 三平台独立 URL/Key/Model
+  //   2026-08-12 任务 2：删 Claude 协议（基本不用）—— protocol 只剩 'openai' | 'gemini'
+  protocol?: 'openai' | 'gemini';
+  // 暮色 2026-07-27：主 API Gemini 独立 URL/Key/Model
   //   - baseUrl/apiKey/model 默认是 OpenAI 协议的（向后兼容老用户）
-  //   - 切到 Claude 时用 claudeBaseUrl/claudeApiKey/claudeModel
   //   - 切到 Gemini 时用 geminiBaseUrl/geminiApiKey/geminiModel（默认 URL https://generativelanguage.googleapis.com/v1beta）
-  //   - 每个 tab 独立保存自己的值，切换不丢
-  claudeBaseUrl?: string;
-  claudeApiKey?: string;
-  claudeModel?: string;
+  //   - 2026-08-12 任务 2：删 claudeBaseUrl/claudeApiKey/claudeModel（Claude 协议不再用）
   geminiBaseUrl?: string;
   geminiApiKey?: string;
   geminiModel?: string;
@@ -220,15 +215,11 @@ export interface APIConfig {
   //   - 读时优先用 geminiApiKeys（数组），兼容老数据用 geminiApiKey（单字符串）
   //   - 老 key 会自动包成 1 元素数组
   geminiApiKeys?: string[];
-  // 暮色 2026-07-27：识图三平台独立配置
-  //   - 跟主 API 同样的三协议 + 独立 URL/Key/Model
+  // 暮色 2026-07-27：识图平台独立配置
   //   - visionBaseUrl/visionApiKey/visionModel 默认 OpenAI 协议
-  //   - 切到 visionProtocol === 'claude' 用 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
   //   - 切到 visionProtocol === 'gemini' 用 visionGeminiBaseUrl/visionGeminiApiKey/visionGeminiModel
-  visionProtocol?: 'openai' | 'claude' | 'gemini';
-  visionClaudeBaseUrl?: string;
-  visionClaudeApiKey?: string;
-  visionClaudeModel?: string;
+  //   - 2026-08-12 任务 2：删 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel（Claude 协议不再用）
+  visionProtocol?: 'openai' | 'gemini';
   visionGeminiBaseUrl?: string;
   visionGeminiApiKey?: string;
   visionGeminiModel?: string;

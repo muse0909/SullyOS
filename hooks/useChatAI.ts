@@ -761,44 +761,31 @@ export const useChatAI = ({
         //   修：判断扩展到 3 套 baseUrl 任何一个非空就视为"设了角色 API"；
         //       构造 effectiveApi 时按 charApi.protocol 选对应那组字段
         const charApi = (char as any).apiConfig;
-        const charProtocol = (charApi?.protocol as 'openai' | 'claude' | 'gemini' | undefined) || 'openai';
+        // 任务 2：协议只支持 'openai' | 'gemini'（删 Claude）
+        const charProtocol = (charApi?.protocol as 'openai' | 'gemini' | undefined) || 'openai';
         const charHasAnyApi = !!charApi && !!(
             charApi.baseUrl
-            || (charApi as any).claudeBaseUrl
             || (charApi as any).geminiBaseUrl
         );
         let effectiveApi = overrideApiConfig
             || (charHasAnyApi
                 ? {
                     ...apiConfig,
-                    baseUrl: charProtocol === 'claude' ? ((charApi as any).claudeBaseUrl || '')
-                        : charProtocol === 'gemini' ? ((charApi as any).geminiBaseUrl || '')
+                    baseUrl: charProtocol === 'gemini' ? ((charApi as any).geminiBaseUrl || '')
                         : (charApi.baseUrl || ''),
-                    apiKey: charProtocol === 'claude' ? ((charApi as any).claudeApiKey || '')
-                        : charProtocol === 'gemini' ? ((charApi as any).geminiApiKey || '')
+                    apiKey: charProtocol === 'gemini' ? ((charApi as any).geminiApiKey || '')
                         : (charApi.apiKey || ''),
-                    model: charProtocol === 'claude' ? ((charApi as any).claudeModel || '')
-                        : charProtocol === 'gemini' ? ((charApi as any).geminiModel || '')
+                    model: charProtocol === 'gemini' ? ((charApi as any).geminiModel || '')
                         : (charApi.model || ''),
                     protocol: charProtocol,
                 } as any
                 : null)
             || apiConfig;
-        // 暮色 2026-07-27：3 tab 协议切换 — 根据 protocol 字段选对应那组的 baseUrl/apiKey/model
-        //   - 角色独立 API 设了 baseUrl 就强制用角色的（保持原有逻辑），协议跟随角色或全局
-        //   - 没设角色 API 时，根据 effectiveApi.protocol 选 claude* / gemini* / baseUrl* 三组
-        //   - 字段是 (effectiveApi as any) 读取，类型上 protocol 在 APIConfig 里有
+        // 暮色 2026-07-27：2 tab 协议切换 — 根据 protocol 字段选对应那组的 baseUrl/apiKey/model（任务 2：删 Claude tab）
         const mainProtocol = (effectiveApi as any).protocol ?? 'openai';
         const charApiOverridesMain = charHasAnyApi;
         if (!charApiOverridesMain) {
             const protoResolved = (() => {
-                if (mainProtocol === 'claude') {
-                    return {
-                        baseUrl: (effectiveApi as any).claudeBaseUrl || effectiveApi.baseUrl,
-                        apiKey: (effectiveApi as any).claudeApiKey || effectiveApi.apiKey,
-                        model: (effectiveApi as any).claudeModel || effectiveApi.model,
-                    };
-                }
                 if (mainProtocol === 'gemini') {
                     return {
                         baseUrl: (effectiveApi as any).geminiBaseUrl || effectiveApi.baseUrl,
@@ -1073,87 +1060,24 @@ export const useChatAI = ({
             // 暮色 2026-07-17 协议分支：
             //   - 即享站长反馈"走 openai 接口不能加 claude 字段，会被 newapi 丢弃"
             //   - protocol === 'openai' (默认): system 放 messages[0]
-            //   - protocol === 'claude':  system 挪到顶层（Anthropic 标准）
-            //   ⚠️ 关键：Claude 协议下 system 必须在 messages 之外（顶层字段），
-            //            否则 newapi 重写消息时会报 messages.164: role 'system' must precede 错
+            // 任务 2：删 Claude 协议 —— protocol 只剩 'openai' | 'gemini'
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
-            const useClaudeProtocol = apiProtocol === 'claude';
             // 暮色 2026-07-27：Gemini 直连协议从「看 URL」改为「读 protocol」字段
-            //   - UI 上 3 tab 平等切换（OpenAI / Claude / Gemini）
+            //   - UI 上 2 tab 切换（OpenAI / Gemini）— 任务 2 删了 Claude tab
             //   - 选 Gemini 时存到 protocol 字段，baseUrl/apiKey/model 复用同一组
             //   - 端点: /v1beta/models/{model}:generateContent?key=xxx
             //   - 请求体: contents/parts + systemInstruction 顶层字段
             //   - 不挂 tool（Gemini function calling 格式跟 OpenAI 不同；想用 tool 切回 OpenAI）
             const useGeminiProtocol = apiProtocol === 'gemini';
-            // 暮色 2026-07-18 深夜抢修：完全停用 cache 写入
-            //   - OpenAI 协议：不发 message-level cache_control
-            //   - Claude 协议：不发 top-level system block cache_control，也不在 history 最后一条打标记
-            //   目标：账单只剩 input / output，没有 cache_creation / cache_read。
-            // ⚠️ 2026-07-17 暮色反馈：Claude 协议 400 修复
-            //   根因：Anthropic 协议要求 messages 数组里只有 user/assistant 两种角色
-            //         system 必须放在顶层 system 字段，不能穿插在 messages 中间
-            //         末尾 system 消息可以，但 content 必须是空 array（directive-only form）
-            //   我们的 history 里混了 system 消息（日记/小红书/记事本/连接中断等，
-            //     来自 useChatAI 多处 DB.saveMessage({...role:'system'...})），
-            //     这些会原样进 apiMessages，违反 Anthropic 协议。
-            //   修法：Claude 协议下把 history 里的 system 转成 user（前面加 [系统消息] 前缀），
-            //         信息保留、协议合规；OpenAI 协议不受影响。
-            if (useClaudeProtocol) {
-                cleanedApiMessages = cleanedApiMessages.map((m: any) => {
-                    if (m.role !== 'system') return m;
-                    const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                    // 暮色 2026-07-31：只对"用户行为触发"的事件用专属前缀（让 AI 主动引用），
-                    //   其他技术状态消息用 [系统状态] 前缀（AI 不要主动回应"连接中断"这类）
-                    // 暮色 2026-08-01：一起听邀请也是用户行为触发的，跟情侣空间事件同等对待
-                    let prefix: string;
-                    let llmText = text;
-                    if (m.type === 'couple_space_invite' || m.type === 'couple_space_event') {
-                        prefix = '[情侣空间事件]';
-                    } else if (m.type === 'music_invite') {
-                        prefix = '[一起听邀请]';
-                        // 暮色 2026-08-02 00:25 江澈转达诉求 4：邀请事件提示词要"自然聊天消息"
-                        // 暮色 2026-08-02 00:25 江澈转达诉求 6：技术测试和真实邀请分开
-                        //   - 正常邀请：只给情感回应（聊歌 / 聊感觉）
-                        //   - 用户问"收到没有 / 有没有生效"：允许技术回执
-                        // 失败回执也走这个分支（type='music_invite'），所以 llmText 要兼容：
-                        //   - 成功消息（"江澈给你放了《xxx》—yy，加入了"一起听""）→ 自然回应
-                        //   - 失败消息（"江澈想放《xxx》但没找到"）→ 告诉暮色"没找到"+"换一首"
-                        // 内容里有"但没找到"是失败消息，其它是成功/邀请消息
-                        if (text.includes('但没找到')) {
-                            // 失败回执
-                            llmText = `${text}\n（提示：用户可能还在等结果；自然地告诉暮色没找到，提议换一首或者别的方式，不要长篇大论。）`;
-                        } else {
-                            // 成功 / 邀请消息
-                            llmText = `${text}\n（提示：把它当作暮色发来的一条自然聊天消息，直接回应歌曲带来的感觉、此刻想到的事，或者你想对她说的话。不要汇报"已收到邀请""提示已出现""功能生效"，不要解释触发机制，也不必强行引用歌词。只有暮色明确询问测试结果时，才简短说明功能状态。重点是像两个人真的在一起听，不是完成回复任务。）`;
-                        }
-                    } else {
-                        prefix = '[系统状态]';
-                    }
-                    return { role: 'user', content: `${prefix} ${llmText}` };
-                });
-            }
-            // Claude 协议：system 在顶层（Anthropic 协议标准）
-            // OpenAI 协议：system 在 messages[0].role = 'system'（OpenAI 协议标准）
-            const fullMessages: any[] = useClaudeProtocol
-                ? [...cleanedApiMessages]  // Claude 协议下 messages 不含 system
-                : [
-                    {
-                        role: 'system',
-                        // OpenAI 协议：system content 是 string（newapi 不接受 array of blocks）
-                        content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
-                    },
-                    ...cleanedApiMessages
-                ];
-            // Claude 协议专用：顶层 system 字段
-            //   这里只保留协议要求的 text blocks，不再附带任何 cache_control。
-            const claudeSystemField: any[] | null = useClaudeProtocol ? [
-                // bp1 - 工具说明：Chat App Rules + 语音功能 + 双语/HTML/麦当劳
-                { type: 'text', text: bp1Tools },
-                // bp2 - 行为规范：date/call 模式提示 + 语音禁用 + 心声输出要求
-                { type: 'text', text: bp2Rules },
-                // bp3 - 角色上下文：角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记+笔记+最近心声
-                { type: 'text', text: bp3Context },
-            ] : null;
+            // 任务 2：删 Claude 协议分支（system 转 user、claudeSystemField 构造、history 协议分支）
+            //   OpenAI 协议：system 在 messages[0].role = 'system'
+            const fullMessages: any[] = [
+                {
+                    role: 'system',
+                    content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                },
+                ...cleanedApiMessages
+            ];
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;
@@ -1255,23 +1179,13 @@ export const useChatAI = ({
                 dynamicTailParts.push(dynamicMemoryPalace);
             }
 
-            if (useClaudeProtocol) {
-                // Claude 协议：合并到顶层 system 字段
-                //   Anthropic 协议要求顶层 system 是 array of text blocks，多个 block 都会被模型看到
-                if (claudeSystemField && dynamicTailParts.length > 0) {
-                    claudeSystemField.push({
-                        type: 'text',
-                        text: dynamicTailParts.join('\n\n'),
-                    });
-                }
-            } else {
-                // 暮色 2026-08-05：OpenAI 协议下 dynamic tail 6 段合并成 1 条 system 消息
-                //   改前：每段 1 条 system 消息 → messages 末尾有 6 条 system（消息头膨胀 + cache prefix 短）
-                //   改后：1 条 system 消息（6 段用 \n\n join）→ messages 里只剩 2 条 system（top + tail）
-                //   LLM 视角信息完全等价（看到的都是拼接后的完整文本）
-                if (dynamicTailParts.length > 0) {
-                    fullMessages.push({ role: 'system', content: dynamicTailParts.join('\n\n') });
-                }
+            // 暮色 2026-08-05：dynamic tail 6 段合并成 1 条 system 消息
+            //   改前：每段 1 条 system 消息 → messages 末尾有 6 条 system（消息头膨胀 + cache prefix 短）
+            //   改后：1 条 system 消息（6 段用 \n\n join）→ messages 里只剩 2 条 system（top + tail）
+            //   LLM 视角信息完全等价（看到的都是拼接后的完整文本）
+            // 任务 2：删 Claude 协议的 claudeSystemField 合并分支
+            if (dynamicTailParts.length > 0) {
+                fullMessages.push({ role: 'system', content: dynamicTailParts.join('\n\n') });
             }
 
             // 【改动 3】旧的副 API 情绪评估已停用，改为主回复内联生成
@@ -1439,29 +1353,21 @@ console.log('🖼️ 识图检测', {
 // 如果最近图片已经有描述，跳过识图，避免重复调用
 const alreadyDescribed = targetImageRawMsg?.metadata?.imageDesc;
 
-// 暮色 2026-07-27：识图 3 tab 协议切换 — 根据 visionProtocol 字段选对应那组的 visionBaseUrl/Key/Model
+// 暮色 2026-07-27：识图 2 tab 协议切换 — 根据 visionProtocol 字段选对应那组的 visionBaseUrl/Key/Model
+// 任务 2：删 Claude tab —— visionProtocol 只剩 'openai' | 'gemini'
 //   - 'openai' (默认): visionBaseUrl/visionApiKey/visionModel
-//   - 'claude':         visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
 //   - 'gemini':         visionGeminiBaseUrl/visionGeminiApiKey/visionGeminiModel
-//   - 每个 tab 独立保存自己的值，切换不丢
 const visionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
 const useVisionGeminiProtocol = visionProtocol === 'gemini';
-const useVisionClaudeProtocol = visionProtocol === 'claude';
-const visionActiveUrl = visionProtocol === 'claude'
-    ? ((effectiveApi as any).visionClaudeBaseUrl || effectiveApi.visionBaseUrl)
-    : visionProtocol === 'gemini'
-        ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
-        : effectiveApi.visionBaseUrl;
-const visionActiveKey = visionProtocol === 'claude'
-    ? ((effectiveApi as any).visionClaudeApiKey || effectiveApi.visionApiKey)
-    : visionProtocol === 'gemini'
-        ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
-        : effectiveApi.visionApiKey;
-const visionActiveModel = visionProtocol === 'claude'
-    ? ((effectiveApi as any).visionClaudeModel || effectiveApi.visionModel || 'claude-3-5-sonnet-20241022')
-    : visionProtocol === 'gemini'
-        ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
-        : (effectiveApi.visionModel || 'gemini-1.5-flash');
+const visionActiveUrl = useVisionGeminiProtocol
+    ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
+    : effectiveApi.visionBaseUrl;
+const visionActiveKey = useVisionGeminiProtocol
+    ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
+    : effectiveApi.visionApiKey;
+const visionActiveModel = useVisionGeminiProtocol
+    ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
+    : (effectiveApi.visionModel || 'gemini-1.5-flash');
 
 if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [
@@ -1786,44 +1692,27 @@ ${visionDesc}
                 max_tokens: 8000,
                 stream: userStream,
             };
-            // 暮色 2026-07-17：Claude 协议加顶层 system 字段
-            //   - Anthropic 协议标准：system 是顶层字段，不在 messages 里
-            //   - OpenAI 协议：system 在 messages[0].role = 'system'（已在 fullMessages 里）
-            //   - 这两种格式不能同时存在，否则 newapi 重写时会报 400
-            if (useClaudeProtocol && claudeSystemField) {
-                baseReqBody.system = claudeSystemField;
-            }
+            // 任务 2：删 Claude 协议加顶层 system 字段的分支（useClaudeProtocol 都没了）
             // 流式时显式要求 usage 统计随末尾 chunk 一起返回，否则 token 徽标拿不到数据
             if (userStream) {
                 baseReqBody.stream_options = { include_usage: true };
             }
-            // 暮色 2026-07-17 协议分支：Claude 协议时强制 stream=false
-            //   - 原因：safeApi.ts 的 SSE 解析只支持 OpenAI 协议
-            //   - Anthropic 流式响应是不同的事件格式（content_block_delta 等）
-            //   - 等以后真要 Claude 流式再补（目前 stream=false 默认，无影响）
-            if (useClaudeProtocol && baseReqBody.stream) {
-                console.log('⚠️ [API] Claude 协议暂不支持流式，自动降级为非流式');
-                baseReqBody.stream = false;
-            }
-            // 暮色 2026-07-17 协议分支：Claude 协议时不挂 tool
-            //   - 原因：Anthropic tool_use 协议格式跟 OpenAI tool_calls 不同
-            //   - 麦当劳 MiniApp / 生图 / 其它 tool 调用：走 OpenAI 协议走
-            //   - Claude 协议分支只支持纯文本聊天（能命中 cache 才是核心目标）
-            //   - 想用 tool 时：把 Settings 的 API 协议切回 OpenAI
+            // 任务 2：删 Claude 协议强制 stream=false 的分支
+            // 任务 2：删 Claude 协议不挂 tool 的分支（!useClaudeProtocol 永远 true）
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
             // 组装 tools 列表
 const toolsList: any[] = [];
-if (!useClaudeProtocol && mcdMiniOpen) {
+if (mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (!useClaudeProtocol && effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
+if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 // 暮色 2026-08-02 16:32：play_song 功能工具注册（handoff #1）
-// 跟生图工具一样：不在 Claude 协议下（Claude 协议不支持 tool_use）
+// 跟生图工具一样：Gemini 协议也不挂 tool（Gemini function calling 格式不同）
 // musicApi 不依赖任何配置（直接调网易云 API），所以不判断"音乐 API 是否配了"——始终注册
-if (!useClaudeProtocol) {
+if (!useGeminiProtocol) {
     toolsList.push(PLAY_SONG_TOOL);
 }
 if (toolsList.length > 0) {
@@ -1852,7 +1741,8 @@ if (toolsList.length > 0) {
                     url: `${baseUrl}/chat/completions`,
                     model: effectiveApi.model,
                     chatMode: char.chatMode || 'full',
-                    apiProtocol: useClaudeProtocol ? 'claude' : 'openai',
+                    // 任务 2：删 Claude 协议 —— apiProtocol 直接用变量（openai / gemini）
+                    apiProtocol,
                     stream: userStream,
                     temperature: userTemp,
                     maxTokens: 8000,

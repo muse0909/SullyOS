@@ -130,15 +130,16 @@ const PresetChip: React.FC<{
   );
 };
 
-const PROTOCOL_TABS = ['openai', 'claude', 'gemini'] as const;
+// 任务 2：删 Claude 协议——PROTOCOL_TABS 只剩 OpenAI / Gemini
+const PROTOCOL_TABS = ['openai', 'gemini'] as const;
 type ApiProtocol = typeof PROTOCOL_TABS[number];
 
 const ProtocolTabs: React.FC<{
   value: ApiProtocol;
   onChange: (value: ApiProtocol) => void;
 }> = ({ value, onChange }) => {
-  const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
-  const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
+  const labelMap = { openai: 'OpenAI', gemini: 'Gemini' } as const;
+  const colorMap = { openai: '#10b981', gemini: '#0ea5e9' } as const;
   return (
     <div className="flex gap-1.5 bg-slate-100/60 p-1 rounded-full">
       {PROTOCOL_TABS.map((protocol) => {
@@ -231,12 +232,10 @@ const ApiQuickFloat: React.FC = () => {
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localModel, setLocalModel] = useState(apiConfig.model);
-  // 暮色 2026-07-17 → 2026-07-27：API 协议 3 tab 切换（OpenAI / Claude / Gemini）
-  const [localProtocol, setLocalProtocol] = useState<'openai' | 'claude' | 'gemini'>(apiConfig.protocol || 'openai');
-  // 暮色 2026-07-27：主 API 三平台独立 URL/Key/Model（切 tab 不丢）
-  const [localClaudeUrl, setLocalClaudeUrl] = useState(apiConfig.claudeBaseUrl || '');
-  const [localClaudeKey, setLocalClaudeKey] = useState(apiConfig.claudeApiKey || '');
-  const [localClaudeModel, setLocalClaudeModel] = useState(apiConfig.claudeModel || '');
+  // 暮色 2026-07-17 → 2026-07-27：API 协议 2 tab 切换（OpenAI / Gemini）
+  // 任务 2：删 Claude tab —— types.ts 的 claudeBaseUrl/claudeApiKey/claudeModel 也已删
+  const [localProtocol, setLocalProtocol] = useState<'openai' | 'gemini'>(apiConfig.protocol || 'openai');
+  // 任务 2：删主 API 的 claude* state（Claude 协议不再用）
   const [localGeminiUrl, setLocalGeminiUrl] = useState(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
   const [localGeminiKey, setLocalGeminiKey] = useState(apiConfig.geminiApiKey || '');
   const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-2.0-flash');
@@ -280,13 +279,11 @@ const ApiQuickFloat: React.FC = () => {
     (memoryPalaceConfig?.lightLLM as any)?.geminiModel || 'gemini-2.0-flash'
   );
 
-  // 暮色 2026-07-27：识图 3 tab 协议（OpenAI / Claude / Gemini）
-  const [localVisionProtocol, setLocalVisionProtocol] = useState<'openai' | 'claude' | 'gemini'>(
-    (apiConfig.visionProtocol as 'openai' | 'claude' | 'gemini') || 'openai'
+  // 任务 2：识图协议 2 tab（OpenAI / Gemini）—— 删 Claude tab
+  const [localVisionProtocol, setLocalVisionProtocol] = useState<'openai' | 'gemini'>(
+    (apiConfig.visionProtocol as 'openai' | 'gemini') || 'openai'
   );
-  const [localVisionClaudeUrl, setLocalVisionClaudeUrl] = useState(apiConfig.visionClaudeBaseUrl || '');
-  const [localVisionClaudeKey, setLocalVisionClaudeKey] = useState(apiConfig.visionClaudeApiKey || '');
-  const [localVisionClaudeModel, setLocalVisionClaudeModel] = useState(apiConfig.visionClaudeModel || '');
+  // 任务 2：删识图 claude* state
   const [localVisionGeminiUrl, setLocalVisionGeminiUrl] = useState(
     apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
   );
@@ -329,30 +326,23 @@ const ApiQuickFloat: React.FC = () => {
     //   永远是 OpenAI 协议的字段，导致 deps 里 Gemini 字段变（比如 key 池保存改了 geminiApiKey）
     //   触发 useEffect 重跑时，把 localUrl 跳回 OpenAI 的 → "选了 Gemini 协议但 URL 是 OpenAI 的"
     //   改用 syncedProtocol 选字段：
-    const syncedProtocol: 'openai' | 'claude' | 'gemini' = apiConfig.protocol === 'claude' || apiConfig.protocol === 'gemini' ? apiConfig.protocol : 'openai';
+    // 任务 2：删 Claude 协议分支，syncedProtocol 只剩 OpenAI / Gemini
+    const syncedProtocol: 'openai' | 'gemini' = apiConfig.protocol === 'gemini' ? apiConfig.protocol : 'openai';
     const syncedBaseUrl = syncedProtocol === 'gemini'
         ? (apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta')
-        : syncedProtocol === 'claude'
-            ? (apiConfig.claudeBaseUrl || '')
-            : (apiConfig.baseUrl || '');
+        : (apiConfig.baseUrl || '');
     const syncedApiKey = syncedProtocol === 'gemini'
         ? (apiConfig.geminiApiKey || '')
-        : syncedProtocol === 'claude'
-            ? (apiConfig.claudeApiKey || '')
-            : (apiConfig.apiKey || '');
+        : (apiConfig.apiKey || '');
     const syncedModel = syncedProtocol === 'gemini'
         ? (apiConfig.geminiModel || 'gemini-2.0-flash')
-        : syncedProtocol === 'claude'
-            ? (apiConfig.claudeModel || '')
-            : (apiConfig.model || '');
+        : (apiConfig.model || '');
     setLocalUrl(syncedBaseUrl);
     setLocalKey(syncedApiKey);
     setLocalModel(syncedModel);
-    // 暮色 2026-07-17 → 2026-07-27：API 协议同步（3 tab 切换，Settings 改了这里也要跟着变）
+    // 暮色 2026-07-17 → 2026-07-27：API 协议同步（2 tab 切换，Settings 改了这里也要跟着变）
     setLocalProtocol(syncedProtocol);
-    setLocalClaudeUrl(apiConfig.claudeBaseUrl || '');
-    setLocalClaudeKey(apiConfig.claudeApiKey || '');
-    setLocalClaudeModel(apiConfig.claudeModel || '');
+    // 任务 2：删主 API claude* 同步（Claude 协议不再用）
     setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
     setLocalGeminiKey(apiConfig.geminiApiKey || '');
     setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
@@ -370,11 +360,8 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
-    // 暮色 2026-07-27：识图 3 tab 协议 + 3 套独立 URL/Key/Model 同步
-    setLocalVisionProtocol((apiConfig.visionProtocol as 'openai' | 'claude' | 'gemini') || 'openai');
-    setLocalVisionClaudeUrl(apiConfig.visionClaudeBaseUrl || '');
-    setLocalVisionClaudeKey(apiConfig.visionClaudeApiKey || '');
-    setLocalVisionClaudeModel(apiConfig.visionClaudeModel || '');
+    // 任务 2：识图协议同步 + 删 visionClaude* 同步
+    setLocalVisionProtocol((apiConfig.visionProtocol as 'openai' | 'gemini') || 'openai');
     setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
     setLocalVisionGeminiKey(apiConfig.visionGeminiApiKey || '');
     setLocalVisionGeminiModel(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
@@ -396,6 +383,7 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.baseUrl,
     apiConfig.apiKey,
     apiConfig.model,
+    // 任务 2：删 apiConfig.claudeBaseUrl / apiConfig.claudeApiKey / apiConfig.claudeModel
     apiConfig.imageBaseUrl,
     apiConfig.imageApiKey,
     apiConfig.imageModel,
@@ -414,11 +402,8 @@ const ApiQuickFloat: React.FC = () => {
     apiConfig.geminiBaseUrl,
     apiConfig.geminiApiKey,
     apiConfig.geminiModel,
-    // 暮色 2026-07-27：识图 3 tab 协议 + 3 套独立 URL/Key/Model
+    // 任务 2：识图协议同步 + 删 visionClaudeBaseUrl/Key/Model deps
     apiConfig.visionProtocol,
-    apiConfig.visionClaudeBaseUrl,
-    apiConfig.visionClaudeApiKey,
-    apiConfig.visionClaudeModel,
     apiConfig.visionGeminiBaseUrl,
     apiConfig.visionGeminiApiKey,
     apiConfig.visionGeminiModel,
@@ -555,13 +540,10 @@ const ApiQuickFloat: React.FC = () => {
 
   // 暮色 2026-07-27：主 API 协议 3 tab 切换 handler
   //   跟 Settings 同样逻辑：切走前存当前值到旧协议缓存，从新协议缓存读出
-  const switchMainProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+  // 任务 2：删 Claude 协议分支 —— switchMainProtocol 只剩 OpenAI / Gemini
+  const switchMainProtocol = (newProtocol: 'openai' | 'gemini') => {
     if (newProtocol === localProtocol) return;
-    if (localProtocol === 'claude') {
-      setLocalClaudeUrl(localUrl);
-      setLocalClaudeKey(localKey);
-      setLocalClaudeModel(localModel);
-    } else if (localProtocol === 'gemini') {
+    if (localProtocol === 'gemini') {
       setLocalGeminiUrl(localUrl);
       setLocalGeminiKey(localKey);
       setLocalGeminiModel(localModel);
@@ -570,10 +552,6 @@ const ApiQuickFloat: React.FC = () => {
       setLocalUrl(apiConfig.baseUrl || '');
       setLocalKey(apiConfig.apiKey || '');
       setLocalModel(apiConfig.model || '');
-    } else if (newProtocol === 'claude') {
-      setLocalUrl(localClaudeUrl || apiConfig.claudeBaseUrl || '');
-      setLocalKey(localClaudeKey || apiConfig.claudeApiKey || '');
-      setLocalModel(localClaudeModel || apiConfig.claudeModel || '');
     } else {
       setLocalUrl(localGeminiUrl || apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalKey(localGeminiKey || apiConfig.geminiApiKey || '');
@@ -610,30 +588,27 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageProtocol(newProtocol);
   };
 
+  // 任务 2：删 Claude 协议 —— handleSaveAndClose 不再存 claudeBaseUrl/claudeApiKey/claudeModel
+  //   任务 3 范围：imageProtocol/imageClaude*/imageGemini* 暂时保留（不在本任务范围）
   const handleSaveAndClose = () => {
     // 暮色 2026-07-15：删 ComfyUI / NAI 分支，只剩 OpenAI 兼容
     // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套，切回 tab 不丢
+    // 任务 2：删 Claude 那 3 行（claudeBaseUrl/claudeApiKey/claudeModel）
     const mainUpdates: any = {
       protocol: localProtocol,
       baseUrl: localProtocol === 'openai' ? localUrl : (apiConfig.baseUrl || ''),
       apiKey: localProtocol === 'openai' ? localKey : (apiConfig.apiKey || ''),
       model: localProtocol === 'openai' ? localModel : (apiConfig.model || ''),
-      claudeBaseUrl: localProtocol === 'claude' ? localUrl : localClaudeUrl,
-      claudeApiKey: localProtocol === 'claude' ? localKey : localClaudeKey,
-      claudeModel: localProtocol === 'claude' ? localModel : localClaudeModel,
       geminiBaseUrl: localProtocol === 'gemini' ? localUrl : localGeminiUrl,
       geminiApiKey: localProtocol === 'gemini' ? localKey : localGeminiKey,
       geminiModel: localProtocol === 'gemini' ? localModel : localGeminiModel,
     };
-    // 暮色 2026-07-27：识图 3 tab 协议 — 同时存 3 套
+    // 任务 2：删 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
     const visionUpdates: any = {
       visionProtocol: localVisionProtocol,
       visionBaseUrl: localVisionProtocol === 'openai' ? localVisionUrl : (apiConfig.visionBaseUrl || ''),
       visionApiKey: localVisionProtocol === 'openai' ? localVisionKey : (apiConfig.visionApiKey || ''),
       visionModel: localVisionProtocol === 'openai' ? localVisionModel : (apiConfig.visionModel || ''),
-      visionClaudeBaseUrl: localVisionProtocol === 'claude' ? localVisionUrl : localVisionClaudeUrl,
-      visionClaudeApiKey: localVisionProtocol === 'claude' ? localVisionKey : localVisionClaudeKey,
-      visionClaudeModel: localVisionProtocol === 'claude' ? localVisionModel : localVisionClaudeModel,
       visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : localVisionGeminiUrl,
       visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : localVisionGeminiKey,
       visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : localVisionGeminiModel,
@@ -723,14 +698,12 @@ const ApiQuickFloat: React.FC = () => {
     //   修：baseUrl/imageBaseUrl/visionBaseUrl 字段始终用 localUrl/localImageUrl/localVisionUrl/localLightUrl（不分协议），
     //   其他协议字段保留 local*Url / local*ClaudeUrl / local*GeminiUrl（切回那个 tab 不丢）。
     if (target === 'main') {
+      // 任务 2：删 claudeBaseUrl/claudeApiKey/claudeModel
       addApiPreset(name, {
         baseUrl: localUrl.trim(),
         apiKey: localKey.trim(),
         model: localModel.trim(),
         protocol: localProtocol,
-        claudeBaseUrl: localProtocol === 'claude' ? localUrl.trim() : localClaudeUrl,
-        claudeApiKey: localProtocol === 'claude' ? localKey.trim() : localClaudeKey,
-        claudeModel: localProtocol === 'claude' ? localModel.trim() : localClaudeModel,
         geminiBaseUrl: localProtocol === 'gemini' ? localUrl.trim() : localGeminiUrl,
         geminiApiKey: localProtocol === 'gemini' ? localKey.trim() : localGeminiKey,
         geminiModel: localProtocol === 'gemini' ? localModel.trim() : localGeminiModel,
@@ -749,14 +722,12 @@ const ApiQuickFloat: React.FC = () => {
         imageGeminiModel: localImageProtocol === 'gemini' ? localImageModel.trim() : localImageGeminiModel,
       } as any, 'image');
     } else if (target === 'vision') {
+      // 任务 2：删 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
       addApiPreset(name, {
         visionBaseUrl: localVisionUrl.trim(),
         visionApiKey: localVisionKey.trim(),
         visionModel: localVisionModel.trim(),
         visionProtocol: localVisionProtocol,
-        visionClaudeBaseUrl: localVisionProtocol === 'claude' ? localVisionUrl.trim() : localVisionClaudeUrl,
-        visionClaudeApiKey: localVisionProtocol === 'claude' ? localVisionKey.trim() : localVisionClaudeKey,
-        visionClaudeModel: localVisionProtocol === 'claude' ? localVisionModel.trim() : localVisionClaudeModel,
         visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl.trim() : localVisionGeminiUrl,
         visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey.trim() : localVisionGeminiKey,
         visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel.trim() : localVisionGeminiModel,
@@ -873,13 +844,10 @@ const ApiQuickFloat: React.FC = () => {
   };
 
   // 暮色 2026-07-27：识图 3 tab 协议切换 handler
-  const switchVisionProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+  const switchVisionProtocol = (newProtocol: 'openai' | 'gemini') => {
+    // 任务 2：删 vision Claude 协议分支 —— switchVisionProtocol 只剩 OpenAI / Gemini
     if (newProtocol === localVisionProtocol) return;
-    if (localVisionProtocol === 'claude') {
-      setLocalVisionClaudeUrl(localVisionUrl);
-      setLocalVisionClaudeKey(localVisionKey);
-      setLocalVisionClaudeModel(localVisionModel);
-    } else if (localVisionProtocol === 'gemini') {
+    if (localVisionProtocol === 'gemini') {
       setLocalVisionGeminiUrl(localVisionUrl);
       setLocalVisionGeminiKey(localVisionKey);
       setLocalVisionGeminiModel(localVisionModel);
@@ -888,10 +856,6 @@ const ApiQuickFloat: React.FC = () => {
       setLocalVisionUrl(apiConfig.visionBaseUrl || '');
       setLocalVisionKey(apiConfig.visionApiKey || '');
       setLocalVisionModel(apiConfig.visionModel || '');
-    } else if (newProtocol === 'claude') {
-      setLocalVisionUrl(localVisionClaudeUrl || apiConfig.visionClaudeBaseUrl || '');
-      setLocalVisionKey(localVisionClaudeKey || apiConfig.visionClaudeApiKey || '');
-      setLocalVisionModel(localVisionClaudeModel || apiConfig.visionClaudeModel || '');
     } else {
       setLocalVisionUrl(localVisionGeminiUrl || apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalVisionKey(localVisionGeminiKey || apiConfig.visionGeminiApiKey || '');
@@ -937,19 +901,10 @@ const ApiQuickFloat: React.FC = () => {
     }
     if (kind === 'vision') {
       // 暮色 2026-07-27：加载预设时按预设 protocol 切 tab + 填对应那组
-      const vProto: 'openai' | 'claude' | 'gemini' = (c as any).visionProtocol || 'openai';
+      // 任务 2：删 vProto === 'claude' 分支（visionClaude* state 都没了）
+      const vProto: 'openai' | 'gemini' = (c as any).visionProtocol === 'gemini' ? 'gemini' : 'openai';
       switchVisionProtocol(vProto);
-      if (vProto === 'claude') {
-        const url = (c as any).visionClaudeBaseUrl || c.visionBaseUrl || '';
-        const key = (c as any).visionClaudeApiKey || c.visionApiKey || '';
-        const model = (c as any).visionClaudeModel || c.visionModel || '';
-        setLocalVisionClaudeUrl(url);
-        setLocalVisionClaudeKey(key);
-        setLocalVisionClaudeModel(model);
-        setLocalVisionUrl(url);
-        setLocalVisionKey(key);
-        setLocalVisionModel(model);
-      } else if (vProto === 'gemini') {
+      if (vProto === 'gemini') {
         const url = (c as any).visionGeminiBaseUrl || c.visionBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
         const key = (c as any).visionGeminiApiKey || c.visionApiKey || '';
         const model = (c as any).visionGeminiModel || c.visionModel || 'gemini-2.0-flash';
@@ -965,7 +920,7 @@ const ApiQuickFloat: React.FC = () => {
         setLocalVisionModel(c.visionModel || '');
       }
       setLocalVisionProtocol(vProto);
-      addToast(`已加载识图预设: ${preset.name} (${vProto === 'claude' ? 'Claude' : vProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
+      addToast(`已加载识图预设: ${preset.name} (${vProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
       return;
     }
     if (kind === 'lightLLM') {
@@ -1002,19 +957,10 @@ const ApiQuickFloat: React.FC = () => {
       return;
     }
     // main: 暮色 2026-07-27：加载预设时按 protocol 切 tab + 填对应那组
-    const mProto: 'openai' | 'claude' | 'gemini' = (c as any).protocol || 'openai';
+    // 任务 2：删 mProto === 'claude' 分支（localClaude* state 都没了）
+    const mProto: 'openai' | 'gemini' = (c as any).protocol === 'gemini' ? 'gemini' : 'openai';
     switchMainProtocol(mProto);
-    if (mProto === 'claude') {
-      const url = (c as any).claudeBaseUrl || c.baseUrl || '';
-      const key = (c as any).claudeApiKey || c.apiKey || '';
-      const model = (c as any).claudeModel || c.model || '';
-      setLocalClaudeUrl(url);
-      setLocalClaudeKey(key);
-      setLocalClaudeModel(model);
-      setLocalUrl(url);
-      setLocalKey(key);
-      setLocalModel(model);
-    } else if (mProto === 'gemini') {
+    if (mProto === 'gemini') {
       const url = (c as any).geminiBaseUrl || c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
       const key = (c as any).geminiApiKey || c.apiKey || '';
       const model = (c as any).geminiModel || c.model || 'gemini-2.0-flash';
@@ -1030,7 +976,8 @@ const ApiQuickFloat: React.FC = () => {
       setLocalModel(c.model || '');
     }
     setLocalProtocol(mProto);
-    addToast(`已加载 API 预设: ${preset.name} (${mProto === 'claude' ? 'Claude' : mProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
+    // 任务 2：删 Claude 分支
+    addToast(`已加载 API 预设: ${preset.name} (${mProto === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
   };
 
   const mainApiPresets = useMemo(
@@ -1087,16 +1034,13 @@ const ApiQuickFloat: React.FC = () => {
       );
     }
     if (kind === 'vision') {
-      // 暮色 2026-07-27：按 visionProtocol + 3 套字段比较（修显示串色 + 跨 tab 高亮）
-      const vProto: 'openai' | 'claude' | 'gemini' = c.visionProtocol || 'openai';
-      const vUrl = vProto === 'claude' ? c.visionClaudeBaseUrl
-        : vProto === 'gemini' ? c.visionGeminiBaseUrl
+      // 暮色 2026-07-27：按 visionProtocol + 2 套字段比较（任务 2：删 Claude 那套）
+      const vProto: 'openai' | 'gemini' = c.visionProtocol === 'gemini' ? 'gemini' : 'openai';
+      const vUrl = vProto === 'gemini' ? c.visionGeminiBaseUrl
         : c.visionBaseUrl;
-      const vKey = vProto === 'claude' ? c.visionClaudeApiKey
-        : vProto === 'gemini' ? c.visionGeminiApiKey
+      const vKey = vProto === 'gemini' ? c.visionGeminiApiKey
         : c.visionApiKey;
-      const vModel = vProto === 'claude' ? c.visionClaudeModel
-        : vProto === 'gemini' ? c.visionGeminiModel
+      const vModel = vProto === 'gemini' ? c.visionGeminiModel
         : c.visionModel;
       return localVisionProtocol === vProto
         && localVisionUrl === (vUrl || '')
@@ -1120,16 +1064,13 @@ const ApiQuickFloat: React.FC = () => {
         && localLightKey === (lKey || '')
         && localLightModel === (lModel || '');
     }
-    // main：暮色 2026-07-27：按 protocol + 3 套字段比较
-    const mProto: 'openai' | 'claude' | 'gemini' = c.protocol || 'openai';
-    const mUrl = mProto === 'claude' ? c.claudeBaseUrl
-      : mProto === 'gemini' ? c.geminiBaseUrl
+    // main：暮色 2026-07-27：按 protocol + 2 套字段比较（任务 2：删 Claude 那套）
+    const mProto: 'openai' | 'gemini' = c.protocol === 'gemini' ? 'gemini' : 'openai';
+    const mUrl = mProto === 'gemini' ? c.geminiBaseUrl
       : c.baseUrl;
-    const mKey = mProto === 'claude' ? c.claudeApiKey
-      : mProto === 'gemini' ? c.geminiApiKey
+    const mKey = mProto === 'gemini' ? c.geminiApiKey
       : c.apiKey;
-    const mModel = mProto === 'claude' ? c.claudeModel
-      : mProto === 'gemini' ? c.geminiModel
+    const mModel = mProto === 'gemini' ? c.geminiModel
       : c.model;
     return localProtocol === mProto
       && localUrl === (mUrl || '')

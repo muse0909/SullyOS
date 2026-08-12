@@ -775,7 +775,9 @@ export default function MemoryPalaceApp() {
         return (
             <button
                 type="button"
-                title="点击加载，长按删除"
+                // 修复 3：title 属性用 props.title（hover tooltip 显示协议+URL+提示）
+                //   之前写死成"点击加载，长按删除"，按钮内容也错把 title 渲染出来
+                title={title}
                 onPointerDown={() => {
                     clearPress();
                     longPressedRef.current = false;
@@ -806,7 +808,8 @@ export default function MemoryPalaceApp() {
                     transition: 'transform 0.1s',
                 }}
             >
-                {title || name}
+                {/* 修复 3：按钮内容显示预设名字（跟 ApiQuickFloat PresetChip 一致），不显示 title */}
+                {name}{active ? ' ✓' : ''}
             </button>
         );
     };

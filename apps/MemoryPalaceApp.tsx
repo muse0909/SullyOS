@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
@@ -399,7 +399,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, addApiPreset, removeApiPreset, availableModels, setAvailableModels, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, syncEmotionApiToAllCharacters, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     // ─── 云端同步：拉到云端新记忆后存到本地 IndexedDB ────────────
@@ -560,17 +560,15 @@ export default function MemoryPalaceApp() {
     const [testResult, setTestResult] = useState<string | null>(null);
 
     // 副 API 配置（全局配置）
-    // 暮色 2026-07-27：3 tab 协议切换（OpenAI / Claude / Gemini）— 跟主 API 一致
+    // 暮色 2026-07-27：协议切换 — 跟主 API 一致
+    // 暮色 8-12 21:15：删 Claude 协议 —— lightProtocol 只剩 OpenAI / Gemini
     const [lightUrl, setLightUrl] = useState(memoryPalaceConfig.lightLLM.baseUrl || '');
     const [lightKey, setLightKey] = useState(memoryPalaceConfig.lightLLM.apiKey || '');
     const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
-    const [lightProtocol, setLightProtocol] = useState<'openai' | 'claude' | 'gemini'>(
-        (memoryPalaceConfig.lightLLM as any).protocol || 'openai'
+    const [lightProtocol, setLightProtocol] = useState<'openai' | 'gemini'>(
+        ((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'gemini') || 'openai'
     );
-    // 三平台独立 URL/Key/Model 缓存
-    const [lightClaudeUrl, setLightClaudeUrl] = useState((memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
-    const [lightClaudeKey, setLightClaudeKey] = useState((memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
-    const [lightClaudeModel, setLightClaudeModel] = useState((memoryPalaceConfig.lightLLM as any).claudeModel || '');
+    // 2 套独立 URL/Key/Model 缓存（OpenAI / Gemini）—— 删 Claude 那套
     const [lightGeminiUrl, setLightGeminiUrl] = useState(
         (memoryPalaceConfig.lightLLM as any).geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta'
     );
@@ -586,16 +584,12 @@ export default function MemoryPalaceApp() {
     const [loadingLightModels, setLoadingLightModels] = useState(false);
     const [lightModelStatus, setLightModelStatus] = useState('');
 
-    // 暮色 2026-07-27：副 API 3 tab 协议切换 handler
+    // 暮色 2026-07-27：副 API 2 tab 协议切换 handler（OpenAI / Gemini）—— 删 Claude 分支
     //   切走前：把当前 lightUrl/Key/Model 存到旧协议缓存
     //   切到后：从新协议缓存读取填入
-    const switchLightProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+    const switchLightProtocol = (newProtocol: 'openai' | 'gemini') => {
         if (newProtocol === lightProtocol) return;
-        if (lightProtocol === 'claude') {
-            setLightClaudeUrl(lightUrl);
-            setLightClaudeKey(lightKey);
-            setLightClaudeModel(lightModel);
-        } else if (lightProtocol === 'gemini') {
+        if (lightProtocol === 'gemini') {
             setLightGeminiUrl(lightUrl);
             setLightGeminiKey(lightKey);
             setLightGeminiModel(lightModel);
@@ -604,10 +598,6 @@ export default function MemoryPalaceApp() {
             setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
             setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
             setLightModel(memoryPalaceConfig.lightLLM.model || '');
-        } else if (newProtocol === 'claude') {
-            setLightUrl(lightClaudeUrl || (memoryPalaceConfig.lightLLM as any).claudeBaseUrl || '');
-            setLightKey(lightClaudeKey || (memoryPalaceConfig.lightLLM as any).claudeApiKey || '');
-            setLightModel(lightClaudeModel || (memoryPalaceConfig.lightLLM as any).claudeModel || '');
         } else {
             setLightUrl(
                 lightGeminiUrl
@@ -645,30 +635,24 @@ export default function MemoryPalaceApp() {
         setEmbModel(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
         setEmbDimensions(memoryPalaceConfig.embedding.dimensions || 1024);
         // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model 同步
-        // 暮色 2026-08-02 18:10 修：原来永远读 baseUrl 字段，gemini/claude 协议下保存后
+        // 暮色 2026-08-02 18:10 修：原来永远读 baseUrl 字段，gemini 协议下保存后
         //   input 永远显示 baseUrl（旧值，京东云）= "跳回京东云"。
-        //   修：按当前 lightProtocol 读对应字段（baseUrl / claudeBaseUrl / geminiBaseUrl）
+        //   修：按当前 lightProtocol 读对应字段（baseUrl / geminiBaseUrl）
         //   这样 gemini 协议下保存 → geminiBaseUrl 更新 → useEffect 读 geminiBaseUrl → input 显示新值
-        const syncedProtocol: 'openai' | 'claude' | 'gemini' = ((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'claude' | 'gemini') || 'openai';
+        // 暮色 8-12 21:15：删 Claude 协议 —— syncedProtocol 只剩 openai / gemini
+        const syncedProtocol: 'openai' | 'gemini' = ((memoryPalaceConfig.lightLLM as any).protocol as 'openai' | 'gemini') || 'openai';
         setLightProtocol(syncedProtocol);
         const _llm = memoryPalaceConfig.lightLLM as any;
         if (syncedProtocol === 'openai') {
             setLightUrl(_llm.baseUrl || '');
             setLightKey(_llm.apiKey || '');
             setLightModel(_llm.model || '');
-        } else if (syncedProtocol === 'claude') {
-            setLightUrl(_llm.claudeBaseUrl || '');
-            setLightKey(_llm.claudeApiKey || '');
-            setLightModel(_llm.claudeModel || '');
         } else {
             setLightUrl(_llm.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
             setLightKey(_llm.geminiApiKey || '');
             setLightModel(_llm.geminiModel || 'gemini-2.0-flash');
         }
-        // 其他协议的字段也要同步（切回那个 tab 时不丢）
-        setLightClaudeUrl(_llm.claudeBaseUrl || '');
-        setLightClaudeKey(_llm.claudeApiKey || '');
-        setLightClaudeModel(_llm.claudeModel || '');
+        // gemini 字段也要同步（切回那个 tab 时不丢）
         setLightGeminiUrl(
             _llm.geminiBaseUrl
             || 'https://generativelanguage.googleapis.com/v1beta'
@@ -745,6 +729,74 @@ export default function MemoryPalaceApp() {
     const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
     const hasLightApi = !!(memoryPalaceConfig.lightLLM.baseUrl && memoryPalaceConfig.lightLLM.apiKey);
     const lightPresets = apiPresets.filter(preset => preset.kind === 'memoryPalaceLight');
+
+    // 任务 4：副 API 预设长按删除（跟 ApiQuickFloat 的 PresetChip 行为一致）
+    //   复制 PresetChip 组件：550ms 长按触发 onRequestDelete；短按触发 onLoad
+    //   为什么不直接 import ApiQuickFloat.PresetChip：那个组件是 ApiQuickFloat 内部 const（没 export）
+    //   重构抽公共组件是任务 4 之后的事，本任务按"行为一致"做最小改动
+    const PRESET_LONG_PRESS_MS = 550;
+    const [lightPresetPendingDelete, setLightPresetPendingDelete] = useState<any | null>(null);
+
+    // 任务 4：长按删除按钮组件（行为跟 ApiQuickFloat.PresetChip 一致）
+    const LightPresetChip: React.FC<{
+        name: string;
+        active: boolean;
+        title: string;
+        onLoad: () => void;
+        onRequestDelete: () => void;
+    }> = ({ name, active, title, onLoad, onRequestDelete }) => {
+        const timerRef = useRef<number | null>(null);
+        const longPressedRef = useRef(false);
+        const [pressing, setPressing] = useState(false);
+        const clearPress = () => {
+            if (timerRef.current !== null) {
+                window.clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            setPressing(false);
+        };
+        useEffect(() => () => clearPress(), []);
+        return (
+            <button
+                type="button"
+                // 修复 3：title 属性用 props.title（hover tooltip 显示协议+URL+提示）
+                //   之前写死成"点击加载，长按删除"，按钮内容也错把 title 渲染出来
+                title={title}
+                onPointerDown={() => {
+                    clearPress();
+                    longPressedRef.current = false;
+                    setPressing(true);
+                    timerRef.current = window.setTimeout(() => {
+                        longPressedRef.current = true;
+                        setPressing(false);
+                        onRequestDelete();
+                    }, PRESET_LONG_PRESS_MS);
+                }}
+                onPointerUp={clearPress}
+                onPointerLeave={clearPress}
+                onPointerCancel={clearPress}
+                onClick={() => {
+                    if (longPressedRef.current) {
+                        longPressedRef.current = false;
+                        return;
+                    }
+                    onLoad();
+                }}
+                style={{
+                    padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    border: active ? '1px solid #10b981' : '1px solid #bbf7d0',
+                    background: active ? '#d1fae5' : 'white',
+                    color: active ? '#065f46' : '#166534',
+                    cursor: 'pointer',
+                    transform: pressing ? 'scale(0.98)' : 'scale(1)',
+                    transition: 'transform 0.1s',
+                }}
+            >
+                {/* 修复 3：按钮内容显示预设名字（跟 ApiQuickFloat PresetChip 一致），不显示 title */}
+                {name}{active ? ' ✓' : ''}
+            </button>
+        );
+    };
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -1087,7 +1139,7 @@ export default function MemoryPalaceApp() {
     };
 
     const handleSaveLightApi = () => {
-        // 暮色 2026-07-27：3 tab 协议 + 同时存 3 套（切回 tab 不丢之前的值）
+        // 暮色 2026-07-27：2 tab 协议 + 同时存 2 套（OpenAI / Gemini）—— 删 Claude 那套
         // 暮色 2026-08-02 18:10 修：原代码 baseUrl/apiKey/model 字段在 lightProtocol !== 'openai' 时
         //   保留旧值（用 memoryPalaceConfig.lightLLM.baseUrl || ''），导致 useEffect 同步时
         //   永远读 baseUrl 字段 → input 显示旧值（京东云）= "跳回京东云"。
@@ -1098,9 +1150,6 @@ export default function MemoryPalaceApp() {
             apiKey: lightKey.trim(),
             model: lightModel.trim(),
             protocol: lightProtocol,
-            claudeBaseUrl: lightProtocol === 'claude' ? lightUrl.trim() : lightClaudeUrl,
-            claudeApiKey: lightProtocol === 'claude' ? lightKey.trim() : lightClaudeKey,
-            claudeModel: lightProtocol === 'claude' ? lightModel.trim() : lightClaudeModel,
             geminiBaseUrl: lightProtocol === 'gemini' ? lightUrl.trim() : lightGeminiUrl,
             geminiApiKey: lightProtocol === 'gemini' ? lightKey.trim() : lightGeminiKey,
             geminiModel: lightProtocol === 'gemini' ? lightModel.trim() : lightGeminiModel,
@@ -1124,11 +1173,8 @@ export default function MemoryPalaceApp() {
             baseUrl: lightUrl.trim(),
             apiKey: lightKey.trim(),
             model: lightModel.trim(),
-            // 暮色 2026-07-27：预设也记当前协议
+            // 暮色 2026-07-27：预设也记当前协议 —— 暮色 8-12 21:15 删 Claude 那套
             protocol: lightProtocol,
-            claudeBaseUrl: lightProtocol === 'claude' ? lightUrl.trim() : lightClaudeUrl,
-            claudeApiKey: lightProtocol === 'claude' ? lightKey.trim() : lightClaudeKey,
-            claudeModel: lightProtocol === 'claude' ? lightModel.trim() : lightClaudeModel,
             geminiBaseUrl: lightProtocol === 'gemini' ? lightUrl.trim() : lightGeminiUrl,
             geminiApiKey: lightProtocol === 'gemini' ? lightKey.trim() : lightGeminiKey,
             geminiModel: lightProtocol === 'gemini' ? lightModel.trim() : lightGeminiModel,
@@ -2267,55 +2313,46 @@ export default function MemoryPalaceApp() {
                         <div style={{ marginBottom: 10 }}>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                 {lightPresets.map(p => {
-                                    // 暮色 2026-07-27：active 判断用 protocol + 3 套字段
-                                    const proto = (p.config as any).protocol || 'openai';
-                                    const activeUrl = proto === 'claude' ? (p.config as any).claudeBaseUrl
-                                        : proto === 'gemini' ? (p.config as any).geminiBaseUrl
+                                    // 暮色 2026-07-27：active 判断用 protocol + 2 套字段（OpenAI / Gemini）—— 删 Claude
+                                    const proto = (p.config as any).protocol === 'gemini' ? 'gemini' : 'openai';
+                                    const activeUrl = proto === 'gemini' ? (p.config as any).geminiBaseUrl
                                         : p.config.baseUrl;
-                                    const activeKey = proto === 'claude' ? (p.config as any).claudeApiKey
-                                        : proto === 'gemini' ? (p.config as any).geminiApiKey
+                                    const activeKey = proto === 'gemini' ? (p.config as any).geminiApiKey
                                         : p.config.apiKey;
-                                    const activeModel = proto === 'claude' ? (p.config as any).claudeModel
-                                        : proto === 'gemini' ? (p.config as any).geminiModel
+                                    const activeModel = proto === 'gemini' ? (p.config as any).geminiModel
                                         : p.config.model;
                                     const active = lightProtocol === proto
                                         && lightUrl === activeUrl
                                         && lightKey === activeKey
                                         && lightModel === activeModel;
                                     return (
-                                        <button
+                                        // 任务 4：换成 LightPresetChip —— 长按 550ms 触发删除确认弹窗
+                                        <LightPresetChip
                                             key={p.id}
-                                            onClick={() => {
+                                            name={p.name}
+                                            active={active}
+                                            title={`${proto} · ${activeUrl || ''}\n点击加载，长按删除`}
+                                            onLoad={() => {
                                                 // 暮色 2026-07-27：加载预设时按预设里的 protocol 切换 + 填对应那组
                                                 // 暮色 2026-08-02 18:10 修：原代码 OpenAI 协议分支什么都没做，
                                                 //   导致点了 OpenAI 预设没反应。补上 setLightUrl/Key/Model。
                                                 // 暮色 2026-08-02 18:29 修：原代码只设了 local* state（lightGeminiKey 等），
                                                 //   但 input 显示的是 lightKey。setLightKey 没更新 → 看起来"API key 没存进去"。
                                                 //   而且 active 判断 lightKey === activeKey 永远不匹配 → 预设不显示绿色✅。
-                                                //   修：所有 3 套字段（baseUrl/claudeBaseUrl/geminiBaseUrl）都填到 light* state + local* state。
+                                                // 暮色 8-12 21:15：删 Claude 协议 —— 2 套字段（baseUrl/geminiBaseUrl）
                                                 const _presetBaseUrl = p.config.baseUrl || '';
                                                 const _presetApiKey = p.config.apiKey || '';
                                                 const _presetModel = p.config.model || '';
-                                                const _presetClaudeUrl = (p.config as any).claudeBaseUrl || p.config.baseUrl || '';
-                                                const _presetClaudeKey = (p.config as any).claudeApiKey || p.config.apiKey || '';
-                                                const _presetClaudeModel = (p.config as any).claudeModel || p.config.model || '';
                                                 const _presetGeminiUrl = (p.config as any).geminiBaseUrl || p.config.baseUrl || '';
                                                 const _presetGeminiKey = (p.config as any).geminiApiKey || p.config.apiKey || '';
                                                 const _presetGeminiModel = (p.config as any).geminiModel || p.config.model || '';
                                                 setLightProtocol(proto);
-                                                // 同步 3 套 local* state（切回那个 tab 时不丢）
-                                                setLightClaudeUrl(_presetClaudeUrl);
-                                                setLightClaudeKey(_presetClaudeKey);
-                                                setLightClaudeModel(_presetClaudeModel);
+                                                // 同步 2 套 local* state（切回那个 tab 时不丢）
                                                 setLightGeminiUrl(_presetGeminiUrl);
                                                 setLightGeminiKey(_presetGeminiKey);
                                                 setLightGeminiModel(_presetGeminiModel);
                                                 // 当前协议的字段填到 light* state（input 显示这个）
-                                                if (proto === 'claude') {
-                                                    setLightUrl(_presetClaudeUrl);
-                                                    setLightKey(_presetClaudeKey);
-                                                    setLightModel(_presetClaudeModel);
-                                                } else if (proto === 'gemini') {
+                                                if (proto === 'gemini') {
                                                     setLightUrl(_presetGeminiUrl);
                                                     setLightKey(_presetGeminiKey);
                                                     setLightModel(_presetGeminiModel);
@@ -2326,28 +2363,68 @@ export default function MemoryPalaceApp() {
                                                 }
                                                 setLightTestResult(null);
                                             }}
-                                            style={{
-                                                padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                                border: active ? '1px solid #10b981' : '1px solid #bbf7d0',
-                                                background: active ? '#d1fae5' : 'white',
-                                                color: active ? '#065f46' : '#166534',
-                                                cursor: 'pointer',
-                                            }}
-                                            title={`${proto} · ${activeUrl || ''}`}
-                                        >
-                                            {p.name}{active ? ' ✓' : ''}
-                                        </button>
+                                            onRequestDelete={() => setLightPresetPendingDelete(p)}
+                                        />
                                     );
                                 })}
                             </div>
                         </div>
                     )}
 
-                    {/* 暮色 2026-07-27：副 API 3 tab 协议切换（OpenAI / Claude / Gemini） */}
+                    {/* 任务 4：副 API 预设长按删除确认弹窗（跟 ApiQuickFloat 行为一致） */}
+                    {lightPresetPendingDelete ? (
+                        <div
+                            onClick={() => setLightPresetPendingDelete(null)}
+                            style={{
+                                position: 'fixed', inset: 0, zIndex: 120,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                padding: 16,
+                            }}
+                        >
+                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)' }} />
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    position: 'relative', width: '100%', maxWidth: 384,
+                                    borderRadius: 24, background: 'white', padding: 20,
+                                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                                }}
+                            >
+                                <div style={{ fontSize: 16, fontWeight: 700, color: '#334155' }}>删除预设</div>
+                                <div style={{ marginTop: 8, fontSize: 14, color: '#64748b' }}>
+                                    确认删除预设"{lightPresetPendingDelete.name}"？
+                                </div>
+                                <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                    <button
+                                        onClick={() => setLightPresetPendingDelete(null)}
+                                        style={{
+                                            width: '100%', padding: '12px 0', borderRadius: 9999,
+                                            background: '#f1f5f9', color: '#475569', fontWeight: 700,
+                                            border: 'none', cursor: 'pointer',
+                                        }}
+                                    >取消</button>
+                                    <button
+                                        onClick={() => {
+                                            removeApiPreset(lightPresetPendingDelete.id);
+                                            addToast(`已删除预设: ${lightPresetPendingDelete.name}`, 'success');
+                                            setLightPresetPendingDelete(null);
+                                        }}
+                                        style={{
+                                            width: '100%', padding: '12px 0', borderRadius: 9999,
+                                            background: '#ef4444', color: 'white', fontWeight: 700,
+                                            border: 'none', cursor: 'pointer',
+                                        }}
+                                    >删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
+
+                    {/* 暮色 2026-07-27：副 API 2 tab 协议切换（OpenAI / Gemini）—— 暮色 8-12 21:15 删 Claude */}
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                        {(['openai', 'claude', 'gemini'] as const).map((p) => {
-                            const labelMap = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini' } as const;
-                            const colorMap = { openai: '#10b981', claude: '#f97316', gemini: '#0ea5e9' } as const;
+                        {(['openai', 'gemini'] as const).map((p) => {
+                            const labelMap = { openai: 'OpenAI', gemini: 'Gemini' } as const;
+                            const colorMap = { openai: '#10b981', gemini: '#0ea5e9' } as const;
                             const active = lightProtocol === p;
                             return (
                                 <button
@@ -2384,7 +2461,7 @@ export default function MemoryPalaceApp() {
                         <div>
                             <label className={labelClass}>BASE URL</label>
                             <input type="text" value={lightUrl} onChange={e => setLightUrl(e.target.value)}
-                                placeholder={lightProtocol === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : lightProtocol === 'claude' ? 'https://api.anthropic.com (走 OpenAI 兼容中转时填中转站 URL)' : 'https://api.siliconflow.cn/v1'} className={inputClass} />
+                                placeholder={lightProtocol === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.siliconflow.cn/v1'} className={inputClass} />
                         </div>
                         <div>
                             <label className={labelClass}>API KEY</label>

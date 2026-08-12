@@ -11,7 +11,22 @@ import { isUserCurrentlyChatting, clearUserChatPresence } from '../utils/chatPre
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
+import { extractGeminiKeys, pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, shortKey } from '../utils/geminiKeyPool';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+
+// 任务 5：API 调试日志开关（跟 useChatAI.isApiLogEnabled 同款）
+//   - localStorage.getItem('sullyos:enableApiLog') === 'true' 才写入 + console.log
+//   - 默认 false（暮色隐私偏好：完整请求体/私密聊天不该默认落 localStorage）
+//   - 用户排查时手动在控制台执行 localStorage.setItem('sullyos:enableApiLog','true') 打开
+//   - 不动请求发送/响应解析，只包住诊断日志
+const isApiLogEnabled = (): boolean => {
+    try {
+        return typeof localStorage !== 'undefined'
+            && localStorage.getItem('sullyos:enableApiLog') === 'true';
+    } catch {
+        return false;
+    }
+};
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
 import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
@@ -38,6 +53,17 @@ const normalizeProactiveAiContent = (raw: string): string => {
     (_match, lineStart: string, emojiName: string) => `${lineStart}[[SEND_EMOJI: ${emojiName.trim()}]]`
   );
   return cleaned;
+};
+
+// 任务 1：baseUrl 缺 /v1 时自动补，防止打到中转站根路径 404。
+//   useChatAI 行 41-46 的同款函数逻辑写反了（! 写错）——这里写对版：
+//   - 不以 /v1 /v2 结尾 → 补 /v1
+//   - 已经以 /v1 结尾 → 原样
+const normalizeApiUrl = (url?: string): string => {
+    const raw = (url || '').trim().replace(/\/+$/, '');
+    if (!raw) return '';
+    if (/\/v\d+$/i.test(raw)) return raw;
+    return `${raw}/v1`;
 };
 
 
@@ -1491,17 +1517,15 @@ if (!isVisible || !isChattingWithThisChar) {
           }
 
           // API 优先级：副 API > 角色独立 API > 主 API
-          // 角色 API 分 3 套协议（OpenAI/Claude/Gemini），baseUrl 按 protocol 存不同字段
-          //   openai → .baseUrl, claude → .claudeBaseUrl, gemini → .geminiBaseUrl
-          //   必须按 char.apiConfig.protocol 选，否则配 Claude/Gemini 时 useCharApi 误判成 false
+          // 任务 2：角色 API 协议只支持 OpenAI/Gemini（删 Claude）—— baseUrl 按 protocol 选
+          //   openai → .baseUrl, gemini → .geminiBaseUrl
+          //   必须按 char.apiConfig.protocol 选，否则配 Gemini 时 useCharApi 误判成 false
           const pCfg = char.proactiveConfig;
           const useSecondary = !!(pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl);
-          // 角色 API 3 协议下的 baseUrl 选择器
+          // 角色 API 2 协议下的 baseUrl 选择器（任务 2：删 Claude）
           const charApiConfig = char.apiConfig;
           const charApiProtocol = (charApiConfig as any)?.protocol ?? 'openai';
-          const charApiBaseUrl = charApiProtocol === 'claude'
-              ? (charApiConfig as any)?.claudeBaseUrl
-              : charApiProtocol === 'gemini'
+          const charApiBaseUrl = charApiProtocol === 'gemini'
               ? (charApiConfig as any)?.geminiBaseUrl
               : charApiConfig?.baseUrl;
           const useCharApi = !useSecondary && !!(pCfg?.useCharApi && charApiBaseUrl);
@@ -1511,16 +1535,16 @@ if (!isVisible || !isChattingWithThisChar) {
               api = pCfg!.secondaryApi!;
               apiSource = 'secondary';
           } else if (useCharApi) {
-              // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 3 套字段 + protocol）
+              // 角色独立 API：把 char.apiConfig 当成完整 APIConfig（已包含 2 套字段 + protocol）
               api = charApiConfig;
               apiSource = 'char';
           } else {
               api = currentApiConfig;
               apiSource = 'main';
           }
-          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 3 套
-          //   gemini 协议 fetch URL 还没修（safeFetchJson 不支持），先记着
-          if (!api.baseUrl && !((api as any).claudeBaseUrl || (api as any).geminiBaseUrl)) {
+          // api.baseUrl 也按 protocol 选——副 API 只有 baseUrl，角色 API 按 protocol 分 2 套
+          // 任务 1 修：Gemini 协议 fetch URL 走自定义分支（见下面）
+          if (!api.baseUrl && !((api as any).geminiBaseUrl)) {
               drainQueuedProactive();
               return;
           }
@@ -1538,8 +1562,28 @@ if (!isVisible || !isChattingWithThisChar) {
           //   之前 systemPrompt 在 try 块内 const 声明，catch 块（line 1727）里 systemPrompt.length 抛 ReferenceError
           //   → 诊断 log 写入炸了 → 推系统消息进聊天也走不到 → 暮色看到的是 console 一片红但 UI 啥都没说
           //   reqBody 早就这么干了，这里补 systemPrompt 同款
+          // 修复 1：useGeminiProtocolProactive 也挪出 try 块 —— 之前定义在 try 内，
+          //   catch 块（行 2060+ 诊断日志）访问会抛 ReferenceError，导致诊断 log 写入也炸
+          const useGeminiProtocolProactive = apiProtocol === 'gemini';
           let reqBody: any = null;
           let systemPrompt: string = '';
+
+          // 任务 1：按 apiProtocol 选 baseUrl/apiKey/model
+          //   修复前：永远只读 api.baseUrl/apiKey/model（OpenAI 字段），用户切到 Gemini 协议时
+          //          主动消息仍打到旧 OpenAI 地址 → 中转站 404/405
+          //   修后：OpenAI 走主字段；Gemini 走 gemini* 字段；其它（含 Claude / 缺省）回落主字段
+          //   跟 useChatAI 行 794-808 protoResolved 同款结构，但本任务范围只支持 OpenAI/Gemini
+          //   注意：api 是引用 React state（charApiConfig / currentApiConfig）—— 不能 mutate
+          //         否则会污染 state。改用临时 activeApi 变量承载本轮生效的 baseUrl/apiKey/model
+          const activeApi: any = apiProtocol === 'gemini' ? {
+              ...api,
+              baseUrl: (api as any).geminiBaseUrl || api.baseUrl,
+              apiKey: (api as any).geminiApiKey || api.apiKey,
+              model: (api as any).geminiModel || api.model,
+          } : { ...api };
+          if (apiProtocol === 'openai') {
+              activeApi.baseUrl = normalizeApiUrl(activeApi.baseUrl);
+          }
 
           try {
               // 1. Calculate time gap
@@ -1659,61 +1703,181 @@ if (!isVisible || !isChattingWithThisChar) {
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 
-            
-              // 4. Send request to AI
-              // max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
-              reqBody = {
-                  model: api.model,
-                  messages: fullMessages,
-                  temperature: 0.8,
-                  max_tokens: 2000,
-              };
 
-              // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
-              // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
-              // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
-              const data = await safeFetchJson(`${api.baseUrl}/chat/completions`, {
-                  method: 'POST',
-                  headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${api.apiKey}`,
-                  },
-                  body: JSON.stringify(reqBody),
-              }, 2, 0, apiProtocol);
+              // 4. Send request to AI
+              // 任务 1：按协议分支构造请求体 + fetch
+              //   OpenAI 协议：messages 数组 + safeFetchJson（带 CORS fallback / 重试）
+              //   Gemini 协议：contents + systemInstruction + key 走 URL 参数 + 手动 key 池轮询
+              //                  （跟 useChatAI 行 1900+ 同款结构；不挂 Authorization header）
+              //   max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
+              // 修复 1：useGeminiProtocolProactive 已在 try 块外声明（catch 块诊断日志也能用）
+              if (useGeminiProtocolProactive) {
+                  const systemText = systemPrompt;
+                  const contents = fullMessages
+                      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+                      .map((m: any) => {
+                          const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                          return {
+                              role: m.role === 'assistant' ? 'model' : 'user',
+                              parts: [{ text: text.slice(0, 30000) }],
+                          };
+                      });
+                  if (contents.length === 0 || contents[0].role !== 'user') {
+                      contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
+                  }
+                  // 修复 4：主动消息系统提示词（hintLines）追加到 contents 末尾
+                  //   暮色 8-12 21:07 反馈：Gemini 协议 contents 末尾停留在 'model' role，
+                  //   触发 Gemini "last message must be user" 400 校验失败。
+                  //   OpenAI 协议走 messages 数组时把 hintLines 作为末尾 system 消息发出去，
+                  //   Gemini 分支没做这步 → 两边行为不一致。
+                  //   修：Gemini 分支拼完历史 records 后，append 一条 user role 的 proactivePrompt。
+                  //   顺便解决两个问题：①唤醒提示没发给模型 ②Gemini 协议强制最后一条是 user。
+                  contents.push({ role: 'user', parts: [{ text: hintLines }] });
+                  reqBody = {
+                      contents,
+                      systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                      generationConfig: { temperature: 0.8, maxOutputTokens: 2000 },
+                  };
+              } else {
+                  reqBody = {
+                      model: activeApi.model,
+                      messages: fullMessages,
+                      temperature: 0.8,
+                      max_tokens: 2000,
+                  };
+              }
+
+              let data: any;
+              if (useGeminiProtocolProactive) {
+                  // 任务 1：Gemini 协议主动消息 — key 池轮询 + 失败切下一个（跟 useChatAI 行 1900+ 同款）
+                  const mainGeminiKeys = extractGeminiKeys(activeApi, 'geminiApiKey', 'geminiApiKeys');
+                  const picked = pickGeminiKey('main', mainGeminiKeys);
+                  if (!picked) {
+                      throw new Error('主动消息 Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
+                  }
+                  const cleanBase = (activeApi.baseUrl || '').replace(/\/+$/, '');
+                  let lastErr: Error | null = null;
+                  let lastStatus = 0;
+                  let lastErrText = '';
+                  let succeeded = false;
+                  for (let attempt = 0; attempt < 3; attempt++) {
+                      const currentPicked = (() => {
+                          if (attempt === 0) {
+                              return { keyIndex: picked.keyIndex, key: picked.key };
+                          }
+                          const np = pickGeminiKey('main', mainGeminiKeys);
+                          if (!np) return null;
+                          return { keyIndex: np.keyIndex, key: np.key };
+                      })();
+                      if (!currentPicked) {
+                          lastErr = new Error('主动消息 Gemini 协议：key 池里所有 key 都不可用（失效/限流中）');
+                          break;
+                      }
+                      const tryKey = currentPicked.key;
+                      const tryUrl = `${cleanBase}/models/${encodeURIComponent(activeApi.model)}:generateContent?key=${encodeURIComponent(tryKey)}`;
+                      const geminiRes = await fetch(tryUrl, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                              contents: reqBody.contents,
+                              systemInstruction: reqBody.systemInstruction,
+                              generationConfig: reqBody.generationConfig,
+                          }),
+                      });
+                      if (!geminiRes.ok) {
+                          const errText = await geminiRes.text().catch(() => '');
+                          lastStatus = geminiRes.status;
+                          lastErrText = errText;
+                          const verdict = reportGeminiFailure('main', currentPicked.keyIndex, geminiRes.status, errText);
+                          if (verdict === 'fail-permanent') {
+                              lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                              break;
+                          }
+                          if (verdict === 'fail-recoverable') {
+                              lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                              break;
+                          }
+                          console.warn(`🌐 [Proactive/Gemini] 池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length} ${geminiRes.status}，切下一个重试`);
+                          lastErr = new Error(`主动消息 Gemini ${geminiRes.status}: ${errText.slice(0, 300)}`);
+                          continue;
+                      }
+                      reportGeminiSuccess('main', currentPicked.keyIndex);
+                      const geminiJson: any = await geminiRes.json();
+                      const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                      const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                      data = {
+                          choices: [{
+                              message: { role: 'assistant', content: geminiText },
+                              finish_reason: geminiFinish,
+                          }],
+                          usage: geminiJson?.usageMetadata ? {
+                              prompt_tokens: geminiJson.usageMetadata.promptTokenCount || 0,
+                              completion_tokens: geminiJson.usageMetadata.candidatesTokenCount || 0,
+                              total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
+                          } : undefined,
+                      };
+                      console.log(`🌐 [Proactive/Gemini] 响应 ${geminiText.length} 字 (池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length}: ${shortKey(tryKey)})`);
+                      succeeded = true;
+                      break;
+                  }
+                  if (!succeeded) {
+                      throw lastErr || new Error(`主动消息 Gemini 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
+                  }
+              } else {
+                  // 暮色 2026-07-21：改用 safeFetchJson，复用 CORS fallback + retry + Claude 协议分支
+                  // 裸 fetch 直打中转站没有 Vercel 代理兜底，跨域 502/CORS 都会被浏览器判死
+                  // （runProactive 自 6/14 restore 起就这样写，今天你 zai 主动消息坏掉才发现）
+                  data = await safeFetchJson(`${activeApi.baseUrl}/chat/completions`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${activeApi.apiKey}`,
+                      },
+                      body: JSON.stringify(reqBody),
+                  }, 2, 0, apiProtocol);
+              }
 
               // 暮色 2026-08-06：跟主 API 一样的请求体日志（存完整请求体到 localStorage）
               //   之前 7-22 只存元数据（msgCount / 字符数），暮色要看到完整 body 才能排查
               //   跟主 API 区别 key：sullyos:lastProactiveReqLog（主 API 是 sullyos:lastApiReqLog）
               //   console 提示从那里复制
               try {
+                  // 任务 1：Gemini 协议下 url 是 /models/...:generateContent，不是 /chat/completions
+                  //   reqBody 里没 temperature/max_tokens/messages 字段——按协议取
+                  const geminiLogBase = (activeApi.baseUrl || '').replace(/\/+$/, '');
                   const logEntry = {
                       timestamp: new Date().toISOString(),
-                      url: `${api.baseUrl}/chat/completions`,
+                      url: useGeminiProtocolProactive
+                          ? `${geminiLogBase}/models/${encodeURIComponent(activeApi.model)}:generateContent?key=***`
+                          : `${activeApi.baseUrl}/chat/completions`,
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
-                      model: api.model,
+                      model: activeApi.model,
                       stream: false,
-                      temperature: reqBody.temperature,
-                      maxTokens: reqBody.max_tokens,
-                      totalMessages: reqBody.messages?.length || 0,
+                      temperature: useGeminiProtocolProactive ? reqBody.generationConfig?.temperature : reqBody.temperature,
+                      maxTokens: useGeminiProtocolProactive ? reqBody.generationConfig?.maxOutputTokens : reqBody.max_tokens,
+                      totalMessages: useGeminiProtocolProactive ? (reqBody.contents?.length || 0) : (reqBody.messages?.length || 0),
                       systemChars: systemPrompt.length,
                       totalBodyChars: JSON.stringify(reqBody).length,
                       requestBody: reqBody,
                   };
-                  const json = JSON.stringify(logEntry, null, 2);
-                  localStorage.setItem('sullyos:lastProactiveReqLog', json);
-                  console.log(
-                      `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
-                      `角色: ${char.name} (${charId})\n` +
-                      `URL: ${logEntry.url}\n` +
-                      `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
-                      `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
-                      `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
-                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
-                      'color: #7c3aed; font-weight: bold;'
-                  );
-                  console.log('完整请求体:', reqBody);
+                  // 任务 5：主动消息请求体日志走开关
+                  if (isApiLogEnabled()) {
+                      const json = JSON.stringify(logEntry, null, 2);
+                      localStorage.setItem('sullyos:lastProactiveReqLog', json);
+                      console.log(
+                          `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
+                          `角色: ${char.name} (${charId})\n` +
+                          `URL: ${logEntry.url}\n` +
+                          `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
+                          `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
+                          `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                          `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
+                          'color: #7c3aed; font-weight: bold;'
+                      );
+                      console.log('完整请求体:', reqBody);
+                  }
               } catch { /* quota 忽略 */ }
 
               // 5. Process & save response
@@ -1896,27 +2060,41 @@ if (!isVisible || !isChattingWithThisChar) {
               //   但 JSON.stringify(errLog) / reqBody.messages? 访问可能炸（reqBody=null 时）
               //   → catch 块本身就炸了 → 推系统消息进聊天也走不到
               try {
+                  // 任务 1：catch 块也用 activeApi（更准确反映实际请求的 model）
+                  //   Gemini 协议时 api.model 还是 OpenAI 字段旧值，会误导排查
                   const errLog = {
                       ts: new Date().toISOString(),
                       char: char.name,
                       charId,
                       protocol: apiProtocol,
-                      model: api.model,
-                      msgCount: reqBody?.messages?.length || 0,
+                      model: activeApi.model,
+                      msgCount: useGeminiProtocolProactive
+                          ? (reqBody?.contents?.length || 0)
+                          : (reqBody?.messages?.length || 0),
                       systemChars: systemPrompt.length,  // 暮色 2026-08-03：挪到 try 块外声明的 let，catch 也能拿到
                       totalBodyChars,
-                      firstMsgRole: reqBody?.messages?.[0]?.role,
-                      lastMsgRole: reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
+                      firstMsgRole: useGeminiProtocolProactive
+                          ? reqBody?.contents?.[0]?.role
+                          : reqBody?.messages?.[0]?.role,
+                      lastMsgRole: useGeminiProtocolProactive
+                          ? reqBody?.contents?.[reqBody?.contents?.length - 1]?.role
+                          : reqBody?.messages?.[reqBody?.messages?.length - 1]?.role,
                       errMessage,
                       errStack: (err as Error)?.stack?.slice(0, 600),
                       reqBody,  // 完整 body
                   };
-                  localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
-                  console.warn(
-                      `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
-                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
-                      'color:#dc2626;font-weight:bold',
-                  );
+                  // 任务 5：主动消息失败诊断日志走开关
+                  if (isApiLogEnabled()) {
+                      localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
+                      console.warn(
+                          `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
+                          `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
+                          'color:#dc2626;font-weight:bold',
+                      );
+                  } else {
+                      // 开关没开时只打一行精简错误，不落 localStorage（避免失败原因被默默吞掉）
+                      console.warn(`[Proactive/Global] 失败: ${errMessage}`);
+                  }
               } catch (diagErr) {
                   console.error('[Proactive/Global] 诊断 log 写入也炸了:', diagErr);
               }

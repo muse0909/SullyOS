@@ -1562,6 +1562,9 @@ if (!isVisible || !isChattingWithThisChar) {
           //   之前 systemPrompt 在 try 块内 const 声明，catch 块（line 1727）里 systemPrompt.length 抛 ReferenceError
           //   → 诊断 log 写入炸了 → 推系统消息进聊天也走不到 → 暮色看到的是 console 一片红但 UI 啥都没说
           //   reqBody 早就这么干了，这里补 systemPrompt 同款
+          // 修复 1：useGeminiProtocolProactive 也挪出 try 块 —— 之前定义在 try 内，
+          //   catch 块（行 2060+ 诊断日志）访问会抛 ReferenceError，导致诊断 log 写入也炸
+          const useGeminiProtocolProactive = apiProtocol === 'gemini';
           let reqBody: any = null;
           let systemPrompt: string = '';
 
@@ -1707,7 +1710,7 @@ if (!isVisible || !isChattingWithThisChar) {
               //   Gemini 协议：contents + systemInstruction + key 走 URL 参数 + 手动 key 池轮询
               //                  （跟 useChatAI 行 1900+ 同款结构；不挂 Authorization header）
               //   max_tokens 2000——500 会卡掉 THOUGHT + 正文（AI 真的在 [[THOUGHT: ...]] 写了不少）
-              const useGeminiProtocolProactive = apiProtocol === 'gemini';
+              // 修复 1：useGeminiProtocolProactive 已在 try 块外声明（catch 块诊断日志也能用）
               if (useGeminiProtocolProactive) {
                   const systemText = systemPrompt;
                   const contents = fullMessages

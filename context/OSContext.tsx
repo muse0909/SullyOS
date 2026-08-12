@@ -13,6 +13,20 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { extractGeminiKeys, pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, shortKey } from '../utils/geminiKeyPool';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+
+// 任务 5：API 调试日志开关（跟 useChatAI.isApiLogEnabled 同款）
+//   - localStorage.getItem('sullyos:enableApiLog') === 'true' 才写入 + console.log
+//   - 默认 false（暮色隐私偏好：完整请求体/私密聊天不该默认落 localStorage）
+//   - 用户排查时手动在控制台执行 localStorage.setItem('sullyos:enableApiLog','true') 打开
+//   - 不动请求发送/响应解析，只包住诊断日志
+const isApiLogEnabled = (): boolean => {
+    try {
+        return typeof localStorage !== 'undefined'
+            && localStorage.getItem('sullyos:enableApiLog') === 'true';
+    } catch {
+        return false;
+    }
+};
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
 import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
@@ -1837,19 +1851,22 @@ if (!isVisible || !isChattingWithThisChar) {
                       totalBodyChars: JSON.stringify(reqBody).length,
                       requestBody: reqBody,
                   };
-                  const json = JSON.stringify(logEntry, null, 2);
-                  localStorage.setItem('sullyos:lastProactiveReqLog', json);
-                  console.log(
-                      `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
-                      `角色: ${char.name} (${charId})\n` +
-                      `URL: ${logEntry.url}\n` +
-                      `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
-                      `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
-                      `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
-                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
-                      'color: #7c3aed; font-weight: bold;'
-                  );
-                  console.log('完整请求体:', reqBody);
+                  // 任务 5：主动消息请求体日志走开关
+                  if (isApiLogEnabled()) {
+                      const json = JSON.stringify(logEntry, null, 2);
+                      localStorage.setItem('sullyos:lastProactiveReqLog', json);
+                      console.log(
+                          `%c🤖 [Proactive Request Log] ${logEntry.timestamp}\n` +
+                          `角色: ${char.name} (${charId})\n` +
+                          `URL: ${logEntry.url}\n` +
+                          `Model: ${logEntry.model}, Protocol: ${apiProtocol}\n` +
+                          `Total messages: ${logEntry.totalMessages}, System: ${logEntry.systemChars} chars\n` +
+                          `完整请求体已存到 localStorage['sullyos:lastProactiveReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                          `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastProactiveReqLog')))`,
+                          'color: #7c3aed; font-weight: bold;'
+                      );
+                      console.log('完整请求体:', reqBody);
+                  }
               } catch { /* quota 忽略 */ }
 
               // 5. Process & save response
@@ -2055,12 +2072,18 @@ if (!isVisible || !isChattingWithThisChar) {
                       errStack: (err as Error)?.stack?.slice(0, 600),
                       reqBody,  // 完整 body
                   };
-                  localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
-                  console.warn(
-                      `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
-                      `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
-                      'color:#dc2626;font-weight:bold',
-                  );
+                  // 任务 5：主动消息失败诊断日志走开关
+                  if (isApiLogEnabled()) {
+                      localStorage.setItem('sullyos:proactiveLastError', JSON.stringify(errLog, null, 2));
+                      console.warn(
+                          `%c[Proactive/Global] 失败详情已存到 localStorage['sullyos:proactiveLastError'] (${(JSON.stringify(errLog).length / 1024).toFixed(1)} KB)\n` +
+                          `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:proactiveLastError')))`,
+                          'color:#dc2626;font-weight:bold',
+                      );
+                  } else {
+                      // 开关没开时只打一行精简错误，不落 localStorage（避免失败原因被默默吞掉）
+                      console.warn(`[Proactive/Global] 失败: ${errMessage}`);
+                  }
               } catch (diagErr) {
                   console.error('[Proactive/Global] 诊断 log 写入也炸了:', diagErr);
               }

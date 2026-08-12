@@ -37,6 +37,20 @@ import { getSettings as getMomentsSettings } from '../utils/momentsStorage';
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
 
+// 任务 5：API 调试日志开关
+//   - localStorage.getItem('sullyos:enableApiLog') === 'true' 才写入 + console.log
+//   - 默认 false（暮色隐私偏好：完整请求体/私密聊天不该默认落 localStorage）
+//   - 用户排查时手动在控制台执行 localStorage.setItem('sullyos:enableApiLog','true') 打开
+//   - 不动请求发送/响应解析，只包住诊断日志
+const isApiLogEnabled = (): boolean => {
+    try {
+        return typeof localStorage !== 'undefined'
+            && localStorage.getItem('sullyos:enableApiLog') === 'true';
+    } catch {
+        return false;
+    }
+};
+
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
 const normalizeApiUrl = (url?: string): string => {
     const raw = (url || '').trim().replace(/\/+$/, '');
@@ -1120,19 +1134,22 @@ export const useChatAI = ({
                 const hash_bp2 = await computeHash(bp1Tools + bp2Rules);
                 const hash_bp3 = await computeHash(bp1Tools + bp2Rules + bp3Context);
                 const hash_bp4 = await computeHash(bp1Tools + bp2Rules + bp3Context + historyConcat);
-                console.log(`🔐 [Cache Hash 4 段] bp1=${hash_bp1} | bp2=${hash_bp2} | bp3=${hash_bp3} | bp4=${hash_bp4}`);
-                // 存到 localStorage（覆盖之前那条，便于对比）
-                try {
-                    const prev = localStorage.getItem('sullyos:lastApiReqLog');
-                    if (prev) {
-                        const obj = JSON.parse(prev);
-                        obj.hash_bp1 = hash_bp1;
-                        obj.hash_bp2 = hash_bp2;
-                        obj.hash_bp3 = hash_bp3;
-                        obj.hash_bp4 = hash_bp4;
-                        localStorage.setItem('sullyos:lastApiReqLog', JSON.stringify(obj, null, 2));
-                    }
-                } catch { /* quota 忽略 */ }
+                // 任务 5：hash 日志也走开关
+                if (isApiLogEnabled()) {
+                    console.log(`🔐 [Cache Hash 4 段] bp1=${hash_bp1} | bp2=${hash_bp2} | bp3=${hash_bp3} | bp4=${hash_bp4}`);
+                    // 存到 localStorage（覆盖之前那条，便于对比）
+                    try {
+                        const prev = localStorage.getItem('sullyos:lastApiReqLog');
+                        if (prev) {
+                            const obj = JSON.parse(prev);
+                            obj.hash_bp1 = hash_bp1;
+                            obj.hash_bp2 = hash_bp2;
+                            obj.hash_bp3 = hash_bp3;
+                            obj.hash_bp4 = hash_bp4;
+                            localStorage.setItem('sullyos:lastApiReqLog', JSON.stringify(obj, null, 2));
+                        }
+                    } catch { /* quota 忽略 */ }
+                }
             } catch (e) {
                 console.warn('hash 校验失败（可能环境不支持 crypto.subtle）：', e);
             }
@@ -1292,7 +1309,9 @@ const summarizeVisionMessagesForLog = (messages: any[]) => messages.map((msg: an
     };
 });
 
+// 任务 5：Vision 调试日志也走开关
 const saveVisionReqLog = (log: any) => {
+    if (!isApiLogEnabled()) return;
     try {
         localStorage.setItem('sullyos:lastVisionReqLog', JSON.stringify(log, null, 2));
     } catch { /* quota 忽略 */ }
@@ -1760,25 +1779,28 @@ if (toolsList.length > 0) {
                     },
                     requestBody: baseReqBody,
                 };
-                try {
-                    const json = JSON.stringify(logEntry, null, 2);
-                    localStorage.setItem('sullyos:lastApiReqLog', json);
-                    console.log(
-                        `%c📤 [API Request Log] ${logEntry.timestamp}\n` +
-                        `URL: ${logEntry.url}\n` +
-                        `Model: ${logEntry.model}\n` +
-                        `Stream: ${logEntry.stream}, Temp: ${logEntry.temperature}, MaxTokens: ${logEntry.maxTokens}\n` +
-                        `Total messages: ${logEntry.totalMessages}, Tools: ${logEntry.toolCount}\n` +
-                        `cache_control 标记数: ${logEntry.cacheControlCount}\n` +
-                        `完整请求体已存到 localStorage['sullyos:lastApiReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
-                        `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))`,
-                        'color: #059669; font-weight: bold;'
-                    );
-                    console.log('完整请求体:', baseReqBody);
-                } catch (e: any) {
-                    console.warn('存请求体日志到 localStorage 失败（quota 超限？）：', e);
-                    // 退化：只 console.log
-                    console.log('📤 [API Request Log]', logEntry);
+                // 任务 5：主 API 完整请求体日志走开关
+                if (isApiLogEnabled()) {
+                    try {
+                        const json = JSON.stringify(logEntry, null, 2);
+                        localStorage.setItem('sullyos:lastApiReqLog', json);
+                        console.log(
+                            `%c📤 [API Request Log] ${logEntry.timestamp}\n` +
+                            `URL: ${logEntry.url}\n` +
+                            `Model: ${logEntry.model}\n` +
+                            `Stream: ${logEntry.stream}, Temp: ${logEntry.temperature}, MaxTokens: ${logEntry.maxTokens}\n` +
+                            `Total messages: ${logEntry.totalMessages}, Tools: ${logEntry.toolCount}\n` +
+                            `cache_control 标记数: ${logEntry.cacheControlCount}\n` +
+                            `完整请求体已存到 localStorage['sullyos:lastApiReqLog'](${(json.length / 1024).toFixed(1)} KB)\n` +
+                            `控制台取: copy(JSON.parse(localStorage.getItem('sullyos:lastApiReqLog')))`,
+                            'color: #059669; font-weight: bold;'
+                        );
+                        console.log('完整请求体:', baseReqBody);
+                    } catch (e: any) {
+                        console.warn('存请求体日志到 localStorage 失败（quota 超限？）：', e);
+                        // 退化：只 console.log
+                        console.log('📤 [API Request Log]', logEntry);
+                    }
                 }
             }
 

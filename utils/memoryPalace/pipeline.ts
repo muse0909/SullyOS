@@ -154,7 +154,7 @@ async function loadMemoriesByDateRanges(
 function applyDateBoost(
     results: ScoredMemory[],
     dateHits: import('./types').MemoryNode[],
-    queryVector: Float32Array | undefined,
+    userQueryVectors: Float32Array[] | undefined,
     prefetchedAllVectors: MemoryVector[] | undefined,
 ): void {
     if (results.length === 0 || dateHits.length === 0) return;
@@ -204,20 +204,25 @@ function applyDateBoost(
 
         if (added >= MAX_NEW_ADDS) { dropped++; continue; }
 
-        // 重打分：cosine（跟当前 query vector）+ imp + recency + 房间权重
+        // 重打分：cosine 用 max over 所有 user query vector——
+        // 任一条 user 消息跟日期记忆相关都识别出来，
+        // 不让后续消息被首条 query 拉偏。
         let vectorSim = 0;
-        if (queryVector) {
+        if (userQueryVectors && userQueryVectors.length > 0) {
             const nodeVec = vectorById.get(node.id);
             if (nodeVec) {
-                const len = Math.min(queryVector.length, nodeVec.length);
-                let dot = 0, na = 0, nb = 0;
-                for (let i = 0; i < len; i++) {
-                    dot += queryVector[i] * nodeVec[i];
-                    na += queryVector[i] * queryVector[i];
-                    nb += nodeVec[i] * nodeVec[i];
-                }
-                if (na > 0 && nb > 0) {
-                    vectorSim = dot / (Math.sqrt(na) * Math.sqrt(nb));
+                for (const qv of userQueryVectors) {
+                    const len = Math.min(qv.length, nodeVec.length);
+                    let dot = 0, na = 0, nb = 0;
+                    for (let i = 0; i < len; i++) {
+                        dot += qv[i] * nodeVec[i];
+                        na += qv[i] * qv[i];
+                        nb += nodeVec[i] * nodeVec[i];
+                    }
+                    if (na > 0 && nb > 0) {
+                        const cos = dot / (Math.sqrt(na) * Math.sqrt(nb));
+                        if (cos > vectorSim) vectorSim = cos;
+                    }
                 }
             }
         }
@@ -868,8 +873,13 @@ export async function retrieveMemories(
                 if (dateHits.length > 0) {
                     // 用 effectiveSpikes[0] 的 query vector 作为"用户当前主意图"
                     // 算日期命中记忆跟它的 cosine（最强信号）
-                    const primaryQueryVector = prefetchedQueryVectors?.[0];
-                    applyDateBoost(results, dateHits, primaryQueryVector, prefetchedAllVectors);
+                    // 用 effectiveSpikes 全部 query vector 算 max cosine——
+                    // 任一条 user 消息跟日期记忆相关都识别出来，避免只取第一条
+                    // 把后几条明确相关的内容误杀
+                    const userQueryVectors = effectiveSpikes.length > 0
+                        ? prefetchedQueryVectors?.slice(0, effectiveSpikes.length)
+                        : undefined;
+                    applyDateBoost(results, dateHits, userQueryVectors, prefetchedAllVectors);
                 }
             }
         } catch (e: any) {

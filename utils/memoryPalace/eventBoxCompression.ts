@@ -336,3 +336,134 @@ export async function compressAllEligibleBoxes(
     const eligible = allBoxes.filter(b => b.liveMemoryIds.length >= EVENT_BOX_COMPRESSION_THRESHOLD);
     return maybeCompressEventBoxes(eligible.map(b => b.id), llmConfig, embeddingConfig, charName, userName);
 }
+
+// ─── 超标 summary 重压缩（清理历史债）───────────────────
+//
+// 触发条件：box 的 summary 节点字符数 > EVENT_BOX_SUMMARY_HARD_MAX_CHARS
+// （旧版本没有硬上限保护，少数早期 summary 写到了 1000-2000 字）。
+// 重压不增加 compressionCount（这是清理债，不是新压缩），不动 liveMemoryIds。
+//
+// 用法：MemoryPalaceApp 维护面板的"压缩超标摘要"按钮 / 控制台手动调。
+// 进度通过 console.log 输出，调用方按日志判断。
+
+/**
+ * 扫描该角色下所有 summary 节点，返回超标的 box id 列表。
+ */
+export async function findOversizedSummaries(
+    charId: string,
+    threshold: number = EVENT_BOX_SUMMARY_HARD_MAX_CHARS,
+): Promise<Array<{ box: EventBox; summaryChars: number }>> {
+    const allBoxes = await EventBoxDB.getByCharId(charId);
+    const out: Array<{ box: EventBox; summaryChars: number }> = [];
+    for (const box of allBoxes) {
+        if (!box.summaryNodeId) continue;
+        const sum = await MemoryNodeDB.getById(box.summaryNodeId);
+        if (sum && sum.content.length > threshold) {
+            out.push({ box, summaryChars: sum.content.length });
+        }
+    }
+    return out;
+}
+
+/**
+ * 重压单条超标 summary：用 LLM 把当前超长内容压缩到目标字数内。
+ * 不动 liveMemoryIds，不增加 compressionCount，只重写 summary 节点并重新向量化。
+ */
+export async function recompressOversizedSummary(
+    box: EventBox,
+    llmConfig: LightLLMConfig,
+    embeddingConfig: EmbeddingConfig,
+    charName: string,
+    userName: string | undefined,
+): Promise<boolean> {
+    if (!box.summaryNodeId) return false;
+    const old = await MemoryNodeDB.getById(box.summaryNodeId);
+    if (!old) return false;
+    if (old.content.length <= EVENT_BOX_SUMMARY_HARD_MAX_CHARS) {
+        console.log(`🗜️ [Recompress] ${box.id} summary ${old.content.length} 字未超标，跳过`);
+        return false;
+    }
+
+    const userLabel = userName || '用户';
+    const systemPrompt = `你是 ${charName}。下面是你之前自己写过的一段关于"${box.name}"的回忆，写的太长了，需要你重写一版短的。
+保留所有关键信息（人物、动作、时间、对象、场景、转折、情绪），但去掉冗余铺陈、修辞、口水话。
+
+**严格要求**：
+1. 第一人称（"我"），${userLabel} 用名字直接称呼
+2. 目标 ${EVENT_BOX_SUMMARY_TARGET_CHARS} 字以内，绝对上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS} 字
+3. 事实先行，去掉所有"真是的""怎么说呢""不过话说回来"这类语气填充
+4. 带时间点但不冗余：每件事标一次日期就够
+
+严格 JSON，不要 markdown 包裹：
+{
+  "content": "（紧凑重写的回忆，${EVENT_BOX_SUMMARY_TARGET_CHARS}字内）"
+}`;
+
+    try {
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(llmConfig, systemPrompt, old.content, {
+            temperature: 0.3,
+            maxTokens: 2000,
+        });
+        const match = result.text.match(/\{[\s\S]*\}/);
+        if (!match) {
+            console.warn(`🗜️ [Recompress] ${box.id} LLM 输出无 JSON`);
+            return false;
+        }
+        const parsed = JSON.parse(match[0]);
+        let content = String(parsed.content || '');
+        if (!content) return false;
+        if (content.length > EVENT_BOX_SUMMARY_HARD_MAX_CHARS) {
+            content = content.slice(0, EVENT_BOX_SUMMARY_HARD_MAX_CHARS) + '……';
+        }
+
+        const oldContentLen = old.content.length;
+        old.content = content;
+        old.lastAccessedAt = Date.now();
+        old.embedded = false;
+        await MemoryNodeDB.save(old);
+
+        const remoteCfg = getRemoteVectorConfig();
+        await vectorizeAndStore([old], embeddingConfig, remoteCfg, { skipDedup: true })
+            .catch((e: any) => console.warn(`🗜️ [Recompress] ${box.id} 重向量化失败: ${e?.message}`));
+
+        console.log(`✅ [Recompress] ${box.id} "${box.name}"：${oldContentLen} → ${old.content.length} 字，已重新向量化`);
+        return true;
+    } catch (err: any) {
+        console.error(`🗜️ [Recompress] ${box.id} 失败: ${err?.message || err}`);
+        return false;
+    }
+}
+
+/**
+ * 扫描该角色所有超标 summary 并依次重压。
+ * 返回 { recompressed, skipped, errors }。
+ */
+export async function recompressAllOversizedSummaries(
+    charId: string,
+    llmConfig: LightLLMConfig,
+    embeddingConfig: EmbeddingConfig,
+    charName: string,
+    userName?: string,
+): Promise<{ recompressed: number; skipped: number; errors: number }> {
+    const oversized = await findOversizedSummaries(charId);
+    if (oversized.length === 0) {
+        console.log(`🗜️ [Recompress] ${charName} 无超标 summary`);
+        return { recompressed: 0, skipped: 0, errors: 0 };
+    }
+    console.log(`🗜️ [Recompress] ${charName} 发现 ${oversized.length} 个超标 summary，开始重压`);
+
+    let recompressed = 0, skipped = 0, errors = 0;
+    for (const { box, summaryChars } of oversized) {
+        try {
+            const ok = await recompressOversizedSummary(box, llmConfig, embeddingConfig, charName, userName);
+            if (ok) recompressed++;
+            else skipped++;
+        } catch (e: any) {
+            console.error(`🗜️ [Recompress] ${box.id} 异常: ${e?.message}`);
+            errors++;
+        }
+    }
+    console.log(`🗜️ [Recompress] ${charName} 完成：重压 ${recompressed} / 跳过 ${skipped} / 失败 ${errors}`);
+    return { recompressed, skipped, errors };
+}

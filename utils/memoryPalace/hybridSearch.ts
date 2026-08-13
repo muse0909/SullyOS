@@ -150,11 +150,17 @@ export async function hybridSearch(
     // 归一化 BM25 分数到 0-1
     const maxBm25 = bm25Results.length > 0 ? bm25Results[0].score : 1;
 
+    // BM25 撞字过滤：纯 BM25 命中（向量 sim 不到 0.35）视为撞字噪声丢弃。
+    // 典型反例：query 含"召回"两字，BM25 撞上"我不是被召回才存在的人"，
+    // 但向量 sim=0.000（语义毫无关联），这种走 BM25 兜底是噪声。
+    // 阈值 0.35：低于此值说明该记忆跟 query 语义方向相距较远，BM25 撞
+    // 字不能作为召回信号。
+    const BM25_VECTOR_FLOOR = 0.35;
+    const vectorSimById = new Map<string, number>();
     for (const vr of vectorResults) {
-        // 优先使用本地完整 node（含 eventBoxId / archived 等最新状态）
         const fullNode = localNodeMap.get(vr.node.id) || vr.node;
-        // 二次保险：本地态显示 archived → 跳过（远程刚被 archive 但 RPC 未及时反映的情况）
         if (fullNode.archived) continue;
+        vectorSimById.set(vr.node.id, vr.similarity);
         scoreMap.set(vr.node.id, {
             node: fullNode,
             vectorSim: vr.similarity,
@@ -168,9 +174,12 @@ export async function hybridSearch(
         if (existing) {
             existing.bm25Score = normalized;
         } else {
+            // 仅 BM25 命中：要求向量搜索里也有 sim ≥ 0.35 的弱信号
+            const vectorSim = vectorSimById.get(br.node.id) ?? 0;
+            if (vectorSim < BM25_VECTOR_FLOOR) continue;
             scoreMap.set(br.node.id, {
                 node: br.node,
-                vectorSim: 0,
+                vectorSim,
                 bm25Score: normalized,
             });
         }

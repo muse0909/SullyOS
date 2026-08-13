@@ -17,7 +17,7 @@
  */
 
 import type { Message } from '../../types';
-import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
+import type { EmbeddingConfig, MemoryVector, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
 
 /** 从 localStorage 读取远程向量配置（避免在每个调用点都传参） */
 function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
@@ -325,6 +325,8 @@ export async function retrieveMemories(
         try { return await p; }
         finally { retrieveTimings.push({ label, kind, ms: Math.round(performance.now() - t0) }); }
     };
+    // spike 阶段预取的本地全量向量，提到 try 块外让多样性去重也能用
+    let prefetchedAllVectors: MemoryVector[] | undefined = undefined;
     try {
         // 1. 构建查询 —— per-message 多路检索策略：
         //
@@ -343,64 +345,59 @@ export async function retrieveMemories(
         //                  （背景话题延续，分数 × 0.5 折扣，不会压过 user 意图）
         const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(recentMessages);
 
-        // 抽取每条有意义的 user 消息作为独立 spike + 二次拆分子 spike
+        // per-msg 检索 query 构造。
         //
-        // 过滤原则：
-        // 1. 剥离 URL（表情包/图片/外链 URL 在 embedding 里是随机噪声，没有语义）
-        // 2. 剥离 URL 后，再剥掉所有标点和空白来计算"有意义字符数"
-        // 3. 有意义字符数 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词/"……"等）
-        // 4. 同内容去重
+        // 每条 user 消息作为独立 query 进 hybridSearch。短消息整句入池，
+        // 长消息按句末标点切最多 3 段，粘贴长文本只整句入池且权重 0.3。
         //
-        // MIN_SPIKE_LEN=2 而不是 4：中文里 2 字已经可以成词（"晚安""回家""想你"
-        // "外公""生气"），如果阈值设 4 会误伤大量短而关键的中文测试性输入。
-        // 被过滤的只有 1 字的"嗯""好""?""哦""哈"类纯语气词，以及"……""。。。"
-        // 这类纯标点输入——它们 embedding 方向随机，BM25 也匹配不上任何东西。
+        // 为什么不再做"2-6 字碎片"子 spike：embedding 模型本身就擅长把
+        // 一句里的多个关键词投影到各自的语义方向上，手工拆 7 字碎片反而
+        // 丢掉上下文，搜出的结果基本是撞字噪声（典型：拆出"省的你指挥
+        // 错了"，撞上 BM25 "踩错"反超真正相关的技术记忆）。正常聊天
+        // 几十到一百多字，模型完全能处理。
         //
-        // 注意：query 文本仍然用"剥 URL 后"的原始 trim 版本（保留标点），
-        // 只在判长度时才看"剥光标点的有意义字符数"。这样"晚安……"这种
-        // 带尾随省略号的合法输入能进池，且 query 里完整保留上下文。
+        // 长度规则：
+        //   ≤ 150 字：整句 1 spike，weight=1.0
+        //   > 150 字：按句末标点切最多 3 段，每段 1 spike，weight=1.0
+        //     （防一条消息串两个不相关话题把质心拉散）
+        //   > 200 字：识别为"粘贴外部资料"，整句 1 spike，weight=0.3
+        //     不切段。粘贴不是对话意图，权重低于 context（0.5）。
         //
-        // 二次拆分（sub-spike）：
-        //   一条消息内部如果有标点/空格分隔多段语义（DateApp 见面模式的
-        //   叙述格式 `"对白" 旁白 "对白"`、或者用户在一条消息里用逗号/
-        //   句号串了多件事），单一 spike 会让真实意图被气泡内的其他片段
-        //   稀释。把消息按 [\s\p{P}]+ 拆成子片段，每个 ≥ MIN_SPIKE_LEN 的
-        //   子片段也作为独立 spike 入池（label 后缀 a/b/c/...）。原消息
-        //   仍保留作 u<N>，捕获跨片段的整体语境。
-        //
-        //   这不是"扩搜索面"——子 spike 比原 spike 更短更专注，每路 query
-        //   质心更精准（不是更宽），所以不会出现 joined / 候选池扩大那种
-        //   "泛情感记忆借宽匹配反超"的问题。机制方向相反。
+        // 多条连续 user 消息仍然各自作为独立 query（u1, u2, u3...）。
+        // context query 不动。
         const MIN_SPIKE_LEN = 2;
         const MAX_SPIKES = 10;
-        const MAX_SUB_SPIKES_PER_MSG = 5;
+        const MAX_SEGMENTS_PER_LONG_MSG = 3;
+        const LONG_MSG_TRIGGER = 150;
+        const PASTE_DETECT_TRIGGER = 200;
         const URL_RE = /https?:\/\/\S+/gi;
         const PUNCT_WS_RE = /[\s\p{P}]/gu;
-        const SPLIT_RE = /[\s\p{P}]+/gu;
+        const SENTENCE_SPLIT_RE = /[。.！!？?\n]+/;
         const seenSpike = new Set<string>();
-        const userSpikes: { label: string; text: string; originalIdx: number }[] = [];
+        const userSpikes: { label: string; text: string; weight: number }[] = [];
         userIntent.forEach((m, idx) => {
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
-            const meaningfulChars = text.replace(PUNCT_WS_RE, '');
-            if (meaningfulChars.length < MIN_SPIKE_LEN) return;
+            if (text.replace(PUNCT_WS_RE, '').length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
-            const baseLabel = `u${idx + 1}`;
-            userSpikes.push({ label: baseLabel, text, originalIdx: idx });
 
-            // 二次拆分：消息内部有多段语义时，每段也作为子 spike
-            const segments = text.split(SPLIT_RE)
+            const baseLabel = `u${idx + 1}`;
+            const isPaste = text.length > PASTE_DETECT_TRIGGER;
+            userSpikes.push({ label: baseLabel, text, weight: isPaste ? 0.3 : 1.0 });
+
+            if (isPaste) return;
+
+            if (text.length <= LONG_MSG_TRIGGER) return;
+            const segments = text.split(SENTENCE_SPLIT_RE)
                 .map(s => s.trim())
-                .filter(s => s.length > 0 && s !== text && s.replace(PUNCT_WS_RE, '').length >= MIN_SPIKE_LEN);
-            let subIdx = 0;
-            for (const seg of segments) {
-                if (subIdx >= MAX_SUB_SPIKES_PER_MSG) break;
+                .filter(s => s.length > 0 && s !== text && s.replace(PUNCT_WS_RE, '').length >= MIN_SPIKE_LEN)
+                .slice(0, MAX_SEGMENTS_PER_LONG_MSG);
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
                 if (seenSpike.has(seg)) continue;
                 seenSpike.add(seg);
-                subIdx++;
-                const subLabel = `${baseLabel}${String.fromCharCode(96 + subIdx)}`; // a,b,c,...
-                userSpikes.push({ label: subLabel, text: seg, originalIdx: idx });
+                userSpikes.push({ label: `${baseLabel}p${i + 1}`, text: seg, weight: 1.0 });
             }
         });
         // 保留最后 MAX_SPIKES 条（如果超过上限，优先保留最近的）
@@ -530,6 +527,7 @@ export async function retrieveMemories(
                     ? Promise.resolve(undefined)
                     : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId)),
             ]);
+            prefetchedAllVectors = allVectors;
 
             const spikePromises = effectiveSpikes.map((s, i) =>
                 hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
@@ -621,17 +619,18 @@ export async function retrieveMemories(
                 console.log(`🏰 [Retrieve] context 搜跳过（context query 为空）`);
             }
 
-            // 合并：每条记忆取 max(所有 spike 分, context 分×折扣)
+            // 合并：每条记忆取 max(所有 spike 分×spike权重, context 分×折扣)
             const merged = new Map<string, ScoredMemory>();
             spikeResultsArr.forEach((spikeResults, idx) => {
-                const label = effectiveSpikes[idx].label;
+                const spike = effectiveSpikes[idx];
                 for (const r of spikeResults) {
                     const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
-                    trace.spikeScores.set(label, r.finalScore);
+                    trace.spikeScores.set(spike.label, r.finalScore);
                     sourceTrace.set(r.node.id, trace);
+                    const weighted = r.finalScore * spike.weight;
                     const existing = merged.get(r.node.id);
-                    if (!existing || r.finalScore > existing.finalScore) {
-                        merged.set(r.node.id, r);
+                    if (!existing || weighted > existing.finalScore) {
+                        merged.set(r.node.id, { ...r, finalScore: weighted, roomScore: r.roomScore * spike.weight });
                     }
                 }
             });
@@ -762,6 +761,69 @@ export async function retrieveMemories(
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索 + 日期路径均无结果，跳过记忆注入`);
             return '';
+        }
+
+        // 多样性去重：同一房间超过 10 条时，对它们两两算内容相似度
+        // （embedding cosine），高于 0.85 的对里只保留分数高的。
+        //
+        // 为什么不是硬限流：聊亲密话题时卧室记忆占满 15 条是合理的；
+        // 真正的问题是"同一件事的不同表述"重复出现。cosine 去重比
+        // 硬限房间数精准。阈值 0.85：同一事件的不同次压缩 cosine
+        // 通常 0.88-0.95；不同事件哪怕同房间同话题通常 < 0.80。
+        const SAME_ROOM_THRESHOLD = 10;
+        const DEDUP_COSINE_THRESHOLD = 0.85;
+        {
+            let needsDedup = false;
+            const byRoom = new Map<string, ScoredMemory[]>();
+            for (const r of results) {
+                const arr = byRoom.get(r.node.room) || [];
+                arr.push(r);
+                byRoom.set(r.node.room, arr);
+                if (arr.length > SAME_ROOM_THRESHOLD) needsDedup = true;
+            }
+            if (needsDedup && prefetchedAllVectors) {
+                const vectorById = new Map<string, Float32Array>();
+                for (const v of prefetchedAllVectors) {
+                    if (!v.vector) continue;
+                    const f = v.vector instanceof Float32Array
+                        ? v.vector
+                        : v.vector instanceof Uint8Array
+                            ? new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength / 4)
+                            : new Float32Array(v.vector as number[]);
+                    vectorById.set(v.memoryId, f);
+                }
+                const cosine = (a: Float32Array, b: Float32Array): number => {
+                    const len = Math.min(a.length, b.length);
+                    let dot = 0, na = 0, nb = 0;
+                    for (let i = 0; i < len; i++) {
+                        dot += a[i] * b[i];
+                        na += a[i] * a[i];
+                        nb += b[i] * b[i];
+                    }
+                    if (na === 0 || nb === 0) return 0;
+                    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+                };
+                const toDrop = new Set<string>();
+                for (const items of byRoom.values()) {
+                    if (items.length <= SAME_ROOM_THRESHOLD) continue;
+                    for (let i = 0; i < items.length; i++) {
+                        for (let j = i + 1; j < items.length; j++) {
+                            if (toDrop.has(items[i].node.id) || toDrop.has(items[j].node.id)) continue;
+                            const va = vectorById.get(items[i].node.id);
+                            const vb = vectorById.get(items[j].node.id);
+                            if (!va || !vb) continue;
+                            if (cosine(va, vb) > DEDUP_COSINE_THRESHOLD) {
+                                if (items[i].finalScore >= items[j].finalScore) toDrop.add(items[j].node.id);
+                                else toDrop.add(items[i].node.id);
+                            }
+                        }
+                    }
+                }
+                if (toDrop.size > 0) {
+                    results = results.filter(r => !toDrop.has(r.node.id));
+                    console.log(`🏰 [Retrieve] 多样性去重：踢掉 ${toDrop.size} 条同房间高相似记忆`);
+                }
+            }
         }
 
         // 3. 扩散激活

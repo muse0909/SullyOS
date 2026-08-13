@@ -370,11 +370,17 @@ export async function retrieveMemories(
         const MAX_SEGMENTS_PER_LONG_MSG = 3;
         const LONG_MSG_TRIGGER = 150;
         const PASTE_DETECT_TRIGGER = 200;
+        // 多行 + 短内容：表格/列表粘贴常常是 6+ 行每行 20-30 字，单看字数 < 200
+        // 但体感"明显长"。行数 + 字数联合判断补漏。
+        const PASTE_LINE_TRIGGER = 3;
+        const PASTE_LINE_MIN_CHARS = 80;
         const URL_RE = /https?:\/\/\S+/gi;
         const PUNCT_WS_RE = /[\s\p{P}]/gu;
         const SENTENCE_SPLIT_RE = /[。.！!？?\n]+/;
         const seenSpike = new Set<string>();
         const userSpikes: { label: string; text: string; weight: number }[] = [];
+        // 拼接排除粘贴的 user content，供日期解析等"语义搜索"逻辑使用
+        const nonPasteContents: string[] = [];
         userIntent.forEach((m, idx) => {
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
@@ -382,9 +388,15 @@ export async function retrieveMemories(
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
 
+            const lineCount = (m.content.match(/\n/g) || []).length + 1;
+            const isPaste = text.length > PASTE_DETECT_TRIGGER
+                || (lineCount >= PASTE_LINE_TRIGGER && text.length >= PASTE_LINE_MIN_CHARS);
+
             const baseLabel = `u${idx + 1}`;
-            const isPaste = text.length > PASTE_DETECT_TRIGGER;
             userSpikes.push({ label: baseLabel, text, weight: isPaste ? 0.3 : 1.0 });
+
+            // 粘贴消息不参与日期解析等"语义搜索"逻辑
+            if (!isPaste) nonPasteContents.push(m.content);
 
             if (isPaste) return;
 
@@ -407,7 +419,7 @@ export async function retrieveMemories(
             .filter(Boolean)
             .join('\n')
             .slice(0, 2000);
-        const userQueryJoined = userIntent.map(m => m.content).join('\n'); // 仅用于日志显示原始 userIntent 文本
+        const userQueryJoined = nonPasteContents.join('\n'); // 仅含非粘贴消息原文，供日期解析等用
 
         // 兜底：极端情况下末尾没有任何可用的 user spike（如冷启动首轮，或全是语气词）
         const fallbackQuery = effectiveSpikes.length > 0

@@ -1070,8 +1070,20 @@ export async function retrieveMemories(
         // 9. 获取期盼
         const anticipations = await tRetrieve('AnticipationDB.getByCharId', 'IDB', AnticipationDB.getByCharId(charId));
 
-        // 10. 格式化
-        const formatted = await tRetrieve('expandAndFormat', 'IDB', expandAndFormat(results, charId, anticipations, userName, formatterCap));
+        // 10. 分数门槛：finalScore < 0.55 的记忆不注入
+        //     15 条是上限不是定额——分数不够宁可不注，也不让低质记忆污染 prompt。
+        //     便利贴在 formatter 内部按 pinnedUntil 单独取，不受此门槛影响。
+        const FINAL_SCORE_THRESHOLD = 0.55;
+        const preFilterCount = results.length;
+        const aboveThreshold = results.filter(r => r.finalScore >= FINAL_SCORE_THRESHOLD);
+        const droppedBelowThreshold = preFilterCount - aboveThreshold.length;
+        if (droppedBelowThreshold > 0) {
+            console.log(`🏰 [Retrieve] 分数门槛 < ${FINAL_SCORE_THRESHOLD} 过滤 ${droppedBelowThreshold} 条：${preFilterCount} → ${aboveThreshold.length}`);
+        }
+        results = aboveThreshold;
+
+        // 11. 格式化
+        const formatted = await tRetrieve('expandAndFormat', 'IDB', expandAndFormat(results, charId, anticipations, userName, formatterCap, preFilterCount));
 
         // ── 汇总打印 ──
         const perfTotal = Math.round(performance.now() - perfRetrieveT0);

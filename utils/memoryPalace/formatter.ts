@@ -99,6 +99,8 @@ export async function expandAndFormat(
     userName?: string,
     /** 注入上限。rerank 启用时传 15 + topN，让 rerank 额外召回的不被切。 */
     maxOutputItems: number = DEFAULT_MAX_OUTPUT_ITEMS,
+    /** 分数门槛过滤前的条数。0 = 没走门槛过滤。日志里显示"X 条中过滤 Y 条"。 */
+    preFilterCount: number = 0,
 ): Promise<string> {
     const MAX_OUTPUT_ITEMS = maxOutputItems;
     // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占 15 条名额）
@@ -185,11 +187,18 @@ export async function expandAndFormat(
     //  - 被截断的 item 也会列出来（标 ✂️），方便判断是不是应该注入的事件盒被挤掉了
     const finalTotalChars = finalItems.reduce((s, it) => s + it.body.length, 0);
     const pinnedTotalChars = pinnedNodes.reduce((s, n) => s + n.content.length, 0);
-    console.groupCollapsed(
-        `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条 · ${finalTotalChars} 字`
-        + `（便利贴 ${pinnedNodes.length}/${pinnedTotalChars}字 | 盒子 ${boxHits.size} | 独立 ${standaloneItems.length}`
-        + `${cutItems.length > 0 ? ` | ✂️ cut ${cutItems.length}` : ''}）`
-    );
+    const filteredByThreshold = preFilterCount > 0 ? preFilterCount - finalItems.length - cutItems.length : 0;
+    const summaryParts: string[] = [`便利贴 ${pinnedNodes.length}/${pinnedTotalChars}字`, `盒子 ${boxHits.size}`, `独立 ${standaloneItems.length}`];
+    if (filteredByThreshold > 0) {
+        summaryParts.push(`门槛过滤 ${filteredByThreshold}`);
+    }
+    if (cutItems.length > 0) {
+        summaryParts.push(`✂️ cut ${cutItems.length}`);
+    }
+    const summaryLabel = preFilterCount > 0
+        ? `🏰 [MemoryPalace] 最终注入 prompt：${preFilterCount} 条中过滤 ${filteredByThreshold} 条，实际注入 ${finalItems.length} 条 · ${finalTotalChars} 字（${summaryParts.join(' | ')}）`
+        : `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条 · ${finalTotalChars} 字（${summaryParts.join(' | ')}）`;
+    console.groupCollapsed(summaryLabel);
     if (pinnedNodes.length > 0) {
         console.groupCollapsed(`📌 便利贴置顶（不占 ${MAX_OUTPUT_ITEMS} 条名额）${pinnedNodes.length} 条 · ${pinnedTotalChars} 字`);
         for (const p of pinnedNodes) {

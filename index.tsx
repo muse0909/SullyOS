@@ -10,6 +10,11 @@ import { installWakeListener } from './utils/proactivePushConfig';
 import { DB } from './utils/db';
 (window as any).__SULLYOS_DB__ = DB;
 
+// 暮色 2026-08-13：挂 Memory Palace Trace 到 window — F12 console 一键跑只读 trace
+//   用法：__mpTrace.listBoxes(charId) / traceRetrieve(opts) / traceBox(charId, boxId)
+//   严格只读：不写 IDB、不改 scoring、不调 touchAccess / strengthenCoActivated
+import './utils/memoryPalace/trace';
+
 // Register the keep-alive Service Worker early so it's ready before any AI calls
 KeepAlive.init().then(() => {
   // Resume any active proactive schedule after SW is ready

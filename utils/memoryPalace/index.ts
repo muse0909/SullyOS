@@ -76,3 +76,12 @@ export type { WipeResult } from './wipe';
 // 查重工具（按相似度找重复 + 按访问次数筛）
 export { findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES } from './dedup';
 export type { DedupThreshold, AccessRange, DuplicatePair } from './dedup';
+
+// 只读 Trace 工具（暮色 2026-08-13 加：F12 console 用）
+export {
+    traceRetrieve, traceBox, listBoxes, traceSuspiciousBoxes, downloadTrace,
+} from './trace';
+export type {
+    RetrieveTraceOptions, RetrieveTraceResult, PerCandidateTrace, SpikeCandidateBundle,
+    BoxTraceResult, BoxSummary,
+} from './trace';

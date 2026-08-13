@@ -191,52 +191,13 @@ export async function hybridSearch(
 
     for (const [, entry] of scoreMap) {
         const { node, vectorSim, bm25Score } = entry;
-
-        // 混合相似度
-        const hybridSim = VECTOR_WEIGHT * vectorSim + BM25_WEIGHT * bm25Score;
-
-        // 新近度（指数衰减）
-        const hoursAgo = (now - node.lastAccessedAt) / (1000 * 60 * 60);
-        const recency = Math.pow(RECENCY_DECAY, hoursAgo);
-
-        // 有效重要性（归一化到 0-1）
-        const effectiveImp = calculateEffectiveImportance(node, now) / 10;
-
-        // 房间权重
-        const weights = ROOM_WEIGHTS[node.room];
-
-        // 老记忆 recency 回收（所有有 recency 权重的房间）：
-        //   recency = RECENCY_DECAY^hoursAgo，约 100 天后会降到 0.1 以下，再往后
-        //   这个信号对排序几乎无贡献。但房间权重里 recency 份额没归零（living_room 0.30、
-        //   study/user_room/self_room/windowsill 0.15、bedroom 0.10），这部分权重
-        //   等于白送——同一条记忆 sim/imp 再高也被少算一截。
-        //
-        //   规则：任意房间 recency < 0.1 时，把 recency 的权重平均分配给 similarity
-        //   和 importance（各 +weights.recency/2），recency 权重归零。这条规则对 attic
-        //   天然无影响（它 recency 权重本来就是 0），对其它房间等于"旧记忆时把白送的
-        //   权重还给 sim/imp"，让旧而精准的记忆不被衰减吃掉。
-        let simW = weights.similarity;
-        let recW = weights.recency;
-        let impW = weights.importance;
-        if (weights.recency > 0 && recency < 0.1) {
-            const redistribute = weights.recency / 2;
-            simW += redistribute;
-            impW += redistribute;
-            recW = 0;
-        }
-
-        const baseScore = simW * hybridSim + recW * recency + impW * effectiveImp;
-
-        // 熟悉度加成（轻权重，防止常聊话题沉底）
-        const familiarity = familiarityBonus(node.accessCount);
-        const roomScore = baseScore + FAMILIARITY_WEIGHT * familiarity;
-
+        const scored = scoreMemoryEntry(node, vectorSim, bm25Score, now);
         results.push({
             node,
-            finalScore: roomScore,
+            finalScore: scored.finalScore,
             similarity: vectorSim,
             bm25Score,
-            roomScore,
+            roomScore: scored.finalScore,
         });
     }
 
@@ -244,4 +205,37 @@ export async function hybridSearch(
     results.sort((a, b) => b.finalScore - a.finalScore);
 
     return results.slice(0, topK);
+}
+
+/**
+ * 单条记忆打分：混合相似度 + 房间权重 + 熟悉度加成。
+ * 拆出来让 pipeline 也能复用（日期命中记忆的重打分走这里，避免重复实现）。
+ */
+export function scoreMemoryEntry(
+    node: MemoryNode,
+    vectorSim: number,
+    bm25Score: number,
+    now: number = Date.now(),
+): { finalScore: number; hybridSim: number } {
+    const hybridSim = VECTOR_WEIGHT * vectorSim + BM25_WEIGHT * bm25Score;
+    const hoursAgo = (now - node.lastAccessedAt) / (1000 * 60 * 60);
+    const recency = Math.pow(RECENCY_DECAY, hoursAgo);
+    const effectiveImp = calculateEffectiveImportance(node, now) / 10;
+    const weights = ROOM_WEIGHTS[node.room];
+
+    // 老记忆 recency 回收：100 天后 recency < 0.1，把 recency 权重平均
+    // 分配给 similarity 和 importance，避免白送权重让旧而精准的记忆被衰减。
+    let simW = weights.similarity;
+    let recW = weights.recency;
+    let impW = weights.importance;
+    if (weights.recency > 0 && recency < 0.1) {
+        const redistribute = weights.recency / 2;
+        simW += redistribute;
+        impW += redistribute;
+        recW = 0;
+    }
+
+    const baseScore = simW * hybridSim + recW * recency + impW * effectiveImp;
+    const familiarity = familiarityBonus(node.accessCount);
+    return { finalScore: baseScore + FAMILIARITY_WEIGHT * familiarity, hybridSim };
 }

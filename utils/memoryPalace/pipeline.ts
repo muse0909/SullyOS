@@ -58,7 +58,7 @@ import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMes
 import { getReceiptIdsInRange } from './recallReceipts';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
-import { hybridSearch } from './hybridSearch';
+import { hybridSearch, scoreMemoryEntry } from './hybridSearch';
 import { getEmbeddings } from './embedding';
 import { isRemoteSearchBroken } from './vectorSearch';
 import { spreadActivation } from './activation';
@@ -134,7 +134,119 @@ async function loadMemoriesByDateRanges(
     return out;
 }
 
-// ─── 自动归档建议构造 ────────────────────────────────
+// ─── 日期命中加权 ─────────────────────────────────────
+
+/**
+ * 日期命中记忆的加权。
+ *
+ * 旧实现的两类问题：
+ *  1. 绝对加分（+0.3 / 底分 0.5）让 sim=0 的"日期撞上了"记忆直接拿 0.8 分
+ *     压过正常 top1，6 条 sim=0 记忆占据前 6 名是常态。
+ *  2. 追加无上限，22 条同质化记忆把候选池撑爆。
+ *
+ * 新规则：
+ *  - 已在 results 里的：×1.2 百分比加成，加成后不超过 top1 × 1.1
+ *    （防中等记忆靠日期翻第一）
+ *  - 不在 results 里的：按 hybrid 打分流程重算（用 prefetched 向量 + 当前
+ *    query vector 算 cosine），要求重打分 ≥ 末位 × 0.7 才追加，同样 ×1.2
+ *  - 追加上限 3 条
+ */
+function applyDateBoost(
+    results: ScoredMemory[],
+    dateHits: import('./types').MemoryNode[],
+    queryVector: Float32Array | undefined,
+    prefetchedAllVectors: MemoryVector[] | undefined,
+): void {
+    if (results.length === 0 || dateHits.length === 0) return;
+
+    const DATE_BOOST_RATIO = 1.2;
+    const TOP1_CAP_RATIO = 1.1;
+    const LAST_RANK_RATIO = 0.7;
+    const MAX_NEW_ADDS = 3;
+
+    // results 已是按 finalScore 降序
+    const top1 = results[0].finalScore;
+    const top1Cap = top1 * TOP1_CAP_RATIO;
+    const lastRank = results[results.length - 1].finalScore;
+    const addThreshold = lastRank * LAST_RANK_RATIO;
+
+    const resultById = new Map(results.map(r => [r.node.id, r]));
+
+    // 索引：nodeId → Float32Array（日期命中节点拿自己的向量跟 query 算 cosine）
+    const vectorById = new Map<string, Float32Array>();
+    if (prefetchedAllVectors) {
+        for (const v of prefetchedAllVectors) {
+            if (!v.vector) continue;
+            const f = v.vector instanceof Float32Array
+                ? v.vector
+                : v.vector instanceof Uint8Array
+                    ? new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength / 4)
+                    : new Float32Array(v.vector as number[]);
+            vectorById.set(v.memoryId, f);
+        }
+    }
+
+    const now = Date.now();
+    let boosted = 0, added = 0, dropped = 0;
+    const debugNew: string[] = [];
+
+    for (const node of dateHits) {
+        const existing = resultById.get(node.id);
+        if (existing) {
+            const newScore = Math.min(existing.finalScore * DATE_BOOST_RATIO, top1Cap);
+            if (newScore > existing.finalScore) {
+                existing.finalScore = newScore;
+                existing.roomScore = newScore;
+                boosted++;
+            }
+            continue;
+        }
+
+        if (added >= MAX_NEW_ADDS) { dropped++; continue; }
+
+        // 重打分：cosine（跟当前 query vector）+ imp + recency + 房间权重
+        let vectorSim = 0;
+        if (queryVector) {
+            const nodeVec = vectorById.get(node.id);
+            if (nodeVec) {
+                const len = Math.min(queryVector.length, nodeVec.length);
+                let dot = 0, na = 0, nb = 0;
+                for (let i = 0; i < len; i++) {
+                    dot += queryVector[i] * nodeVec[i];
+                    na += queryVector[i] * queryVector[i];
+                    nb += nodeVec[i] * nodeVec[i];
+                }
+                if (na > 0 && nb > 0) {
+                    vectorSim = dot / (Math.sqrt(na) * Math.sqrt(nb));
+                }
+            }
+        }
+        const scored = scoreMemoryEntry(node, vectorSim, 0, now);
+        if (scored.finalScore < addThreshold) { dropped++; continue; }
+
+        const boostedScore = Math.min(scored.finalScore * DATE_BOOST_RATIO, top1Cap);
+        results.push({
+            node,
+            finalScore: boostedScore,
+            similarity: vectorSim,
+            bm25Score: 0,
+            roomScore: boostedScore,
+        });
+        added++;
+        debugNew.push(`#${added} ${node.id.slice(-8)} sim=${vectorSim.toFixed(3)} final=${scored.finalScore.toFixed(3)}→${boostedScore.toFixed(3)}`);
+    }
+
+    if (boosted + added + dropped > 0) {
+        const parts: string[] = [];
+        if (boosted) parts.push(`已命中 ${boosted} 条 ×1.2`);
+        if (added) parts.push(`新增 ${added} 条 ×1.2`);
+        if (dropped) parts.push(`丢弃 ${dropped} 条（超上限或未达门槛）`);
+        console.log(`📅 [Retrieve] 日期命中加权：${parts.join('，')}`);
+        if (debugNew.length > 0) {
+            console.log(`📅 [DateBoost] 新增明细：${debugNew.join('；')}`);
+        }
+    }
+}
 
 /**
  * 把一批 MemoryNode 按 createdAt 日期 group，合成 YAML bullets 格式的 MemoryFragment 候选。
@@ -327,6 +439,8 @@ export async function retrieveMemories(
     };
     // spike 阶段预取的本地全量向量，提到 try 块外让多样性去重也能用
     let prefetchedAllVectors: MemoryVector[] | undefined = undefined;
+    // 合批算的 query embedding，提到 try 块外让日期命中记忆的重打分也能用
+    let prefetchedQueryVectors: Float32Array[] | undefined = undefined;
     try {
         // 1. 构建查询 —— per-message 多路检索策略：
         //
@@ -540,6 +654,7 @@ export async function retrieveMemories(
                     : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId)),
             ]);
             prefetchedAllVectors = allVectors;
+            prefetchedQueryVectors = queryVectors as Float32Array[];
 
             const spikePromises = effectiveSpikes.map((s, i) =>
                 hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
@@ -732,37 +847,29 @@ export async function retrieveMemories(
         // 2.5 日期引用路径：从 user 意图里抽"去年12月""3月4号""上周"这类
         //     日期引用，直接按 createdAt 捞对应区间的记忆（vector/BM25 都对不准日期）。
         //     archived 节点参与日期匹配 → 路由到其 EventBox summary 返回。
+        //
+        //     加权策略：
+        //     - 已在 top15 的：×1.2 百分比加成，上限 ≤ top1 × 1.1（防中等记忆靠日期翻第一）
+        //     - 不在 top15 的：要求按 hybrid 重新打分 ≥ top15 末位 × 0.7 才追加，同样 ×1.2
+        //     - 追加上限 3 条（原逻辑无上限，22 条同质化记忆能撑爆候选池）
+        //     - dateResolver 输入只用 userQueryJoined（已排除粘贴），不用 context
+        //       （context 是历史 assistant 回复，里面偶尔提到的日期不代表用户在问）
         const dateT0 = performance.now();
         try {
             const { resolveDateReferences } = await import('./dateResolver');
-            const queryForDates = [userQueryJoined, contextQuery, fallbackQuery].filter(Boolean).join('\n');
-            const ranges = resolveDateReferences(queryForDates);
+            const queryForDates = userQueryJoined;
+            if (queryForDates) {
+                console.log(`📅 [DateResolver] 输入文本（${queryForDates.length} 字）：${queryForDates.slice(0, 300)}${queryForDates.length > 300 ? '...' : ''}`);
+            }
+            const ranges = queryForDates ? resolveDateReferences(queryForDates) : [];
             if (ranges.length > 0) {
                 console.log(`📅 [Retrieve] 检测到日期引用 ${ranges.length} 个：${ranges.map(r => `${r.label}→[${new Date(r.start).toLocaleDateString('zh-CN')}..${new Date(r.end - 1).toLocaleDateString('zh-CN')}]`).join('、')}`);
                 const dateHits = await loadMemoriesByDateRanges(charId, ranges);
-                const DATE_BOOST = 0.3;
-                const DATE_BASE = 0.5;
-                const resultIdx = new Map(results.map((r, i) => [r.node.id, i]));
-                let boosted = 0, added = 0;
-                for (const node of dateHits) {
-                    const idx = resultIdx.get(node.id);
-                    if (idx !== undefined) {
-                        results[idx].finalScore += DATE_BOOST;
-                        results[idx].roomScore += DATE_BOOST;
-                        boosted++;
-                    } else {
-                        results.push({
-                            node,
-                            finalScore: DATE_BASE + DATE_BOOST,
-                            similarity: 0,
-                            bm25Score: 0,
-                            roomScore: DATE_BASE + DATE_BOOST,
-                        });
-                        added++;
-                    }
-                }
-                if (boosted + added > 0) {
-                    console.log(`📅 [Retrieve] 日期命中加权：${boosted} 条已命中 +${DATE_BOOST}，${added} 条新增`);
+                if (dateHits.length > 0) {
+                    // 用 effectiveSpikes[0] 的 query vector 作为"用户当前主意图"
+                    // 算日期命中记忆跟它的 cosine（最强信号）
+                    const primaryQueryVector = prefetchedQueryVectors?.[0];
+                    applyDateBoost(results, dateHits, primaryQueryVector, prefetchedAllVectors);
                 }
             }
         } catch (e: any) {

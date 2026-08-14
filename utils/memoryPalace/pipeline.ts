@@ -500,24 +500,27 @@ export async function retrieveMemories(
         const userSpikes: { label: string; text: string; weight: number }[] = [];
         // 拼接排除粘贴的 user content，供日期解析等"语义搜索"逻辑使用
         const nonPasteContents: string[] = [];
+        let pasteSkippedCount = 0;
         userIntent.forEach((m, idx) => {
+            // 粘贴判断挪到截断前：用用户原始消息的字数和行数判断。
+            // 暮色 2026-08-14 反馈：截断后 (slice(0, 2000)) 的 text 做判断会让
+            // 一些短粘贴漏判，挪到截断前用原始 m.content 才是"用户实际输入"的判断。
+            const rawChars = m.content.length;
+            const lineCount = (m.content.match(/\n/g) || []).length + 1;
+            const isPaste = rawChars > PASTE_DETECT_TRIGGER
+                || (lineCount >= PASTE_LINE_TRIGGER && rawChars >= PASTE_LINE_MIN_CHARS);
+            console.log(`📋 [PasteDetect] 原始字数 ${rawChars}，行数 ${lineCount}，isPaste=${isPaste}`);
+            if (isPaste) { pasteSkippedCount++; return; }
+
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
             if (text.replace(PUNCT_WS_RE, '').length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
 
-            const lineCount = (m.content.match(/\n/g) || []).length + 1;
-            const isPaste = text.length > PASTE_DETECT_TRIGGER
-                || (lineCount >= PASTE_LINE_TRIGGER && text.length >= PASTE_LINE_MIN_CHARS);
-
             const baseLabel = `u${idx + 1}`;
-            userSpikes.push({ label: baseLabel, text, weight: isPaste ? 0.3 : 1.0 });
-
-            // 粘贴消息不参与日期解析等"语义搜索"逻辑
-            if (!isPaste) nonPasteContents.push(m.content);
-
-            if (isPaste) return;
+            userSpikes.push({ label: baseLabel, text, weight: 1.0 });
+            nonPasteContents.push(m.content);
 
             if (text.length <= LONG_MSG_TRIGGER) return;
             const segments = text.split(SENTENCE_SPLIT_RE)
@@ -533,6 +536,9 @@ export async function retrieveMemories(
         });
         // 保留最后 MAX_SPIKES 条（如果超过上限，优先保留最近的）
         const effectiveSpikes = userSpikes.slice(-MAX_SPIKES);
+        if (pasteSkippedCount > 0) {
+            console.log(`📋 [Retrieve] 跳过 ${pasteSkippedCount} 条粘贴消息，不创建搜索请求`);
+        }
 
         const contextQuery = [queryOverride, contextTurns.map(m => m.content).join('\n')]
             .filter(Boolean)

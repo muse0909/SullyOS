@@ -71,7 +71,6 @@ export interface MemoryNode {
     createdAt: number;          // timestamp ms
     lastAccessedAt: number;     // timestamp ms
     accessCount: number;
-    pinnedUntil?: number | null; // 便利贴置顶截止时间（timestamp ms），null/undefined = 不置顶
     sourceId?: string | null;   // 消化衍生记忆的源记忆 ID，null = 非衍生记忆
     origin?: 'extraction' | 'digestion' | 'system'; // 记忆来源：extraction=聊天提取, digestion=认知消化衍生, system=系统生成
 

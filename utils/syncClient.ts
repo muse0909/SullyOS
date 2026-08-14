@@ -311,7 +311,6 @@ export interface CloudMemory {
     createdAt: number;
     lastAccessedAt: number;
     accessCount: number;
-    pinnedUntil: number | null;
     groupId: string | null;
     groupName: string | null;
     deleted: boolean;

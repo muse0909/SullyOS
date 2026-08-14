@@ -292,7 +292,6 @@ class CloudSyncEngine {
             createdAt: memory.createdAt,
             lastAccessedAt: memory.lastAccessedAt,
             accessCount: memory.accessCount,
-            pinnedUntil: memory.pinnedUntil,
             groupId: memory.groupId,
             groupName: memory.groupName,
             deleted,

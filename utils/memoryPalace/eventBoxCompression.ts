@@ -28,6 +28,15 @@ import { vectorizeAndStore } from './vectorStore';
 import { bulkSetArchived } from './supabaseVector';
 import { safeFetchJson } from '../safeApi';
 
+/** 按盒内最高 importance 算 summary 字数上限。
+ *  1-3 → 100/200，4-6 → 300/400，7-10 → 500/600。
+ *  越重要的事给越多字数保留。 */
+export function getSummarySizeForImportance(maxImportance: number): { target: number; hardMax: number } {
+    if (maxImportance <= 3) return { target: 100, hardMax: 200 };
+    if (maxImportance <= 6) return { target: 300, hardMax: 400 };
+    return { target: 500, hardMax: 600 };
+}
+
 const VALID_ROOMS: MemoryRoom[] = [
     'living_room', 'bedroom', 'study', 'user_room',
     'self_room', 'attic', 'windowsill',
@@ -64,8 +73,10 @@ async function callCompressionLLM(
     llmConfig: LightLLMConfig,
     charName: string,
     userName: string | undefined,
+    summarySize: { target: number; hardMax: number },
 ): Promise<CompressionLLMResult | null> {
     const userLabel = userName || '用户';
+    const { target, hardMax } = summarySize;
 
     const formatDate = (ts: number): string => {
         const d = new Date(ts);
@@ -85,7 +96,7 @@ async function callCompressionLLM(
 
 **要求（严格遵守）**：
 1. **第一人称**（用"我"），从 ${charName} 的视角写。${userLabel} 用名字直接称呼。
-2. **字数目标 ${EVENT_BOX_SUMMARY_TARGET_CHARS} 字以内，绝对上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS} 字**。紧凑、务实、不口水。
+2. **字数目标 ${target} 字以内，绝对上限 ${hardMax} 字**。紧凑、务实、不口水。
 3. **只保留关键信息**：具体人物、动作、对象、场景、转折、情绪。**去掉所有语气填充、修辞铺陈、重复感慨**（如"真是的"、"怎么说呢"、"不过话说回来"等）。事实先行。
 4. **带时间点但不冗余**：每件事标一次日期就够（"3 月 20 日…4 月 5 日…"），不要每句都重复时间。
 5. **连贯但简洁**：不套"起因/经过/结果"模板，但要让读者能按顺序看懂事情怎么发展的。
@@ -100,7 +111,7 @@ async function callCompressionLLM(
 
 严格 JSON，不要 markdown 包裹：
 {
-  "content": "（紧凑的第一人称回忆，${EVENT_BOX_SUMMARY_TARGET_CHARS}字内）",
+  "content": "（紧凑的第一人称回忆，${target}字内）",
   "name": "...",
   "tags": ["...", "..."],
   "room": "...",
@@ -136,9 +147,9 @@ async function callCompressionLLM(
         }
         // 硬截断安全网：LLM 超限时截断并追加提示，避免单盒 summary 无限膨胀
         let content = String(parsed.content);
-        if (content.length > EVENT_BOX_SUMMARY_HARD_MAX_CHARS) {
-            console.warn(`🗜️ [Compression] LLM summary ${content.length} 字超过硬上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS}，截断`);
-            content = content.slice(0, EVENT_BOX_SUMMARY_HARD_MAX_CHARS) + '……';
+        if (content.length > hardMax) {
+            console.warn(`🗜️ [Compression] LLM summary ${content.length} 字超过硬上限 ${hardMax}，截断`);
+            content = content.slice(0, hardMax) + '……';
         }
         return {
             content,
@@ -150,6 +161,41 @@ async function callCompressionLLM(
         };
     } catch (err: any) {
         console.error(`🗜️ [Compression] LLM 调用失败: ${err?.message || err}`);
+        return null;
+    }
+}
+
+/** 把已有 summary content 精炼到 ≤ hardMax。保留关键事实和情绪转折点，砍重复叙述。
+ *  失败返回 null（外层会跳过本轮精炼）。 */
+async function refineSummaryContent(
+    content: string,
+    hardMax: number,
+    llmConfig: LightLLMConfig,
+    charName: string,
+    userName: string | undefined,
+): Promise<string | null> {
+    const userLabel = userName || '用户';
+    const systemPrompt = `你是 ${charName}。下面是你之前自己写过的一段关于这件事的回忆，写的太长了，需要你重写一版短的。
+保留所有关键信息（人物、动作、时间、对象、场景、转折、情绪），但去掉冗余铺陈、修辞、口水话、重复叙述。
+
+**严格要求**：
+1. 第一人称（"我"），${userLabel} 用名字直接称呼
+2. 严格控制在 ${hardMax} 字以内
+3. 事实先行，去掉所有"真是的""怎么说呢""不过话说回来"这类语气填充
+4. 带时间点但不冗余：每件事标一次日期就够
+5. 只输出重写后的 content 文本，不要 JSON 包裹`;
+
+    try {
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(llmConfig, systemPrompt, content, {
+            temperature: 0.3,
+            maxTokens: 2000,
+        });
+        const refined = result.text.trim();
+        if (!refined) return null;
+        return refined;
+    } catch (err: any) {
+        console.warn(`🗜️ [Refine] 精炼失败: ${err?.message || err}`);
         return null;
     }
 }
@@ -181,11 +227,26 @@ async function compressEventBox(
 
     console.log(`🗜️ [Compression] 开始压缩 ${box.id} "${box.name}"（${liveNodes.length} 条活节点，第 ${box.compressionCount + 1} 次压缩）`);
 
-    // 3. LLM 整合
-    const result = await callCompressionLLM(box, oldSummaryContent, liveNodes, llmConfig, charName, userName);
+    // 2.5 按盒内最高 importance 算 summary 字数上限
+    const maxImportance = liveNodes.reduce((m, n) => Math.max(m, n.importance || 0), 0);
+    const summarySize = getSummarySizeForImportance(maxImportance);
+
+    // 3. LLM 整合（最多 3 轮：1 次初压 + 2 次精炼，超 hardMax 时强制再精炼）
+    let result = await callCompressionLLM(box, oldSummaryContent, liveNodes, llmConfig, charName, userName, summarySize);
     if (!result) {
         console.warn(`🗜️ [Compression] ${box.id} LLM 失败，跳过本次压缩（活节点保留）`);
         return false;
+    }
+    for (let i = 0; i < 2 && result.content.length > summarySize.hardMax; i++) {
+        const refined = await refineSummaryContent(result.content, summarySize.hardMax, llmConfig, charName, userName);
+        if (!refined) break;
+        result = { ...result, content: refined };
+        console.log(`🗜️ [Compression] ${box.id} 第 ${i + 1} 轮精炼：${refined.length} 字`);
+    }
+    // 安全网：3 轮后还超就硬截断
+    if (result.content.length > summarySize.hardMax) {
+        console.warn(`🗜️ [Compression] ${box.id} 精炼 2 轮后仍超 ${summarySize.hardMax}（${result.content.length} 字），硬截断`);
+        result.content = result.content.slice(0, summarySize.hardMax) + '……';
     }
 
     // 4. 创建或更新 summary 节点
@@ -335,4 +396,148 @@ export async function compressAllEligibleBoxes(
     const allBoxes = await EventBoxDB.getByCharId(charId);
     const eligible = allBoxes.filter(b => b.liveMemoryIds.length >= EVENT_BOX_COMPRESSION_THRESHOLD);
     return maybeCompressEventBoxes(eligible.map(b => b.id), llmConfig, embeddingConfig, charName, userName);
+}
+
+// ─── 超标 summary 重压缩（清理历史债）───────────────────
+//
+// 触发条件：box 的 summary 节点字符数 > EVENT_BOX_SUMMARY_HARD_MAX_CHARS
+// （旧版本没有硬上限保护，少数早期 summary 写到了 1000-2000 字）。
+// 重压不增加 compressionCount（这是清理债，不是新压缩），不动 liveMemoryIds。
+//
+// 用法：MemoryPalaceApp 维护面板的"压缩超标摘要"按钮 / 控制台手动调。
+// 进度通过 console.log 输出，调用方按日志判断。
+
+/**
+ * 扫描该角色下所有 summary 节点，返回超标的 box id 列表。
+ */
+export async function findOversizedSummaries(
+    charId: string,
+    threshold: number = EVENT_BOX_SUMMARY_HARD_MAX_CHARS,
+): Promise<Array<{ box: EventBox; summaryChars: number }>> {
+    const allBoxes = await EventBoxDB.getByCharId(charId);
+    const out: Array<{ box: EventBox; summaryChars: number }> = [];
+    for (const box of allBoxes) {
+        if (!box.summaryNodeId) continue;
+        const sum = await MemoryNodeDB.getById(box.summaryNodeId);
+        if (sum && sum.content.length > threshold) {
+            out.push({ box, summaryChars: sum.content.length });
+        }
+    }
+    return out;
+}
+
+/**
+ * 重压单条超标 summary：用 LLM 把当前超长内容压缩到目标字数内。
+ * 不动 liveMemoryIds，不增加 compressionCount，只重写 summary 节点并重新向量化。
+ * 按盒内最高 importance 算分级上限（继承压缩规则）。超 hardMax 时再精炼 1 轮。
+ */
+export async function recompressOversizedSummary(
+    box: EventBox,
+    llmConfig: LightLLMConfig,
+    embeddingConfig: EmbeddingConfig,
+    charName: string,
+    userName: string | undefined,
+): Promise<boolean> {
+    if (!box.summaryNodeId) return false;
+    const old = await MemoryNodeDB.getById(box.summaryNodeId);
+    if (!old) return false;
+    // 按盒内最高 importance 算上限（live + archived 都算）
+    let maxImportance = old.importance || 0;
+    for (const id of [...box.liveMemoryIds, ...box.archivedMemoryIds]) {
+        const n = await MemoryNodeDB.getById(id);
+        if (n && n.importance > maxImportance) maxImportance = n.importance;
+    }
+    const summarySize = getSummarySizeForImportance(maxImportance);
+    if (old.content.length <= summarySize.hardMax) {
+        console.log(`🗜️ [Recompress] ${box.id} summary ${old.content.length} 字未超 ${summarySize.hardMax} 上限（importance ${maxImportance}），跳过`);
+        return false;
+    }
+
+    const userLabel = userName || '用户';
+    const systemPrompt = `你是 ${charName}。下面是你之前自己写过的一段关于"${box.name}"的回忆，写的太长了，需要你重写一版短的。
+保留所有关键信息（人物、动作、时间、对象、场景、转折、情绪），但去掉冗余铺陈、修辞、口水话。
+
+**严格要求**：
+1. 第一人称（"我"），${userLabel} 用名字直接称呼
+2. 目标 ${summarySize.target} 字以内，绝对上限 ${summarySize.hardMax} 字
+3. 事实先行，去掉所有"真是的""怎么说呢""不过话说回来"这类语气填充
+4. 带时间点但不冗余：每件事标一次日期就够
+
+严格 JSON，不要 markdown 包裹：
+{
+  "content": "（紧凑重写的回忆，${summarySize.target}字内）"
+}`;
+
+    try {
+        const { callLLM } = await import('./llmCall');
+        const result = await callLLM(llmConfig, systemPrompt, old.content, {
+            temperature: 0.3,
+            maxTokens: 2000,
+        });
+        const match = result.text.match(/\{[\s\S]*\}/);
+        if (!match) {
+            console.warn(`🗜️ [Recompress] ${box.id} LLM 输出无 JSON`);
+            return false;
+        }
+        const parsed = JSON.parse(match[0]);
+        let content = String(parsed.content || '');
+        if (!content) return false;
+        // 超 hardMax 时强制再精炼一轮
+        if (content.length > summarySize.hardMax) {
+            const refined = await refineSummaryContent(content, summarySize.hardMax, llmConfig, charName, userName);
+            if (refined) content = refined;
+        }
+        if (content.length > summarySize.hardMax) {
+            content = content.slice(0, summarySize.hardMax) + '……';
+        }
+
+        const oldContentLen = old.content.length;
+        old.content = content;
+        old.lastAccessedAt = Date.now();
+        old.embedded = false;
+        await MemoryNodeDB.save(old);
+
+        const remoteCfg = getRemoteVectorConfig();
+        await vectorizeAndStore([old], embeddingConfig, remoteCfg, { skipDedup: true })
+            .catch((e: any) => console.warn(`🗜️ [Recompress] ${box.id} 重向量化失败: ${e?.message}`));
+
+        console.log(`✅ [Recompress] ${box.id} "${box.name}"：${oldContentLen} → ${old.content.length} 字（重要性 ${maxImportance} 档），已重新向量化`);
+        return true;
+    } catch (err: any) {
+        console.error(`🗜️ [Recompress] ${box.id} 失败: ${err?.message || err}`);
+        return false;
+    }
+}
+
+/**
+ * 扫描该角色所有超标 summary 并依次重压。
+ * 返回 { recompressed, skipped, errors }。
+ */
+export async function recompressAllOversizedSummaries(
+    charId: string,
+    llmConfig: LightLLMConfig,
+    embeddingConfig: EmbeddingConfig,
+    charName: string,
+    userName?: string,
+): Promise<{ recompressed: number; skipped: number; errors: number }> {
+    const oversized = await findOversizedSummaries(charId);
+    if (oversized.length === 0) {
+        console.log(`🗜️ [Recompress] ${charName} 无超标 summary`);
+        return { recompressed: 0, skipped: 0, errors: 0 };
+    }
+    console.log(`🗜️ [Recompress] ${charName} 发现 ${oversized.length} 个超标 summary，开始重压`);
+
+    let recompressed = 0, skipped = 0, errors = 0;
+    for (const { box, summaryChars } of oversized) {
+        try {
+            const ok = await recompressOversizedSummary(box, llmConfig, embeddingConfig, charName, userName);
+            if (ok) recompressed++;
+            else skipped++;
+        } catch (e: any) {
+            console.error(`🗜️ [Recompress] ${box.id} 异常: ${e?.message}`);
+            errors++;
+        }
+    }
+    console.log(`🗜️ [Recompress] ${charName} 完成：重压 ${recompressed} / 跳过 ${skipped} / 失败 ${errors}`);
+    return { recompressed, skipped, errors };
 }

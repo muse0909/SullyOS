@@ -71,7 +71,6 @@ export interface MemoryNode {
     createdAt: number;          // timestamp ms
     lastAccessedAt: number;     // timestamp ms
     accessCount: number;
-    pinnedUntil?: number | null; // 便利贴置顶截止时间（timestamp ms），null/undefined = 不置顶
     sourceId?: string | null;   // 消化衍生记忆的源记忆 ID，null = 非衍生记忆
     origin?: 'extraction' | 'digestion' | 'system'; // 记忆来源：extraction=聊天提取, digestion=认知消化衍生, system=系统生成
 
@@ -171,9 +170,11 @@ export const EVENT_BOX_LIVE_HARD_CAP = 15;
 /** 盒内事件总数（archived + live）达到此值后封盒，之后的相关记忆另开新盒 */
 export const EVENT_BOX_SEAL_THRESHOLD = 12;
 
-/** summary 目标字数（prompt 引导）+ 硬上限（超过强制截断） */
+/** summary 目标字数（prompt 引导）+ 硬上限（超过强制截断）
+ *  按盒内最高 importance 分级：1-3 → 100/200，4-6 → 300/400，7-10 → 500/600
+ *  下方常量取最高档作为兜底。实际值由 getSummarySizeForImportance 算出。 */
 export const EVENT_BOX_SUMMARY_TARGET_CHARS = 500;
-export const EVENT_BOX_SUMMARY_HARD_MAX_CHARS = 800;
+export const EVENT_BOX_SUMMARY_HARD_MAX_CHARS = 600;
 
 // ─── 旧话题盒（已废弃，代码路径已摘除，类型保留以兼容残留数据读取） ──
 

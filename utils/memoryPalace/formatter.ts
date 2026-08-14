@@ -9,13 +9,14 @@
  *  - 命中独立记忆（无 eventBoxId）→ 1 个名额
  *  - 同一 box 多次命中只算 1 次（按 box id 去重）
  *  - 总名额上限 MAX_OUTPUT_ITEMS（默认 15）
- *  - 便利贴置顶不占名额
+ *  - 状态面板由 buildStatusPanelSectionForInjection 拼在最前面，不占名额
  */
 
 import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
 import { recordRecallReceipt } from './recallReceipts';
+import { buildStatusPanelSectionForInjection } from './statusPanel';
 
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
@@ -99,15 +100,17 @@ export async function expandAndFormat(
     userName?: string,
     /** 注入上限。rerank 启用时传 15 + topN，让 rerank 额外召回的不被切。 */
     maxOutputItems: number = DEFAULT_MAX_OUTPUT_ITEMS,
+    /** 分数门槛过滤前的条数。0 = 没走门槛过滤。日志里显示"X 条中过滤 Y 条"。 */
+    preFilterCount: number = 0,
 ): Promise<string> {
     const MAX_OUTPUT_ITEMS = maxOutputItems;
-    // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占 15 条名额）
-    const now = Date.now();
+    // 0. 状态面板：拼在最前面，不占 15 条名额
+    const statusPanelSection = buildStatusPanelSectionForInjection(
+        (await import('./statusPanel')).getStatusPanel()
+    );
     const allCharNodes = await MemoryNodeDB.getByCharId(charId);
-    const pinnedNodes = allCharNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now && !n.archived);
-    const pinnedIds = new Set(pinnedNodes.map(n => n.id));
 
-    if (results.length === 0 && anticipations.length === 0 && pinnedNodes.length === 0) return '';
+    if (results.length === 0 && anticipations.length === 0 && statusPanelSection === '') return '';
 
     // 1. 按 eventBoxId 去重分组（同一 box 多次命中合并；保留命中里最高分作 box 分）
     //    boxItem: { boxId, topScore, hitNodeIds[] }
@@ -115,7 +118,6 @@ export async function expandAndFormat(
     const standaloneItems: ScoredMemory[] = [];
 
     for (const r of results) {
-        if (pinnedIds.has(r.node.id)) continue; // 已置顶不再下沉到列表里
         if (r.node.archived) continue;          // 防御：理论上 archived 不会到这里
 
         const ebId = r.node.eventBoxId;
@@ -164,12 +166,11 @@ export async function expandAndFormat(
     const cutItems = renderItems.slice(MAX_OUTPUT_ITEMS);
 
     // ── 召回回执：把这次实际注入 prompt 的 memoryId 落到 localStorage ──
-    // 用途见 ./recallReceipts.ts。便利贴也算注入（用户对某条便利贴可能纠正）。
-    // 截断/过期记忆不计入（cut 部分没进 prompt，pinnedIds 已经过 archived 过滤）。
+    // 用途见 ./recallReceipts.ts。截断/过期记忆不计入。
+    // 状态面板是 per-user 全局面板，不在 memory_nodes 表里，不计入回执。
     try {
         const injectedIds: string[] = [];
         for (const it of finalItems) injectedIds.push(...it.sourceIds);
-        for (const id of pinnedIds) injectedIds.push(id);
         recordRecallReceipt(charId, injectedIds);
     } catch (e) {
         // 回执只是 extraction 阶段的辅助，写失败不影响本次召回输出
@@ -184,22 +185,18 @@ export async function expandAndFormat(
     //    验证盒内成员有没有真的一起出来）
     //  - 被截断的 item 也会列出来（标 ✂️），方便判断是不是应该注入的事件盒被挤掉了
     const finalTotalChars = finalItems.reduce((s, it) => s + it.body.length, 0);
-    const pinnedTotalChars = pinnedNodes.reduce((s, n) => s + n.content.length, 0);
-    console.groupCollapsed(
-        `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条 · ${finalTotalChars} 字`
-        + `（便利贴 ${pinnedNodes.length}/${pinnedTotalChars}字 | 盒子 ${boxHits.size} | 独立 ${standaloneItems.length}`
-        + `${cutItems.length > 0 ? ` | ✂️ cut ${cutItems.length}` : ''}）`
-    );
-    if (pinnedNodes.length > 0) {
-        console.groupCollapsed(`📌 便利贴置顶（不占 ${MAX_OUTPUT_ITEMS} 条名额）${pinnedNodes.length} 条 · ${pinnedTotalChars} 字`);
-        for (const p of pinnedNodes) {
-            const daysLeft = Math.ceil((p.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
-            console.log(
-                `📌 [${p.room}] 剩余 ${daysLeft} 天 · ${p.content.length} 字\n${p.content}`
-            );
-        }
-        console.groupEnd();
+    const filteredByThreshold = preFilterCount > 0 ? preFilterCount - finalItems.length - cutItems.length : 0;
+    const summaryParts: string[] = [`盒子 ${boxHits.size}`, `独立 ${standaloneItems.length}`];
+    if (filteredByThreshold > 0) {
+        summaryParts.push(`门槛过滤 ${filteredByThreshold}`);
     }
+    if (cutItems.length > 0) {
+        summaryParts.push(`✂️ cut ${cutItems.length}`);
+    }
+    const summaryLabel = preFilterCount > 0
+        ? `🏰 [MemoryPalace] 最终注入 prompt：${preFilterCount} 条中过滤 ${filteredByThreshold} 条，实际注入 ${finalItems.length} 条 · ${finalTotalChars} 字（${summaryParts.join(' | ')}）`
+        : `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条 · ${finalTotalChars} 字（${summaryParts.join(' | ')}）`;
+    console.groupCollapsed(summaryLabel);
     finalItems.forEach((it, i) => {
         const isBox = it.debugLabel.startsWith('box ');
         const scoreStr = it.score.toFixed(3);
@@ -238,17 +235,9 @@ export async function expandAndFormat(
     let output = `### 记忆宫殿 (Memory Palace)\n`;
     output += `以下是你脑海中浮现的相关记忆片段，它们可能影响你此刻的感受和反应：\n\n`;
 
-    // 4a. 便利贴置顶记忆
-    if (pinnedNodes.length > 0) {
-        output += `📌 **便利贴（近期重要事项）**\n`;
-        for (const node of pinnedNodes) {
-            const daysLeft = Math.ceil((node.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
-            // 暮色 2026-07-25：便利贴时间戳同样升级（让 AI 知道是哪天立的重要事项）
-            const pTs = formatMemoryTimestamp(node.createdAt);
-            output += `- ${node.content}（${pTs}·剩余 ${daysLeft} 天）\n`;
-        }
-        output += `\n`;
-        console.log(`📌 [MemoryPalace] 便利贴置顶 ${pinnedNodes.length} 条`);
+    // 4a. 状态面板（per-user 全局，拼在最前面，不占 15 条名额；全空时不注入）
+    if (statusPanelSection) {
+        output += statusPanelSection;
     }
 
     // 按房间分组（保持房间显示顺序：卧室 > 客厅 > 书房 > 用户房间 > 自我房间 > 阁楼 > 窗台）

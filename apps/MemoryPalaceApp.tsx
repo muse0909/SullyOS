@@ -14,6 +14,7 @@ import {
     findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES,
     vectorizeAndStore,
 } from '../utils/memoryPalace';
+import { dissolveEventBox, reviveAllArchivedInBox } from '../utils/memoryPalace/eventBox';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
@@ -444,7 +445,6 @@ export default function MemoryPalaceApp() {
                                 archived: cm.archived,
                                 isBoxSummary: cm.isBoxSummary,
                                 eventBoxId: cm.eventBoxId,
-                                pinnedUntil: cm.pinnedUntil,
                                 groupId: cm.groupId ?? undefined,
                                 groupName: cm.groupName ?? undefined,
                             };
@@ -465,18 +465,29 @@ export default function MemoryPalaceApp() {
     const [showCharPicker, setShowCharPicker] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [selectMode, setSelectMode] = useState(false);
+
+    // 全部记忆视图专用：跟房间视图的 selectMode 物理独立，避免跨视图混淆
+    const [allSelectMode, setAllSelectMode] = useState(false);
+    const [allSelectedIds, setAllSelectedIds] = useState<Set<string>>(new Set());
     const [deleting, setDeleting] = useState(false);
     const [roomNodes, setRoomNodes] = useState<MemoryNode[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [linkCount, setLinkCount] = useState(0);
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
-    const [pinnedNodes, setPinnedNodes] = useState<MemoryNode[]>([]);
 
     // 事件盒视图
     const [allBoxes, setAllBoxes] = useState<EventBox[]>([]);
     const [expandedBoxId, setExpandedBoxId] = useState<string | null>(null);
     const [boxMembers, setBoxMembers] = useState<Record<string, { summary: MemoryNode | null; live: MemoryNode[]; archived: MemoryNode[] }>>({});
+
+    // 事件盒管理（红框批量 + 黄框单盒）
+    const [isManageMode, setIsManageMode] = useState(false);
+    const [selectedBoxIds, setSelectedBoxIds] = useState<Set<string>>(new Set());
+    const [boxMenuBoxId, setBoxMenuBoxId] = useState<string | null>(null);
+    const [boxEditMode, setBoxEditMode] = useState<'name' | 'tags' | null>(null);
+    const [boxEditValue, setBoxEditValue] = useState('');
+    const [boxWorking, setBoxWorking] = useState(false);
 
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
@@ -511,7 +522,7 @@ export default function MemoryPalaceApp() {
             setTlInitialized(false);
         }
     }, [view, tlInitialized]);
-    const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
+    const [allSortBy, setAllSortBy] = useState<'time' | 'importance' | 'accessCount'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
 
@@ -818,10 +829,6 @@ export default function MemoryPalaceApp() {
         const ants = await AnticipationDB.getByCharId(char.id);
         setAnticipations(ants);
 
-        // 加载便利贴置顶记忆
-        const now = Date.now();
-        setPinnedNodes(allNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now));
-
         let links = 0;
         for (const node of allNodes.slice(0, 5)) {
             const nodeLinks = await MemoryLinkDB.getByNodeId(node.id);
@@ -943,6 +950,169 @@ export default function MemoryPalaceApp() {
             alert(`移出失败：${e?.message || e}`);
         }
     };
+
+    // ─── 事件盒管理（红框批量 + 黄框单盒） ─────────────────
+
+    /** 拉取并刷新盒列表（解散/复活后调用）。展开的盒若被删，把展开态一起清。 */
+    const reloadAllBoxes = useCallback(async () => {
+        if (!char) return;
+        const boxes = await EventBoxDB.getByCharId(char.id);
+        boxes.sort((a, b) => b.updatedAt - a.updatedAt);
+        setAllBoxes(boxes);
+        // 展开态：已删除的盒从 boxMembers 移除
+        if (expandedBoxId && !boxes.some(b => b.id === expandedBoxId)) {
+            setExpandedBoxId(null);
+            setBoxMembers(prev => {
+                const next = { ...prev };
+                delete next[expandedBoxId];
+                return next;
+            });
+        }
+        loadStats();
+    }, [char, expandedBoxId]);
+
+    const enterManageMode = () => {
+        setIsManageMode(true);
+        setSelectedBoxIds(new Set());
+        setExpandedBoxId(null);
+        setBoxMenuBoxId(null);
+    };
+
+    const exitManageMode = () => {
+        setIsManageMode(false);
+        setSelectedBoxIds(new Set());
+    };
+
+    const toggleBoxSelect = (boxId: string) => {
+        setSelectedBoxIds(prev => {
+            const next = new Set(prev);
+            if (next.has(boxId)) next.delete(boxId);
+            else next.add(boxId);
+            return next;
+        });
+    };
+
+    const selectAllBoxes = () => {
+        setSelectedBoxIds(new Set(allBoxes.map(b => b.id)));
+    };
+
+    const deselectAllBoxes = () => {
+        setSelectedBoxIds(new Set());
+    };
+
+    /** 批量解散选中盒：每个盒 summary 删 + archived 复活 + 删盒。
+     *  走 dissolveEventBox 串行执行，避免并发写 IDB。 */
+    const handleBatchDissolve = async () => {
+        if (!char) return;
+        const ids = Array.from(selectedBoxIds);
+        if (ids.length === 0) return;
+        const targetBoxes = allBoxes.filter(b => ids.includes(b.id));
+        const totalArchived = targetBoxes.reduce((s, b) => s + b.archivedMemoryIds.length, 0);
+        const totalSummary = targetBoxes.filter(b => b.summaryNodeId).length;
+        if (!confirm(
+            `确认解散 ${ids.length} 个事件盒？\n\n`
+            + `将删除 ${totalSummary} 条 summary 节点，释放 ${totalArchived} 条 archived 节点到"地上"作为独立记忆。\n`
+            + `此操作不可撤销。`
+        )) return;
+        if (!confirm('再次确认：真的要解散？')) return;
+        setBoxWorking(true);
+        try {
+            for (const id of ids) {
+                await dissolveEventBox(id, { remoteVectorConfig });
+            }
+            await reloadAllBoxes();
+            setSelectedBoxIds(new Set());
+            addToast(`已解散 ${ids.length} 个事件盒`, 'success');
+        } catch (e: any) {
+            alert(`批量解散失败：${e?.message || e}`);
+        } finally {
+            setBoxWorking(false);
+        }
+    };
+
+    const openBoxMenu = (boxId: string) => setBoxMenuBoxId(boxId);
+    const closeBoxMenu = () => {
+        setBoxMenuBoxId(null);
+        setBoxEditMode(null);
+        setBoxEditValue('');
+    };
+
+    const startEditBoxName = (box: EventBox) => {
+        setBoxEditMode('name');
+        setBoxEditValue(box.name || '');
+    };
+
+    const startEditBoxTags = (box: EventBox) => {
+        setBoxEditMode('tags');
+        setBoxEditValue(box.tags.join('，'));
+    };
+
+    const saveBoxEdit = async () => {
+        if (!boxMenuBoxId || !boxEditMode) return;
+        const box = await EventBoxDB.getById(boxMenuBoxId);
+        if (!box) { closeBoxMenu(); return; }
+        if (boxEditMode === 'name') {
+            box.name = boxEditValue.trim();
+        } else if (boxEditMode === 'tags') {
+            box.tags = boxEditValue.split(/[，,]/).map(s => s.trim()).filter(Boolean).slice(0, 20);
+        }
+        box.updatedAt = Date.now();
+        await EventBoxDB.save(box);
+        await reloadAllBoxes();
+        addToast(boxEditMode === 'name' ? '盒名已更新' : '盒标签已更新', 'success');
+        setBoxEditMode(null);
+        setBoxEditValue('');
+    };
+
+    /** 单盒解散。走 dissolveEventBox：summary 删 + archived 复活 + live 释放 + 盒删。 */
+    const handleDissolveSingleBox = async (box: EventBox) => {
+        if (!confirm(
+            `解散「${box.name || '未命名'}」？\n\n`
+            + `将删除 ${box.summaryNodeId ? '1 条' : '0 条'} summary 节点，`
+            + `释放 ${box.archivedMemoryIds.length} 条 archived 节点到"地上"作为独立记忆。\n`
+            + `活节点 ${box.liveMemoryIds.length} 条也会同时释放。\n\n`
+            + `此操作不可撤销。`
+        )) return;
+        setBoxWorking(true);
+        try {
+            await dissolveEventBox(box.id, { remoteVectorConfig });
+            closeBoxMenu();
+            await reloadAllBoxes();
+            addToast(`已解散「${box.name || '未命名'}」`, 'success');
+        } catch (e: any) {
+            alert(`解散失败：${e?.message || e}`);
+        } finally {
+            setBoxWorking(false);
+        }
+    };
+
+    /** 一键复活盒内所有 archived 节点到活池，盒保留。 */
+    const handleReviveAllArchived = async (box: EventBox) => {
+        if (box.archivedMemoryIds.length === 0) {
+            addToast('该盒没有 archived 节点', 'info');
+            return;
+        }
+        if (!confirm(`一键复活「${box.name || '未命名'}」里的 ${box.archivedMemoryIds.length} 条 archived 节点？`)) return;
+        setBoxWorking(true);
+        try {
+            const result = await reviveAllArchivedInBox(box.id);
+            closeBoxMenu();
+            await reloadAllBoxes();
+            addToast(`已复活 ${result.revived} 条 archived`, 'success');
+        } catch (e: any) {
+            alert(`复活失败：${e?.message || e}`);
+        } finally {
+            setBoxWorking(false);
+        }
+    };
+
+    // 单盒管理菜单按钮样式
+    const boxMenuBtnStyle = (bg: string, fg: string, border: string, busy: boolean): React.CSSProperties => ({
+        width: '100%', padding: '10px 0', borderRadius: 9999,
+        background: bg, color: fg, fontWeight: 600, fontSize: 13,
+        border: border === 'none' ? 'none' : `1px solid ${border}`,
+        cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
+    });
 
     const toggleBoxExpand = async (box: EventBox) => {
         if (expandedBoxId === box.id) {
@@ -1467,27 +1637,11 @@ export default function MemoryPalaceApp() {
 
     /** 彻底删除一条记忆（node + vector + links + EventBox 成员引用 + 远程同步） */
     const deleteMemory = async (nodeId: string) => {
-        // 先从 EventBox 中移除（若属于某盒）
-        try { await removeMemoryFromBox(nodeId); } catch { /* ignore */ }
-        // 删关联
-        const links = await MemoryLinkDB.getByNodeId(nodeId);
-        for (const link of links) {
-            await MemoryLinkDB.delete(link.id);
-        }
-        // 删向量（本地）
-        const { MemoryVectorDB } = await import('../utils/memoryPalace');
-        await MemoryVectorDB.delete(nodeId);
-        // 删向量（远程同步）
-        if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
-            import('../utils/memoryPalace/supabaseVector').then(({ deleteVector }) =>
-                deleteVector(remoteVectorConfig, nodeId).catch(() => {})
-            );
-        }
-        // 删节点
-        await MemoryNodeDB.delete(nodeId);
+        const { deleteMemoryNode } = await import('../utils/memoryPalace/eventBox');
+        await deleteMemoryNode(nodeId, remoteVectorConfig);
     };
 
-    /** 批量删除选中的记忆 */
+    /** 批量删除选中的记忆（房间视图） */
     const handleBatchDelete = async () => {
         if (selectedIds.size === 0 || !char) return;
         setDeleting(true);
@@ -1507,6 +1661,38 @@ export default function MemoryPalaceApp() {
         } finally {
             setDeleting(false);
         }
+    };
+
+    /** 批量删除选中的记忆（全部记忆视图） */
+    const handleBatchDeleteAll = async () => {
+        if (allSelectedIds.size === 0 || !char) return;
+        if (!confirm(`确认删除 ${allSelectedIds.size} 条记忆？此操作不可撤销。`)) return;
+        if (!confirm('再次确认：真的要删除？')) return;
+        setDeleting(true);
+        try {
+            for (const id of allSelectedIds) {
+                await deleteMemory(id);
+            }
+            // 刷新全部记忆数据
+            const nodes = await MemoryNodeDB.getByCharId(char.id);
+            setAllNodes(nodes);
+            setAllSelectedIds(new Set());
+            setAllSelectMode(false);
+            loadStats();
+        } catch (e: any) {
+            alert(`批量删除失败：${e?.message || e}`);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const toggleAllSelect = (id: string) => {
+        setAllSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     };
 
     /** 删除单条记忆并返回上一视图 */
@@ -3722,50 +3908,7 @@ create table if not exists memory_vectors (
                     )}
                 </div>
 
-                {/* 便利贴置顶 */}
-                {pinnedNodes.length > 0 && !globalSearchQuery.trim() && (
-                    <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Icon name="pin" size={14} />
-                            <span>便利贴</span>
-                        </div>
-                        {pinnedNodes.map(node => {
-                            const daysLeft = Math.ceil((node.pinnedUntil! - Date.now()) / (24 * 60 * 60 * 1000));
-                            const color = ROOM_COLORS[node.room];
-                            return (
-                                <div key={node.id} style={{
-                                    padding: '10px 12px', borderRadius: 10, marginBottom: 6,
-                                    border: '1px solid #fde68a', background: '#fffbeb',
-                                    display: 'flex', alignItems: 'flex-start', gap: 8,
-                                }}>
-                                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(node, 'all')}>
-                                        <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
-                                            {node.content.length > 80 ? node.content.slice(0, 80) + '...' : node.content}
-                                        </div>
-                                        <div style={{ fontSize: 10, color: '#92400e', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                            <RoomIcon room={node.room} size={12} style={{ color: ROOM_COLORS[node.room] }} />
-                                            <span>{getRoomLabel(node.room, userProfile?.name)} · 剩余 {daysLeft} 天</span>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={async () => {
-                                            const updated = { ...node, pinnedUntil: null };
-                                            await MemoryNodeDB.save(updated);
-                                            setPinnedNodes(prev => prev.filter(n => n.id !== node.id));
-                                        }}
-                                        style={{
-                                            flexShrink: 0, padding: '4px 8px', borderRadius: 6,
-                                            border: '1px solid #fde68a', background: 'white',
-                                            fontSize: 10, color: '#92400e', cursor: 'pointer',
-                                        }}
-                                    >
-                                        取消置顶
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+                {/* 便利贴置顶已下线，由状态面板替代（statusPanel.ts） */}
 
                 {/* 搜索结果 or 七个房间 */}
                 {globalSearchQuery.trim().length >= 2 ? (
@@ -4181,56 +4324,110 @@ create table if not exists memory_vectors (
         const sorted = [...allNodes].sort((a, b) => {
             const dir = allSortDir === 'desc' ? -1 : 1;
             if (allSortBy === 'time') return dir * (a.createdAt - b.createdAt);
+            if (allSortBy === 'accessCount') return dir * ((a.accessCount || 0) - (b.accessCount || 0));
             return dir * (a.importance - b.importance);
         });
 
+        const sortBtnStyle = (active: boolean): React.CSSProperties => ({
+            padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+            border: active ? '2px solid #7c3aed' : '1px solid #d4d4d4',
+            background: active ? '#f3f0ff' : 'white',
+            color: active ? '#7c3aed' : '#6b7280',
+            cursor: 'pointer',
+        });
+
         return (
-            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div
-                        onClick={() => { setView('palace'); }}
-                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
-                    >
-                        ← 返回宫殿
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: 0, maxHeight: '100%', overflowY: 'auto' }}>
+                {/* 绿框 sticky 顶部：返回宫殿 + 排序 + 管理，背景跟页面一致 */}
+                <div style={{
+                    position: 'sticky', top: 0, zIndex: 10,
+                    background: '#faf9f5',
+                    paddingTop: SAFE_PAD_TOP,
+                    paddingBottom: 8,
+                    borderBottom: '1px solid #e5e7eb',
+                    marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16,
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div
+                            onClick={() => { setView('palace'); }}
+                            style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                        >
+                            ← 返回宫殿
+                        </div>
+                        <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
                     </div>
-                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
-                </div>
 
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Icon name="list" size={18} />
-                    <span>全部记忆</span>
-                </div>
-
-                {/* 排序控制 */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: '#6b7280' }}>排序：</span>
-                    {(['time', 'importance'] as const).map(s => (
+                    {/* 排序行：升序降序 / 时间 / 重要性 / 访问次数 靠左 + 管理 靠右 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                                onClick={() => setAllSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+                                style={sortBtnStyle(false)}
+                            >
+                                {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
+                            </button>
+                            {(['time', 'importance', 'accessCount'] as const).map(s => (
+                                <button
+                                    key={s}
+                                    onClick={() => setAllSortBy(s)}
+                                    style={sortBtnStyle(allSortBy === s)}
+                                >
+                                    {s === 'time' ? '时间' : s === 'importance' ? '重要性' : '访问次数'}
+                                </button>
+                            ))}
+                        </div>
                         <button
-                            key={s}
-                            onClick={() => setAllSortBy(s)}
+                            onClick={() => { setAllSelectMode(!allSelectMode); setAllSelectedIds(new Set()); }}
+                            disabled={allNodes.length === 0}
                             style={{
+                                marginLeft: 'auto',
                                 padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                                border: allSortBy === s ? '2px solid #7c3aed' : '1px solid #d4d4d4',
-                                background: allSortBy === s ? '#f3f0ff' : 'white',
-                                color: allSortBy === s ? '#7c3aed' : '#6b7280',
-                                cursor: 'pointer',
+                                border: allSelectMode ? '1px solid #dc2626' : '1px solid #d4d4d4',
+                                background: allSelectMode ? '#fef2f2' : 'white',
+                                color: allSelectMode ? '#dc2626' : '#6b7280',
+                                cursor: allNodes.length === 0 ? 'not-allowed' : 'pointer',
+                                opacity: allNodes.length === 0 ? 0.5 : 1,
                             }}
                         >
-                            {s === 'time' ? '时间' : '重要性'}
+                            {allSelectMode ? '取消选择' : '管理'}
                         </button>
-                    ))}
-                    <button
-                        onClick={() => setAllSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-                        style={{
-                            padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            border: '1px solid #d4d4d4', background: 'white', color: '#6b7280',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
-                    </button>
+                    </div>
+
+                    {/* selectMode 操作条：已选 N / 全选 / 取消全选 / 删除 */}
+                    {allSelectMode && (
+                        <div style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            marginTop: 8, padding: '6px 10px', borderRadius: 8,
+                            background: '#fef2f2', border: '1px solid #fecaca',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#991b1b' }}>
+                                <span>已选 {allSelectedIds.size} 条</span>
+                                <span
+                                    onClick={() => setAllSelectedIds(new Set(sorted.map(n => n.id)))}
+                                    style={{ color: '#6b7280', cursor: 'pointer', textDecoration: 'underline' }}
+                                >全选</span>
+                                <span
+                                    onClick={() => setAllSelectedIds(new Set())}
+                                    style={{ color: '#6b7280', cursor: 'pointer', textDecoration: 'underline' }}
+                                >取消全选</span>
+                            </div>
+                            <button
+                                onClick={handleBatchDeleteAll}
+                                disabled={allSelectedIds.size === 0 || deleting}
+                                style={{
+                                    padding: '4px 12px', borderRadius: 8, border: 'none',
+                                    fontSize: 12, fontWeight: 700,
+                                    color: 'white', background: allSelectedIds.size > 0 ? '#dc2626' : '#d4d4d4',
+                                    cursor: allSelectedIds.size === 0 || deleting ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                {deleting ? '删除中...' : `删除 (${allSelectedIds.size})`}
+                            </button>
+                        </div>
+                    )}
                 </div>
 
+                {/* 记忆列表（独立滚动区） */}
                 {sorted.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#9ca3af', padding: 40, fontSize: 13 }}>
                         还没有任何记忆
@@ -4239,13 +4436,19 @@ create table if not exists memory_vectors (
                     sorted.map((node: MemoryNode) => (
                         <div
                             key={node.id}
-                            onClick={() => openMemory(node, 'all')}
+                            onClick={() => allSelectMode ? toggleAllSelect(node.id) : openMemory(node, 'all')}
                             style={{
                                 padding: 12, borderRadius: 10, marginBottom: 8,
-                                border: '1px solid #e5e7eb', cursor: 'pointer',
-                                backgroundColor: '#fafafa',
+                                border: `1px solid ${allSelectMode && allSelectedIds.has(node.id) ? '#dc2626' : '#e5e7eb'}`,
+                                cursor: 'pointer',
+                                backgroundColor: allSelectMode && allSelectedIds.has(node.id) ? '#fef2f2' : '#fafafa',
                             }}
                         >
+                            {allSelectMode && (
+                                <div style={{ float: 'right', marginLeft: 8, color: allSelectedIds.has(node.id) ? '#dc2626' : '#9ca3af', display: 'inline-flex' }}>
+                                    <Icon name={allSelectedIds.has(node.id) ? 'square-check' : 'square'} size={16} />
+                                </div>
+                            )}
                             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
                             <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -4279,14 +4482,67 @@ create table if not exists memory_vectors (
     if (view === 'boxes') {
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8 }}>
                     <div
-                        onClick={() => { setView('palace'); }}
-                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                        onClick={() => {
+                            if (isManageMode) {
+                                exitManageMode();
+                            } else {
+                                setView('palace');
+                            }
+                        }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', flexShrink: 0 }}
                     >
-                        ← 返回宫殿
+                        {isManageMode ? '← 取消' : '← 返回宫殿'}
                     </div>
-                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{allBoxes.length} 个事件盒</div>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {isManageMode ? (
+                            <>
+                                <div style={{ fontSize: 11, color: '#6b7280' }}>已选 {selectedBoxIds.size} / {allBoxes.length}</div>
+                                <button
+                                    onClick={selectedBoxIds.size === allBoxes.length ? deselectAllBoxes : selectAllBoxes}
+                                    disabled={boxWorking}
+                                    style={{
+                                        fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                        border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca',
+                                        cursor: boxWorking ? 'not-allowed' : 'pointer', opacity: boxWorking ? 0.5 : 1,
+                                    }}
+                                >
+                                    {selectedBoxIds.size === allBoxes.length ? '取消全选' : '全选'}
+                                </button>
+                                <button
+                                    onClick={handleBatchDissolve}
+                                    disabled={selectedBoxIds.size === 0 || boxWorking}
+                                    style={{
+                                        fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                        border: 'none',
+                                        background: selectedBoxIds.size === 0 ? '#e5e7eb' : '#dc2626',
+                                        color: selectedBoxIds.size === 0 ? '#9ca3af' : 'white',
+                                        cursor: selectedBoxIds.size === 0 || boxWorking ? 'not-allowed' : 'pointer',
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    解散 {selectedBoxIds.size} 个盒
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div style={{ fontSize: 12, color: '#9ca3af' }}>{allBoxes.length} 个事件盒</div>
+                                {allBoxes.length > 0 && (
+                                    <button
+                                        onClick={enterManageMode}
+                                        style={{
+                                            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                            border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca',
+                                            cursor: 'pointer', fontWeight: 600,
+                                        }}
+                                    >
+                                        管理事件盒
+                                    </button>
+                                )}
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4305,27 +4561,63 @@ create table if not exists memory_vectors (
                     allBoxes.map(box => {
                         const expanded = expandedBoxId === box.id;
                         const members = boxMembers[box.id];
+                        const isSelected = selectedBoxIds.has(box.id);
                         return (
                             <div
                                 key={box.id}
                                 style={{
                                     borderRadius: 12, marginBottom: 10,
-                                    border: '1px solid #c7d2fe',
+                                    border: isManageMode && isSelected ? '2px solid #4338ca' : '1px solid #c7d2fe',
                                     background: expanded ? '#f5f7ff' : '#fafbff',
                                     overflow: 'hidden',
                                 }}
                             >
                                 <div
-                                    onClick={() => toggleBoxExpand(box)}
+                                    onClick={() => {
+                                        if (isManageMode) {
+                                            toggleBoxSelect(box.id);
+                                        } else {
+                                            toggleBoxExpand(box);
+                                        }
+                                    }}
                                     style={{ padding: 12, cursor: 'pointer' }}
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        {isManageMode && (
+                                            <div
+                                                onClick={(e) => { e.stopPropagation(); toggleBoxSelect(box.id); }}
+                                                style={{
+                                                    width: 18, height: 18, borderRadius: 4,
+                                                    border: isSelected ? 'none' : '2px solid #c7d2fe',
+                                                    background: isSelected ? '#4338ca' : '#fff',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    flexShrink: 0, cursor: 'pointer',
+                                                }}
+                                            >
+                                                {isSelected && <Icon name="check" size={12} color="white" />}
+                                            </div>
+                                        )}
                                         <div style={{ fontSize: 14, fontWeight: 700, color: '#3730a3', flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
                                             <Icon name="box" size={14} />
                                             <span>{box.name || '未命名'}</span>
                                             {box.sealed && <span style={{ fontSize: 10, marginLeft: 4, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>已封盒</span>}
                                         </div>
-                                        <div style={{ fontSize: 11, color: '#6366f1' }}>{expanded ? '▲' : '▼'}</div>
+                                        {!isManageMode && (
+                                            <>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); openBoxMenu(box.id); }}
+                                                    disabled={boxWorking}
+                                                    style={{
+                                                        fontSize: 10, padding: '3px 8px', borderRadius: 6,
+                                                        border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca',
+                                                        cursor: boxWorking ? 'not-allowed' : 'pointer', opacity: boxWorking ? 0.5 : 1,
+                                                    }}
+                                                >
+                                                    管理
+                                                </button>
+                                                <div style={{ fontSize: 11, color: '#6366f1' }}>{expanded ? '▲' : '▼'}</div>
+                                            </>
+                                        )}
                                     </div>
                                     {box.tags.length > 0 && (
                                         <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -4468,6 +4760,117 @@ create table if not exists memory_vectors (
                         );
                     })
                 )}
+
+                {/* 单盒管理菜单弹窗（黄框"管理"按钮触发） */}
+                {boxMenuBoxId && (() => {
+                    const menuBox = allBoxes.find(b => b.id === boxMenuBoxId);
+                    if (!menuBox) return null;
+                    return (
+                        <div
+                            onClick={closeBoxMenu}
+                            style={{
+                                position: 'fixed', inset: 0, zIndex: 100,
+                                background: 'rgba(0,0,0,0.4)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+                            }}
+                        >
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    background: 'white', borderRadius: 16, padding: 20,
+                                    width: '100%', maxWidth: 360,
+                                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                                }}
+                            >
+                                {boxEditMode ? (
+                                    <>
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: '#334155', marginBottom: 12 }}>
+                                            {boxEditMode === 'name' ? '编辑盒名' : '编辑盒标签'}
+                                        </div>
+                                        <input
+                                            autoFocus
+                                            value={boxEditValue}
+                                            onChange={(e) => setBoxEditValue(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') saveBoxEdit(); }}
+                                            placeholder={boxEditMode === 'name' ? '输入新盒名' : '用逗号分隔多个标签'}
+                                            style={{
+                                                width: '100%', padding: '10px 12px', borderRadius: 8,
+                                                border: '1px solid #cbd5e1', fontSize: 14, outline: 'none',
+                                                boxSizing: 'border-box', marginBottom: 16,
+                                            }}
+                                        />
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                            <button
+                                                onClick={() => { setBoxEditMode(null); setBoxEditValue(''); }}
+                                                disabled={boxWorking}
+                                                style={{
+                                                    padding: '10px 0', borderRadius: 9999,
+                                                    background: '#f1f5f9', color: '#475569', fontWeight: 700,
+                                                    border: 'none', cursor: boxWorking ? 'not-allowed' : 'pointer',
+                                                }}
+                                            >取消</button>
+                                            <button
+                                                onClick={saveBoxEdit}
+                                                disabled={boxWorking}
+                                                style={{
+                                                    padding: '10px 0', borderRadius: 9999,
+                                                    background: '#4338ca', color: 'white', fontWeight: 700,
+                                                    border: 'none', cursor: boxWorking ? 'not-allowed' : 'pointer',
+                                                }}
+                                            >保存</button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: '#334155', marginBottom: 4 }}>
+                                            {menuBox.name || '未命名'}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 16 }}>
+                                            活 {menuBox.liveMemoryIds.length} · 归档 {menuBox.archivedMemoryIds.length}
+                                            {menuBox.compressionCount > 0 && ` · 压缩 ${menuBox.compressionCount} 次`}
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                            <button
+                                                onClick={() => startEditBoxName(menuBox)}
+                                                disabled={boxWorking}
+                                                style={boxMenuBtnStyle('#fff', '#4338ca', '#c7d2fe', boxWorking)}
+                                            >编辑盒名</button>
+                                            <button
+                                                onClick={() => startEditBoxTags(menuBox)}
+                                                disabled={boxWorking}
+                                                style={boxMenuBtnStyle('#fff', '#4338ca', '#c7d2fe', boxWorking)}
+                                            >编辑盒标签</button>
+                                            {menuBox.archivedMemoryIds.length > 0 && (
+                                                <button
+                                                    onClick={() => handleReviveAllArchived(menuBox)}
+                                                    disabled={boxWorking}
+                                                    style={boxMenuBtnStyle('#fff', '#0e7490', '#a5f3fc', boxWorking)}
+                                                >一键复活 {menuBox.archivedMemoryIds.length} 条 archived</button>
+                                            )}
+                                            {menuBox.liveMemoryIds.length > 0 && (
+                                                <button
+                                                    onClick={() => { handleUnbindAllLive(menuBox); closeBoxMenu(); }}
+                                                    disabled={boxWorking}
+                                                    style={boxMenuBtnStyle('#fff', '#b45309', '#fde68a', boxWorking)}
+                                                >移出 {menuBox.liveMemoryIds.length} 条活节点</button>
+                                            )}
+                                            <button
+                                                onClick={() => handleDissolveSingleBox(menuBox)}
+                                                disabled={boxWorking}
+                                                style={boxMenuBtnStyle('#fef2f2', '#b91c1c', '#fecaca', boxWorking)}
+                                            >解散此盒（删 summary + 释放 archived）</button>
+                                            <button
+                                                onClick={closeBoxMenu}
+                                                disabled={boxWorking}
+                                                style={boxMenuBtnStyle('#f1f5f9', '#475569', 'none', boxWorking)}
+                                            >取消</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
             </div>
         );
     }

@@ -31,6 +31,12 @@ interface ChatSettingsDrawerProps {
     emotionEnabled: boolean;
     onToggleEmotion: () => void;
 
+    // 工具开关：生图 / 放歌
+    imageGenEnabled: boolean;
+    onToggleImageGen: () => void;
+    playSongEnabled: boolean;
+    onTogglePlaySong: () => void;
+
     // 上下文条数
     contextLimit: number;
     onSetContextLimit: (n: number) => void;
@@ -125,6 +131,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     onBgUpload, onRemoveBg, onOpenSearch,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
+    imageGenEnabled, onToggleImageGen, playSongEnabled, onTogglePlaySong,
     contextLimit, onSetContextLimit,
     // 暮色 2026-08-05：角色自定义时区
     customTimezone, onSetCustomTimezone,
@@ -453,6 +460,31 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
                             开启后，角色会在聊天中自动生成一段第一人称的内心独白。
+                        </p>
+                    </section>
+
+                    {/* === 工具开关：生图 / 放歌（暮色 2026-08-14 减少输入 token + 按需能力） === */}
+                    <section className="pt-2 border-t border-slate-100">
+                        <div className="flex items-center justify-between cursor-pointer" onClick={onToggleImageGen}>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">生图</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${imageGenEnabled ? 'bg-violet-400' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${imageGenEnabled ? 'translate-x-4' : ''}`} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            开启后，AI 可在合适场景调 generate_image 生成图片。关闭则请求体里不带生图工具。
+                        </p>
+                    </section>
+
+                    <section>
+                        <div className="flex items-center justify-between cursor-pointer" onClick={onTogglePlaySong}>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">放歌</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${playSongEnabled ? 'bg-violet-400' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${playSongEnabled ? 'translate-x-4' : ''}`} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            开启后，AI 可在合适场景调 play_song 主动放歌。关闭则请求体里不带放歌工具。
                         </p>
                     </section>
 

@@ -4,7 +4,7 @@
  * 与 extraction.ts 的区别：
  * - 视角是"群聊观察者"而非角色本人 → 第三人称叙事，主语是具体的角色名
  * - 内容前缀统一为 "在【XXX群】里，..."，便于该记忆后续平等地分发给每个成员
- * - 不参与便利贴系统（pinDays），不参与 relatedTo / EventBox 跨时间链接（v1 简化）
+ * - 不参与 relatedTo / EventBox 跨时间链接（v1 简化）
  *
  * 私聊路径完全不感知本文件存在。
  */
@@ -71,7 +71,7 @@ function buildGroupRulesBlock(groupName: string, memberNames: string[], userLabe
    - arousal：-1（极平静）→ +1（极激烈）
 6. **标签**（tags）：提取 2-5 个关键词标签，最好包含涉及的角色名
 7. **不要遗漏值得记的事，但也不要把每句话都变成记忆**。一段群聊通常提取 1–5 条记忆。
-8. **不需要 pinDays / relatedTo / sameAs / eventName / eventTags** —— 群记忆 v1 不参与便利贴和事件盒系统。`;
+8. **不需要 relatedTo / sameAs / eventName / eventTags** —— 群记忆 v1 不参与事件盒系统。`;
 }
 
 function buildGroupConversationText(messages: Message[], speakerNameOf: (m: Message) => string): string {

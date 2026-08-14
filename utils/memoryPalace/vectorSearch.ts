@@ -132,7 +132,6 @@ export async function vectorSearch(
                         createdAt: r.createdAt || Date.now(),
                         lastAccessedAt: r.lastAccessedAt || r.createdAt || Date.now(),
                         accessCount: r.accessCount || 0,
-                        pinnedUntil: r.pinnedUntil,
                         sourceId: r.sourceId,
                         origin: (r.origin as any) ?? undefined,
                         eventBoxId: r.eventBoxId,

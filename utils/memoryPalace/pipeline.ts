@@ -17,7 +17,7 @@
  */
 
 import type { Message } from '../../types';
-import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
+import type { EmbeddingConfig, MemoryVector, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
 
 /** 从 localStorage 读取远程向量配置（避免在每个调用点都传参） */
 function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
@@ -53,12 +53,12 @@ function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; to
     } catch { return undefined; }
 }
 import { extractMemoriesFromBuffer } from './extraction';
-import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
+import type { RelatedMemoryRef } from './extraction';
 import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';
 import { getReceiptIdsInRange } from './recallReceipts';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
-import { hybridSearch } from './hybridSearch';
+import { hybridSearch, scoreMemoryEntry } from './hybridSearch';
 import { getEmbeddings } from './embedding';
 import { isRemoteSearchBroken } from './vectorSearch';
 import { spreadActivation } from './activation';
@@ -134,7 +134,124 @@ async function loadMemoriesByDateRanges(
     return out;
 }
 
-// ─── 自动归档建议构造 ────────────────────────────────
+// ─── 日期命中加权 ─────────────────────────────────────
+
+/**
+ * 日期命中记忆的加权。
+ *
+ * 旧实现的两类问题：
+ *  1. 绝对加分（+0.3 / 底分 0.5）让 sim=0 的"日期撞上了"记忆直接拿 0.8 分
+ *     压过正常 top1，6 条 sim=0 记忆占据前 6 名是常态。
+ *  2. 追加无上限，22 条同质化记忆把候选池撑爆。
+ *
+ * 新规则：
+ *  - 已在 results 里的：×1.2 百分比加成，加成后不超过 top1 × 1.1
+ *    （防中等记忆靠日期翻第一）
+ *  - 不在 results 里的：按 hybrid 打分流程重算（用 prefetched 向量 + 当前
+ *    query vector 算 cosine），要求重打分 ≥ 末位 × 0.7 才追加，同样 ×1.2
+ *  - 追加上限 3 条
+ */
+function applyDateBoost(
+    results: ScoredMemory[],
+    dateHits: import('./types').MemoryNode[],
+    userQueryVectors: Float32Array[] | undefined,
+    prefetchedAllVectors: MemoryVector[] | undefined,
+): void {
+    if (results.length === 0 || dateHits.length === 0) return;
+
+    const DATE_BOOST_RATIO = 1.2;
+    const TOP1_CAP_RATIO = 1.1;
+    const LAST_RANK_RATIO = 0.7;
+    const MAX_NEW_ADDS = 3;
+
+    // results 已是按 finalScore 降序
+    const top1 = results[0].finalScore;
+    const top1Cap = top1 * TOP1_CAP_RATIO;
+    const lastRank = results[results.length - 1].finalScore;
+    const addThreshold = lastRank * LAST_RANK_RATIO;
+
+    const resultById = new Map(results.map(r => [r.node.id, r]));
+
+    // 索引：nodeId → Float32Array（日期命中节点拿自己的向量跟 query 算 cosine）
+    const vectorById = new Map<string, Float32Array>();
+    if (prefetchedAllVectors) {
+        for (const v of prefetchedAllVectors) {
+            if (!v.vector) continue;
+            const f = v.vector instanceof Float32Array
+                ? v.vector
+                : v.vector instanceof Uint8Array
+                    ? new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength / 4)
+                    : new Float32Array(v.vector as number[]);
+            vectorById.set(v.memoryId, f);
+        }
+    }
+
+    const now = Date.now();
+    let boosted = 0, added = 0, dropped = 0;
+    const debugNew: string[] = [];
+
+    for (const node of dateHits) {
+        const existing = resultById.get(node.id);
+        if (existing) {
+            const newScore = Math.min(existing.finalScore * DATE_BOOST_RATIO, top1Cap);
+            if (newScore > existing.finalScore) {
+                existing.finalScore = newScore;
+                existing.roomScore = newScore;
+                boosted++;
+            }
+            continue;
+        }
+
+        if (added >= MAX_NEW_ADDS) { dropped++; continue; }
+
+        // 重打分：cosine 用 max over 所有 user query vector——
+        // 任一条 user 消息跟日期记忆相关都识别出来，
+        // 不让后续消息被首条 query 拉偏。
+        let vectorSim = 0;
+        if (userQueryVectors && userQueryVectors.length > 0) {
+            const nodeVec = vectorById.get(node.id);
+            if (nodeVec) {
+                for (const qv of userQueryVectors) {
+                    const len = Math.min(qv.length, nodeVec.length);
+                    let dot = 0, na = 0, nb = 0;
+                    for (let i = 0; i < len; i++) {
+                        dot += qv[i] * nodeVec[i];
+                        na += qv[i] * qv[i];
+                        nb += nodeVec[i] * nodeVec[i];
+                    }
+                    if (na > 0 && nb > 0) {
+                        const cos = dot / (Math.sqrt(na) * Math.sqrt(nb));
+                        if (cos > vectorSim) vectorSim = cos;
+                    }
+                }
+            }
+        }
+        const scored = scoreMemoryEntry(node, vectorSim, 0, now);
+        if (scored.finalScore < addThreshold) { dropped++; continue; }
+
+        const boostedScore = Math.min(scored.finalScore * DATE_BOOST_RATIO, top1Cap);
+        results.push({
+            node,
+            finalScore: boostedScore,
+            similarity: vectorSim,
+            bm25Score: 0,
+            roomScore: boostedScore,
+        });
+        added++;
+        debugNew.push(`#${added} ${node.id.slice(-8)} sim=${vectorSim.toFixed(3)} final=${scored.finalScore.toFixed(3)}→${boostedScore.toFixed(3)}`);
+    }
+
+    if (boosted + added + dropped > 0) {
+        const parts: string[] = [];
+        if (boosted) parts.push(`已命中 ${boosted} 条 ×1.2`);
+        if (added) parts.push(`新增 ${added} 条 ×1.2`);
+        if (dropped) parts.push(`丢弃 ${dropped} 条（超上限或未达门槛）`);
+        console.log(`📅 [Retrieve] 日期命中加权：${parts.join('，')}`);
+        if (debugNew.length > 0) {
+            console.log(`📅 [DateBoost] 新增明细：${debugNew.join('；')}`);
+        }
+    }
+}
 
 /**
  * 把一批 MemoryNode 按 createdAt 日期 group，合成 YAML bullets 格式的 MemoryFragment 候选。
@@ -325,6 +442,10 @@ export async function retrieveMemories(
         try { return await p; }
         finally { retrieveTimings.push({ label, kind, ms: Math.round(performance.now() - t0) }); }
     };
+    // spike 阶段预取的本地全量向量，提到 try 块外让多样性去重也能用
+    let prefetchedAllVectors: MemoryVector[] | undefined = undefined;
+    // 合批算的 query embedding，提到 try 块外让日期命中记忆的重打分也能用
+    let prefetchedQueryVectors: Float32Array[] | undefined = undefined;
     try {
         // 1. 构建查询 —— per-message 多路检索策略：
         //
@@ -343,74 +464,87 @@ export async function retrieveMemories(
         //                  （背景话题延续，分数 × 0.5 折扣，不会压过 user 意图）
         const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(recentMessages);
 
-        // 抽取每条有意义的 user 消息作为独立 spike + 二次拆分子 spike
+        // per-msg 检索 query 构造。
         //
-        // 过滤原则：
-        // 1. 剥离 URL（表情包/图片/外链 URL 在 embedding 里是随机噪声，没有语义）
-        // 2. 剥离 URL 后，再剥掉所有标点和空白来计算"有意义字符数"
-        // 3. 有意义字符数 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词/"……"等）
-        // 4. 同内容去重
+        // 每条 user 消息作为独立 query 进 hybridSearch。短消息整句入池，
+        // 长消息按句末标点切最多 3 段，粘贴长文本只整句入池且权重 0.3。
         //
-        // MIN_SPIKE_LEN=2 而不是 4：中文里 2 字已经可以成词（"晚安""回家""想你"
-        // "外公""生气"），如果阈值设 4 会误伤大量短而关键的中文测试性输入。
-        // 被过滤的只有 1 字的"嗯""好""?""哦""哈"类纯语气词，以及"……""。。。"
-        // 这类纯标点输入——它们 embedding 方向随机，BM25 也匹配不上任何东西。
+        // 为什么不再做"2-6 字碎片"子 spike：embedding 模型本身就擅长把
+        // 一句里的多个关键词投影到各自的语义方向上，手工拆 7 字碎片反而
+        // 丢掉上下文，搜出的结果基本是撞字噪声（典型：拆出"省的你指挥
+        // 错了"，撞上 BM25 "踩错"反超真正相关的技术记忆）。正常聊天
+        // 几十到一百多字，模型完全能处理。
         //
-        // 注意：query 文本仍然用"剥 URL 后"的原始 trim 版本（保留标点），
-        // 只在判长度时才看"剥光标点的有意义字符数"。这样"晚安……"这种
-        // 带尾随省略号的合法输入能进池，且 query 里完整保留上下文。
+        // 长度规则：
+        //   ≤ 150 字：整句 1 spike，weight=1.0
+        //   > 150 字：按句末标点切最多 3 段，每段 1 spike，weight=1.0
+        //     （防一条消息串两个不相关话题把质心拉散）
+        //   > 200 字：识别为"粘贴外部资料"，整句 1 spike，weight=0.3
+        //     不切段。粘贴不是对话意图，权重低于 context（0.5）。
         //
-        // 二次拆分（sub-spike）：
-        //   一条消息内部如果有标点/空格分隔多段语义（DateApp 见面模式的
-        //   叙述格式 `"对白" 旁白 "对白"`、或者用户在一条消息里用逗号/
-        //   句号串了多件事），单一 spike 会让真实意图被气泡内的其他片段
-        //   稀释。把消息按 [\s\p{P}]+ 拆成子片段，每个 ≥ MIN_SPIKE_LEN 的
-        //   子片段也作为独立 spike 入池（label 后缀 a/b/c/...）。原消息
-        //   仍保留作 u<N>，捕获跨片段的整体语境。
-        //
-        //   这不是"扩搜索面"——子 spike 比原 spike 更短更专注，每路 query
-        //   质心更精准（不是更宽），所以不会出现 joined / 候选池扩大那种
-        //   "泛情感记忆借宽匹配反超"的问题。机制方向相反。
+        // 多条连续 user 消息仍然各自作为独立 query（u1, u2, u3...）。
+        // context query 不动。
         const MIN_SPIKE_LEN = 2;
         const MAX_SPIKES = 10;
-        const MAX_SUB_SPIKES_PER_MSG = 5;
+        const MAX_SEGMENTS_PER_LONG_MSG = 3;
+        const LONG_MSG_TRIGGER = 150;
+        const PASTE_DETECT_TRIGGER = 200;
+        // 多行 + 短内容：表格/列表粘贴常常是 6+ 行每行 20-30 字，单看字数 < 200
+        // 但体感"明显长"。行数 + 字数联合判断补漏。
+        const PASTE_LINE_TRIGGER = 3;
+        const PASTE_LINE_MIN_CHARS = 80;
         const URL_RE = /https?:\/\/\S+/gi;
         const PUNCT_WS_RE = /[\s\p{P}]/gu;
-        const SPLIT_RE = /[\s\p{P}]+/gu;
+        const SENTENCE_SPLIT_RE = /[。.！!？?\n]+/;
         const seenSpike = new Set<string>();
-        const userSpikes: { label: string; text: string; originalIdx: number }[] = [];
+        const userSpikes: { label: string; text: string; weight: number }[] = [];
+        // 拼接排除粘贴的 user content，供日期解析等"语义搜索"逻辑使用
+        const nonPasteContents: string[] = [];
+        let pasteSkippedCount = 0;
         userIntent.forEach((m, idx) => {
+            // 粘贴判断挪到截断前：用用户原始消息的字数和行数判断。
+            // 暮色 2026-08-14 反馈：截断后 (slice(0, 2000)) 的 text 做判断会让
+            // 一些短粘贴漏判，挪到截断前用原始 m.content 才是"用户实际输入"的判断。
+            const rawChars = m.content.length;
+            const lineCount = (m.content.match(/\n/g) || []).length + 1;
+            const isPaste = rawChars > PASTE_DETECT_TRIGGER
+                || (lineCount >= PASTE_LINE_TRIGGER && rawChars >= PASTE_LINE_MIN_CHARS);
+            console.log(`📋 [PasteDetect] 原始字数 ${rawChars}，行数 ${lineCount}，isPaste=${isPaste}`);
+            if (isPaste) { pasteSkippedCount++; return; }
+
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
-            const meaningfulChars = text.replace(PUNCT_WS_RE, '');
-            if (meaningfulChars.length < MIN_SPIKE_LEN) return;
+            if (text.replace(PUNCT_WS_RE, '').length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
-            const baseLabel = `u${idx + 1}`;
-            userSpikes.push({ label: baseLabel, text, originalIdx: idx });
 
-            // 二次拆分：消息内部有多段语义时，每段也作为子 spike
-            const segments = text.split(SPLIT_RE)
+            const baseLabel = `u${idx + 1}`;
+            userSpikes.push({ label: baseLabel, text, weight: 1.0 });
+            nonPasteContents.push(m.content);
+
+            if (text.length <= LONG_MSG_TRIGGER) return;
+            const segments = text.split(SENTENCE_SPLIT_RE)
                 .map(s => s.trim())
-                .filter(s => s.length > 0 && s !== text && s.replace(PUNCT_WS_RE, '').length >= MIN_SPIKE_LEN);
-            let subIdx = 0;
-            for (const seg of segments) {
-                if (subIdx >= MAX_SUB_SPIKES_PER_MSG) break;
+                .filter(s => s.length > 0 && s !== text && s.replace(PUNCT_WS_RE, '').length >= MIN_SPIKE_LEN)
+                .slice(0, MAX_SEGMENTS_PER_LONG_MSG);
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
                 if (seenSpike.has(seg)) continue;
                 seenSpike.add(seg);
-                subIdx++;
-                const subLabel = `${baseLabel}${String.fromCharCode(96 + subIdx)}`; // a,b,c,...
-                userSpikes.push({ label: subLabel, text: seg, originalIdx: idx });
+                userSpikes.push({ label: `${baseLabel}p${i + 1}`, text: seg, weight: 1.0 });
             }
         });
         // 保留最后 MAX_SPIKES 条（如果超过上限，优先保留最近的）
         const effectiveSpikes = userSpikes.slice(-MAX_SPIKES);
+        if (pasteSkippedCount > 0) {
+            console.log(`📋 [Retrieve] 跳过 ${pasteSkippedCount} 条粘贴消息，不创建搜索请求`);
+        }
 
         const contextQuery = [queryOverride, contextTurns.map(m => m.content).join('\n')]
             .filter(Boolean)
             .join('\n')
             .slice(0, 2000);
-        const userQueryJoined = userIntent.map(m => m.content).join('\n'); // 仅用于日志显示原始 userIntent 文本
+        const userQueryJoined = nonPasteContents.join('\n'); // 仅含非粘贴消息原文，供日期解析等用
 
         // 兜底：极端情况下末尾没有任何可用的 user spike（如冷启动首轮，或全是语气词）
         const fallbackQuery = effectiveSpikes.length > 0
@@ -530,6 +664,8 @@ export async function retrieveMemories(
                     ? Promise.resolve(undefined)
                     : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId)),
             ]);
+            prefetchedAllVectors = allVectors;
+            prefetchedQueryVectors = queryVectors as Float32Array[];
 
             const spikePromises = effectiveSpikes.map((s, i) =>
                 hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
@@ -621,17 +757,18 @@ export async function retrieveMemories(
                 console.log(`🏰 [Retrieve] context 搜跳过（context query 为空）`);
             }
 
-            // 合并：每条记忆取 max(所有 spike 分, context 分×折扣)
+            // 合并：每条记忆取 max(所有 spike 分×spike权重, context 分×折扣)
             const merged = new Map<string, ScoredMemory>();
             spikeResultsArr.forEach((spikeResults, idx) => {
-                const label = effectiveSpikes[idx].label;
+                const spike = effectiveSpikes[idx];
                 for (const r of spikeResults) {
                     const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
-                    trace.spikeScores.set(label, r.finalScore);
+                    trace.spikeScores.set(spike.label, r.finalScore);
                     sourceTrace.set(r.node.id, trace);
+                    const weighted = r.finalScore * spike.weight;
                     const existing = merged.get(r.node.id);
-                    if (!existing || r.finalScore > existing.finalScore) {
-                        merged.set(r.node.id, r);
+                    if (!existing || weighted > existing.finalScore) {
+                        merged.set(r.node.id, { ...r, finalScore: weighted, roomScore: r.roomScore * spike.weight });
                     }
                 }
             });
@@ -721,37 +858,34 @@ export async function retrieveMemories(
         // 2.5 日期引用路径：从 user 意图里抽"去年12月""3月4号""上周"这类
         //     日期引用，直接按 createdAt 捞对应区间的记忆（vector/BM25 都对不准日期）。
         //     archived 节点参与日期匹配 → 路由到其 EventBox summary 返回。
+        //
+        //     加权策略：
+        //     - 已在 top15 的：×1.2 百分比加成，上限 ≤ top1 × 1.1（防中等记忆靠日期翻第一）
+        //     - 不在 top15 的：要求按 hybrid 重新打分 ≥ top15 末位 × 0.7 才追加，同样 ×1.2
+        //     - 追加上限 3 条（原逻辑无上限，22 条同质化记忆能撑爆候选池）
+        //     - dateResolver 输入只用 userQueryJoined（已排除粘贴），不用 context
+        //       （context 是历史 assistant 回复，里面偶尔提到的日期不代表用户在问）
         const dateT0 = performance.now();
         try {
             const { resolveDateReferences } = await import('./dateResolver');
-            const queryForDates = [userQueryJoined, contextQuery, fallbackQuery].filter(Boolean).join('\n');
-            const ranges = resolveDateReferences(queryForDates);
+            const queryForDates = userQueryJoined;
+            if (queryForDates) {
+                console.log(`📅 [DateResolver] 输入文本（${queryForDates.length} 字）：${queryForDates.slice(0, 300)}${queryForDates.length > 300 ? '...' : ''}`);
+            }
+            const ranges = queryForDates ? resolveDateReferences(queryForDates) : [];
             if (ranges.length > 0) {
                 console.log(`📅 [Retrieve] 检测到日期引用 ${ranges.length} 个：${ranges.map(r => `${r.label}→[${new Date(r.start).toLocaleDateString('zh-CN')}..${new Date(r.end - 1).toLocaleDateString('zh-CN')}]`).join('、')}`);
                 const dateHits = await loadMemoriesByDateRanges(charId, ranges);
-                const DATE_BOOST = 0.3;
-                const DATE_BASE = 0.5;
-                const resultIdx = new Map(results.map((r, i) => [r.node.id, i]));
-                let boosted = 0, added = 0;
-                for (const node of dateHits) {
-                    const idx = resultIdx.get(node.id);
-                    if (idx !== undefined) {
-                        results[idx].finalScore += DATE_BOOST;
-                        results[idx].roomScore += DATE_BOOST;
-                        boosted++;
-                    } else {
-                        results.push({
-                            node,
-                            finalScore: DATE_BASE + DATE_BOOST,
-                            similarity: 0,
-                            bm25Score: 0,
-                            roomScore: DATE_BASE + DATE_BOOST,
-                        });
-                        added++;
-                    }
-                }
-                if (boosted + added > 0) {
-                    console.log(`📅 [Retrieve] 日期命中加权：${boosted} 条已命中 +${DATE_BOOST}，${added} 条新增`);
+                if (dateHits.length > 0) {
+                    // 用 effectiveSpikes[0] 的 query vector 作为"用户当前主意图"
+                    // 算日期命中记忆跟它的 cosine（最强信号）
+                    // 用 effectiveSpikes 全部 query vector 算 max cosine——
+                    // 任一条 user 消息跟日期记忆相关都识别出来，避免只取第一条
+                    // 把后几条明确相关的内容误杀
+                    const userQueryVectors = effectiveSpikes.length > 0
+                        ? prefetchedQueryVectors?.slice(0, effectiveSpikes.length)
+                        : undefined;
+                    applyDateBoost(results, dateHits, userQueryVectors, prefetchedAllVectors);
                 }
             }
         } catch (e: any) {
@@ -762,6 +896,69 @@ export async function retrieveMemories(
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索 + 日期路径均无结果，跳过记忆注入`);
             return '';
+        }
+
+        // 多样性去重：同一房间超过 10 条时，对它们两两算内容相似度
+        // （embedding cosine），高于 0.85 的对里只保留分数高的。
+        //
+        // 为什么不是硬限流：聊亲密话题时卧室记忆占满 15 条是合理的；
+        // 真正的问题是"同一件事的不同表述"重复出现。cosine 去重比
+        // 硬限房间数精准。阈值 0.85：同一事件的不同次压缩 cosine
+        // 通常 0.88-0.95；不同事件哪怕同房间同话题通常 < 0.80。
+        const SAME_ROOM_THRESHOLD = 10;
+        const DEDUP_COSINE_THRESHOLD = 0.85;
+        {
+            let needsDedup = false;
+            const byRoom = new Map<string, ScoredMemory[]>();
+            for (const r of results) {
+                const arr = byRoom.get(r.node.room) || [];
+                arr.push(r);
+                byRoom.set(r.node.room, arr);
+                if (arr.length > SAME_ROOM_THRESHOLD) needsDedup = true;
+            }
+            if (needsDedup && prefetchedAllVectors) {
+                const vectorById = new Map<string, Float32Array>();
+                for (const v of prefetchedAllVectors) {
+                    if (!v.vector) continue;
+                    const f = v.vector instanceof Float32Array
+                        ? v.vector
+                        : v.vector instanceof Uint8Array
+                            ? new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength / 4)
+                            : new Float32Array(v.vector as number[]);
+                    vectorById.set(v.memoryId, f);
+                }
+                const cosine = (a: Float32Array, b: Float32Array): number => {
+                    const len = Math.min(a.length, b.length);
+                    let dot = 0, na = 0, nb = 0;
+                    for (let i = 0; i < len; i++) {
+                        dot += a[i] * b[i];
+                        na += a[i] * a[i];
+                        nb += b[i] * b[i];
+                    }
+                    if (na === 0 || nb === 0) return 0;
+                    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+                };
+                const toDrop = new Set<string>();
+                for (const items of byRoom.values()) {
+                    if (items.length <= SAME_ROOM_THRESHOLD) continue;
+                    for (let i = 0; i < items.length; i++) {
+                        for (let j = i + 1; j < items.length; j++) {
+                            if (toDrop.has(items[i].node.id) || toDrop.has(items[j].node.id)) continue;
+                            const va = vectorById.get(items[i].node.id);
+                            const vb = vectorById.get(items[j].node.id);
+                            if (!va || !vb) continue;
+                            if (cosine(va, vb) > DEDUP_COSINE_THRESHOLD) {
+                                if (items[i].finalScore >= items[j].finalScore) toDrop.add(items[j].node.id);
+                                else toDrop.add(items[i].node.id);
+                            }
+                        }
+                    }
+                }
+                if (toDrop.size > 0) {
+                    results = results.filter(r => !toDrop.has(r.node.id));
+                    console.log(`🏰 [Retrieve] 多样性去重：踢掉 ${toDrop.size} 条同房间高相似记忆`);
+                }
+            }
         }
 
         // 3. 扩散激活
@@ -879,8 +1076,30 @@ export async function retrieveMemories(
         // 9. 获取期盼
         const anticipations = await tRetrieve('AnticipationDB.getByCharId', 'IDB', AnticipationDB.getByCharId(charId));
 
-        // 10. 格式化
-        const formatted = await tRetrieve('expandAndFormat', 'IDB', expandAndFormat(results, charId, anticipations, userName, formatterCap));
+        // 10. 分数门槛：15 条是上限不是定额——分数不够宁可不注。
+        //     状态面板由 formatter 单独拼在最前面，不受此门槛影响。
+        //
+        //     短 query（< 3 字，如"OK""嗯""好"）没有独立语义，
+        //     它的 per-msg 搜索命中分数天然虚高（撞 imp 9-10 记忆）。
+        //     这种情况下把门槛提到 0.7，让"纯靠 context 历史对话"主导召回。
+        //     上下文几百条完全够支撑，不需要低质 per-msg 命中凑数。
+        const FINAL_SCORE_THRESHOLD = 0.55;
+        const SHORT_QUERY_THRESHOLD = 0.7;
+        const SHORT_QUERY_MIN_CHARS = 3;
+        const userChars = effectiveSpikes[0]?.text.replace(PUNCT_WS_RE, '').length ?? 0;
+        const threshold = userChars < SHORT_QUERY_MIN_CHARS && userChars > 0
+            ? SHORT_QUERY_THRESHOLD
+            : FINAL_SCORE_THRESHOLD;
+        const preFilterCount = results.length;
+        const aboveThreshold = results.filter(r => r.finalScore >= threshold);
+        const droppedBelowThreshold = preFilterCount - aboveThreshold.length;
+        if (droppedBelowThreshold > 0) {
+            console.log(`🏰 [Retrieve] 分数门槛 < ${threshold} 过滤 ${droppedBelowThreshold} 条：${preFilterCount} → ${aboveThreshold.length}${userChars < SHORT_QUERY_MIN_CHARS && userChars > 0 ? `（短 query ${userChars} 字，启用 ${SHORT_QUERY_THRESHOLD} 高门槛）` : ''}`);
+        }
+        results = aboveThreshold;
+
+        // 11. 格式化
+        const formatted = await tRetrieve('expandAndFormat', 'IDB', expandAndFormat(results, charId, anticipations, userName, formatterCap, preFilterCount));
 
         // ── 汇总打印 ──
         const perfTotal = Math.round(performance.now() - perfRetrieveT0);
@@ -1265,14 +1484,7 @@ export async function processNewMessages(
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
         }
 
-        // 6. 收集当前便利贴（供 LLM 判断是否需要提前摘除）
-        const now = Date.now();
-        const allCharNodes = await MemoryNodeDB.getByCharId(charId);
-        const pinnedRefs: PinnedMemoryRef[] = allCharNodes
-            .filter(n => n.pinnedUntil && n.pinnedUntil > now)
-            .map(n => ({ id: n.id, content: n.content.slice(0, 80) }));
-
-        // 7. LLM 提取记忆 — 大缓冲区分批处理（每批 ~250 条消息）
+        // 6. LLM 提取记忆 — 大缓冲区分批处理（每批 ~250 条消息）
         //    避免一次喂太多消息导致 LLM 偷懒只提取几条
         const CHUNK_SIZE = 250;
         const chunks: Message[][] = [];
@@ -1294,8 +1506,9 @@ export async function processNewMessages(
             console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
 
             try {
+                // 状态面板的存储由 extractMemoriesFromBuffer 内部 applyStatusUpdate 写入
                 const extractionResult = await extractMemoriesFromBuffer(
-                    chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
+                    chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs,
                 );
                 allMemories.push(...extractionResult.memories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
@@ -1303,16 +1516,8 @@ export async function processNewMessages(
                 allCorrections.push(...extractionResult.corrections);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
 
-                // 处理便利贴摘除
-                if (extractionResult.unpinIds.length > 0) {
-                    for (const unpinId of extractionResult.unpinIds) {
-                        const node = allCharNodes.find(n => n.id === unpinId);
-                        if (node) {
-                            node.pinnedUntil = null;
-                            await MemoryNodeDB.save(node);
-                        }
-                    }
-                    console.log(`📌 [Pipeline] batch ${ci + 1}: 摘除 ${extractionResult.unpinIds.length} 条便利贴`);
+                if (extractionResult.statusUpdate != null) {
+                    console.log(`📌 [Pipeline] batch ${ci + 1}: 状态面板更新`);
                 }
             } catch (e: any) {
                 console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);

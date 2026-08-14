@@ -1767,6 +1767,21 @@ const Chat: React.FC = () => {
         addToast(!isEmotionOnNow ? '心声已开启' : '心声已关闭', !isEmotionOnNow ? 'success' : 'info');
     };
 
+    // 工具开关：生图 / 放歌（暮色 2026-08-14）
+    // undefined = 默认开（保持现有行为）
+    const handleToggleImageGen = () => {
+        if (!char) return;
+        const isOn = char.imageGenEnabled !== false;
+        updateCharacter(char.id, { imageGenEnabled: !isOn } as any);
+        addToast(!isOn ? '生图已开启' : '生图已关闭', !isOn ? 'success' : 'info');
+    };
+    const handleTogglePlaySong = () => {
+        if (!char) return;
+        const isOn = char.playSongEnabled !== false;
+        updateCharacter(char.id, { playSongEnabled: !isOn } as any);
+        addToast(!isOn ? '放歌已开启' : '放歌已关闭', !isOn ? 'success' : 'info');
+    };
+
     // 打开聊天设置抽屉（头像右上角 GearSix 按钮触发）
     const handleOpenChatSettings = () => {
         setShowPanel('none'); // 顺手关掉 + 号面板，避免叠层
@@ -2910,6 +2925,10 @@ if (keepN > 0) {
                 onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
                 emotionEnabled={isEmotionOn(char)}
                 onToggleEmotion={handleToggleEmotion}
+                imageGenEnabled={char.imageGenEnabled !== false}
+                onToggleImageGen={handleToggleImageGen}
+                playSongEnabled={char.playSongEnabled !== false}
+                onTogglePlaySong={handleTogglePlaySong}
                 contextLimit={char.contextLimit || 500}
                 onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
                 // 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国）

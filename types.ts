@@ -1220,6 +1220,16 @@ export interface CharacterProfile {
   emotionEnabled?: boolean;
 
   /**
+   * 工具开关：生图 / 放歌
+   * - true：开，AI 可调对应工具（默认开）
+   * - false：关，AI 看不到该工具，工具数组里不带
+   * - undefined：老用户兜底——等同 true（保持现有行为）
+   * 跟 emotionEnabled 不同：心声是"输出"层开关，工具开关是"注册到 LLM 请求体"层
+   */
+  imageGenEnabled?: boolean;
+  playSongEnabled?: boolean;
+
+  /**
    * HTML 模块模式（per-character）。
    * - htmlModeEnabled：开启后，给 LLM 注入"用 [html]...[/html] 包裹的富 HTML 卡片"提示词，
    *   AI 输出里的 [html] 块会被解析成单独的 html_card 消息（沙盒 iframe 渲染）。

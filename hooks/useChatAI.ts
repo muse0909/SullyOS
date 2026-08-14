@@ -64,17 +64,15 @@ const IMAGE_GENERATION_TOOL = {
   type: 'function' as const,
   function: {
     name: 'generate_image',
-    // 暮色 2026-07-22 江澈改：核心逻辑——默认不调，三种情感场景放行，日常闲聊不碰，拿不准就不碰
-    // 修前：'...or when you want to share a visual (like a selfie, a scene, a photo you took, etc)'
-    //       → 暮色反馈"角色没主动调用时也会偶尔自动触发"，这句是元凶
-    //       → LLM 觉得"想加点画面感"就调了，代码层面看不出来
-    description: 'Generate an image based on a text prompt. Use this when the user explicitly asks you to draw, paint, or generate an image. You may also use this proactively ONLY in the following scenarios: (1) the user is emotionally down and you want to comfort them with a visual; (2) you miss the user and want to share a selfie or scene; (3) special dates such as anniversaries or birthdays. Do NOT use this tool for casual chat decoration, adding "visual flair" to normal conversation, or when the user has not mentioned anything image-related. When in doubt, do not call.',
+    // 暮色 2026-08-14 缩 description：原 600 字符 → 80 字符，节省每轮 input token
+    // 核心规则保留：用户明确说 / 情感低落 / 想念用户 / 特殊日期。日常不调。
+    description: 'Generate an image from an English prompt. Use only when: (1) user explicitly asks to draw/paint, (2) user is emotionally down and you want to comfort with a visual, (3) you miss the user and want to share a selfie/scene, (4) special dates (anniversary/birthday). Do NOT use for casual chat decoration.',
     parameters: {
       type: 'object',
       properties: {
         prompt: {
           type: 'string',
-          description: 'A detailed English prompt describing the image to generate. Be specific about style, composition, colors, and details.',
+          description: 'Detailed English prompt. Specify style, composition, colors.',
         },
       },
       required: ['prompt'],
@@ -88,21 +86,22 @@ const IMAGE_GENERATION_TOOL = {
 // 修法：从结构上让大语言模型能调，不是靠提示词哄
 // 跟 generate_image 一样：用户不主动说、对话里聊到歌 / 气氛适合 / 用户提到想听什么时再用
 // 不抢戏、不每轮必调、拿不准就不调
+// 暮色 2026-08-14 缩 description：原 700 字符 → 100 字符
 const PLAY_SONG_TOOL = {
   type: 'function' as const,
   function: {
     name: 'play_song',
-    description: '主动给用户放一首歌。Use this ONLY when one of these is true: (1) the user is currently listening to a song and you want to react to it / respond with a song that matches the moment; (2) you are already "listening together" with the user and want to change the song; (3) the conversation naturally surfaces a song (the user mentioned a song name, the mood calls for music, or the user said "play a song" / "放首歌"); (4) the user explicitly asks you to play a song. Provide the song name (in Chinese or English) and an optional join flag. Do NOT use this for casual chat decoration, adding "musical flair" to normal conversation, or when no song context exists. When in doubt, do not call. If you previously tried to play a song and got a "not found" reply, do not retry the same name.',
+    description: 'Play a song for the user. Use only when: (1) user is listening and you want to react with a matching song, (2) you are "listening together" and want to change the song, (3) conversation surfaces a song (user mentioned a song name, mood calls for music, user said 听/歌/放歌), (4) user explicitly asks. Do NOT use for casual decoration.',
     parameters: {
       type: 'object',
       properties: {
         songName: {
           type: 'string',
-          description: 'The song name to search and play. Can be Chinese or English. Be specific — include the artist name if you know it (e.g. "关不上的窗 周传雄") for more accurate results.',
+          description: 'Song name (Chinese or English). Include artist if known (e.g. "关不上的窗 周传雄").',
         },
         join: {
           type: 'boolean',
-          description: 'Whether to also enter "listening together" mode (both you and the user hear the same song). Default false. Set true only when the moment calls for shared listening — not for every song.',
+          description: 'Enter "listening together" mode. Default false. Set true only for shared listening moments.',
         },
       },
       required: ['songName'],
@@ -1725,13 +1724,14 @@ const toolsList: any[] = [];
 if (mcdMiniOpen) {
     toolsList.push(MCD_PROPOSE_TOOL);
 }
-if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel) {
+if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel && char.imageGenEnabled !== false) {
     toolsList.push(IMAGE_GENERATION_TOOL);
 }
 // 暮色 2026-08-02 16:32：play_song 功能工具注册（handoff #1）
 // 跟生图工具一样：Gemini 协议也不挂 tool（Gemini function calling 格式不同）
 // musicApi 不依赖任何配置（直接调网易云 API），所以不判断"音乐 API 是否配了"——始终注册
-if (!useGeminiProtocol) {
+// 暮色 2026-08-14：加 playSongEnabled 开关——关掉时请求体里不带
+if (!useGeminiProtocol && char.playSongEnabled !== false) {
     toolsList.push(PLAY_SONG_TOOL);
 }
 if (toolsList.length > 0) {

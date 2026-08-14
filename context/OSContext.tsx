@@ -1907,37 +1907,40 @@ if (!isVisible || !isChattingWithThisChar) {
               //   跟 useChatAI 同步：1 天最多 5 条 + 1 小时内相同内容跳过
               //   提醒走 addToast 顶部弹窗（不显示内容详情）
               try {
-                  const todayStart = new Date();
-                  todayStart.setHours(0, 0, 0, 0);
-                  const oneHourAgo = Date.now() - 60 * 60 * 1000;
-                  const todaysXZT = (await DB.getXiaoZhiTiaos(charId))
-                      .filter(n => n.timestamp >= todayStart.getTime());
-                  if (todaysXZT.length >= 5) {
-                      console.log(`📝 [XiaoZhiTiao/Proactive] 今天已写 ${todaysXZT.length} 条，跳过`);
-                  } else {
-                      const xztMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
-                      if (xztMatch) {
-                          const content = xztMatch[1].trim();
-                          const recentDuplicate = todaysXZT.find(n =>
-                              n.timestamp >= oneHourAgo && n.content === content
-                          );
-                          if (recentDuplicate) {
-                              console.log(`📝 [XiaoZhiTiao/Proactive] 1h 内已写过相同内容，跳过`);
-                          } else if (content) {
-                              const newNote: XiaoZhiTiao = {
-                                  id: `xzt-${Date.now()}`,
-                                  charId,
-                                  timestamp: Date.now(),
-                                  content,
-                                  styleImageUrl: pickRandomXiaoZhiTiaoImage(),
-                              };
-                              await DB.saveXiaoZhiTiao(newNote);
-                              console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
-                              addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                  // AI 没输出小纸条标记 → 跳过 IDB 查询 / 计数 / 解析
+                  if (aiContent.includes('[[XIAO_ZHI_TIAO:')) {
+                      const todayStart = new Date();
+                      todayStart.setHours(0, 0, 0, 0);
+                      const oneHourAgo = Date.now() - 60 * 60 * 1000;
+                      const todaysXZT = (await DB.getXiaoZhiTiaos(charId))
+                          .filter(n => n.timestamp >= todayStart.getTime());
+                      if (todaysXZT.length >= 5) {
+                          console.log(`📝 [XiaoZhiTiao/Proactive] 今天已写 ${todaysXZT.length} 条，跳过`);
+                      } else {
+                          const xztMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
+                          if (xztMatch) {
+                              const content = xztMatch[1].trim();
+                              const recentDuplicate = todaysXZT.find(n =>
+                                  n.timestamp >= oneHourAgo && n.content === content
+                              );
+                              if (recentDuplicate) {
+                                  console.log(`📝 [XiaoZhiTiao/Proactive] 1h 内已写过相同内容，跳过`);
+                              } else if (content) {
+                                  const newNote: XiaoZhiTiao = {
+                                      id: `xzt-${Date.now()}`,
+                                      charId,
+                                      timestamp: Date.now(),
+                                      content,
+                                      styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                                  };
+                                  await DB.saveXiaoZhiTiao(newNote);
+                                  console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
+                                  addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                              }
                           }
+                          // 主动消息里把 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
+                          aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
                       }
-                      // 主动消息里把 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
-                      aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
                   }
               } catch (e) {
                   console.warn('📝 [XiaoZhiTiao/Proactive] 解析失败:', e);

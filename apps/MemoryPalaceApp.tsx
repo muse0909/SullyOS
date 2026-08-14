@@ -465,6 +465,10 @@ export default function MemoryPalaceApp() {
     const [showCharPicker, setShowCharPicker] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [selectMode, setSelectMode] = useState(false);
+
+    // 全部记忆视图专用：跟房间视图的 selectMode 物理独立，避免跨视图混淆
+    const [allSelectMode, setAllSelectMode] = useState(false);
+    const [allSelectedIds, setAllSelectedIds] = useState<Set<string>>(new Set());
     const [deleting, setDeleting] = useState(false);
     const [roomNodes, setRoomNodes] = useState<MemoryNode[]>([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -518,7 +522,7 @@ export default function MemoryPalaceApp() {
             setTlInitialized(false);
         }
     }, [view, tlInitialized]);
-    const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
+    const [allSortBy, setAllSortBy] = useState<'time' | 'importance' | 'accessCount'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
 
@@ -1637,7 +1641,7 @@ export default function MemoryPalaceApp() {
         await deleteMemoryNode(nodeId, remoteVectorConfig);
     };
 
-    /** 批量删除选中的记忆 */
+    /** 批量删除选中的记忆（房间视图） */
     const handleBatchDelete = async () => {
         if (selectedIds.size === 0 || !char) return;
         setDeleting(true);
@@ -1657,6 +1661,38 @@ export default function MemoryPalaceApp() {
         } finally {
             setDeleting(false);
         }
+    };
+
+    /** 批量删除选中的记忆（全部记忆视图） */
+    const handleBatchDeleteAll = async () => {
+        if (allSelectedIds.size === 0 || !char) return;
+        if (!confirm(`确认删除 ${allSelectedIds.size} 条记忆？此操作不可撤销。`)) return;
+        if (!confirm('再次确认：真的要删除？')) return;
+        setDeleting(true);
+        try {
+            for (const id of allSelectedIds) {
+                await deleteMemory(id);
+            }
+            // 刷新全部记忆数据
+            const nodes = await MemoryNodeDB.getByCharId(char.id);
+            setAllNodes(nodes);
+            setAllSelectedIds(new Set());
+            setAllSelectMode(false);
+            loadStats();
+        } catch (e: any) {
+            alert(`批量删除失败：${e?.message || e}`);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const toggleAllSelect = (id: string) => {
+        setAllSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     };
 
     /** 删除单条记忆并返回上一视图 */
@@ -4288,56 +4324,110 @@ create table if not exists memory_vectors (
         const sorted = [...allNodes].sort((a, b) => {
             const dir = allSortDir === 'desc' ? -1 : 1;
             if (allSortBy === 'time') return dir * (a.createdAt - b.createdAt);
+            if (allSortBy === 'accessCount') return dir * ((a.accessCount || 0) - (b.accessCount || 0));
             return dir * (a.importance - b.importance);
         });
 
+        const sortBtnStyle = (active: boolean): React.CSSProperties => ({
+            padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+            border: active ? '2px solid #7c3aed' : '1px solid #d4d4d4',
+            background: active ? '#f3f0ff' : 'white',
+            color: active ? '#7c3aed' : '#6b7280',
+            cursor: 'pointer',
+        });
+
         return (
-            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div
-                        onClick={() => { setView('palace'); }}
-                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
-                    >
-                        ← 返回宫殿
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: 0, maxHeight: '100%', overflowY: 'auto' }}>
+                {/* 绿框 sticky 顶部：返回宫殿 + 排序 + 管理，背景跟页面一致 */}
+                <div style={{
+                    position: 'sticky', top: 0, zIndex: 10,
+                    background: '#faf9f5',
+                    paddingTop: SAFE_PAD_TOP,
+                    paddingBottom: 8,
+                    borderBottom: '1px solid #e5e7eb',
+                    marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16,
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <div
+                            onClick={() => { setView('palace'); }}
+                            style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                        >
+                            ← 返回宫殿
+                        </div>
+                        <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
                     </div>
-                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
-                </div>
 
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Icon name="list" size={18} />
-                    <span>全部记忆</span>
-                </div>
-
-                {/* 排序控制 */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: '#6b7280' }}>排序：</span>
-                    {(['time', 'importance'] as const).map(s => (
+                    {/* 排序行：升序降序 / 时间 / 重要性 / 访问次数 靠左 + 管理 靠右 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                                onClick={() => setAllSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+                                style={sortBtnStyle(false)}
+                            >
+                                {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
+                            </button>
+                            {(['time', 'importance', 'accessCount'] as const).map(s => (
+                                <button
+                                    key={s}
+                                    onClick={() => setAllSortBy(s)}
+                                    style={sortBtnStyle(allSortBy === s)}
+                                >
+                                    {s === 'time' ? '时间' : s === 'importance' ? '重要性' : '访问次数'}
+                                </button>
+                            ))}
+                        </div>
                         <button
-                            key={s}
-                            onClick={() => setAllSortBy(s)}
+                            onClick={() => { setAllSelectMode(!allSelectMode); setAllSelectedIds(new Set()); }}
+                            disabled={allNodes.length === 0}
                             style={{
+                                marginLeft: 'auto',
                                 padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                                border: allSortBy === s ? '2px solid #7c3aed' : '1px solid #d4d4d4',
-                                background: allSortBy === s ? '#f3f0ff' : 'white',
-                                color: allSortBy === s ? '#7c3aed' : '#6b7280',
-                                cursor: 'pointer',
+                                border: allSelectMode ? '1px solid #dc2626' : '1px solid #d4d4d4',
+                                background: allSelectMode ? '#fef2f2' : 'white',
+                                color: allSelectMode ? '#dc2626' : '#6b7280',
+                                cursor: allNodes.length === 0 ? 'not-allowed' : 'pointer',
+                                opacity: allNodes.length === 0 ? 0.5 : 1,
                             }}
                         >
-                            {s === 'time' ? '时间' : '重要性'}
+                            {allSelectMode ? '取消选择' : '管理'}
                         </button>
-                    ))}
-                    <button
-                        onClick={() => setAllSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-                        style={{
-                            padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            border: '1px solid #d4d4d4', background: 'white', color: '#6b7280',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
-                    </button>
+                    </div>
+
+                    {/* selectMode 操作条：已选 N / 全选 / 取消全选 / 删除 */}
+                    {allSelectMode && (
+                        <div style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            marginTop: 8, padding: '6px 10px', borderRadius: 8,
+                            background: '#fef2f2', border: '1px solid #fecaca',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#991b1b' }}>
+                                <span>已选 {allSelectedIds.size} 条</span>
+                                <span
+                                    onClick={() => setAllSelectedIds(new Set(sorted.map(n => n.id)))}
+                                    style={{ color: '#6b7280', cursor: 'pointer', textDecoration: 'underline' }}
+                                >全选</span>
+                                <span
+                                    onClick={() => setAllSelectedIds(new Set())}
+                                    style={{ color: '#6b7280', cursor: 'pointer', textDecoration: 'underline' }}
+                                >取消全选</span>
+                            </div>
+                            <button
+                                onClick={handleBatchDeleteAll}
+                                disabled={allSelectedIds.size === 0 || deleting}
+                                style={{
+                                    padding: '4px 12px', borderRadius: 8, border: 'none',
+                                    fontSize: 12, fontWeight: 700,
+                                    color: 'white', background: allSelectedIds.size > 0 ? '#dc2626' : '#d4d4d4',
+                                    cursor: allSelectedIds.size === 0 || deleting ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                {deleting ? '删除中...' : `删除 (${allSelectedIds.size})`}
+                            </button>
+                        </div>
+                    )}
                 </div>
 
+                {/* 记忆列表（独立滚动区） */}
                 {sorted.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#9ca3af', padding: 40, fontSize: 13 }}>
                         还没有任何记忆
@@ -4346,13 +4436,19 @@ create table if not exists memory_vectors (
                     sorted.map((node: MemoryNode) => (
                         <div
                             key={node.id}
-                            onClick={() => openMemory(node, 'all')}
+                            onClick={() => allSelectMode ? toggleAllSelect(node.id) : openMemory(node, 'all')}
                             style={{
                                 padding: 12, borderRadius: 10, marginBottom: 8,
-                                border: '1px solid #e5e7eb', cursor: 'pointer',
-                                backgroundColor: '#fafafa',
+                                border: `1px solid ${allSelectMode && allSelectedIds.has(node.id) ? '#dc2626' : '#e5e7eb'}`,
+                                cursor: 'pointer',
+                                backgroundColor: allSelectMode && allSelectedIds.has(node.id) ? '#fef2f2' : '#fafafa',
                             }}
                         >
+                            {allSelectMode && (
+                                <div style={{ float: 'right', marginLeft: 8, color: allSelectedIds.has(node.id) ? '#dc2626' : '#9ca3af', display: 'inline-flex' }}>
+                                    <Icon name={allSelectedIds.has(node.id) ? 'square-check' : 'square'} size={16} />
+                                </div>
+                            )}
                             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
                             <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>

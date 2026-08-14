@@ -33,7 +33,7 @@ create table if not exists memory_vectors (
   created_at bigint default (extract(epoch from now()) * 1000)::bigint,
   last_accessed_at bigint default 0,
   access_count int default 0,
-  -- 便利贴置顶截止（ms timestamp，null = 不置顶）
+  -- 便利贴置顶截止（ms timestamp，null = 不置顶）— 字段保留以兼容老数据，新代码不读不写
   pinned_until bigint default null,
   -- 消化衍生记忆的源 + 来源标签
   source_id text default null,
@@ -52,9 +52,10 @@ alter table memory_vectors add column if not exists is_summary boolean default f
 alter table memory_vectors add column if not exists event_box_id text default null;
 alter table memory_vectors add column if not exists valence real default null;
 alter table memory_vectors add column if not exists arousal real default null;
-alter table memory_vectors add column if not exists pinned_until bigint default null;
 alter table memory_vectors add column if not exists source_id text default null;
 alter table memory_vectors add column if not exists origin text default null;
+-- 早期版本曾加过 pinned_until 列；老表可能已有，新代码不再读写
+alter table memory_vectors add column if not exists pinned_until bigint default null;
 
 -- 3. 创建索引
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
@@ -231,7 +232,6 @@ export async function upsertVector(
             created_at: node.createdAt,
             last_accessed_at: node.lastAccessedAt || node.createdAt,
             access_count: node.accessCount || 0,
-            pinned_until: node.pinnedUntil ?? null,
             source_id: node.sourceId ?? null,
             origin: node.origin ?? null,
             archived: !!node.archived,
@@ -288,7 +288,6 @@ export async function upsertVectorBatch(
                 created_at: item.node.createdAt,
                 last_accessed_at: item.node.lastAccessedAt || item.node.createdAt,
                 access_count: item.node.accessCount || 0,
-                pinned_until: item.node.pinnedUntil ?? null,
                 source_id: item.node.sourceId ?? null,
                 origin: item.node.origin ?? null,
                 archived: !!item.node.archived,
@@ -339,7 +338,6 @@ export async function searchVectors(
     createdAt: number;
     lastAccessedAt: number;
     accessCount: number;
-    pinnedUntil: number | null;
     sourceId: string | null;
     origin: string | null;
     archived: boolean;
@@ -377,7 +375,6 @@ export async function searchVectors(
         createdAt: Number(row.created_at) || 0,
         lastAccessedAt: Number(row.last_accessed_at) || 0,
         accessCount: Number(row.access_count) || 0,
-        pinnedUntil: row.pinned_until != null ? Number(row.pinned_until) : null,
         sourceId: row.source_id ?? null,
         origin: row.origin ?? null,
         archived: !!row.archived,
@@ -401,7 +398,7 @@ export async function fetchRemoteByRoom(
 ): Promise<MemoryNode[]> {
     try {
         const params = new URLSearchParams({
-            select: 'memory_id,char_id,content,room,importance,tags,mood,valence,arousal,created_at,last_accessed_at,access_count,pinned_until,source_id,origin,archived,is_summary,event_box_id',
+            select: 'memory_id,char_id,content,room,importance,tags,mood,valence,arousal,created_at,last_accessed_at,access_count,source_id,origin,archived,is_summary,event_box_id',
             char_id: `eq.${charId}`,
             room: `eq.${room}`,
             archived: 'eq.false',
@@ -427,7 +424,6 @@ export async function fetchRemoteByRoom(
             createdAt: Number(row.created_at) || 0,
             lastAccessedAt: Number(row.last_accessed_at) || 0,
             accessCount: Number(row.access_count) || 0,
-            pinnedUntil: row.pinned_until != null ? Number(row.pinned_until) : null,
             sourceId: row.source_id ?? null,
             origin: row.origin ?? undefined,
             archived: !!row.archived,

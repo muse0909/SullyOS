@@ -53,7 +53,7 @@ function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; to
     } catch { return undefined; }
 }
 import { extractMemoriesFromBuffer } from './extraction';
-import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
+import type { RelatedMemoryRef } from './extraction';
 import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';
 import { getReceiptIdsInRange } from './recallReceipts';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
@@ -1077,7 +1077,7 @@ export async function retrieveMemories(
         const anticipations = await tRetrieve('AnticipationDB.getByCharId', 'IDB', AnticipationDB.getByCharId(charId));
 
         // 10. 分数门槛：15 条是上限不是定额——分数不够宁可不注。
-        //     便利贴在 formatter 内部按 pinnedUntil 单独取，不受此门槛影响。
+        //     状态面板由 formatter 单独拼在最前面，不受此门槛影响。
         //
         //     短 query（< 3 字，如"OK""嗯""好"）没有独立语义，
         //     它的 per-msg 搜索命中分数天然虚高（撞 imp 9-10 记忆）。
@@ -1484,14 +1484,7 @@ export async function processNewMessages(
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
         }
 
-        // 6. 收集当前便利贴（供 LLM 判断是否需要提前摘除）
-        const now = Date.now();
-        const allCharNodes = await MemoryNodeDB.getByCharId(charId);
-        const pinnedRefs: PinnedMemoryRef[] = allCharNodes
-            .filter(n => n.pinnedUntil && n.pinnedUntil > now)
-            .map(n => ({ id: n.id, content: n.content.slice(0, 80) }));
-
-        // 7. LLM 提取记忆 — 大缓冲区分批处理（每批 ~250 条消息）
+        // 6. LLM 提取记忆 — 大缓冲区分批处理（每批 ~250 条消息）
         //    避免一次喂太多消息导致 LLM 偷懒只提取几条
         const CHUNK_SIZE = 250;
         const chunks: Message[][] = [];
@@ -1513,8 +1506,9 @@ export async function processNewMessages(
             console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
 
             try {
+                // 状态面板的存储由 extractMemoriesFromBuffer 内部 applyStatusUpdate 写入
                 const extractionResult = await extractMemoriesFromBuffer(
-                    chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
+                    chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs,
                 );
                 allMemories.push(...extractionResult.memories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
@@ -1522,16 +1516,8 @@ export async function processNewMessages(
                 allCorrections.push(...extractionResult.corrections);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
 
-                // 处理便利贴摘除
-                if (extractionResult.unpinIds.length > 0) {
-                    for (const unpinId of extractionResult.unpinIds) {
-                        const node = allCharNodes.find(n => n.id === unpinId);
-                        if (node) {
-                            node.pinnedUntil = null;
-                            await MemoryNodeDB.save(node);
-                        }
-                    }
-                    console.log(`📌 [Pipeline] batch ${ci + 1}: 摘除 ${extractionResult.unpinIds.length} 条便利贴`);
+                if (extractionResult.statusUpdate != null) {
+                    console.log(`📌 [Pipeline] batch ${ci + 1}: 状态面板更新`);
                 }
             } catch (e: any) {
                 console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);

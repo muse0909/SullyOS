@@ -444,7 +444,6 @@ export default function MemoryPalaceApp() {
                                 archived: cm.archived,
                                 isBoxSummary: cm.isBoxSummary,
                                 eventBoxId: cm.eventBoxId,
-                                pinnedUntil: cm.pinnedUntil,
                                 groupId: cm.groupId ?? undefined,
                                 groupName: cm.groupName ?? undefined,
                             };
@@ -471,7 +470,6 @@ export default function MemoryPalaceApp() {
     const [linkCount, setLinkCount] = useState(0);
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
-    const [pinnedNodes, setPinnedNodes] = useState<MemoryNode[]>([]);
 
     // 事件盒视图
     const [allBoxes, setAllBoxes] = useState<EventBox[]>([]);
@@ -817,10 +815,6 @@ export default function MemoryPalaceApp() {
 
         const ants = await AnticipationDB.getByCharId(char.id);
         setAnticipations(ants);
-
-        // 加载便利贴置顶记忆
-        const now = Date.now();
-        setPinnedNodes(allNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now));
 
         let links = 0;
         for (const node of allNodes.slice(0, 5)) {
@@ -3722,50 +3716,7 @@ create table if not exists memory_vectors (
                     )}
                 </div>
 
-                {/* 便利贴置顶 */}
-                {pinnedNodes.length > 0 && !globalSearchQuery.trim() && (
-                    <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Icon name="pin" size={14} />
-                            <span>便利贴</span>
-                        </div>
-                        {pinnedNodes.map(node => {
-                            const daysLeft = Math.ceil((node.pinnedUntil! - Date.now()) / (24 * 60 * 60 * 1000));
-                            const color = ROOM_COLORS[node.room];
-                            return (
-                                <div key={node.id} style={{
-                                    padding: '10px 12px', borderRadius: 10, marginBottom: 6,
-                                    border: '1px solid #fde68a', background: '#fffbeb',
-                                    display: 'flex', alignItems: 'flex-start', gap: 8,
-                                }}>
-                                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(node, 'all')}>
-                                        <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
-                                            {node.content.length > 80 ? node.content.slice(0, 80) + '...' : node.content}
-                                        </div>
-                                        <div style={{ fontSize: 10, color: '#92400e', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                            <RoomIcon room={node.room} size={12} style={{ color: ROOM_COLORS[node.room] }} />
-                                            <span>{getRoomLabel(node.room, userProfile?.name)} · 剩余 {daysLeft} 天</span>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={async () => {
-                                            const updated = { ...node, pinnedUntil: null };
-                                            await MemoryNodeDB.save(updated);
-                                            setPinnedNodes(prev => prev.filter(n => n.id !== node.id));
-                                        }}
-                                        style={{
-                                            flexShrink: 0, padding: '4px 8px', borderRadius: 6,
-                                            border: '1px solid #fde68a', background: 'white',
-                                            fontSize: 10, color: '#92400e', cursor: 'pointer',
-                                        }}
-                                    >
-                                        取消置顶
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+                {/* 便利贴置顶已下线，由状态面板替代（statusPanel.ts） */}
 
                 {/* 搜索结果 or 七个房间 */}
                 {globalSearchQuery.trim().length >= 2 ? (

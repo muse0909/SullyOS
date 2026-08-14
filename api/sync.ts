@@ -492,7 +492,6 @@ async function handleUploadMemories(req: any) {
         const createdAt = Number(m?.createdAt);
         const lastAccessedAt = Number(m?.lastAccessedAt) || Number(m?.createdAt) || 0;
         const accessCount = Number(m?.accessCount) || 0;
-        const pinnedUntil = m?.pinnedUntil == null ? null : Number(m.pinnedUntil);
         const deleted = !!m?.deleted;
         const groupId = typeof m?.groupId === 'string' ? m.groupId : null;
         const groupName = typeof m?.groupName === 'string' ? m.groupName : null;
@@ -510,7 +509,6 @@ async function handleUploadMemories(req: any) {
         if (!Number.isFinite(createdAt) || createdAt < 0) return jsonError(400, 'INVALID_CREATED_AT', 'createdAt 非法');
         if (valence != null && (valence < -1 || valence > 1)) return jsonError(400, 'INVALID_VALENCE', 'valence 必须在 -1 到 1');
         if (arousal != null && (arousal < -1 || arousal > 1)) return jsonError(400, 'INVALID_AROUSAL', 'arousal 必须在 -1 到 1');
-        if (pinnedUntil != null && !Number.isFinite(pinnedUntil)) return jsonError(400, 'INVALID_PINNED_UNTIL', 'pinnedUntil 非法');
 
         const now = nowMs();
         rows.push({
@@ -526,7 +524,6 @@ async function handleUploadMemories(req: any) {
             created_at: createdAt,
             last_accessed_at: lastAccessedAt,
             access_count: accessCount,
-            pinned_until: pinnedUntil,
             group_id: groupId,
             group_name: groupName && groupName.length <= 128 ? groupName : null,
             deleted,
@@ -552,13 +549,13 @@ async function handleUploadMemories(req: any) {
                 INSERT INTO memory_palace_items
                     (pair_code, memory_id, char_id, content, room, tags, importance, mood, valence, arousal,
                      source_id, origin, archived, is_box_summary, event_box_id, created_at, last_accessed_at,
-                     access_count, pinned_until, group_id, group_name, deleted, cloud_updated_at, uploaded_by)
+                     access_count, group_id, group_name, deleted, cloud_updated_at, uploaded_by)
                 VALUES
                     (${row.pair_code}, ${row.memory_id}, ${row.char_id}, ${row.content}, ${row.room},
                      ${row.tags_array}, ${row.importance}, ${row.mood}, ${row.valence}, ${row.arousal},
                      ${row.source_id}, ${row.origin}, ${row.archived}, ${row.is_box_summary},
                      ${row.event_box_id}, ${row.created_at}, ${row.last_accessed_at}, ${row.access_count},
-                     ${row.pinned_until}, ${row.group_id}, ${row.group_name}, true, ${row.cloud_updated_at},
+                     ${row.group_id}, ${row.group_name}, true, ${row.cloud_updated_at},
                      ${row.uploaded_by})
                 ON CONFLICT (pair_code, memory_id) DO UPDATE SET
                     deleted = true, cloud_updated_at = EXCLUDED.cloud_updated_at, uploaded_by = EXCLUDED.uploaded_by
@@ -570,13 +567,13 @@ async function handleUploadMemories(req: any) {
                 INSERT INTO memory_palace_items
                     (pair_code, memory_id, char_id, content, room, tags, importance, mood, valence, arousal,
                      source_id, origin, archived, is_box_summary, event_box_id, created_at, last_accessed_at,
-                     access_count, pinned_until, group_id, group_name, deleted, cloud_updated_at, uploaded_by)
+                     access_count, group_id, group_name, deleted, cloud_updated_at, uploaded_by)
                 VALUES
                     (${row.pair_code}, ${row.memory_id}, ${row.char_id}, ${row.content}, ${row.room},
                      ${row.tags_array}, ${row.importance}, ${row.mood}, ${row.valence}, ${row.arousal},
                      ${row.source_id}, ${row.origin}, ${row.archived}, ${row.is_box_summary},
                      ${row.event_box_id}, ${row.created_at}, ${row.last_accessed_at}, ${row.access_count},
-                     ${row.pinned_until}, ${row.group_id}, ${row.group_name}, false, ${row.cloud_updated_at},
+                     ${row.group_id}, ${row.group_name}, false, ${row.cloud_updated_at},
                      ${row.uploaded_by})
                 ON CONFLICT (pair_code, memory_id) DO UPDATE SET
                     char_id = EXCLUDED.char_id, content = EXCLUDED.content, room = EXCLUDED.room,
@@ -586,7 +583,6 @@ async function handleUploadMemories(req: any) {
                     archived = EXCLUDED.archived, is_box_summary = EXCLUDED.is_box_summary,
                     event_box_id = EXCLUDED.event_box_id,
                     last_accessed_at = EXCLUDED.last_accessed_at, access_count = EXCLUDED.access_count,
-                    pinned_until = EXCLUDED.pinned_until,
                     group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name,
                     deleted = false, cloud_updated_at = EXCLUDED.cloud_updated_at, uploaded_by = EXCLUDED.uploaded_by
                 RETURNING (xmax = 0) AS inserted
@@ -651,7 +647,6 @@ async function handlePullMemories(req: any) {
         createdAt: Number(r.created_at),
         lastAccessedAt: Number(r.last_accessed_at),
         accessCount: r.access_count,
-        pinnedUntil: r.pinned_until == null ? null : Number(r.pinned_until),
         groupId: r.group_id,
         groupName: r.group_name,
         deleted: !!r.deleted,

@@ -1070,15 +1070,25 @@ export async function retrieveMemories(
         // 9. 获取期盼
         const anticipations = await tRetrieve('AnticipationDB.getByCharId', 'IDB', AnticipationDB.getByCharId(charId));
 
-        // 10. 分数门槛：finalScore < 0.55 的记忆不注入
-        //     15 条是上限不是定额——分数不够宁可不注，也不让低质记忆污染 prompt。
+        // 10. 分数门槛：15 条是上限不是定额——分数不够宁可不注。
         //     便利贴在 formatter 内部按 pinnedUntil 单独取，不受此门槛影响。
+        //
+        //     短 query（< 3 字，如"OK""嗯""好"）没有独立语义，
+        //     它的 per-msg 搜索命中分数天然虚高（撞 imp 9-10 记忆）。
+        //     这种情况下把门槛提到 0.7，让"纯靠 context 历史对话"主导召回。
+        //     上下文几百条完全够支撑，不需要低质 per-msg 命中凑数。
         const FINAL_SCORE_THRESHOLD = 0.55;
+        const SHORT_QUERY_THRESHOLD = 0.7;
+        const SHORT_QUERY_MIN_CHARS = 3;
+        const userChars = effectiveSpikes[0]?.text.replace(PUNCT_WS_RE, '').length ?? 0;
+        const threshold = userChars < SHORT_QUERY_MIN_CHARS && userChars > 0
+            ? SHORT_QUERY_THRESHOLD
+            : FINAL_SCORE_THRESHOLD;
         const preFilterCount = results.length;
-        const aboveThreshold = results.filter(r => r.finalScore >= FINAL_SCORE_THRESHOLD);
+        const aboveThreshold = results.filter(r => r.finalScore >= threshold);
         const droppedBelowThreshold = preFilterCount - aboveThreshold.length;
         if (droppedBelowThreshold > 0) {
-            console.log(`🏰 [Retrieve] 分数门槛 < ${FINAL_SCORE_THRESHOLD} 过滤 ${droppedBelowThreshold} 条：${preFilterCount} → ${aboveThreshold.length}`);
+            console.log(`🏰 [Retrieve] 分数门槛 < ${threshold} 过滤 ${droppedBelowThreshold} 条：${preFilterCount} → ${aboveThreshold.length}${userChars < SHORT_QUERY_MIN_CHARS && userChars > 0 ? `（短 query ${userChars} 字，启用 ${SHORT_QUERY_THRESHOLD} 高门槛）` : ''}`);
         }
         results = aboveThreshold;
 

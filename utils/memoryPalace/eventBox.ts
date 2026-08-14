@@ -457,3 +457,110 @@ export async function realMergeMemories(
     console.log(`🔀 [RealMerge] ${keepId} + ${dropId} → 模式 ${mode}，已合并并清理 drop 的 vec/links/node`);
     return { merged: true, keepNode: mergedNode };
 }
+
+// ─── 公共 API：节点清理链 + 盒级批量操作 ───────────────────
+
+/**
+ * 完整清理一条记忆节点：解绑 box → 清关联 → 清本地 vec → 同步远程 vec → 删 node。
+ * 任何一步失败都吞掉异常继续往下走，避免半清理状态。
+ * 危险点：远程 vec 删除是 fire-and-forget，UI 不能阻塞等结果。
+ */
+export async function deleteMemoryNode(
+    nodeId: string,
+    remoteVectorConfig?: RemoteVectorConfig,
+): Promise<void> {
+    try { await removeMemoryFromBox(nodeId); } catch { /* 可能没绑 box */ }
+    const links = await MemoryLinkDB.getByNodeId(nodeId);
+    for (const l of links) {
+        try { await MemoryLinkDB.delete(l.id); } catch { /* ignore */ }
+    }
+    try { await MemoryVectorDB.delete(nodeId); } catch { /* 可能没 vec */ }
+    if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
+        // 远程 vec 同步走 fire-and-forget，跟 realMergeMemories 一致
+        import('./supabaseVector').then(({ deleteVector }) =>
+            deleteVector(remoteVectorConfig, nodeId).catch(() => {})
+        );
+    }
+    await MemoryNodeDB.delete(nodeId);
+}
+
+/**
+ * 解散一个 EventBox：
+ *  - summary 节点走完整清理链（删 node + 清 vec + 远程同步）
+ *  - archived 节点全部复活到"地上"（archived=false, eventBoxId=null），vec 保留 → 各自独立召回
+ *  - live 节点全部释放到"地上"（eventBoxId=null），vec 保留
+ *  - 盒记录删除
+ * 召回效果：原本 1 条 summary 命中的场景，改为命中各自独立记忆时只召回那 1 条。
+ */
+export async function dissolveEventBox(
+    boxId: string,
+    options?: { remoteVectorConfig?: RemoteVectorConfig },
+): Promise<{
+    dissolved: boolean;
+    releasedArchived: number;
+    releasedLive: number;
+    deletedSummary: boolean;
+    error?: string;
+}> {
+    const box = await EventBoxDB.getById(boxId);
+    if (!box) {
+        return { dissolved: false, releasedArchived: 0, releasedLive: 0, deletedSummary: false, error: 'box 不存在' };
+    }
+
+    if (box.summaryNodeId) {
+        await deleteMemoryNode(box.summaryNodeId, options?.remoteVectorConfig);
+    }
+
+    let releasedArchived = 0;
+    for (const id of box.archivedMemoryIds) {
+        const node = await MemoryNodeDB.getById(id);
+        if (!node) continue;
+        node.archived = false;
+        node.eventBoxId = null;
+        await MemoryNodeDB.save(node);
+        releasedArchived++;
+    }
+
+    let releasedLive = 0;
+    for (const id of box.liveMemoryIds) {
+        const node = await MemoryNodeDB.getById(id);
+        if (!node) continue;
+        node.eventBoxId = null;
+        await MemoryNodeDB.save(node);
+        releasedLive++;
+    }
+
+    await EventBoxDB.delete(boxId);
+
+    console.log(`💥 [EventBox] 解散 ${boxId}：summary ${box.summaryNodeId ? '已删' : '无'}，archived 复活 ${releasedArchived}，live 释放 ${releasedLive}`);
+    return { dissolved: true, releasedArchived, releasedLive, deletedSummary: !!box.summaryNodeId };
+}
+
+/**
+ * 把盒内所有 archived 节点一键复活到活池，盒本身保留。
+ * 区别于 dissolveEventBox：这里盒还在，只是不再有"压入 summary 不召回"的 archived。
+ * 危险点：archived 复活后 vec 不动，archived=false 是 metadata 标记。
+ */
+export async function reviveAllArchivedInBox(boxId: string): Promise<{ revived: number; error?: string }> {
+    const box = await EventBoxDB.getById(boxId);
+    if (!box) return { revived: 0, error: 'box 不存在' };
+
+    let revived = 0;
+    for (const id of box.archivedMemoryIds) {
+        const node = await MemoryNodeDB.getById(id);
+        if (!node) continue;
+        node.archived = false;
+        await MemoryNodeDB.save(node);
+        // box 内部列表：archived → live
+        if (!box.liveMemoryIds.includes(id)) {
+            box.liveMemoryIds.push(id);
+        }
+        revived++;
+    }
+    box.archivedMemoryIds = [];
+    box.updatedAt = Date.now();
+    await EventBoxDB.save(box);
+
+    console.log(`🌅 [EventBox] ${boxId} 一键复活 ${revived} 条 archived → live`);
+    return { revived };
+}

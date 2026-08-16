@@ -43,15 +43,16 @@ const DrawGuessApp: React.FC = () => {
     const currentRole = characters.find(c => c.id === currentRoleId);
 
     // 画板尺寸跟随容器（用 useLayoutEffect 同步在 layout 后跑，offsetWidth 更可靠）
+    // 注意：只依赖 phase，不依赖 strokes —— strokes 变化时不应重设 canvas.width（会清空画布）
     useLayoutEffect(() => {
         if (phase === 'setup') return;
         const canvas = canvasRef.current;
         if (!canvas) return;
         const size = canvas.offsetWidth;
-        if (size === 0) return;  // 容器还没 layout 出来，跳过
+        if (size === 0) return;
         canvas.width = size * 2;
         canvas.height = size * 2;
-    }, [phase, strokes]);
+    }, [phase]);
 
     // 重绘所有笔画
     useEffect(() => {

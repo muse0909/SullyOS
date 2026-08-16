@@ -587,9 +587,14 @@ export async function reviveAllArchivedInBox(boxId: string): Promise<{ revived: 
 }
 
 /**
- * 扫描"幽灵整合回忆"：isBoxSummary=true 但盒已删 / eventBoxId 指向 null 或不存在的盒
- * 这些是历史债（事件盒解散后云端同步把 summary 复活成独立记忆），
- * UI 上一条条手动删。按 content 长度倒序排列。
+ * 扫描"幽灵整合回忆"：
+ * 1. isBoxSummary=true 但 eventBoxId 指向 null / 不存在盒
+ * 2. isBoxSummary=false 但符合"幽灵 summary-like 独立记忆"特征：
+ *    - eventBoxId === null
+ *    - content 长度 >= 1000（典型 summary 超长，独立小段记忆很少这么长）
+ *    - importance >= 7（summary 通常高重要度）
+ *    这种情况：老版本云端同步把 summary 复活成独立记忆（isBoxSummary 被改成 false）
+ * UI 上一条条手动拆 / 删。按 content 长度倒序排列。
  */
 export async function scanGhostSummaries(charId: string): Promise<Array<{
     id: string;
@@ -609,18 +614,37 @@ export async function scanGhostSummaries(charId: string): Promise<Array<{
         createdAt: number;
     }> = [];
     for (const node of allNodes) {
-        if (!node.isBoxSummary) continue;
-        // 幽灵：eventBoxId 指向 null 或者指向不存在的盒
-        const box = node.eventBoxId ? await EventBoxDB.getById(node.eventBoxId) : null;
-        if (box) continue;
-        ghosts.push({
-            id: node.id,
-            content: node.content,
-            contentLength: node.content.length,
-            importance: node.importance,
-            eventBoxId: node.eventBoxId,
-            createdAt: node.createdAt,
-        });
+        if (node.isBoxSummary) {
+            // 条件 1：isBoxSummary=true 但 eventBoxId 指向 null / 不存在盒
+            const box = node.eventBoxId ? await EventBoxDB.getById(node.eventBoxId) : null;
+            if (!box) {
+                ghosts.push({
+                    id: node.id,
+                    content: node.content,
+                    contentLength: node.content.length,
+                    importance: node.importance,
+                    eventBoxId: node.eventBoxId,
+                    createdAt: node.createdAt,
+                });
+            }
+        } else {
+            // 条件 2：isBoxSummary=false 但符合幽灵 summary-like 独立记忆
+            // （老版本云端同步把 summary 改 isBoxSummary=false 后复活的独立记忆）
+            if (
+                node.eventBoxId === null &&
+                node.content.length >= 1000 &&
+                node.importance >= 7
+            ) {
+                ghosts.push({
+                    id: node.id,
+                    content: node.content,
+                    contentLength: node.content.length,
+                    importance: node.importance,
+                    eventBoxId: node.eventBoxId,
+                    createdAt: node.createdAt,
+                });
+            }
+        }
     }
     ghosts.sort((a, b) => b.contentLength - a.contentLength);
     return ghosts;

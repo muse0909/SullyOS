@@ -495,6 +495,16 @@ export default function MemoryPalaceApp() {
     const [scanningGhosts, setScanningGhosts] = useState(false);
     const [deletingGhostId, setDeletingGhostId] = useState<string | null>(null);
 
+    // 手动拆分 summary 弹窗
+    const [showExpandPanel, setShowExpandPanel] = useState(false);
+    const [expandSourceNode, setExpandSourceNode] = useState<{
+        id: string; content: string; contentLength: number; importance: number; eventBoxId: string | null; createdAt: number;
+    } | null>(null);
+    const [expandFragments, setExpandFragments] = useState<Array<{
+        content: string; createdAt: number; importance: number; tags: string[]; room: MemoryRoom; mood: string;
+    }>>([]);
+    const [expanding, setExpanding] = useState(false);
+
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
     const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
@@ -1146,6 +1156,87 @@ export default function MemoryPalaceApp() {
             alert(`删除失败：${e?.message || e}`);
         } finally {
             setDeletingGhostId(null);
+        }
+    };
+
+    const handleExpandSummary = (ghost: typeof ghostList[number]) => {
+        setExpandSourceNode(ghost);
+        setExpandFragments([{
+            content: '',
+            createdAt: Date.now(),
+            importance: ghost.importance,
+            tags: [],
+            room: 'living_room' as MemoryRoom,
+            mood: 'peaceful',
+        }]);
+        setShowGhostPanel(false);
+        setShowExpandPanel(true);
+    };
+
+    const handleAddFragment = () => {
+        if (!expandSourceNode) return;
+        setExpandFragments(prev => [...prev, {
+            content: '',
+            createdAt: Date.now(),
+            importance: expandSourceNode.importance,
+            tags: [],
+            room: 'living_room' as MemoryRoom,
+            mood: 'peaceful',
+        }]);
+    };
+
+    const handleUpdateFragment = (idx: number, patch: Partial<typeof expandFragments[number]>) => {
+        setExpandFragments(prev => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
+    };
+
+    const handleRemoveFragment = (idx: number) => {
+        setExpandFragments(prev => prev.filter((_, i) => i !== idx));
+    };
+
+    const handleSubmitExpand = async () => {
+        if (!char || !expandSourceNode) return;
+        if (expandFragments.length === 0) {
+            alert('至少要有一条片段');
+            return;
+        }
+        const emptyIdx = expandFragments.findIndex(f => !f.content.trim());
+        if (emptyIdx >= 0) {
+            alert(`第 ${emptyIdx + 1} 条片段内容为空，请填写`);
+            return;
+        }
+        setExpanding(true);
+        try {
+            for (const frag of expandFragments) {
+                const node: MemoryNode = {
+                    id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    charId: char.id,
+                    content: frag.content.trim(),
+                    room: frag.room,
+                    tags: frag.tags,
+                    importance: frag.importance,
+                    mood: frag.mood,
+                    embedded: false,
+                    createdAt: frag.createdAt,
+                    lastAccessedAt: frag.createdAt,
+                    accessCount: 0,
+                    sourceId: null,
+                    origin: 'system',
+                    eventBoxId: null,
+                    archived: false,
+                    isBoxSummary: false,
+                };
+                await MemoryNodeDB.save(node);
+                // 每个节点 id 唯一（用 1ms 间隔错开 Date.now）
+                await new Promise(r => setTimeout(r, 2));
+            }
+            alert(`已拆出 ${expandFragments.length} 条独立记忆\n\n原 summary 节点（ID: ${expandSourceNode.id.slice(0, 20)}...）请手动删除`);
+            setShowExpandPanel(false);
+            setExpandSourceNode(null);
+            setExpandFragments([]);
+        } catch (e: any) {
+            alert(`拆分失败：${e?.message || e}`);
+        } finally {
+            setExpanding(false);
         }
     };
 
@@ -5000,17 +5091,27 @@ create table if not exists memory_vectors (
                                             <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 600 }}>
                                                 {ghost.contentLength} 字 · 重要性 {ghost.importance} · {new Date(ghost.createdAt).toLocaleDateString('zh-CN')}
                                             </div>
-                                            <button
-                                                onClick={() => handleDeleteGhost(ghost.id)}
-                                                disabled={deletingGhostId === ghost.id}
-                                                style={{
-                                                    padding: '4px 10px', borderRadius: 6, border: 'none',
-                                                    background: deletingGhostId === ghost.id ? '#9ca3af' : '#dc2626',
-                                                    color: 'white', fontSize: 11, fontWeight: 600,
-                                                    cursor: deletingGhostId === ghost.id ? 'not-allowed' : 'pointer',
-                                                    flexShrink: 0,
-                                                }}
-                                            >{deletingGhostId === ghost.id ? '删除中...' : '删除'}</button>
+                                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                                <button
+                                                    onClick={() => handleExpandSummary(ghost)}
+                                                    title="手动拆成多条独立记忆"
+                                                    style={{
+                                                        padding: '4px 10px', borderRadius: 6, border: 'none',
+                                                        background: '#f59e0b', color: 'white', fontSize: 11, fontWeight: 600,
+                                                        cursor: 'pointer',
+                                                    }}
+                                                >🪓 拆</button>
+                                                <button
+                                                    onClick={() => handleDeleteGhost(ghost.id)}
+                                                    disabled={deletingGhostId === ghost.id}
+                                                    style={{
+                                                        padding: '4px 10px', borderRadius: 6, border: 'none',
+                                                        background: deletingGhostId === ghost.id ? '#9ca3af' : '#dc2626',
+                                                        color: 'white', fontSize: 11, fontWeight: 600,
+                                                        cursor: deletingGhostId === ghost.id ? 'not-allowed' : 'pointer',
+                                                    }}
+                                                >{deletingGhostId === ghost.id ? '删除中...' : '删除'}</button>
+                                            </div>
                                         </div>
                                         <div style={{ fontSize: 12, color: '#1f2937', lineHeight: 1.5 }}>
                                             {ghost.content.length > 200 ? ghost.content.slice(0, 200) + '...' : ghost.content}
@@ -5018,6 +5119,138 @@ create table if not exists memory_vectors (
                                     </div>
                                 ))
                             )}
+                        </div>
+                    </div>
+                )}
+
+                {/* 手动拆分 summary 弹窗 */}
+                {showExpandPanel && expandSourceNode && (
+                    <div
+                        onClick={() => !expanding && setShowExpandPanel(false)}
+                        style={{
+                            position: 'fixed', inset: 0, zIndex: 101,
+                            background: 'rgba(0,0,0,0.4)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+                        }}
+                    >
+                        <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: 'white', borderRadius: 16, padding: 20,
+                                width: '100%', maxWidth: 720, maxHeight: '90vh', overflowY: 'auto',
+                                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>
+                                    🪓 手动拆分 summary（{expandSourceNode.contentLength} 字 → {expandFragments.length} 条）
+                                </div>
+                                <button
+                                    onClick={() => setShowExpandPanel(false)}
+                                    disabled={expanding}
+                                    style={{ background: 'none', border: 'none', cursor: expanding ? 'not-allowed' : 'pointer', fontSize: 18, color: '#9ca3af', padding: 0, lineHeight: 1 }}
+                                >×</button>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>
+                                左边是 summary 全文（只读，方便复制），右边填入每条独立记忆。提交后原 summary 节点**不会自动删除**，请在 IDB 工具或扫幽灵弹窗里手动删除。
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                {/* 左：summary 全文 */}
+                                <div>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
+                                        summary 全文（只读）
+                                    </div>
+                                    <div style={{
+                                        fontSize: 11, color: '#1f2937', lineHeight: 1.6, padding: 10,
+                                        background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0',
+                                        maxHeight: '60vh', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                    }}>
+                                        {expandSourceNode.content}
+                                    </div>
+                                </div>
+
+                                {/* 右：片段列表 */}
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>
+                                            片段列表（{expandFragments.length}）
+                                        </div>
+                                        <button
+                                            onClick={handleAddFragment}
+                                            style={{
+                                                padding: '4px 10px', borderRadius: 6, border: 'none',
+                                                background: '#3b82f6', color: 'white', fontSize: 11, fontWeight: 600,
+                                                cursor: 'pointer',
+                                            }}
+                                        >+ 加一条</button>
+                                    </div>
+
+                                    {expandFragments.map((frag, idx) => (
+                                        <div key={idx} style={{
+                                            marginBottom: 10, padding: 8, borderRadius: 8,
+                                            border: '1px solid #e5e7eb', background: '#f9fafb',
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                                <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600 }}>#{idx + 1}</div>
+                                                <button
+                                                    onClick={() => handleRemoveFragment(idx)}
+                                                    disabled={expandFragments.length === 1 || expanding}
+                                                    style={{
+                                                        background: 'none', border: 'none',
+                                                        cursor: (expandFragments.length === 1 || expanding) ? 'not-allowed' : 'pointer',
+                                                        fontSize: 11, color: (expandFragments.length === 1 || expanding) ? '#d1d5db' : '#dc2626',
+                                                    }}
+                                                >删</button>
+                                            </div>
+                                            <textarea
+                                                value={frag.content}
+                                                onChange={e => handleUpdateFragment(idx, { content: e.target.value })}
+                                                placeholder="从 summary 复制粘贴一段"
+                                                disabled={expanding}
+                                                style={{
+                                                    width: '100%', minHeight: 60, padding: 6, fontSize: 11,
+                                                    border: '1px solid #d1d5db', borderRadius: 6, fontFamily: 'inherit',
+                                                    resize: 'vertical', boxSizing: 'border-box',
+                                                }}
+                                            />
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 4 }}>
+                                                <div>
+                                                    <label style={{ fontSize: 9, color: '#6b7280', display: 'block' }}>时间</label>
+                                                    <input
+                                                        type="datetime-local"
+                                                        value={new Date(frag.createdAt - new Date(frag.createdAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                                                        onChange={e => handleUpdateFragment(idx, { createdAt: new Date(e.target.value).getTime() })}
+                                                        disabled={expanding}
+                                                        style={{ width: '100%', padding: 4, fontSize: 10, border: '1px solid #d1d5db', borderRadius: 4, boxSizing: 'border-box' }}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ fontSize: 9, color: '#6b7280', display: 'block' }}>重要性: {frag.importance}</label>
+                                                    <input
+                                                        type="range" min="1" max="10" step="1"
+                                                        value={frag.importance}
+                                                        onChange={e => handleUpdateFragment(idx, { importance: parseInt(e.target.value) })}
+                                                        disabled={expanding}
+                                                        style={{ width: '100%' }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    <button
+                                        onClick={handleSubmitExpand}
+                                        disabled={expanding}
+                                        style={{
+                                            width: '100%', padding: '10px 0', borderRadius: 8, marginTop: 8,
+                                            background: expanding ? '#9ca3af' : '#10b981',
+                                            color: 'white', fontWeight: 600, fontSize: 13,
+                                            border: 'none', cursor: expanding ? 'not-allowed' : 'pointer',
+                                        }}
+                                    >{expanding ? '保存中...' : `✓ 拆出 ${expandFragments.length} 条独立记忆`}</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -5135,6 +5368,11 @@ create table if not exists memory_vectors (
     if (view === 'memory' && selectedNode) {
         const roomColor = ROOM_COLORS[editing ? editRoom : selectedNode.room];
         const MOODS = ['happy', 'sad', 'angry', 'anxious', 'tender', 'peaceful', 'excited', 'nostalgic', 'frustrated', 'hopeful', 'lonely', 'grateful'];
+        const MOOD_LABELS: Record<string, string> = {
+            happy: '开心', sad: '伤心', angry: '生气', anxious: '焦虑',
+            tender: '温柔', peaceful: '平静', excited: '兴奋', nostalgic: '怀念',
+            frustrated: '沮丧', hopeful: '有希望', lonely: '孤独', grateful: '感激',
+        };
 
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
@@ -5194,7 +5432,7 @@ create table if not exists memory_vectors (
                                         className={inputClass}
                                         style={{ fontFamily: 'inherit' }}
                                     >
-                                        {MOODS.map(m => <option key={m} value={m}>{m}</option>)}
+                                        {MOODS.map(m => <option key={m} value={m}>{MOOD_LABELS[m] || m}</option>)}
                                     </select>
                                 </div>
                             </div>
@@ -5264,7 +5502,7 @@ create table if not exists memory_vectors (
                                     <span>{getRoomLabel(selectedNode.room, userProfile?.name)}</span>
                                 </div>
                                 <div>重要性: {'★'.repeat(selectedNode.importance)}{'☆'.repeat(10 - selectedNode.importance)}</div>
-                                <div>情绪: {selectedNode.mood}</div>
+                                <div>情绪: {MOOD_LABELS[selectedNode.mood] || selectedNode.mood}</div>
                                 <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>
                                 <div>最后访问: {new Date(selectedNode.lastAccessedAt).toLocaleString('zh-CN')}</div>
                                 <div>访问次数: {selectedNode.accessCount}</div>

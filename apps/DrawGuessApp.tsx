@@ -40,7 +40,47 @@ const DrawGuessApp: React.FC = () => {
     const [isEraser, setIsEraser] = useState(false);
     const [strokes, setStrokes] = useState<Stroke[]>([]);
 
+    // 独立视觉 API 配置（存 localStorage，优先于系统识图配置）
+    const VISION_CFG_KEY = 'sullyos-draw-guess-vision-api';
+    const [visionCfg, setVisionCfg] = useState<{ baseUrl: string; apiKey: string; model: string } | null>(null);
+    const [showVisionCfg, setShowVisionCfg] = useState(false);
+    const [visionForm, setVisionForm] = useState({ baseUrl: '', apiKey: '', model: '' });
+
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(VISION_CFG_KEY);
+            if (saved) setVisionCfg(JSON.parse(saved));
+        } catch { }
+    }, []);
+
     const currentRole = characters.find(c => c.id === currentRoleId);
+
+    const openVisionCfg = () => {
+        setVisionForm(visionCfg || { baseUrl: '', apiKey: '', model: '' });
+        setShowVisionCfg(true);
+    };
+
+    const saveVisionCfg = () => {
+        const b = visionForm.baseUrl.trim();
+        const k = visionForm.apiKey.trim();
+        const m = visionForm.model.trim();
+        if (!b || !k || !m) {
+            addToast('三个字段都要填', 'error');
+            return;
+        }
+        const cfg = { baseUrl: b, apiKey: k, model: m };
+        setVisionCfg(cfg);
+        localStorage.setItem(VISION_CFG_KEY, JSON.stringify(cfg));
+        setShowVisionCfg(false);
+        addToast('视觉 API 已保存', 'success');
+    };
+
+    const clearVisionCfg = () => {
+        setVisionCfg(null);
+        localStorage.removeItem(VISION_CFG_KEY);
+        setShowVisionCfg(false);
+        addToast('已清除，回退到系统识图配置', 'success');
+    };
 
     // 画板尺寸跟随容器（用 useLayoutEffect 同步在 layout 后跑，offsetWidth 更可靠）
     // 注意：只依赖 phase，不依赖 strokes —— strokes 变化时不应重设 canvas.width（会清空画布）
@@ -171,17 +211,27 @@ const DrawGuessApp: React.FC = () => {
     const sysLog = (text: string) => appendChat('系统', text);
 
     // 视觉模型识别（B 方案：独立视觉 API，不带角色人设，纯识别）
+    // 优先级：本 App 独立配置（localStorage） > 系统识图配置
     const identifyImage = async (imageBase64: string): Promise<string> => {
-        if (!apiConfig?.visionBaseUrl || !apiConfig?.visionApiKey || !apiConfig?.visionModel) {
-            throw new Error('视觉 API 未配置（设置 → 视觉模型 填 baseUrl / apiKey / model）');
+        let vUrl: string, vKey: string, vModel: string;
+        if (visionCfg) {
+            vUrl = visionCfg.baseUrl;
+            vKey = visionCfg.apiKey;
+            vModel = visionCfg.model;
+        } else if (apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel) {
+            vUrl = apiConfig.visionBaseUrl;
+            vKey = apiConfig.visionApiKey;
+            vModel = apiConfig.visionModel;
+        } else {
+            throw new Error('视觉 API 未配置（点右上 ⚙ 在你画我猜里设置，或在系统设置 → 识图配置）');
         }
         const data = await safeFetchJson(
-            `${apiConfig.visionBaseUrl}/chat/completions`,
+            `${vUrl}/chat/completions`,
             {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${apiConfig.visionApiKey}`, 'Content-Type': 'application/json' },
+                headers: { 'Authorization': `Bearer ${vKey}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: apiConfig.visionModel,
+                    model: vModel,
                     messages: [{
                         role: 'user',
                         content: [
@@ -418,7 +468,9 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                 </div>
                 {phase !== 'setup' ? (
                     <button onClick={quitGame} className="text-sm text-gray-500">退出</button>
-                ) : <div className="w-8" />}
+                ) : (
+                    <button onClick={openVisionCfg} className="text-xl text-gray-600 px-1" title="视觉 API 配置">⚙</button>
+                )}
             </div>
 
             {/* 设置阶段 */}
@@ -471,6 +523,14 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                     >
                         开始游戏
                     </button>
+
+                    <div className="text-xs text-gray-400 text-center pt-2 border-t border-gray-100">
+                        视觉 API：{visionCfg
+                            ? <span className="text-green-600">独立配置（{visionCfg.model}）</span>
+                            : apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel
+                                ? <span className="text-gray-600">系统配置（{apiConfig.visionModel}）</span>
+                                : <span className="text-red-500">未配置 · 点右上 ⚙</span>}
+                    </div>
                 </div>
             )}
 
@@ -586,6 +646,67 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                         </div>
                     )}
                 </>
+            )}
+
+            {/* 视觉 API 配置 Modal */}
+            {showVisionCfg && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl w-full max-w-sm p-4 space-y-3">
+                        <div className="font-bold text-base">你画我猜 · 视觉 API</div>
+                        <div className="text-xs text-gray-500">
+                            独立配置：仅"你画我猜"的识图用这个，不影响系统其他功能。
+                        </div>
+                        <div>
+                            <div className="text-xs text-gray-600 mb-1">baseUrl</div>
+                            <input
+                                value={visionForm.baseUrl}
+                                onChange={e => setVisionForm({ ...visionForm, baseUrl: e.target.value })}
+                                placeholder="https://generativelanguage.googleapis.com/v1beta"
+                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <div className="text-xs text-gray-600 mb-1">apiKey</div>
+                            <input
+                                value={visionForm.apiKey}
+                                onChange={e => setVisionForm({ ...visionForm, apiKey: e.target.value })}
+                                placeholder="AIza..."
+                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <div className="text-xs text-gray-600 mb-1">model</div>
+                            <input
+                                value={visionForm.model}
+                                onChange={e => setVisionForm({ ...visionForm, model: e.target.value })}
+                                placeholder="gemini-2.0-flash"
+                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                            <button
+                                onClick={() => setShowVisionCfg(false)}
+                                className="flex-1 py-2 bg-gray-100 rounded text-sm"
+                            >
+                                取消
+                            </button>
+                            {visionCfg && (
+                                <button
+                                    onClick={clearVisionCfg}
+                                    className="px-3 py-2 bg-red-50 text-red-600 rounded text-sm"
+                                >
+                                    清除
+                                </button>
+                            )}
+                            <button
+                                onClick={saveVisionCfg}
+                                className="flex-1 py-2 bg-blue-500 text-white rounded text-sm font-bold"
+                            >
+                                保存
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

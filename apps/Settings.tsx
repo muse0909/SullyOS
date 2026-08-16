@@ -1537,6 +1537,18 @@ const handleSaveTts = () => {
                 • <b>聊天记录 (.txt)</b>: 只导出聊天文字为纯文本格式，可选多个角色。txt 只用于保留/阅读。<br/>
                 • 兼容旧版 JSON 备份文件的导入。
             </p>
+            {/* 格式化系统提示块（保留云端备份） */}
+            <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="text-[11px] font-bold text-amber-800 mb-1.5 flex items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.7 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                    <span>⚠️ 格式化前请先看完</span>
+                </div>
+                <div className="text-[10px] text-amber-900 leading-relaxed space-y-1">
+                    <div><b className="text-red-600">会清空：</b>所有角色、聊天记录、便利贴、小纸条、记忆宫殿、事件盒、主动消息、IDB 全部数据 + 大部分浏览器本地存储。</div>
+                    <div><b className="text-emerald-700">会保留：</b>云端备份配对码和设备 ID（<code className="bg-amber-100 px-1 rounded">os_cloud_sync_config</code> + <code className="bg-amber-100 px-1 rounded">os_sync_device_id</code>），配对状态不丢；云端数据不动。</div>
+                    <div><b className="text-red-600">此操作不可撤销</b>。建议先点击上方"整合导出"做一份本地备份。</div>
+                </div>
+            </div>
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                 格式化系统 (出厂设置)
             </button>
@@ -2503,6 +2515,12 @@ const handleSaveTts = () => {
           <div className="flex flex-col items-center gap-3 py-2">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-red-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
               <p className="text-center text-sm text-slate-600 font-medium">这将<span className="text-red-500 font-bold">永久删除</span>所有角色、聊天记录和设置，且无法恢复！</p>
+              <div className="w-full mt-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-left">
+                  <div className="text-[11px] font-bold text-emerald-800 mb-1.5">✅ 会保留云端备份</div>
+                  <div className="text-[10px] text-emerald-900 leading-relaxed">
+                      格式化后你的配对码和设备 ID 仍保留，云端数据不动。换浏览器 / 换设备登录仍能恢复数据。
+                  </div>
+              </div>
           </div>
       </Modal>
 

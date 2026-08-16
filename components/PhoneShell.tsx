@@ -23,6 +23,7 @@ import SocialApp from '../apps/SocialApp';
 import StudyApp from '../apps/StudyApp'; 
 import FAQApp from '../apps/FAQApp'; 
 import GameApp from '../apps/GameApp'; 
+import DrawGuessApp from '../apps/DrawGuessApp';
 import WorldbookApp from '../apps/WorldbookApp';
 import NovelApp from '../apps/NovelApp'; 
 import BankApp from '../apps/BankApp';
@@ -410,6 +411,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Study: return <StudyApp />; 
       case AppID.FAQ: return <FAQApp />; 
       case AppID.Game: return <GameApp />; 
+      case AppID.DrawGuess: return <DrawGuessApp />;
       case AppID.Worldbook: return <WorldbookApp />;
       case AppID.Novel: return <NovelApp />; 
       case AppID.Bank: return <BankApp />;

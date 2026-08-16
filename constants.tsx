@@ -33,6 +33,7 @@ import {
   Notebook,
   Plugs,
   Planet,
+  PaintBucket,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -70,6 +71,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
   QQBridge: ({ className }) => <Plugs className={className} weight="bold" />,
   VRWorld: ({ className }) => <Planet className={className} weight="bold" />,
+  DrawGuess: ({ className }) => <PaintBucket className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -102,6 +104,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   // 暮色 2026-07-31：情侣空间不放 Launcher（暮色"Launcher 主页的就不要了"），只从发现页进
   //   AppID.CoupleSpace 保留以支持 DiscoverPage 入口的 openApp(AppID.CoupleSpace)
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
+  { id: AppID.DrawGuess, name: '你画我猜', icon: 'DrawGuess', color: 'sky' },
 ];
 
 export const DOCK_APPS = [AppID.Call, AppID.Chat, AppID.GroupChat, AppID.Settings];

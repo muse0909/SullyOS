@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'reac
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
+import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
 import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
@@ -3150,7 +3151,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 暮色 2026-08-07：每天最多 5 条 — 系统硬限制（即使 prompt 写了，AI 仍可能超）
             // 暮色 2026-08-07：触发路径收窄到"主动消息 + 正常聊天"——其余 5 个递归路径（read-note / search / diary / read-diary / fs-diary / fs-read-diary）不解析
             //   allowXiaoZhiTiaoParse 闭包 flag 由各递归路径自己设 false
-            if (!allowXiaoZhiTiaoParse) {
+            if (!allowXiaoZhiTiaoParse || !isXiaoZhiTiaoEnabled()) {
                 aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
             } else try {
                 // AI 没输出小纸条标记 → 跳过 IDB 查询 / 计数 / 解析

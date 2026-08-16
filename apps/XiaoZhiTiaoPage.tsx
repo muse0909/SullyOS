@@ -17,7 +17,7 @@ import NotebookBackground, {
     setStoredNotebookBuiltin,
     BuiltinBg,
 } from '../components/notes/NotebookBackground';
-import { XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY } from '../utils/chatPrompts';
+import { XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY, XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY } from '../utils/chatPrompts';
 import {
     getStoredXiaoZhiTiaoStyles,
     setStoredXiaoZhiTiaoStyles,
@@ -248,6 +248,25 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
         } catch { /* ignore */ }
     }, []);
 
+    // 2026-08-16：小纸条总开关（默认开启）
+    const [xztEnabled, setXztEnabled] = useState<boolean>(true);
+    useEffect(() => {
+        try {
+            const v = localStorage.getItem(XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY);
+            setXztEnabled(v === null ? true : v === 'true');
+        } catch { /* ignore */ }
+    }, []);
+    const handleToggleXztEnabled = (next: boolean) => {
+        setXztEnabled(next);
+        try {
+            localStorage.setItem(XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY, next ? 'true' : 'false');
+            setStatusMsg(next ? '小纸条已开启' : '小纸条已关闭');
+            setTimeout(() => setStatusMsg(''), 1500);
+        } catch (e: any) {
+            setStatusMsg('保存失败：' + (e?.message || '未知错误'));
+        }
+    };
+
     // 2026-07-22：自定义小纸条样式（独立命名 + 独立 key）
     const [styles, setStyles] = useState<XiaoZhiTiaoStyles>({ groups: {}, activeGroup: null });
     const [newGroupName, setNewGroupName] = useState<string>('');
@@ -352,6 +371,34 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
                 {/* 内容 */}
                 <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6 no-scrollbar">
+                    {/* 2026-08-16：小纸条总开关 */}
+                    <section>
+                        <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">小纸条</div>
+                        <div className="flex items-center justify-between gap-3 px-1">
+                            <div className="flex-1">
+                                <div className="text-sm font-semibold text-slate-700 mb-1">启用小纸条</div>
+                                <div className="text-[11px] text-slate-500 leading-relaxed">
+                                    关闭后：AI 不再写小纸条，prompt 段也不发给模型（连请求体里都没有），已写的小纸条还在。
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => handleToggleXztEnabled(!xztEnabled)}
+                                title={xztEnabled ? '点击关闭' : '点击开启'}
+                                style={{
+                                    width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                                    background: xztEnabled ? '#10b981' : '#cbd5e1',
+                                    position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+                                }}
+                            >
+                                <div style={{
+                                    position: 'absolute', top: 2, left: xztEnabled ? 22 : 2,
+                                    width: 20, height: 20, borderRadius: '50%', background: 'white',
+                                    transition: 'left 0.2s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                }} />
+                            </button>
+                        </div>
+                    </section>
+
                     {/* 搜索区 */}
                     <section>
                         <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">搜索</div>

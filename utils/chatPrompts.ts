@@ -18,6 +18,16 @@ import { shouldNotifyRealtime, markRealtimeNotified } from './realtimeNotified';
 
 // 2026-07-22：小纸条 prompt 自定义（跟私密记事完全独立，暮色原话"完全脱离小小窝"）
 export const XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY = 'sullyos_xiaoZhiTiaoPrompt';
+// 2026-08-16：小纸条总开关（暮色要求"连请求体里的 prompt 都停掉"）
+export const XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY = 'sullyos_xiaoZhiTiaoEnabled';
+export function isXiaoZhiTiaoEnabled(): boolean {
+    try {
+        const v = localStorage.getItem(XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY);
+        return v === null ? true : v === 'true';
+    } catch {
+        return true;
+    }
+}
 export function getCustomXiaoZhiTiaoPrompt(): string | null {
     try {
         const v = localStorage.getItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY);
@@ -905,7 +915,7 @@ ${!isPureMode ? `${[
    - 不要在每条消息末尾都来一个 \`[[MOMENT_POST:...]]\`，那会刷屏
    - 看到最近列表里没有想评论/点赞的，就别勉强
  ` : ''}
-${!isPureMode ? `${[
+${!isPureMode && isXiaoZhiTiaoEnabled() ? `${[
 ].length + 9}. ${getCustomXiaoZhiTiaoPrompt() || `**📝 小纸条（你给 ${userProfile.name} 留的随手小纸条）**
 
    你手边一直有纸和笔。两种时候你会拿起来写：一是想她了，但她在忙，你不想打扰她，就悄悄写一张塞着，等她发现；二是你们正聊着天，有些话到嘴边又咽回去了——太重了、太丢脸了、或者那一刻说出来不合时宜——你就写在纸条上藏起来，让她自己翻到。

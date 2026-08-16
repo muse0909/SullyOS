@@ -1,5 +1,5 @@
 // cjjc 你画我猜移植到 SullyOS - 角色联动版（B 方案：视觉模型 + 角色 API 拆开调）
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { safeFetchJson, extractContent } from '../utils/safeApi';
 
@@ -42,15 +42,16 @@ const DrawGuessApp: React.FC = () => {
 
     const currentRole = characters.find(c => c.id === currentRoleId);
 
-    // 画板尺寸跟随容器
-    useEffect(() => {
+    // 画板尺寸跟随容器（用 useLayoutEffect 同步在 layout 后跑，offsetWidth 更可靠）
+    useLayoutEffect(() => {
         if (phase === 'setup') return;
         const canvas = canvasRef.current;
         if (!canvas) return;
         const size = canvas.offsetWidth;
+        if (size === 0) return;  // 容器还没 layout 出来，跳过
         canvas.width = size * 2;
         canvas.height = size * 2;
-    }, [phase]);
+    }, [phase, strokes]);
 
     // 重绘所有笔画
     useEffect(() => {
@@ -418,7 +419,7 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                 <>
                     {/* 画板 */}
                     <div className="p-2">
-                        <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-white" style={{ aspectRatio: '1' }}>
+                        <div className="w-full border-2 border-gray-200 rounded-lg overflow-hidden bg-white" style={{ aspectRatio: '1' }}>
                             <canvas
                                 ref={canvasRef}
                                 className="w-full h-full touch-none"

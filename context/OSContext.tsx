@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, DateQuickPhrase } from '../types';
 import { DB } from '../utils/db';
+// 暮色 2026-08-16：格式化系统保留云端备份
+import { factoryReset } from '../utils/factoryReset';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
@@ -3844,7 +3846,19 @@ if (!isVisible || !isChattingWithThisChar) {
       }
   };
 
-  const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
+  // 暮色 2026-08-16：原版清所有 localStorage 会把云端备份配对码也清掉。
+  // 改用 factoryReset：清所有 IDB 数据库 + 清大部分 localStorage，保留云端备份 key。
+  const resetSystem = async () => {
+      try {
+          const result = await factoryReset();
+          console.log(`[resetSystem] IDB ${result.indexedDBsDeleted.length} 个 / localStorage 清 ${result.localStorageKeysRemoved} / 保留 ${result.localStorageKeysPreserved.length}`);
+          addToast(`格式化完成（保留云端备份 ${result.localStorageKeysPreserved.length} 项）`, 'success');
+          window.location.reload();
+      } catch (e) {
+          console.error(e);
+          addToast('重置失败，请手动清除浏览器数据', 'error');
+      }
+  };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);

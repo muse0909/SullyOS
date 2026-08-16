@@ -538,7 +538,7 @@ export default function MemoryPalaceApp() {
             setTlInitialized(false);
         }
     }, [view, tlInitialized]);
-    const [allSortBy, setAllSortBy] = useState<'time' | 'importance' | 'accessCount'>('time');
+    const [allSortBy, setAllSortBy] = useState<'time' | 'importance' | 'accessCount' | 'contentLength'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
 
@@ -4472,6 +4472,7 @@ create table if not exists memory_vectors (
             const dir = allSortDir === 'desc' ? -1 : 1;
             if (allSortBy === 'time') return dir * (a.createdAt - b.createdAt);
             if (allSortBy === 'accessCount') return dir * ((a.accessCount || 0) - (b.accessCount || 0));
+            if (allSortBy === 'contentLength') return dir * (a.content.length - b.content.length);
             return dir * (a.importance - b.importance);
         });
 
@@ -4513,13 +4514,13 @@ create table if not exists memory_vectors (
                             >
                                 {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
                             </button>
-                            {(['time', 'importance', 'accessCount'] as const).map(s => (
+                            {(['time', 'importance', 'accessCount', 'contentLength'] as const).map(s => (
                                 <button
                                     key={s}
                                     onClick={() => setAllSortBy(s)}
                                     style={sortBtnStyle(allSortBy === s)}
                                 >
-                                    {s === 'time' ? '时间' : s === 'importance' ? '重要性' : '访问次数'}
+                                    {s === 'time' ? '时间' : s === 'importance' ? '重要性' : s === 'accessCount' ? '访问次数' : '字数'}
                                 </button>
                             ))}
                         </div>
@@ -5123,35 +5124,34 @@ create table if not exists memory_vectors (
                     </div>
                 )}
 
-                {/* 手动拆分 summary 弹窗 */}
+                {/* 手动拆分 summary 弹窗（全屏） */}
                 {showExpandPanel && expandSourceNode && (
                     <div
-                        onClick={() => !expanding && setShowExpandPanel(false)}
                         style={{
                             position: 'fixed', inset: 0, zIndex: 101,
-                            background: 'rgba(0,0,0,0.4)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+                            background: 'white',
+                            display: 'flex', flexDirection: 'column',
                         }}
                     >
-                        <div
-                            onClick={(e) => e.stopPropagation()}
-                            style={{
-                                background: 'white', borderRadius: 16, padding: 20,
-                                width: '100%', maxWidth: 720, maxHeight: '90vh', overflowY: 'auto',
-                                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
-                            }}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>
-                                    🪓 手动拆分 summary（{expandSourceNode.contentLength} 字 → {expandFragments.length} 条）
-                                </div>
-                                <button
-                                    onClick={() => setShowExpandPanel(false)}
-                                    disabled={expanding}
-                                    style={{ background: 'none', border: 'none', cursor: expanding ? 'not-allowed' : 'pointer', fontSize: 18, color: '#9ca3af', padding: 0, lineHeight: 1 }}
-                                >×</button>
+                        {/* sticky 顶部 */}
+                        <div style={{
+                            padding: '12px 16px', borderBottom: '1px solid #e5e7eb',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            background: 'white', flexShrink: 0,
+                        }}>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: '#334155' }}>
+                                🪓 手动拆分 summary（{expandSourceNode.contentLength} 字 → {expandFragments.length} 条）
                             </div>
-                            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>
+                            <button
+                                onClick={() => setShowExpandPanel(false)}
+                                disabled={expanding}
+                                style={{ background: 'none', border: 'none', cursor: expanding ? 'not-allowed' : 'pointer', fontSize: 22, color: '#9ca3af', padding: 0, lineHeight: 1, width: 32, height: 32 }}
+                            >×</button>
+                        </div>
+
+                        {/* 中间滚动区 */}
+                        <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+                            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>
                                 左边是 summary 全文（只读，方便复制），右边填入每条独立记忆。提交后原 summary 节点**不会自动删除**，请在 IDB 工具或扫幽灵弹窗里手动删除。
                             </div>
 
@@ -5159,7 +5159,7 @@ create table if not exists memory_vectors (
                                 {/* 左：summary 全文 */}
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
                                             summary 全文（拖动选中复制）
                                         </div>
                                         <button
@@ -5173,16 +5173,16 @@ create table if not exists memory_vectors (
                                                 }
                                             }}
                                             style={{
-                                                padding: '4px 10px', borderRadius: 6, border: 'none',
-                                                background: '#3b82f6', color: 'white', fontSize: 11, fontWeight: 600,
+                                                padding: '6px 12px', borderRadius: 6, border: 'none',
+                                                background: '#3b82f6', color: 'white', fontSize: 12, fontWeight: 600,
                                                 cursor: 'pointer',
                                             }}
                                         >📋 复制全文</button>
                                     </div>
                                     <div style={{
-                                        fontSize: 11, color: '#1f2937', lineHeight: 1.6, padding: 10,
+                                        fontSize: 13, color: '#1f2937', lineHeight: 1.7, padding: 14,
                                         background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0',
-                                        maxHeight: '60vh', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                        maxHeight: 'calc(100vh - 260px)', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                                         userSelect: 'text', cursor: 'text',
                                     }}>
                                         {expandSourceNode.content}
@@ -5192,14 +5192,14 @@ create table if not exists memory_vectors (
                                 {/* 右：片段列表 */}
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>
+                                        <div style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>
                                             片段列表（{expandFragments.length}）
                                         </div>
                                         <button
                                             onClick={handleAddFragment}
                                             style={{
-                                                padding: '4px 10px', borderRadius: 6, border: 'none',
-                                                background: '#3b82f6', color: 'white', fontSize: 11, fontWeight: 600,
+                                                padding: '6px 12px', borderRadius: 6, border: 'none',
+                                                background: '#3b82f6', color: 'white', fontSize: 12, fontWeight: 600,
                                                 cursor: 'pointer',
                                             }}
                                         >+ 加一条</button>
@@ -5207,18 +5207,18 @@ create table if not exists memory_vectors (
 
                                     {expandFragments.map((frag, idx) => (
                                         <div key={idx} style={{
-                                            marginBottom: 10, padding: 8, borderRadius: 8,
+                                            marginBottom: 12, padding: 10, borderRadius: 8,
                                             border: '1px solid #e5e7eb', background: '#f9fafb',
                                         }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                                                <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 600 }}>#{idx + 1}</div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                                <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>#{idx + 1}</div>
                                                 <button
                                                     onClick={() => handleRemoveFragment(idx)}
                                                     disabled={expandFragments.length === 1 || expanding}
                                                     style={{
                                                         background: 'none', border: 'none',
                                                         cursor: (expandFragments.length === 1 || expanding) ? 'not-allowed' : 'pointer',
-                                                        fontSize: 11, color: (expandFragments.length === 1 || expanding) ? '#d1d5db' : '#dc2626',
+                                                        fontSize: 12, color: (expandFragments.length === 1 || expanding) ? '#d1d5db' : '#dc2626',
                                                     }}
                                                 >删</button>
                                             </div>
@@ -5228,24 +5228,24 @@ create table if not exists memory_vectors (
                                                 placeholder="从 summary 复制粘贴一段"
                                                 disabled={expanding}
                                                 style={{
-                                                    width: '100%', minHeight: 60, padding: 6, fontSize: 11,
+                                                    width: '100%', minHeight: 80, padding: 8, fontSize: 12,
                                                     border: '1px solid #d1d5db', borderRadius: 6, fontFamily: 'inherit',
                                                     resize: 'vertical', boxSizing: 'border-box',
                                                 }}
                                             />
-                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 4 }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 6 }}>
                                                 <div>
-                                                    <label style={{ fontSize: 9, color: '#6b7280', display: 'block' }}>时间</label>
+                                                    <label style={{ fontSize: 10, color: '#6b7280', display: 'block' }}>时间</label>
                                                     <input
                                                         type="datetime-local"
                                                         value={new Date(frag.createdAt - new Date(frag.createdAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
                                                         onChange={e => handleUpdateFragment(idx, { createdAt: new Date(e.target.value).getTime() })}
                                                         disabled={expanding}
-                                                        style={{ width: '100%', padding: 4, fontSize: 10, border: '1px solid #d1d5db', borderRadius: 4, boxSizing: 'border-box' }}
+                                                        style={{ width: '100%', padding: 5, fontSize: 11, border: '1px solid #d1d5db', borderRadius: 4, boxSizing: 'border-box' }}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label style={{ fontSize: 9, color: '#6b7280', display: 'block' }}>重要性: {frag.importance}</label>
+                                                    <label style={{ fontSize: 10, color: '#6b7280', display: 'block' }}>重要性: {frag.importance}</label>
                                                     <input
                                                         type="range" min="1" max="10" step="1"
                                                         value={frag.importance}
@@ -5257,19 +5257,25 @@ create table if not exists memory_vectors (
                                             </div>
                                         </div>
                                     ))}
-
-                                    <button
-                                        onClick={handleSubmitExpand}
-                                        disabled={expanding}
-                                        style={{
-                                            width: '100%', padding: '10px 0', borderRadius: 8, marginTop: 8,
-                                            background: expanding ? '#9ca3af' : '#10b981',
-                                            color: 'white', fontWeight: 600, fontSize: 13,
-                                            border: 'none', cursor: expanding ? 'not-allowed' : 'pointer',
-                                        }}
-                                    >{expanding ? '保存中...' : `✓ 拆出 ${expandFragments.length} 条独立记忆`}</button>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* sticky 底部（拆出按钮） */}
+                        <div style={{
+                            padding: '12px 16px', borderTop: '1px solid #e5e7eb',
+                            background: 'white', flexShrink: 0,
+                        }}>
+                            <button
+                                onClick={handleSubmitExpand}
+                                disabled={expanding}
+                                style={{
+                                    width: '100%', padding: '14px 0', borderRadius: 8,
+                                    background: expanding ? '#9ca3af' : '#10b981',
+                                    color: 'white', fontWeight: 700, fontSize: 15,
+                                    border: 'none', cursor: expanding ? 'not-allowed' : 'pointer',
+                                }}
+                            >{expanding ? '保存中...' : `✓ 拆出 ${expandFragments.length} 条独立记忆`}</button>
                         </div>
                     </div>
                 )}

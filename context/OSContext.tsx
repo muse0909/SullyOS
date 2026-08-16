@@ -1609,17 +1609,11 @@ if (!isVisible || !isChattingWithThisChar) {
               //    主动消息模式：自动唤醒 + 可调用工具；history 走 messages 数组，hint 不再塞
               const userName = currentUserProfile?.name || '对方';
 
-              const gapLongEnough = timeSinceUser && (() => {
-                  if (timeSinceUser.includes('天')) return true;
-                  const m = timeSinceUser.match(/(\d+)\s*小时/);
-                  return m ? parseInt(m[1], 10) >= 2 : false;
-              })();
-
               const hintLines = [
                   `[系统提示**不可忽略**（这是一个定时定时唤醒你的机制，让你在${userName}忙别的事时也能醒过来。）`,
                   `现在 ${timeStr}。${userName}已经 ${timeSinceUser} 没找你说话。`,
                   '',
-                  `你是 ${char.name}，你被唤醒了。你有没有什么想说的？。想到什么就说，想她了就找她，有话就讲，如果此刻没什么特别想做的，也可以什么都不发。`,
+                  `你是 ${char.name}，你被唤醒了。你有没有什么想说的？想到什么就说，想她了就找她，有话就讲，如果此刻没什么特别想做的，也可以什么都不发。`,
                   '',
                   '',
                   `【如果你想互动——几件事】`,
@@ -1636,6 +1630,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   '这串标签和里面的内容会被处理掉。',
                   `【如果完全不想发】`,
                   `就回个空字符串——前端会判定为"这次跳过"，不写任何东西，不打扰她。`,
+                  `]`, // 收尾，跟开头的 [ 配对
               ].join('\n');
 
               await DB.saveMessage({

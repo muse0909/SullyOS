@@ -272,6 +272,29 @@ export async function removeMemoryFromBox(memoryId: string): Promise<void> {
     const node = await MemoryNodeDB.getById(memoryId);
     if (!node || !node.eventBoxId) return;
     const box = await EventBoxDB.getById(node.eventBoxId);
+
+    // summary 节点走"直接删"：先断 box 引用 + 删本地 + 上传 deleted=true 软删标记
+    // 不能"降级保存"——会触发"deleted=false 上传"+"deleted=true 软删"时序错位，
+    // useCloudMemories 按拉取顺序"先 save 新记忆到本地"再"看到软删标记但不删"，
+    // 导致 summary 节点在本地永久复活成独立记忆
+    if (node.isBoxSummary) {
+        if (box) {
+            box.summaryNodeId = null;
+            box.updatedAt = Date.now();
+            const empty = box.liveMemoryIds.length === 0
+                && box.archivedMemoryIds.length === 0
+                && !box.summaryNodeId;
+            if (empty) {
+                await EventBoxDB.delete(box.id);
+            } else {
+                await EventBoxDB.save(box);
+            }
+        }
+        await MemoryNodeDB.delete(memoryId);
+        return;
+    }
+
+    // 普通节点原流程（移出事件盒但不删）
     if (!box) {
         node.eventBoxId = null;
         await MemoryNodeDB.save(node);
@@ -280,10 +303,8 @@ export async function removeMemoryFromBox(memoryId: string): Promise<void> {
     box.liveMemoryIds = box.liveMemoryIds.filter(id => id !== memoryId);
     box.archivedMemoryIds = box.archivedMemoryIds.filter(id => id !== memoryId);
     box.updatedAt = Date.now();
-    if (box.summaryNodeId === memoryId) box.summaryNodeId = null;
     node.eventBoxId = null;
     node.archived = false;
-    node.isBoxSummary = false;
     await MemoryNodeDB.save(node);
 
     // 空盒清理
@@ -563,4 +584,49 @@ export async function reviveAllArchivedInBox(boxId: string): Promise<{ revived: 
 
     console.log(`🌅 [EventBox] ${boxId} 一键复活 ${revived} 条 archived → live`);
     return { revived };
+}
+
+/**
+ * 扫描"幽灵整合回忆"：isBoxSummary=true 但盒已删 / eventBoxId 指向 null 或不存在的盒
+ * 这些是历史债（事件盒解散后云端同步把 summary 复活成独立记忆），
+ * UI 上一条条手动删。按 content 长度倒序排列。
+ */
+export async function scanGhostSummaries(charId: string): Promise<Array<{
+    id: string;
+    content: string;
+    contentLength: number;
+    importance: number;
+    eventBoxId: string | null;
+    createdAt: number;
+}>> {
+    const allNodes = await MemoryNodeDB.getByCharId(charId);
+    const ghosts: Array<{
+        id: string;
+        content: string;
+        contentLength: number;
+        importance: number;
+        eventBoxId: string | null;
+        createdAt: number;
+    }> = [];
+    for (const node of allNodes) {
+        if (!node.isBoxSummary) continue;
+        // 幽灵：eventBoxId 指向 null 或者指向不存在的盒
+        const box = node.eventBoxId ? await EventBoxDB.getById(node.eventBoxId) : null;
+        if (box) continue;
+        ghosts.push({
+            id: node.id,
+            content: node.content,
+            contentLength: node.content.length,
+            importance: node.importance,
+            eventBoxId: node.eventBoxId,
+            createdAt: node.createdAt,
+        });
+    }
+    ghosts.sort((a, b) => b.contentLength - a.contentLength);
+    return ghosts;
+}
+
+/** 删除一条幽灵整合回忆（走 deleteMemoryNode，云端同步走 deleted=true 软删标记） */
+export async function deleteGhostSummary(nodeId: string): Promise<void> {
+    await deleteMemoryNode(nodeId);
 }

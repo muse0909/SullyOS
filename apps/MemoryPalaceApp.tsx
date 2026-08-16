@@ -14,7 +14,7 @@ import {
     findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES,
     vectorizeAndStore,
 } from '../utils/memoryPalace';
-import { dissolveEventBox, reviveAllArchivedInBox } from '../utils/memoryPalace/eventBox';
+import { dissolveEventBox, reviveAllArchivedInBox, scanGhostSummaries, deleteGhostSummary } from '../utils/memoryPalace/eventBox';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
@@ -488,6 +488,12 @@ export default function MemoryPalaceApp() {
     const [boxEditMode, setBoxEditMode] = useState<'name' | 'tags' | null>(null);
     const [boxEditValue, setBoxEditValue] = useState('');
     const [boxWorking, setBoxWorking] = useState(false);
+
+    // 幽灵整合回忆（事件盒解散后云端同步把 summary 复活成独立记忆）
+    const [showGhostPanel, setShowGhostPanel] = useState(false);
+    const [ghostList, setGhostList] = useState<Array<{ id: string; content: string; contentLength: number; importance: number; eventBoxId: string | null; createdAt: number }>>([]);
+    const [scanningGhosts, setScanningGhosts] = useState(false);
+    const [deletingGhostId, setDeletingGhostId] = useState<string | null>(null);
 
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
@@ -1113,6 +1119,56 @@ export default function MemoryPalaceApp() {
         border: border === 'none' ? 'none' : `1px solid ${border}`,
         cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
     });
+
+    // 扫描幽灵整合回忆：isBoxSummary=true 但 eventBoxId 指向 null 或不存在的盒
+    const handleScanGhosts = async () => {
+        if (!char) return;
+        setScanningGhosts(true);
+        try {
+            const list = await scanGhostSummaries(char.id);
+            setGhostList(list);
+            setShowGhostPanel(true);
+        } catch (e: any) {
+            alert(`扫描失败：${e?.message || e}`);
+        } finally {
+            setScanningGhosts(false);
+        }
+    };
+
+    const handleDeleteGhost = async (nodeId: string) => {
+        if (!confirm('确认删除这条幽灵整合回忆？')) return;
+        setDeletingGhostId(nodeId);
+        try {
+            await deleteGhostSummary(nodeId);
+            setGhostList(prev => prev.filter(g => g.id !== nodeId));
+            addToast('已删除', 'success');
+        } catch (e: any) {
+            alert(`删除失败：${e?.message || e}`);
+        } finally {
+            setDeletingGhostId(null);
+        }
+    };
+
+    const handleBatchDeleteGhosts = async () => {
+        if (ghostList.length === 0) return;
+        if (!confirm(`确认批量删除 ${ghostList.length} 条幽灵整合回忆？此操作不可撤销。`)) return;
+        if (!confirm('再次确认：真的要批量删除？')) return;
+        setScanningGhosts(true);
+        try {
+            let successCount = 0;
+            for (const ghost of ghostList) {
+                try {
+                    await deleteGhostSummary(ghost.id);
+                    successCount++;
+                } catch { /* 单条失败继续 */ }
+            }
+            addToast(`已批量删除 ${successCount} 条`, 'success');
+            setShowGhostPanel(false);
+            setGhostList([]);
+        } finally {
+            setScanningGhosts(false);
+        }
+    };
 
     const toggleBoxExpand = async (box: EventBox) => {
         if (expandedBoxId === box.id) {
@@ -4540,6 +4596,19 @@ create table if not exists memory_vectors (
                                         管理事件盒
                                     </button>
                                 )}
+                                <button
+                                    onClick={handleScanGhosts}
+                                    disabled={scanningGhosts}
+                                    title="扫描所有 isBoxSummary=true 但盒已删的幽灵整合回忆"
+                                    style={{
+                                        fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                        border: '1px solid #fecaca', background: '#fff', color: '#b91c1c',
+                                        cursor: scanningGhosts ? 'not-allowed' : 'pointer', fontWeight: 600,
+                                        opacity: scanningGhosts ? 0.5 : 1,
+                                    }}
+                                >
+                                    {scanningGhosts ? '扫描中...' : '🔍 扫描幽灵 summary'}
+                                </button>
                             </>
                         )}
                     </div>
@@ -4871,6 +4940,87 @@ create table if not exists memory_vectors (
                         </div>
                     );
                 })()}
+
+                {/* 幽灵整合回忆扫描结果弹窗 */}
+                {showGhostPanel && (
+                    <div
+                        onClick={() => setShowGhostPanel(false)}
+                        style={{
+                            position: 'fixed', inset: 0, zIndex: 100,
+                            background: 'rgba(0,0,0,0.4)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+                        }}
+                    >
+                        <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: 'white', borderRadius: 16, padding: 20,
+                                width: '100%', maxWidth: 500, maxHeight: '80vh', overflowY: 'auto',
+                                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>
+                                    幽灵整合回忆（{ghostList.length} 条）
+                                </div>
+                                <button
+                                    onClick={() => setShowGhostPanel(false)}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#9ca3af', padding: 0, lineHeight: 1 }}
+                                >×</button>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 12, lineHeight: 1.5 }}>
+                                事件盒解散后云端同步把整合回忆复活成的独立记忆。逐条删除，或批量清理。
+                            </div>
+                            {ghostList.length > 0 && (
+                                <button
+                                    onClick={handleBatchDeleteGhosts}
+                                    disabled={scanningGhosts}
+                                    style={{
+                                        width: '100%', padding: '8px 0', borderRadius: 8, marginBottom: 12,
+                                        background: scanningGhosts ? '#9ca3af' : '#dc2626',
+                                        color: 'white', fontWeight: 600, fontSize: 12,
+                                        border: 'none', cursor: scanningGhosts ? 'not-allowed' : 'pointer',
+                                    }}
+                                >{scanningGhosts ? '删除中...' : `批量删除全部 (${ghostList.length})`}</button>
+                            )}
+                            {ghostList.length === 0 ? (
+                                <div style={{ textAlign: 'center', color: '#9ca3af', padding: 30, fontSize: 13 }}>
+                                    没有幽灵整合回忆 🎉
+                                </div>
+                            ) : (
+                                ghostList.map(ghost => (
+                                    <div
+                                        key={ghost.id}
+                                        style={{
+                                            padding: 10, marginBottom: 8, borderRadius: 8,
+                                            border: '1px solid #fecaca', background: '#fef2f2',
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                                            <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 600 }}>
+                                                {ghost.contentLength} 字 · 重要性 {ghost.importance} · {new Date(ghost.createdAt).toLocaleDateString('zh-CN')}
+                                            </div>
+                                            <button
+                                                onClick={() => handleDeleteGhost(ghost.id)}
+                                                disabled={deletingGhostId === ghost.id}
+                                                style={{
+                                                    padding: '4px 10px', borderRadius: 6, border: 'none',
+                                                    background: deletingGhostId === ghost.id ? '#9ca3af' : '#dc2626',
+                                                    color: 'white', fontSize: 11, fontWeight: 600,
+                                                    cursor: deletingGhostId === ghost.id ? 'not-allowed' : 'pointer',
+                                                    flexShrink: 0,
+                                                }}
+                                            >{deletingGhostId === ghost.id ? '删除中...' : '删除'}</button>
+                                        </div>
+                                        <div style={{ fontSize: 12, color: '#1f2937', lineHeight: 1.5 }}>
+                                            {ghost.content.length > 200 ? ghost.content.slice(0, 200) + '...' : ghost.content}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }

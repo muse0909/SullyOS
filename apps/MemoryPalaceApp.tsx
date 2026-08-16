@@ -5158,13 +5158,32 @@ create table if not exists memory_vectors (
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                                 {/* 左：summary 全文 */}
                                 <div>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-                                        summary 全文（只读）
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>
+                                            summary 全文（拖动选中复制）
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                if (!expandSourceNode) return;
+                                                try {
+                                                    await navigator.clipboard.writeText(expandSourceNode.content);
+                                                    alert('已复制全文到剪贴板，去右边片段输入框粘贴即可');
+                                                } catch (e: any) {
+                                                    alert('自动复制失败，请手动拖动选中复制：' + (e?.message || ''));
+                                                }
+                                            }}
+                                            style={{
+                                                padding: '4px 10px', borderRadius: 6, border: 'none',
+                                                background: '#3b82f6', color: 'white', fontSize: 11, fontWeight: 600,
+                                                cursor: 'pointer',
+                                            }}
+                                        >📋 复制全文</button>
                                     </div>
                                     <div style={{
                                         fontSize: 11, color: '#1f2937', lineHeight: 1.6, padding: 10,
                                         background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0',
                                         maxHeight: '60vh', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                        userSelect: 'text', cursor: 'text',
                                     }}>
                                         {expandSourceNode.content}
                                     </div>

@@ -54,13 +54,11 @@ const DrawGuessApp: React.FC = () => {
         canvas.height = size * 2;
     }, [phase]);
 
-    // 重绘所有笔画
+    // 重画 strokes（不 fillRect 清空 - onMove 实时画的保留；strokes 重画会和 onMove 画的位置叠加，视觉无差）
     useEffect(() => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
         if (!ctx || !canvas) return;
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
         strokes.forEach(stroke => {
             if (stroke.points.length < 2) return;
             ctx.strokeStyle = stroke.color;
@@ -77,6 +75,16 @@ const DrawGuessApp: React.FC = () => {
             ctx.stroke();
         });
     }, [strokes]);
+
+    // 清空时机：phase 变 setup / end 时清空画板
+    useEffect(() => {
+        if (phase === 'setup' || phase === 'end') {
+            const canvas = canvasRef.current;
+            const ctx = canvas?.getContext('2d');
+            if (!ctx || !canvas) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }, [phase]);
 
     // 坐标归一化到 0-100
     const getCoords = (e: React.MouseEvent | React.TouchEvent): [number, number] => {
@@ -126,12 +134,35 @@ const DrawGuessApp: React.FC = () => {
         if (!drawing) return;
         setDrawing(false);
         if (curRef.current.length >= 2) {
-            setStrokes(prev => [...prev, { points: curRef.current, color: isEraser ? '#fff' : drawColor }]);
+            const newStroke = { points: [...curRef.current], color: isEraser ? '#fff' : drawColor };
+            // 同步画这一笔（确保画板显示，setStrokes 触发的 useEffect 不清空所以也画）
+            const canvas = canvasRef.current;
+            const ctx = canvas?.getContext('2d');
+            if (ctx && canvas) {
+                ctx.strokeStyle = newStroke.color;
+                ctx.lineWidth = newStroke.color === '#fff' ? 24 : 6;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                const [sx, sy] = newStroke.points[0];
+                ctx.moveTo((sx / 100) * canvas.width, (sy / 100) * canvas.height);
+                for (let i = 1; i < newStroke.points.length; i++) {
+                    const [x, y] = newStroke.points[i];
+                    ctx.lineTo((x / 100) * canvas.width, (y / 100) * canvas.height);
+                }
+                ctx.stroke();
+            }
+            setStrokes(prev => [...prev, newStroke]);
         }
         curRef.current = [];
     };
 
-    const clearCanvas = () => setStrokes([]);
+    const clearCanvas = () => {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        setStrokes([]);
+    };
 
     const appendChat = (sender: string, text: string) => {
         setChatLog(prev => [...prev, { sender, text, type: 'text' }]);
@@ -253,7 +284,25 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
             }
             for (const strokePoints of strokesData) {
                 if (strokePoints.length < 2) continue;
-                setStrokes(prev => [...prev, { points: strokePoints.map(p => [p[0], p[1]] as [number, number]), color: '#000' }]);
+                const newStroke = { points: strokePoints.map(p => [p[0], p[1]] as [number, number]), color: '#000' };
+                // 同步画这一笔（确保画板显示，setStrokes 触发的 useEffect 不清空所以也画）
+                const canvas = canvasRef.current;
+                const ctx = canvas?.getContext('2d');
+                if (ctx && canvas) {
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 6;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.beginPath();
+                    const [sx, sy] = newStroke.points[0];
+                    ctx.moveTo((sx / 100) * canvas.width, (sy / 100) * canvas.height);
+                    for (let i = 1; i < newStroke.points.length; i++) {
+                        const [x, y] = newStroke.points[i];
+                        ctx.lineTo((x / 100) * canvas.width, (y / 100) * canvas.height);
+                    }
+                    ctx.stroke();
+                }
+                setStrokes(prev => [...prev, newStroke]);
                 await new Promise(r => setTimeout(r, 500));
             }
             sysLog(`${currentRole.name} 画完了，轮到 ${userProfile.name} 猜`);
@@ -319,6 +368,11 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
         setChatLog([]);
         setStrokes([]);
         setCurrentWord('');
+        curRef.current = [];
+        // 手动清空画板（phase 变 'drawing' 不在清空触发里）
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
         sysLog(`开始游戏，${currentRole.name} 上场`);
         if (host === 'ai') {
             setPhase('drawing');
@@ -332,6 +386,10 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
         setChatLog([]);
         setStrokes([]);
         setCurrentWord('');
+        curRef.current = [];
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (host === 'ai') {
             setPhase('drawing');
             aiDraw();
@@ -345,6 +403,7 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
         setChatLog([]);
         setStrokes([]);
         setCurrentWord('');
+        curRef.current = [];
     };
 
     return (

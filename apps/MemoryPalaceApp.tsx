@@ -15,6 +15,7 @@ import {
     vectorizeAndStore,
 } from '../utils/memoryPalace';
 import { dissolveEventBox, reviveAllArchivedInBox, scanGhostSummaries, deleteGhostSummary } from '../utils/memoryPalace/eventBox';
+import { factoryReset } from '../utils/factoryReset';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
@@ -3877,6 +3878,55 @@ create table if not exists memory_vectors (
                             )}
                         </button>
                     </div>
+                </div>
+                )}
+
+                {/* 极端区：格式化系统（恢复出厂设置） */}
+                {isGlobal && (
+                <div style={{ marginTop: 16, background: '#451a03', borderRadius: 16, padding: 16, border: '2px solid #fbbf24' }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#fef3c7', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="warning" size={14} />
+                        <span>极端区：格式化系统（恢复出厂设置）</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#fef3c7', marginBottom: 12, lineHeight: 1.7 }}>
+                        清空所有 IDB 数据库（角色 / 聊天 / 便利贴 / 小纸条 / 记忆宫殿 / 事件盒 / 主动消息）+ 大部分 localStorage。
+                        <br />
+                        <b style={{ color: '#fbbf24' }}>保留：</b>云端备份配对码和设备 ID（<code>os_cloud_sync_config</code> + <code>os_sync_device_id</code>），配对状态不丢。
+                        <br />
+                        <b style={{ color: '#fbbf24' }}>此操作不可撤销。需输入"格式化"才执行。</b>
+                    </div>
+
+                    <button
+                        onClick={async () => {
+                            if (!confirm('【第一步】即将格式化系统。\n\n将清空：所有 IDB 数据库（角色/聊天/便利贴/小纸条/记忆/事件盒/主动消息）+ 大部分 localStorage。\n\n保留：云端备份配对码和设备 ID。\n\n此操作不可撤销。')) return;
+                            if (!confirm('【第二步】真的要格式化吗？\n\n所有数据会被清空。确定？')) return;
+                            const input = prompt('【第三步】输入"格式化"以继续：');
+                            if (input !== '格式化') {
+                                alert('已取消');
+                                return;
+                            }
+                            setWiping(true);
+                            try {
+                                const result = await factoryReset();
+                                const msg = `格式化完成：\n\n- IDB 库：${result.indexedDBsDeleted.join(', ') || '(无)'}\n- localStorage 清 ${result.localStorageKeysRemoved} 条\n- 保留 ${result.localStorageKeysPreserved.length} 条（云端备份相关）\n\n页面将自动刷新。`;
+                                alert(msg);
+                                location.reload();
+                            } catch (e: any) {
+                                alert('格式化失败：' + (e?.message || e));
+                            } finally {
+                                setWiping(false);
+                            }
+                        }}
+                        disabled={wiping}
+                        style={{
+                            width: '100%', padding: '12px 0', borderRadius: 12,
+                            border: 'none', fontWeight: 800, fontSize: 14,
+                            color: 'white', background: wiping ? '#d4d4d4' : '#7c2d12',
+                            cursor: wiping ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {wiping ? '格式化中…' : '⚠️ 格式化系统（恢复出厂设置）'}
+                    </button>
                 </div>
                 )}
             </div>

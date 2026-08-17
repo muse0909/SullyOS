@@ -18,8 +18,8 @@
 
 import { DB } from './db';
 
-/** 暮色 2026-08-05：每角色每天主动消息条数硬上限。默认 10，可调。 */
-export const MAX_PROACTIVE_PER_DAY = 10;
+/** 暮色 2026-08-05：每角色每天主动消息条数硬上限。默认 50（之前 10 太紧，1min 档测不到几条就触发）。 */
+export const MAX_PROACTIVE_PER_DAY = 50;
 
 /** 主动消息识别：m.metadata?.isProactive === true（OSContext.runProactive 写入） */
 const isProactiveMessage = (m: { metadata?: any }): boolean =>

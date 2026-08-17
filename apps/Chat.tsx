@@ -204,14 +204,7 @@ const Chat: React.FC = () => {
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
     const [perCharApiKey, setPerCharApiKey] = useState('');
     const [perCharApiModel, setPerCharApiModel] = useState('');
-    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换（OpenAI / Claude / Gemini）
-    //   - 跟全局主 API 一致，3 套独立 URL/Key/Model 缓存
-    //   - 切 tab 自动存当前值到旧协议缓存，从新协议缓存读取
-    //   - 加载 Gemini 预设时同步切 protocol + 填对应那组（修暮色报的 401 bug）
-    const [perCharApiProtocol, setPerCharApiProtocol] = useState<'openai' | 'claude' | 'gemini'>('openai');
-    const [perCharApiClaudeUrl, setPerCharApiClaudeUrl] = useState('');
-    const [perCharApiClaudeKey, setPerCharApiClaudeKey] = useState('');
-    const [perCharApiClaudeModel, setPerCharApiClaudeModel] = useState('');
+    const [perCharApiProtocol, setPerCharApiProtocol] = useState<'openai' | 'gemini'>('openai');
     const [perCharApiGeminiUrl, setPerCharApiGeminiUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
     const [perCharApiGeminiKey, setPerCharApiGeminiKey] = useState('');
     const [perCharApiGeminiModel, setPerCharApiGeminiModel] = useState('gemini-2.0-flash');
@@ -237,26 +230,15 @@ const Chat: React.FC = () => {
     //     （跟 switchPerCharApiProtocol 切 tab 时的逻辑保持一致）
     useEffect(() => {
         if (showChatSettingsDrawer && char) {
-            const proto = ((char.apiConfig as any)?.protocol as 'openai' | 'claude' | 'gemini') || 'openai';
-            const claudeUrl = (char.apiConfig as any)?.claudeBaseUrl || '';
-            const claudeKey = (char.apiConfig as any)?.claudeApiKey || '';
-            const claudeModel = (char.apiConfig as any)?.claudeModel || '';
+            const proto = ((char.apiConfig as any)?.protocol as 'openai' | 'gemini') || 'openai';
             const geminiUrl = (char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
             const geminiKey = (char.apiConfig as any)?.geminiApiKey || '';
             const geminiModel = (char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash';
             setPerCharApiProtocol(proto);
-            setPerCharApiClaudeUrl(claudeUrl);
-            setPerCharApiClaudeKey(claudeKey);
-            setPerCharApiClaudeModel(claudeModel);
             setPerCharApiGeminiUrl(geminiUrl);
             setPerCharApiGeminiKey(geminiKey);
             setPerCharApiGeminiModel(geminiModel);
-            // 按当前 protocol 填入对应的 baseUrl/Key/Model，让输入框跟 tab 状态对齐
-            if (proto === 'claude') {
-                setPerCharApiBaseUrl(claudeUrl);
-                setPerCharApiKey(claudeKey);
-                setPerCharApiModel(claudeModel);
-            } else if (proto === 'gemini') {
+            if (proto === 'gemini') {
                 setPerCharApiBaseUrl(geminiUrl);
                 setPerCharApiKey(geminiKey);
                 setPerCharApiModel(geminiModel);
@@ -266,17 +248,10 @@ const Chat: React.FC = () => {
                 setPerCharApiModel(char.apiConfig?.model || '');
             }
         }
-    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model, (char as any)?.apiConfig?.protocol, (char as any)?.apiConfig?.claudeBaseUrl, (char as any)?.apiConfig?.claudeApiKey, (char as any)?.apiConfig?.claudeModel, (char as any)?.apiConfig?.geminiBaseUrl, (char as any)?.apiConfig?.geminiApiKey, (char as any)?.apiConfig?.geminiModel]);
-    // 暮色 2026-07-27：角色独立 API 3 tab 协议切换 handler
-    //   切走前：把当前 perCharApiBaseUrl/Key/Model 存到旧协议缓存
-    //   切到后：从新协议缓存读取填入
-    const switchPerCharApiProtocol = (newProtocol: 'openai' | 'claude' | 'gemini') => {
+    }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model, (char as any)?.apiConfig?.protocol, (char as any)?.apiConfig?.geminiBaseUrl, (char as any)?.apiConfig?.geminiApiKey, (char as any)?.apiConfig?.geminiModel]);
+    const switchPerCharApiProtocol = (newProtocol: 'openai' | 'gemini') => {
         if (newProtocol === perCharApiProtocol) return;
-        if (perCharApiProtocol === 'claude') {
-            setPerCharApiClaudeUrl(perCharApiBaseUrl);
-            setPerCharApiClaudeKey(perCharApiKey);
-            setPerCharApiClaudeModel(perCharApiModel);
-        } else if (perCharApiProtocol === 'gemini') {
+        if (perCharApiProtocol === 'gemini') {
             setPerCharApiGeminiUrl(perCharApiBaseUrl);
             setPerCharApiGeminiKey(perCharApiKey);
             setPerCharApiGeminiModel(perCharApiModel);
@@ -285,10 +260,6 @@ const Chat: React.FC = () => {
             setPerCharApiBaseUrl(char?.apiConfig?.baseUrl || '');
             setPerCharApiKey(char?.apiConfig?.apiKey || '');
             setPerCharApiModel(char?.apiConfig?.model || '');
-        } else if (newProtocol === 'claude') {
-            setPerCharApiBaseUrl(perCharApiClaudeUrl || (char?.apiConfig as any)?.claudeBaseUrl || '');
-            setPerCharApiKey(perCharApiClaudeKey || (char?.apiConfig as any)?.claudeApiKey || '');
-            setPerCharApiModel(perCharApiClaudeModel || (char?.apiConfig as any)?.claudeModel || '');
         } else {
             setPerCharApiBaseUrl(perCharApiGeminiUrl || (char?.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
             setPerCharApiKey(perCharApiGeminiKey || (char?.apiConfig as any)?.geminiApiKey || '');
@@ -298,11 +269,7 @@ const Chat: React.FC = () => {
     };
     const handleSavePerCharApi = async () => {
         if (!char) return;
-        // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套（切回 tab 不丢之前的值）
-        //   - 当前 perCharApiBaseUrl/Key/Model 是当前 tab 的值
-        //   - 另外 2 套从 state 缓存读出（perCharApiClaudeUrl 等）
-        //   - 角色 apiConfig 字段没值（空）→ updateCharApiConfig(undefined) 清空
-        if (!perCharApiBaseUrl.trim() && !perCharApiClaudeUrl.trim() && !perCharApiGeminiUrl.trim()) {
+        if (!perCharApiBaseUrl.trim() && !perCharApiGeminiUrl.trim()) {
             await updateCharApiConfig(char.id, undefined);
         } else {
             await updateCharApiConfig(char.id, {
@@ -310,31 +277,20 @@ const Chat: React.FC = () => {
                 apiKey: perCharApiProtocol === 'openai' ? perCharApiKey.trim() || undefined : (char.apiConfig?.apiKey || undefined),
                 model: perCharApiProtocol === 'openai' ? perCharApiModel.trim() || undefined : (char.apiConfig?.model || undefined),
                 protocol: perCharApiProtocol,
-                claudeBaseUrl: perCharApiProtocol === 'claude' ? perCharApiBaseUrl.trim() : perCharApiClaudeUrl,
-                claudeApiKey: perCharApiProtocol === 'claude' ? perCharApiKey.trim() : perCharApiClaudeKey,
-            claudeModel: perCharApiProtocol === 'claude' ? perCharApiModel.trim() : perCharApiClaudeModel,
-            geminiBaseUrl: perCharApiProtocol === 'gemini' ? perCharApiBaseUrl.trim() : perCharApiGeminiUrl,
-            geminiApiKey: perCharApiProtocol === 'gemini' ? perCharApiKey.trim() : perCharApiGeminiKey,
-            geminiModel: perCharApiProtocol === 'gemini' ? perCharApiModel.trim() : perCharApiGeminiModel,
-        } as any);
+                geminiBaseUrl: perCharApiProtocol === 'gemini' ? perCharApiBaseUrl.trim() : perCharApiGeminiUrl,
+                geminiApiKey: perCharApiProtocol === 'gemini' ? perCharApiKey.trim() : perCharApiGeminiKey,
+                geminiModel: perCharApiProtocol === 'gemini' ? perCharApiModel.trim() : perCharApiGeminiModel,
+            } as any);
         }
-        // 暮色 2026-07-27：保存后自动关闭侧拉栏
         setShowChatSettingsDrawer(false);
         addToast('角色 API 配置已保存', 'success');
     };
     const handleClearPerCharApi = async () => {
         if (!char) return;
-        // 暮色 2026-08-05 修：清空时把所有 3 套 state 都清成空（之前 Gemini URL 设了默认值"https://..."，
-        //   留下后用户点保存，line 293 判断 perCharApiGeminiUrl 非空 → 走 else 分支保存成默认 Gemini 配置，
-        //   → char.apiConfig 又有值了，triggerAI 还是走角色 API，不是主 API）。
-        // 同时关抽屉（跟 handleSavePerCharApi 一致 — 清空后 user 看不到状态，留个 open 抽屉让人误以为没清空）。
         setPerCharApiBaseUrl('');
         setPerCharApiKey('');
         setPerCharApiModel('');
         setPerCharApiProtocol('openai');
-        setPerCharApiClaudeUrl('');
-        setPerCharApiClaudeKey('');
-        setPerCharApiClaudeModel('');
         setPerCharApiGeminiUrl('');
         setPerCharApiGeminiKey('');
         setPerCharApiGeminiModel('');
@@ -345,20 +301,12 @@ const Chat: React.FC = () => {
     };
     // 从预设加载（只填输入框，不直接保存）
     // 暮色 2026-07-27：预设也带 protocol 字段，加载时按 protocol 切换 + 填对应那组（修 401 bug）
-    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string; protocol?: 'openai' | 'claude' | 'gemini' }) => {
-        const loadedProto: 'openai' | 'claude' | 'gemini' = (cfg as any).protocol || 'openai';
-        // 切到目标协议 tab
+    const handleLoadPresetIntoPerChar = (cfg: { baseUrl?: string; apiKey?: string; model?: string; protocol?: 'openai' | 'gemini' }) => {
+        const loadedProto: 'openai' | 'gemini' = (cfg as any).protocol || 'openai';
         if (loadedProto !== perCharApiProtocol) {
             switchPerCharApiProtocol(loadedProto);
         }
-        if (loadedProto === 'claude') {
-            setPerCharApiClaudeUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
-            setPerCharApiClaudeKey((cfg as any).claudeApiKey || cfg.apiKey || '');
-            setPerCharApiClaudeModel((cfg as any).claudeModel || cfg.model || '');
-            setPerCharApiBaseUrl((cfg as any).claudeBaseUrl || cfg.baseUrl || '');
-            setPerCharApiKey((cfg as any).claudeApiKey || cfg.apiKey || '');
-            setPerCharApiModel((cfg as any).claudeModel || cfg.model || '');
-        } else if (loadedProto === 'gemini') {
+        if (loadedProto === 'gemini') {
             setPerCharApiGeminiUrl((cfg as any).geminiBaseUrl || cfg.baseUrl || '');
             setPerCharApiGeminiKey((cfg as any).geminiApiKey || cfg.apiKey || '');
             setPerCharApiGeminiModel((cfg as any).geminiModel || cfg.model || '');
@@ -2960,12 +2908,8 @@ if (keepN > 0) {
                 perCharApiBaseUrl={perCharApiBaseUrl} setPerCharApiBaseUrl={setPerCharApiBaseUrl}
                 perCharApiKey={perCharApiKey} setPerCharApiKey={setPerCharApiKey}
                 perCharApiModel={perCharApiModel} setPerCharApiModel={setPerCharApiModel}
-                // 暮色 2026-07-27：3 tab 协议 + 3 套独立 URL/Key/Model
                 perCharApiProtocol={perCharApiProtocol} setPerCharApiProtocol={setPerCharApiProtocol}
                 switchPerCharApiProtocol={switchPerCharApiProtocol}
-                perCharApiClaudeUrl={perCharApiClaudeUrl} setPerCharApiClaudeUrl={setPerCharApiClaudeUrl}
-                perCharApiClaudeKey={perCharApiClaudeKey} setPerCharApiClaudeKey={setPerCharApiClaudeKey}
-                perCharApiClaudeModel={perCharApiClaudeModel} setPerCharApiClaudeModel={setPerCharApiClaudeModel}
                 perCharApiGeminiUrl={perCharApiGeminiUrl} setPerCharApiGeminiUrl={setPerCharApiGeminiUrl}
                 perCharApiGeminiKey={perCharApiGeminiKey} setPerCharApiGeminiKey={setPerCharApiGeminiKey}
                 perCharApiGeminiModel={perCharApiGeminiModel} setPerCharApiGeminiModel={setPerCharApiGeminiModel}

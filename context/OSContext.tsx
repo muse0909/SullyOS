@@ -1694,9 +1694,13 @@ if (!isVisible || !isChattingWithThisChar) {
               //   hint 丢失 → AI 看不到"主动唤醒"指令顺着 history 末尾续写
               //   修：Claude 模型把 hint 合并到 systemPrompt 顶层，避中转站转换陷阱
               //   其他模型（GPT / Gemini / 智谱）保持现状
+              // 8-17 22:09 加：model 匹配用 /clau/i 而非 includes('claude')
+              //   暮色实际用的是 "180-Clau4.6opus"（少个 d），之前的判断漏了
+              //   Anthropic 模型系列都含 clau 前缀（claude-3-5 / claude-3-opus / Clau4.6opus），
+              //   /clau/i 都能命中，其他模型命名不会撞这 4 个字母
               const isClaudeOnOpenAI = apiProtocol === 'openai'
                   && typeof activeApi.model === 'string'
-                  && activeApi.model.toLowerCase().includes('claude');
+                  && /clau/i.test(activeApi.model);
               const fullMessages: any[] = isClaudeOnOpenAI
                   ? [
                       { role: 'system', content: systemPrompt + '\n\n' + hintLines },

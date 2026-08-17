@@ -1689,11 +1689,24 @@ if (!isVisible || !isChattingWithThisChar) {
               //   之前在 system prompt 末尾 → AI 读 system 后还要读 20 条 history，hint 容易被淹没
               //   挪到 messages 末尾 → AI 读完最后一条 history 立刻看到 hint，紧接着输出
               //   role:'system'（不是 user）→ 不会被 LLM 误当成"用户最新说的话"
-              const fullMessages = [
-                  { role: 'system', content: systemPrompt },
-                  ...apiMessages,
-                  { role: 'system', content: hintLines },
-              ];
+              // 暮色 2026-08-17 修：Claude 模型走 OpenAI 协议时（即享/青屿中转）
+              //   中转站做 OpenAI→Anthropic 转换时吞掉 messages 末尾的 system role，
+              //   hint 丢失 → AI 看不到"主动唤醒"指令顺着 history 末尾续写
+              //   修：Claude 模型把 hint 合并到 systemPrompt 顶层，避中转站转换陷阱
+              //   其他模型（GPT / Gemini / 智谱）保持现状
+              const isClaudeOnOpenAI = apiProtocol === 'openai'
+                  && typeof activeApi.model === 'string'
+                  && activeApi.model.toLowerCase().includes('claude');
+              const fullMessages: any[] = isClaudeOnOpenAI
+                  ? [
+                      { role: 'system', content: systemPrompt + '\n\n' + hintLines },
+                      ...apiMessages,
+                  ]
+                  : [
+                      { role: 'system', content: systemPrompt },
+                      ...apiMessages,
+                      { role: 'system', content: hintLines },
+                  ];
 
               // 3c. 主动消息不再走旧情绪评估，避免旧格式的多 buff 异步覆盖头像心声。
 
@@ -1739,6 +1752,27 @@ if (!isVisible || !isChattingWithThisChar) {
                       temperature: 0.8,
                       max_tokens: 2000,
                   };
+                  // 暮色 2026-08-17 诊断：记下 OpenAI 协议主动消息的 messages 尾巴结构
+                  //   用来确认 Claude 模型 hint 是否真的被中转站丢了
+                  //   写 localStorage 比 console.log 更稳（生产环境用）
+                  try {
+                      const tail = fullMessages.slice(-3).map((m: any) => ({
+                          role: m.role,
+                          contentLen: typeof m.content === 'string' ? m.content.length : 0,
+                          contentTail: typeof m.content === 'string' ? m.content.slice(-60) : '',
+                      }));
+                      const diag = {
+                          timestamp: new Date().toISOString(),
+                          char: char.name,
+                          model: activeApi.model,
+                          apiProtocol,
+                          isClaudeOnOpenAI,
+                          hintPosition: isClaudeOnOpenAI ? 'merged-into-system' : 'last-message-system-role',
+                          messagesTotal: fullMessages.length,
+                          last3: tail,
+                      };
+                      localStorage.setItem('sullyos:lastProactiveMsgTail', JSON.stringify(diag, null, 2));
+                  } catch { /* quota 忽略 */ }
               }
 
               let data: any;

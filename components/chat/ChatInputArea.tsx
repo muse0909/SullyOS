@@ -1,10 +1,9 @@
 
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, CornersOut, Copy, PencilSimple } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Copy, PencilSimple } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
-import FullScreenEditor from '../common/FullScreenEditor';
 
 interface ChatInputAreaProps {
     input: string;
@@ -80,26 +79,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const actionsSwipeStart = useRef<{ x: number; y: number } | null>(null);
     const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
-
-    // --- 全屏输入状态 ---
-    const [showFullInput, setShowFullInput] = useState(false);
-    const [tempInput, setTempInput] = useState('');
-    const openFullInput = () => {
-        setTempInput(input);
-        setShowFullInput(true);
-    };
-    const confirmFullInput = () => {
-        setInput(tempInput);
-        setShowFullInput(false);
-    };
-    const sendFromFullInput = () => {
-        const text = tempInput.trim();
-        if (!text || isTyping) return;
-        setInput(tempInput); // 同步给原 input（保持状态一致）
-        setShowFullInput(false);
-        // 触发 onSend 是在父组件里通过 onSend prop，所以用 setTimeout 0 等状态更新
-        setTimeout(() => onSend(), 0);
-    };
 
     // 点空白处收起面板（暮色要求）：
     //   - 点 panel 容器内 → 不收起（用户在选表情/操作）
@@ -429,14 +408,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
                     <div className={`flex-1 min-w-0 flex items-center transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
-                        <button
-                            onClick={openFullInput}
-                            className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}
-                            title="全屏输入"
-                            aria-label="全屏输入"
-                        >
-                            <CornersOut className="w-5 h-5" weight="bold" />
-                        </button>
                         <textarea
                             ref={textareaRef}
                             rows={1}
@@ -687,20 +658,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     )}
                 </div>
             )}
-
-            {/* 全屏编辑器（v2 整个全屏 + 设置） */}
-            <FullScreenEditor
-                isOpen={showFullInput}
-                title="聊天输入"
-                value={tempInput}
-                onChange={setTempInput}
-                onClose={() => setShowFullInput(false)}
-                onConfirm={confirmFullInput}
-                onSend={sendFromFullInput}
-                placeholder="输入消息..."
-                confirmText="完成"
-                sendButtonText="发送"
-            />
         </div>
     );
 };

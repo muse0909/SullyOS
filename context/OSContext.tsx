@@ -1689,17 +1689,18 @@ if (!isVisible || !isChattingWithThisChar) {
               //   之前在 system prompt 末尾 → AI 读 system 后还要读 20 条 history，hint 容易被淹没
               //   挪到 messages 末尾 → AI 读完最后一条 history 立刻看到 hint，紧接着输出
               //   role:'system'（不是 user）→ 不会被 LLM 误当成"用户最新说的话"
-              // 暮色 2026-08-17 22:10 改：中转站对 messages 末尾 system role 处理不可靠
-              //   青屿对 "180-Clau4.6opus" 这个 model 吞末尾 system role，hint 丢失
-              //   → AI 顺着 history 末尾续写。中转站命名多变不能当判断依据
-              //   修：所有非 Gemini 协议（OpenAI）都把 hint 合并到 systemPrompt 末尾
-              //   避开中转站对末尾 system role 的不可靠处理，hint 一定生效
-              //   Gemini 协议走 contents + user role 拼接（line 1729 修复 4），不在此列
+              // 暮色 2026-08-17 22:19 改：Claude 训练行为是接续 messages 流里最后一条 user role 回应
+              //   hint 放末尾 system role 时，messages 数组最后一条 user 实际是 history 末尾
+              //   → Claude 接到 hint 唤醒指令但还是接续 history 末尾的 user 续写（"回复之前的消息"）
+              //   GPT/GLM 训练不同：system role 不影响消息流，AI 看到 system 指令就照做主动发
+              //   修：把 hint 改成 messages 末尾 user role（与 Gemini 路径 line 1729 修复 4 对齐）
+              //   Claude 接到末尾 user(hint) → 接续它回应 → 看到 hint 里的"主动发消息"指令 → 主动发
               const isOpenAIProtocol = !useGeminiProtocolProactive;
               const fullMessages: any[] = isOpenAIProtocol
                   ? [
-                      { role: 'system', content: systemPrompt + '\n\n' + hintLines },
+                      { role: 'system', content: systemPrompt },
                       ...apiMessages,
+                      { role: 'user', content: hintLines },
                   ]
                   : [
                       { role: 'system', content: systemPrompt },
@@ -1764,7 +1765,7 @@ if (!isVisible || !isChattingWithThisChar) {
                           char: char.name,
                           model: activeApi.model,
                           apiProtocol,
-                          hintPosition: isOpenAIProtocol ? 'merged-into-system' : 'last-message-system-role',
+                          hintPosition: isOpenAIProtocol ? 'last-message-user-role' : 'last-message-system-role',
                           messagesTotal: fullMessages.length,
                           last3: tail,
                       };

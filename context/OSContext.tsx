@@ -1689,19 +1689,14 @@ if (!isVisible || !isChattingWithThisChar) {
               //   之前在 system prompt 末尾 → AI 读 system 后还要读 20 条 history，hint 容易被淹没
               //   挪到 messages 末尾 → AI 读完最后一条 history 立刻看到 hint，紧接着输出
               //   role:'system'（不是 user）→ 不会被 LLM 误当成"用户最新说的话"
-              // 暮色 2026-08-17 修：Claude 模型走 OpenAI 协议时（即享/青屿中转）
-              //   中转站做 OpenAI→Anthropic 转换时吞掉 messages 末尾的 system role，
-              //   hint 丢失 → AI 看不到"主动唤醒"指令顺着 history 末尾续写
-              //   修：Claude 模型把 hint 合并到 systemPrompt 顶层，避中转站转换陷阱
-              //   其他模型（GPT / Gemini / 智谱）保持现状
-              // 8-17 22:09 加：model 匹配用 /clau/i 而非 includes('claude')
-              //   暮色实际用的是 "180-Clau4.6opus"（少个 d），之前的判断漏了
-              //   Anthropic 模型系列都含 clau 前缀（claude-3-5 / claude-3-opus / Clau4.6opus），
-              //   /clau/i 都能命中，其他模型命名不会撞这 4 个字母
-              const isClaudeOnOpenAI = apiProtocol === 'openai'
-                  && typeof activeApi.model === 'string'
-                  && /clau/i.test(activeApi.model);
-              const fullMessages: any[] = isClaudeOnOpenAI
+              // 暮色 2026-08-17 22:10 改：中转站对 messages 末尾 system role 处理不可靠
+              //   青屿对 "180-Clau4.6opus" 这个 model 吞末尾 system role，hint 丢失
+              //   → AI 顺着 history 末尾续写。中转站命名多变不能当判断依据
+              //   修：所有非 Gemini 协议（OpenAI）都把 hint 合并到 systemPrompt 末尾
+              //   避开中转站对末尾 system role 的不可靠处理，hint 一定生效
+              //   Gemini 协议走 contents + user role 拼接（line 1729 修复 4），不在此列
+              const isOpenAIProtocol = !useGeminiProtocolProactive;
+              const fullMessages: any[] = isOpenAIProtocol
                   ? [
                       { role: 'system', content: systemPrompt + '\n\n' + hintLines },
                       ...apiMessages,
@@ -1757,7 +1752,6 @@ if (!isVisible || !isChattingWithThisChar) {
                       max_tokens: 2000,
                   };
                   // 暮色 2026-08-17 诊断：记下 OpenAI 协议主动消息的 messages 尾巴结构
-                  //   用来确认 Claude 模型 hint 是否真的被中转站丢了
                   //   写 localStorage 比 console.log 更稳（生产环境用）
                   try {
                       const tail = fullMessages.slice(-3).map((m: any) => ({
@@ -1770,8 +1764,7 @@ if (!isVisible || !isChattingWithThisChar) {
                           char: char.name,
                           model: activeApi.model,
                           apiProtocol,
-                          isClaudeOnOpenAI,
-                          hintPosition: isClaudeOnOpenAI ? 'merged-into-system' : 'last-message-system-role',
+                          hintPosition: isOpenAIProtocol ? 'merged-into-system' : 'last-message-system-role',
                           messagesTotal: fullMessages.length,
                           last3: tail,
                       };

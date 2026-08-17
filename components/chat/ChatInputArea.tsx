@@ -419,11 +419,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-[2px] py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            className={`flex-1 min-w-0 bg-transparent px-1.5 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-40 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..."
                             style={{ height: 'auto', overflowY: 'hidden' }}
                         />
-                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-1 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                        <button ref={toggleEmojisBtnRef} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-1.5 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>

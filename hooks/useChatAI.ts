@@ -2340,8 +2340,25 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             addToast(`生图失败：${msg}`, 'error');
 
             // 生图失败时，不允许模型继续说“图片已经发了”
+            // 补 assistant + tool 消息：让 LLM 看到完整工具调用循环（自己刚调了 generate_image + 工具返回了失败）
+            //   不补的话 LLM 看不到自己调过 tool，会以为"系统让我重试"再输出 [[ACTION:GENERATE_IMAGE | ...]]
+            //   那个 action 标签被 chatParser.ts:347 strip 掉 → 用户看到"消息截断只剩思维链"
             const failMessages = [
                 ...fullMessages,
+                {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                        id: imgCall.id,
+                        type: 'function',
+                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) }
+                    }]
+                },
+                {
+                    role: 'tool',
+                    tool_call_id: imgCall.id,
+                    content: `生图失败：${msg}`
+                },
                 {
                     role: 'system',
                     content: `刚才系统尝试调用生图工具失败，失败原因：${msg}
@@ -2372,11 +2389,22 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
         if (imageGenerated) {
             // 只有真的保存了图片，才让模型继续说“图片已生成”
+            // 补 assistant + tool 消息：让 LLM 看到完整工具调用循环
             const followMessages = [
                 ...fullMessages,
                 {
                     role: 'assistant',
-                    content: `[我已经生成了一张图片发送给用户，prompt: ${imgPrompt}]`,
+                    content: null,
+                    tool_calls: [{
+                        id: imgCall.id,
+                        type: 'function',
+                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) }
+                    }]
+                },
+                {
+                    role: 'tool',
+                    tool_call_id: imgCall.id,
+                    content: `[图片已生成，URL 已发给用户]`
                 },
                 {
                     role: 'user',
@@ -2489,8 +2517,18 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 修法：跟生图失败同款，再追加一条 system 消息明确指令"不要声称已放歌成功"
             // 保留 tool 消息是 OpenAI 协议要求（不回传 tool_call_id LLM 会困惑可能再调一次）
             const failReason = playSongError || '未知原因';
+            // 补 assistant + tool 消息：让 LLM 看到完整工具调用循环（避免 LLM 输出 [[ACTION:PLAY_SONG | ...]] 标签重试）
             const followMessages = [
                 ...fullMessages,
+                {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                        id: playSongCall.id,
+                        type: 'function',
+                        function: { name: 'play_song', arguments: JSON.stringify({ songName, join }) }
+                    }]
+                },
                 {
                     role: 'tool',
                     tool_call_id: playSongCall.id,

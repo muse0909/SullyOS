@@ -56,6 +56,23 @@
 1. 加 `convertJsonSchemaToGemini(schema)` 辅助函数：递归把 `type` 字段小写转大写（`object`→`OBJECT`、`string`→`STRING`、`number`→`NUMBER`、`boolean`→`BOOLEAN`、`array`→`ARRAY`、`integer`→`INTEGER`）
 2. `geminiRequestBody.tools[].functionDeclarations[].parameters` 套一层 `convertJsonSchemaToGemini(t.function.parameters)`
 3. `doGeminiRequest` 400 处理加 `console.warn('🌐 [Gemini ...] ${status} 响应体: ${errText.slice(0, 500)}')`：以后再 400 立刻能看到 Google 实际说啥，不用猜
+4. 三个 helper（`convertJsonSchemaToGemini` / `messagesToGeminiRequest` / `doGeminiRequest`）改 `function` 声明：之前 const 箭头函数在 line 1820+ 才声明，但 line 1710 已经调用 → TDZ `'Aa' before initialization` ReferenceError
+5. 删 `geminiRequestBody.__pickedKeyIndex` / `__pickedKeyShort` 挂载：之前 8-4 写的老逻辑，漏删导致 `JSON.stringify` 把这俩内部字段也发出去 → Google 400 INVALID_ARGUMENT
+
+## 修复 follow-up 阶段 LLM 输出 `[[ACTION:GENERATE_IMAGE | ...]]` 被 strip
+
+**症状**：暮色 8-20 21:23 测时，江澈生图失败 follow-up 阶段只输出 `[THOUGHT: ...]` 思维链 + `[[ACTION:GENERATE_IMAGE | ...]]` 文本标签。`chatParser.ts:347` 的正则把所有 `[[ACTION:...]]` 标签 strip 掉，**用户看不到**这段——只剩思维链。
+
+**根因**：
+- follow-up 阶段 LLM 看不到自己第一轮调 tool 的记录（`cleanedApiMessages` 历史不存 tool_calls 字段）
+- LLM 看到 system 消息说"生图失败"——以为"系统让我重试"——又尝试调 generate_image
+- 但 follow-up 删了 tools（避免无限循环）——LLM 没法调 tool——只能用文本标签 `[[ACTION:...]]` 代替
+- `chatParser.ts:347` strip 所有 `[[ACTION:...]]` 标签（包括 `GENERATE_IMAGE` 这种不认的）——用户看不到这段
+
+**修法**（A 方案）：3 处 follow-up 都补 assistant + tool 消息（让 LLM 看到完整工具调用循环）
+- 生图失败：`failMessages` 补 `assistant: {content: null, tool_calls: [{generate_image, ...}]}` + `tool: {content: '生图失败：${msg}'}`
+- 生图成功：`followMessages` 补 `assistant: {content: null, tool_calls: [{generate_image, ...}]}` + `tool: {content: '[图片已生成，URL 已发给用户]'}`
+- 放歌失败：`followMessages` 补 `assistant: {content: null, tool_calls: [{play_song, ...}]}` + 已有 `tool` 消息
 
 ## 影响范围
 

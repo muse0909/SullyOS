@@ -1706,7 +1706,9 @@ ${visionDesc}
                         functionDeclarations: toolsList.map((t: any) => ({
                             name: t.function.name,
                             description: t.function.description,
-                            parameters: t.function.parameters,
+                            // OpenAI JSON Schema type 字段是小写（object/string/number/boolean/array/integer），
+                            // Gemini OpenAPI 3.0 要求大写（OBJECT/STRING/...）—— 直接传小写会被 Google 拒 400
+                            parameters: convertJsonSchemaToGemini(t.function.parameters),
                         })),
                     }];
                 }
@@ -1818,6 +1820,23 @@ ${visionDesc}
             //   - 不带 tools（follow-up 删了 tools 字段）
             //   - role: 'assistant' → 'model'，role: 'tool' → user/functionResponse
             //   - 收集 tool_call_id → function name 映射，让 functionResponse 知道工具名
+            //
+            //   配套 convertJsonSchemaToGemini：把 OpenAI JSON Schema 转 Gemini OpenAPI 3.0
+            //   - 关键差异：type 字段 OpenAI 小写（object/string）→ Gemini 大写（OBJECT/STRING）
+            //   - 直接传小写 Google 拒 400 INVALID_ARGUMENT
+            const convertJsonSchemaToGemini = (schema: any): any => {
+                if (!schema || typeof schema !== 'object') return schema;
+                if (Array.isArray(schema)) return schema.map(convertJsonSchemaToGemini);
+                const out: any = {};
+                for (const [key, value] of Object.entries(schema)) {
+                    if (key === 'type' && typeof value === 'string') {
+                        out[key] = value.toUpperCase();
+                    } else {
+                        out[key] = convertJsonSchemaToGemini(value);
+                    }
+                }
+                return out;
+            };
             const messagesToGeminiRequest = (openaiMessages: any[], baseSystemText: string): any => {
                 const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
                 const systemAppend = systemMsgs.map((m: any) =>
@@ -1917,6 +1936,8 @@ ${visionDesc}
                         const errText = await geminiRes.text().catch(() => '');
                         lastStatus = geminiRes.status;
                         lastErrText = errText;
+                        // 把 Google 实际错误体打出来——之前 400 不知道是哪个字段错，现在能立刻看到
+                        console.warn(`🌐 [Gemini ${logLabel}] ${geminiRes.status} 响应体: ${errText.slice(0, 500)}`);
                         const verdict = reportGeminiFailure('main', picked.keyIndex, geminiRes.status, errText);
                         if (verdict === 'fail-permanent') {
                             addToast(`🔑 Gemini key 失效（${shortKey(picked.key)}）— 请去 API 浮窗更新`, 'error');

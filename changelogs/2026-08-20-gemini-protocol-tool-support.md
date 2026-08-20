@@ -43,6 +43,20 @@
 - 控制台应看到 `🌐 [Gemini initial] 响应 ... 字 + 1 个 tool_call` 日志
 - 跟 OpenAI 兼容协议（其他角色）行为对齐
 
+## 后续修复（同一 commit 系列）
+
+**问题**：暮色 8-20 测时 6/7/8 三个 key 全报 400 Bad Request，截图显示 9/10/11/12 都"可用"但轮询不到。
+
+**根因**：OpenAI JSON Schema 的 `type` 字段是小写（`object` / `string` / `number` 等），但 Gemini OpenAPI 3.0 要求**大写**（`OBJECT` / `STRING` / `NUMBER` 等）。`SullyOS` 的 `IMAGE_GENERATION_TOOL.parameters` 用的是 OpenAI 格式（`type: 'object'`），我直接塞进 Gemini `functionDeclarations.parameters`，Google 收到不认的字段 → 400 INVALID_ARGUMENT。所有 key 都用同一个请求体 → 所有 key 都报同一个 400。
+
+**不是"轮询不到"**：cursor 是 round-robin 推进的，attempt 0/1/2 = 池 6/7/8（池 5 是构造 geminiRequestBody 时的 picked 日志，不是 attempt）。但 6/7/8 全 400 → 没机会到 9/10/11/12。`reportGeminiFailure` 把 400 标为 `rate-limited` 5s（`NETWORK_COOLDOWN_MS`），5s 后又能用——但 400 不会自己变好。
+
+**改动**：
+
+1. 加 `convertJsonSchemaToGemini(schema)` 辅助函数：递归把 `type` 字段小写转大写（`object`→`OBJECT`、`string`→`STRING`、`number`→`NUMBER`、`boolean`→`BOOLEAN`、`array`→`ARRAY`、`integer`→`INTEGER`）
+2. `geminiRequestBody.tools[].functionDeclarations[].parameters` 套一层 `convertJsonSchemaToGemini(t.function.parameters)`
+3. `doGeminiRequest` 400 处理加 `console.warn('🌐 [Gemini ...] ${status} 响应体: ${errText.slice(0, 500)}')`：以后再 400 立刻能看到 Google 实际说啥，不用猜
+
 ## 影响范围
 
 | 协议 | 工具 | 改动前 | 改动后 |

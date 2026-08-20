@@ -1677,7 +1677,6 @@ ${visionDesc}
             //   - 不带 Authorization header（key 走 URL 参数）
             //   - tools 字段格式: {tools: [{functionDeclarations: [{name, description, parameters}]}]}（跟 OpenAI 嵌套不一样）
             let geminiRequestBody: any = null;
-            let geminiUrl = '';
             if (useGeminiProtocol) {
                 const systemText = `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`;
                 const contents = cleanedApiMessages
@@ -1712,22 +1711,10 @@ ${visionDesc}
                         })),
                     }];
                 }
-                // 暮色 2026-08-04：Gemini key 池轮询（多 key + 失败自动切下一个）
-                //   - extractGeminiKeys 兼容老字段 geminiApiKey（单字符串）→ 自动包成 1 元素数组
-                //   - pickGeminiKey round-robin + 跳过限流中的 key
-                //   - 真正 fetch + 重试逻辑在 line 1850+ 那段（fetchGeminiWithPool）
-                const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
-                const picked = pickGeminiKey('main', mainGeminiKeys);
-                if (!picked) {
-                    throw new Error('Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
-                }
-                const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
-                // 选中的 key 在 geminiMainKey 闭包变量里暂存，fetch 段使用
-                //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
-                (geminiRequestBody as any).__pickedKeyIndex = picked.keyIndex;
-                (geminiRequestBody as any).__pickedKeyShort = shortKey(picked.key);
-                geminiUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(picked.key)}`;
-                console.log(`🌐 [Gemini] 直连协议 → ${geminiUrl.split('?')[0]}?key=*** (池 ${picked.keyIndex + 1}/${picked.totalKeys}: ${picked.key ? shortKey(picked.key) : ''})`);
+                // key 池轮询 / URL 构造 / fetch / 重试全部在 doGeminiRequest 内部处理
+                //   外层只构造 geminiRequestBody（contents + systemInstruction + generationConfig + tools）
+                //   之前在 8-4 写的 __pickedKeyIndex / __pickedKeyShort 挂载 + geminiUrl 构造都是抽函数之前的旧逻辑
+                //   漏删导致 JSON.stringify 把这俩内部字段也发出去 → Google 拒 400
             }
             const baseReqBody: any = {
                 model: effectiveApi.model,

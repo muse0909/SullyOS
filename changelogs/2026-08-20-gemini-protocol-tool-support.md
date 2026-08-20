@@ -82,3 +82,17 @@
 | Gemini | generate_image / play_song / propose_cart_items | ❌ 完全失效 | ✅ 正常 |
 
 **遗留**：mcd 循环（`useChatAI.ts:2014-2023`）的 follow-up 仍走 OpenAI 兼容——因为 mcd 场景下 Gemini 协议下第一轮不会再调 `propose_cart_items`（用户没在麦当劳小程序里），暂不需要改。
+
+## 后续修复：Gemini 2.5+ thoughtSignature 字段
+
+**症状**：暮色 8-20 22:11 测时，江澈生图 API 失败后 follow-up 调 Gemini 报 400 INVALID_ARGUMENT，错误信息：
+
+> "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance."
+
+**根因**：Gemini 2.5+ 模型要求 `functionCall` part 必须带 `thoughtSignature` 字段（Gemini 内部用来"理解"function call 的思维签名）。我之前解析 Gemini 响应时只提了 `functionCall.name` + `args`，**没**提 `thoughtSignature`；follow-up 重新构造请求时也**没**塞回去。
+
+**改动**：
+
+1. `doGeminiRequest` 解析时把 `part.thoughtSignature` 存到 `tool_calls[i].thoughtSignature` 字段
+2. `messagesToGeminiRequest` 重新构造 assistant 消息时检查 `tc.thoughtSignature`，有就塞回 `functionCall` part 的兄弟字段
+3. 3 处手工补的 follow-up 消息（生图成功/失败、放歌失败）也带上 `imgCall.thoughtSignature` / `playSongCall.thoughtSignature`

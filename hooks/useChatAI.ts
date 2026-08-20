@@ -1867,12 +1867,19 @@ ${visionDesc}
                                 } catch {
                                     args = {};
                                 }
-                                parts.push({
+                                // Gemini 2.5+ 必填：functionCall part 上的 thoughtSignature
+                                //   doGeminiRequest 解析时存在 tc.thoughtSignature，重新构造时塞回
+                                //   否则 Gemini 第二次调报 400 "missing thought_signature"
+                                const partObj: any = {
                                     functionCall: {
                                         name: tc.function?.name,
                                         args,
                                     },
-                                });
+                                };
+                                if (tc.thoughtSignature) {
+                                    partObj.thoughtSignature = tc.thoughtSignature;
+                                }
+                                parts.push(partObj);
                             });
                         }
                         contents.push({
@@ -1960,6 +1967,10 @@ ${visionDesc}
                                     name: part.functionCall.name,
                                     arguments: JSON.stringify(part.functionCall.args || {}),
                                 },
+                                // Gemini 2.5+ 必填：functionCall part 上的 thoughtSignature
+                                //   follow-up 重新构造请求时需要塞回去，否则 Gemini 第二次调报
+                                //   400 INVALID_ARGUMENT "Function call is missing a thought_signature"
+                                thoughtSignature: part.thoughtSignature,
                             });
                         }
                     });
@@ -2351,7 +2362,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     tool_calls: [{
                         id: imgCall.id,
                         type: 'function',
-                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) }
+                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) },
+                        // Gemini 2.5+ 必填：原 tool_call 上有 thoughtSignature，重新构造时带上
+                        thoughtSignature: imgCall.thoughtSignature,
                     }]
                 },
                 {
@@ -2398,7 +2411,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     tool_calls: [{
                         id: imgCall.id,
                         type: 'function',
-                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) }
+                        function: { name: 'generate_image', arguments: JSON.stringify({ prompt: imgPrompt }) },
+                        // Gemini 2.5+ 必填：原 tool_call 上有 thoughtSignature，重新构造时带上
+                        thoughtSignature: imgCall.thoughtSignature,
                     }]
                 },
                 {
@@ -2526,7 +2541,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     tool_calls: [{
                         id: playSongCall.id,
                         type: 'function',
-                        function: { name: 'play_song', arguments: JSON.stringify({ songName, join }) }
+                        function: { name: 'play_song', arguments: JSON.stringify({ songName, join }) },
+                        // Gemini 2.5+ 必填：原 tool_call 上有 thoughtSignature，重新构造时带上
+                        thoughtSignature: playSongCall.thoughtSignature,
                     }]
                 },
                 {

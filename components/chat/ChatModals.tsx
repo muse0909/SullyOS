@@ -460,7 +460,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {/* 暮色 2026-08-20：重传图床（消息是 base64 兜底图时手动重传到 imgbb / Cloudinary） */}
                     {selectedMessage?.content && selectedMessage?.type === 'image' && selectedMessage.content.startsWith('data:') && onReuploadImage && (
                         <button onClick={async () => { if (selectedMessage) { await onReuploadImage(selectedMessage.id, selectedMessage.content); setModalType('none'); } }} className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2 col-span-2">
-                            重传图床（base64 → 图床 URL）
+                            重传图床
                         </button>
                     )}
 

@@ -1824,7 +1824,10 @@ ${visionDesc}
             //   配套 convertJsonSchemaToGemini：把 OpenAI JSON Schema 转 Gemini OpenAPI 3.0
             //   - 关键差异：type 字段 OpenAI 小写（object/string）→ Gemini 大写（OBJECT/STRING）
             //   - 直接传小写 Google 拒 400 INVALID_ARGUMENT
-            const convertJsonSchemaToGemini = (schema: any): any => {
+            // 用 function 声明（hoisted）—— 避免被 line 1710 的 geminiRequestBody.tools 构造前置引用时报 TDZ
+            //   之前 const 箭头函数声明在 line 1820+，但 line 1710 已经调它 → ReferenceError
+            //   function 声明会被 JS 引擎 hoisted 到作用域顶部，前置引用安全
+            function convertJsonSchemaToGemini(schema: any): any {
                 if (!schema || typeof schema !== 'object') return schema;
                 if (Array.isArray(schema)) return schema.map(convertJsonSchemaToGemini);
                 const out: any = {};
@@ -1836,8 +1839,8 @@ ${visionDesc}
                     }
                 }
                 return out;
-            };
-            const messagesToGeminiRequest = (openaiMessages: any[], baseSystemText: string): any => {
+            }
+            function messagesToGeminiRequest(openaiMessages: any[], baseSystemText: string): any {
                 const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
                 const systemAppend = systemMsgs.map((m: any) =>
                     typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
@@ -1913,8 +1916,8 @@ ${visionDesc}
                     systemInstruction: { role: 'system', parts: [{ text: systemText }] },
                     generationConfig: { temperature: userTemp, maxOutputTokens: 8000 },
                 };
-            };
-            const doGeminiRequest = async (reqBody: any, logLabel: string): Promise<any> => {
+            }
+            async function doGeminiRequest(reqBody: any, logLabel: string): Promise<any> {
                 const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
                 const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
                 let lastErr: Error | null = null;
@@ -1997,7 +2000,7 @@ ${visionDesc}
                     return data;
                 }
                 throw lastErr || new Error(`Gemini API 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
-            };
+            }
 
             let data: any;
             if (useGeminiProtocol && geminiRequestBody) {

@@ -167,6 +167,8 @@ export interface APIConfig {
   visionApiKey?: string;
   visionModel?: string;
   imgbbApiKey?: string;       // imgbb 图床 API Key，用于发送图片自动转URL
+  cloudinaryCloudName?: string;  // Cloudinary cloud_name（imgbb fallback）
+  cloudinaryUploadPreset?: string;  // Cloudinary unsigned upload preset 名（imgbb fallback）
 
   // Cloudflare R2 对象存储（暮色 2026-07-14 换 R2 替代 imgbb，因为 imgbb 免费版会压缩图片）
   // 用于：1) 生图 b64 上传  2) 用户发图上传

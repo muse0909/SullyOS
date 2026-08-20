@@ -2275,8 +2275,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     // 默认直接走 imgbb。imgbb 成功不弹 toast（正常流程不该打扰）；
                     // imgbb 失败时用 'bell' 样式 toast 提示"已用 base64 临时存储，会占 localStorage 空间"
                     const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
+                    // 暮色 2026-08-20：imgbb 网络不稳（节点受限速）→ 加 Cloudinary 作 fallback
+                    //   imgbb 失败（fetch 抛错 / 5xx）自动切 Cloudinary；
+                    //   Cloudinary 用 unsigned upload preset（控制台创建，无需签名）
+                    //   Cloudinary 也失败才退 data URL
+                    const _cloudName = (effectiveApi as any)?.cloudinaryCloudName;
+                    const _cloudPreset = (effectiveApi as any)?.cloudinaryUploadPreset;
                     if (_imgbbKey) {
                         console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 imgbb...');
+                        let _imgbbSucceeded = false;
                         try {
                             const _formData = new FormData();
                             _formData.append('image', _imgData0.b64_json);
@@ -2287,15 +2294,39 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const _uploadData = await _uploadRes.json().catch(() => ({} as any));
                             if (_uploadRes.ok && _uploadData?.data?.url) {
                                 imageUrl = _uploadData.data.url;
+                                _imgbbSucceeded = true;
                                 console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
                                 // imgbb 成功：不弹 toast，正常流程不该打扰
                             } else {
-                                console.warn('🎨 [ImageGen] imgbb 上传失败，临时用 data URL 兜底:', _uploadData?.error?.message);
-                                onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
-                                imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                                console.warn('🎨 [ImageGen] imgbb 上传失败:', _uploadData?.error?.message);
                             }
                         } catch (uploadErr: any) {
-                            console.warn('🎨 [ImageGen] imgbb 上传异常，临时用 data URL 兜底:', uploadErr?.message);
+                            console.warn('🎨 [ImageGen] imgbb 上传异常:', uploadErr?.message);
+                        }
+                        // imgbb 失败：fallback 切 Cloudinary
+                        if (!_imgbbSucceeded && _cloudName && _cloudPreset) {
+                            console.log('🎨 [ImageGen] imgbb 失败，fallback 到 Cloudinary...');
+                            try {
+                                const _cForm = new FormData();
+                                _cForm.append('file', `data:${_mime};base64,${_imgData0.b64_json}`);
+                                _cForm.append('upload_preset', _cloudPreset);
+                                const _cRes = await fetch(`https://api.cloudinary.com/v1_1/${_cloudName}/image/upload`, {
+                                    method: 'POST',
+                                    body: _cForm,
+                                });
+                                const _cData = await _cRes.json().catch(() => ({} as any));
+                                if (_cRes.ok && _cData?.secure_url) {
+                                    imageUrl = _cData.secure_url;
+                                    console.log('🎨 [ImageGen] b64 已上传到 Cloudinary, url =', imageUrl);
+                                } else {
+                                    console.warn('🎨 [ImageGen] Cloudinary 上传失败:', _cData?.error?.message);
+                                }
+                            } catch (cErr: any) {
+                                console.warn('🎨 [ImageGen] Cloudinary 上传异常:', cErr?.message);
+                            }
+                        }
+                        // imgbb + Cloudinary 都失败：data URL 兜底
+                        if (!imageUrl) {
                             onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
                             imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
                         }

@@ -177,6 +177,9 @@ const Settings: React.FC = () => {
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
   const [localImgbbApiKey, setLocalImgbbApiKey] = useState(apiConfig.imgbbApiKey || '');
+  // 暮色 2026-08-20：Cloudinary fallback（imgbb 网络不稳时的备用图床）
+  const [localCloudinaryCloudName, setLocalCloudinaryCloudName] = useState(apiConfig.cloudinaryCloudName || '');
+  const [localCloudinaryUploadPreset, setLocalCloudinaryUploadPreset] = useState(apiConfig.cloudinaryUploadPreset || '');
   // 暮色 2026-07-14：Cloudflare R2 图床（替代 imgbb，不压缩原图）
   const [localR2AccountId, setLocalR2AccountId] = useState(apiConfig.r2AccountId || '');
   const [localR2AccessKeyId, setLocalR2AccessKeyId] = useState(apiConfig.r2AccessKeyId || '');
@@ -451,6 +454,8 @@ const Settings: React.FC = () => {
       setLocalVisionKey(apiConfig.visionApiKey || '');
       setLocalVisionModel(apiConfig.visionModel || '');
       setLocalImgbbApiKey(apiConfig.imgbbApiKey || '');
+      setLocalCloudinaryCloudName(apiConfig.cloudinaryCloudName || '');
+      setLocalCloudinaryUploadPreset(apiConfig.cloudinaryUploadPreset || '');
       // 暮色 2026-07-14：R2 状态同步（从识图卡迁到独立图床卡）
       setLocalR2AccountId(apiConfig.r2AccountId || '');
       setLocalR2AccessKeyId(apiConfig.r2AccessKeyId || '');
@@ -546,6 +551,8 @@ const Settings: React.FC = () => {
     // 暮色 2026-07-14：图床预设（独立 kind，暮色要把图床从识图里拆出来做独立卡片）
     if (kind === 'imagebed') {
       setLocalImgbbApiKey(c.imgbbApiKey || '');
+      setLocalCloudinaryCloudName(c.cloudinaryCloudName || '');
+      setLocalCloudinaryUploadPreset(c.cloudinaryUploadPreset || '');
       setLocalR2AccountId(c.r2AccountId || '');
       setLocalR2AccessKeyId(c.r2AccessKeyId || '');
       setLocalR2SecretAccessKey(c.r2SecretAccessKey || '');
@@ -553,6 +560,8 @@ const Settings: React.FC = () => {
       setLocalR2PublicUrl(c.r2PublicUrl || '');
       updateApiConfig({
         imgbbApiKey: c.imgbbApiKey || '',
+        cloudinaryCloudName: c.cloudinaryCloudName || '',
+        cloudinaryUploadPreset: c.cloudinaryUploadPreset || '',
         r2AccountId: c.r2AccountId || '',
         r2AccessKeyId: c.r2AccessKeyId || '',
         r2SecretAccessKey: c.r2SecretAccessKey || '',
@@ -660,6 +669,8 @@ const Settings: React.FC = () => {
         config = {
           baseUrl: '', apiKey: '', model: '',
           imgbbApiKey: localImgbbApiKey,
+          cloudinaryCloudName: localCloudinaryCloudName,
+          cloudinaryUploadPreset: localCloudinaryUploadPreset,
           r2AccountId: localR2AccountId,
           r2AccessKeyId: localR2AccessKeyId,
           r2SecretAccessKey: localR2SecretAccessKey,
@@ -2042,6 +2053,35 @@ const handleSaveTts = () => {
                 hint="配置后发图自动上传图床转 URL，解决卡顿"
                 className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
               />
+              {/* 暮色 2026-08-20：Cloudinary fallback（imgbb 网络不稳时的备用图床） */}
+              <div className="rounded-2xl bg-sky-50/60 border border-sky-200/50 px-4 py-3 mt-4">
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-sky-700">Cloudinary</span> — imgbb fallback 图床。imgbb 失败时自动切这里。
+                  注册 cloudinary.com → Settings → Upload → Add upload preset → 选 <code className="px-1 bg-white/60 rounded">Signing Mode = Unsigned</code>，记下 preset 名。
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-slate-500 pl-2">Cloud Name</label>
+                  <input
+                    type="text"
+                    value={localCloudinaryCloudName}
+                    onChange={e => setLocalCloudinaryCloudName(e.target.value)}
+                    placeholder="例：sullyos"
+                    className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 pl-2">Upload Preset（unsigned）</label>
+                  <input
+                    type="text"
+                    value={localCloudinaryUploadPreset}
+                    onChange={e => setLocalCloudinaryUploadPreset(e.target.value)}
+                    placeholder="例：ml_default"
+                    className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
+                  />
+                </div>
+              </div>
               {/* R2 子区块 — 暮色 2026-07-15：已废弃（试过一直卡 Vercel 函数 10 秒超时），代码已不再调用
                   字段保留以备后用（比如以后想换别的 R2 调用方式或自建后端） */}
               <div className="pt-3 mt-2 border-t border-slate-200/60 opacity-60">

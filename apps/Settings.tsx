@@ -496,8 +496,9 @@ const Settings: React.FC = () => {
           return preset.kind === kind;
       });
     // 暮色 2026-08-20：图床预设按当前 tab 过滤（互不打扰）—— 老预设（没 bedKind）默认归 imgbb
+    // bug 修：bedKind 存在 p.config.bedKind（不是 p.bedKind 顶层）—— 之前读错位置全 fallback 到 imgbb
     const imagebedForCurrent = (currentTab: 'imgbb' | 'cloudinary' | 'r2') =>
-        apiPresets.filter(p => p.kind === 'imagebed' && ((p as any).bedKind || 'imgbb') === currentTab);
+        apiPresets.filter(p => p.kind === 'imagebed' && ((p as any).config?.bedKind || 'imgbb') === currentTab);
     return {
         main: byKind('main'),
         vision: byKind('vision'),

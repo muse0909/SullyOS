@@ -180,6 +180,8 @@ const Settings: React.FC = () => {
   // 暮色 2026-08-20：Cloudinary fallback（imgbb 网络不稳时的备用图床）
   const [localCloudinaryCloudName, setLocalCloudinaryCloudName] = useState(apiConfig.cloudinaryCloudName || '');
   const [localCloudinaryUploadPreset, setLocalCloudinaryUploadPreset] = useState(apiConfig.cloudinaryUploadPreset || '');
+  // 暮色 2026-08-20：3 tab 切换（imgbb / Cloudinary / R2），每页独立预设 + 一键清空
+  const [localImageBed, setLocalImageBed] = useState<'imgbb' | 'cloudinary' | 'r2'>('imgbb');
   // 暮色 2026-07-14：Cloudflare R2 图床（替代 imgbb，不压缩原图）
   const [localR2AccountId, setLocalR2AccountId] = useState(apiConfig.r2AccountId || '');
   const [localR2AccessKeyId, setLocalR2AccessKeyId] = useState(apiConfig.r2AccessKeyId || '');
@@ -493,6 +495,9 @@ const Settings: React.FC = () => {
           if (kind === 'main') return preset.kind === 'main';
           return preset.kind === kind;
       });
+    // 暮色 2026-08-20：图床预设按当前 tab 过滤（互不打扰）—— 老预设（没 bedKind）默认归 imgbb
+    const imagebedForCurrent = (currentTab: 'imgbb' | 'cloudinary' | 'r2') =>
+        apiPresets.filter(p => p.kind === 'imagebed' && ((p as any).bedKind || 'imgbb') === currentTab);
     return {
         main: byKind('main'),
         vision: byKind('vision'),
@@ -500,6 +505,8 @@ const Settings: React.FC = () => {
         imagebed: byKind('imagebed'),
         tts: byKind('tts'),
         other: byKind('other'),
+        // 暮色 2026-08-20：图床按 tab 过滤的预设（3 tab 互不打扰）
+        imagebedByTab: (tab: 'imgbb' | 'cloudinary' | 'r2') => imagebedForCurrent(tab),
     };
   }, [apiPresets]);
 
@@ -558,6 +565,11 @@ const Settings: React.FC = () => {
       setLocalR2SecretAccessKey(c.r2SecretAccessKey || '');
       setLocalR2Bucket(c.r2Bucket || '');
       setLocalR2PublicUrl(c.r2PublicUrl || '');
+      // 暮色 2026-08-20：加载预设时切到对应 bedKind tab（老预设默认 imgbb）
+      const _bedKind = (c as any).bedKind || 'imgbb';
+      if (_bedKind === 'imgbb' || _bedKind === 'cloudinary' || _bedKind === 'r2') {
+        setLocalImageBed(_bedKind);
+      }
       updateApiConfig({
         imgbbApiKey: c.imgbbApiKey || '',
         cloudinaryCloudName: c.cloudinaryCloudName || '',
@@ -665,9 +677,11 @@ const Settings: React.FC = () => {
         };
         break;
       // 暮色 2026-07-14：图床预设只保存图床字段（imgbb + R2），不掺生图字段
+      // 暮色 2026-08-20：加 bedKind 字段（当前 tab），预设按 bedKind 过滤互不打扰
       case 'imagebed':
         config = {
           baseUrl: '', apiKey: '', model: '',
+          bedKind: localImageBed,
           imgbbApiKey: localImgbbApiKey,
           cloudinaryCloudName: localCloudinaryCloudName,
           cloudinaryUploadPreset: localCloudinaryUploadPreset,
@@ -819,13 +833,15 @@ const Settings: React.FC = () => {
     updateApiConfig({
       ...apiConfig,
       imgbbApiKey: localImgbbApiKey,
+      cloudinaryCloudName: localCloudinaryCloudName,
+      cloudinaryUploadPreset: localCloudinaryUploadPreset,
       r2AccountId: localR2AccountId,
       r2AccessKeyId: localR2AccessKeyId,
       r2SecretAccessKey: localR2SecretAccessKey,
       r2Bucket: localR2Bucket,
       r2PublicUrl: localR2PublicUrl,
     });
-    setImagebedStatusMsg('图床配置已保存');
+    setImagebedStatusMsg(`${localImageBed} 配置已保存`);
     setTimeout(() => setImagebedStatusMsg(''), 2000);
   };
 
@@ -2014,19 +2030,47 @@ const handleSaveTts = () => {
                 保存为预设
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">用户发图 / 生图 b64 兜底时，会自动上传到配置的图床，转成永久 URL 存到消息库。<span className="font-semibold text-emerald-600">推荐用 R2（不压缩原图）</span>；imgbb 是回退方案（免费版会压缩）。</p>
-            {presetsByKind.imagebed.length > 0 && (
+            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">用户发图 / 生图 b64 兜底时，会自动上传到配置的图床，转成永久 URL 存到消息库。<span className="font-semibold text-emerald-600">推荐用 ibb / Cloudinary</span>（imgbb 网络不稳时自动 fallback Cloudinary）；R2 字段保留以备后用。</p>
+            {/* 暮色 2026-08-20：3 tab 切换（imgbb / Cloudinary / R2），每页独立预设 + 一键清空 */}
+            <div className="bg-slate-50/60 rounded-2xl p-1 flex gap-1 border border-slate-200/50 mb-4">
+              <button
+                type="button"
+                onClick={() => setLocalImageBed('imgbb')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${localImageBed === 'imgbb' ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${localImageBed === 'imgbb' ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                imgbb
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocalImageBed('cloudinary')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${localImageBed === 'cloudinary' ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${localImageBed === 'cloudinary' ? 'bg-sky-500' : 'bg-slate-300'}`}></span>
+                Cloudinary
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocalImageBed('r2')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${localImageBed === 'r2' ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${localImageBed === 'r2' ? 'bg-amber-500' : 'bg-slate-300'}`}></span>
+                R2
+              </button>
+            </div>
+            {/* 当前 tab 的预设区（按 bedKind 过滤，互不打扰） */}
+            {presetsByKind.imagebedByTab(localImageBed).length > 0 && (
               <div className="mb-4">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">图床预设</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">{localImageBed} 预设</label>
                 <div className="flex gap-2 flex-wrap">
-                  {presetsByKind.imagebed.map(preset => (
+                  {presetsByKind.imagebedByTab(localImageBed).map(preset => (
                     <PresetChip
                       key={preset.id}
                       preset={preset}
-                      activeClassName="bg-emerald-50 border-emerald-200"
+                      activeClassName={localImageBed === 'cloudinary' ? 'bg-sky-50 border-sky-200' : localImageBed === 'r2' ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}
                       idleClassName="bg-white border-slate-200"
-                      textActiveClassName="text-emerald-600"
-                      textIdleClassName="text-slate-600 hover:text-emerald-500"
+                      textActiveClassName={localImageBed === 'cloudinary' ? 'text-sky-600' : localImageBed === 'r2' ? 'text-amber-600' : 'text-emerald-600'}
+                      textIdleClassName="text-slate-600"
                       onLoad={() => loadPreset(preset, 'imagebed')}
                       onRequestDelete={() => setPresetPendingDelete(preset)}
                     />
@@ -2035,70 +2079,78 @@ const handleSaveTts = () => {
               </div>
             )}
             <div className="space-y-4">
-              {/* imgbb 子区块 */}
-              <div className="rounded-2xl bg-emerald-50/60 border border-emerald-200/50 px-4 py-3">
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  <span className="font-semibold text-emerald-700">imgbb</span> — 免费图床公开 API，跨域天然支持。
-                  当前主图床（发图 / 生图默认走这个）。缺点是免费版会自动压缩图片，截图字小一点的会糊。
-                  <span className="text-slate-400">注意：imgbb 对香港/部分 IP 段会触发 CloudFlare 风控（code 103），换 🇯🇵 日本节点一般可解。</span>
-                </p>
-              </div>
-              <VisibleKeyInput
-                label="imgbb API Key"
-                value={localImgbbApiKey}
-                onChange={setLocalImgbbApiKey}
-                placeholder="imgbb.com 注册后免费获取"
-                visible={showImgbbKey}
-                onToggle={() => setShowImgbbKey(v => !v)}
-                hint="配置后发图自动上传图床转 URL，解决卡顿"
-                className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
-              />
-              {/* 暮色 2026-08-20：Cloudinary fallback（imgbb 网络不稳时的备用图床） */}
-              <div className="rounded-2xl bg-sky-50/60 border border-sky-200/50 px-4 py-3 mt-4">
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  <span className="font-semibold text-sky-700">Cloudinary</span> — imgbb fallback 图床。imgbb 失败时自动切这里。
-                  注册 cloudinary.com → Settings → Upload → Add upload preset → 选 <code className="px-1 bg-white/60 rounded">Signing Mode = Unsigned</code>，记下 preset 名。
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-slate-500 pl-2">Cloud Name</label>
-                  <input
-                    type="text"
-                    value={localCloudinaryCloudName}
-                    onChange={e => setLocalCloudinaryCloudName(e.target.value)}
-                    placeholder="例：sullyos"
-                    className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
+              {/* === imgbb 页 === */}
+              {localImageBed === 'imgbb' && (
+                <>
+                  <div className="rounded-2xl bg-emerald-50/60 border border-emerald-200/50 px-4 py-3">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      <span className="font-semibold text-emerald-700">imgbb</span> — 免费图床公开 API，跨域天然支持。
+                      当前主图床（发图 / 生图默认走这个）。缺点是免费版会自动压缩图片，截图字小一点的会糊。
+                      <span className="text-slate-400">注意：imgbb 对香港/部分 IP 段会触发 CloudFlare 风控（code 103），换 🇯🇵 日本节点一般可解。</span>
+                    </p>
+                  </div>
+                  <VisibleKeyInput
+                    label="imgbb API Key"
+                    value={localImgbbApiKey}
+                    onChange={setLocalImgbbApiKey}
+                    placeholder="imgbb.com 注册后免费获取"
+                    visible={showImgbbKey}
+                    onToggle={() => setShowImgbbKey(v => !v)}
+                    hint="配置后发图自动上传图床转 URL，解决卡顿"
+                    className="w-full px-4 py-2.5 pr-20 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
                   />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 pl-2">Upload Preset（unsigned）</label>
-                  <input
-                    type="text"
-                    value={localCloudinaryUploadPreset}
-                    onChange={e => setLocalCloudinaryUploadPreset(e.target.value)}
-                    placeholder="例：ml_default"
-                    className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200"
-                  />
-                </div>
-              </div>
-              {/* R2 子区块 — 暮色 2026-07-15：已废弃（试过一直卡 Vercel 函数 10 秒超时），代码已不再调用
-                  字段保留以备后用（比如以后想换别的 R2 调用方式或自建后端） */}
-              <div className="pt-3 mt-2 border-t border-slate-200/60 opacity-60">
-                <div className="flex items-center gap-1.5 mb-2 pl-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest line-through">Cloudflare R2</span>
-                  <span className="text-[9px] text-amber-600">（已废弃 · 试过卡 Vercel 10 秒超时 · 字段保留以备后用）</span>
-                </div>
-                <div className="space-y-2.5">
-                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
-                  <VisibleKeyInput label="Access Key ID" value={localR2AccessKeyId} onChange={setLocalR2AccessKeyId} placeholder="R2 API Token 的 Access Key" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
-                  <VisibleKeyInput label="Secret Access Key" value={localR2SecretAccessKey} onChange={setLocalR2SecretAccessKey} placeholder="R2 API Token 的 Secret（**只显示一次**）" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
-                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Bucket 名</label><input type="text" value={localR2Bucket} onChange={(e) => setLocalR2Bucket(e.target.value)} placeholder="例 sullyos-images" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
-                  <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">公网 URL</label><input type="text" value={localR2PublicUrl} onChange={(e) => setLocalR2PublicUrl(e.target.value)} placeholder="https://pub-xxxxx.r2.dev" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
-                </div>
-              </div>
-              <button onClick={handleSaveImagebed} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all mt-2">{imagebedStatusMsg || '保存图床配置'}</button>
-              <p className="text-[10px] text-center text-slate-300 italic mt-2">提示：修改后请点击此按钮生效</p>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveImagebed} className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-emerald-500/20 bg-emerald-500 active:scale-95 transition-all">{imagebedStatusMsg || '保存 imgbb 配置'}</button>
+                    <button onClick={() => { if (confirm('清空 imgbb 配置？')) { setLocalImgbbApiKey(''); updateApiConfig({ ...apiConfig, imgbbApiKey: '' }); setImagebedStatusMsg('已清空'); setTimeout(() => setImagebedStatusMsg(''), 1500); } }} className="px-4 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 active:scale-95 transition-all text-xs">一键清空</button>
+                  </div>
+                </>
+              )}
+              {/* === Cloudinary 页 === */}
+              {localImageBed === 'cloudinary' && (
+                <>
+                  <div className="rounded-2xl bg-sky-50/60 border border-sky-200/50 px-4 py-3">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      <span className="font-semibold text-sky-700">Cloudinary</span> — imgbb fallback 图床。imgbb 失败时自动切这里。
+                      注册 cloudinary.com → Settings → Upload → Add upload preset → 选 <code className="px-1 bg-white/60 rounded">Signing Mode = Unsigned</code>，记下 preset 名。
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] text-slate-500 pl-2">Cloud Name</label>
+                      <input type="text" value={localCloudinaryCloudName} onChange={e => setLocalCloudinaryCloudName(e.target.value)} placeholder="例：sullyos" className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 pl-2">Upload Preset（unsigned）</label>
+                      <input type="text" value={localCloudinaryUploadPreset} onChange={e => setLocalCloudinaryUploadPreset(e.target.value)} placeholder="例：ml_default" className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveImagebed} className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-sky-500/20 bg-sky-500 active:scale-95 transition-all">{imagebedStatusMsg || '保存 Cloudinary 配置'}</button>
+                    <button onClick={() => { if (confirm('清空 Cloudinary 配置？')) { setLocalCloudinaryCloudName(''); setLocalCloudinaryUploadPreset(''); updateApiConfig({ ...apiConfig, cloudinaryCloudName: '', cloudinaryUploadPreset: '' }); setImagebedStatusMsg('已清空'); setTimeout(() => setImagebedStatusMsg(''), 1500); } }} className="px-4 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 active:scale-95 transition-all text-xs">一键清空</button>
+                  </div>
+                </>
+              )}
+              {/* === R2 页 === */}
+              {localImageBed === 'r2' && (
+                <>
+                  <div className="rounded-2xl bg-amber-50/60 border border-amber-200/50 px-4 py-3">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      <span className="font-semibold text-amber-700">Cloudflare R2</span> — <span className="text-amber-600">已废弃</span>（试过卡 Vercel 10 秒超时），字段保留以备后用（比如以后想换别的 R2 调用方式或自建后端）。
+                    </p>
+                  </div>
+                  <div className="space-y-2.5">
+                    <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Account ID</label><input type="text" value={localR2AccountId} onChange={(e) => setLocalR2AccountId(e.target.value)} placeholder="32 位 hex，R2 概览页右上角" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                    <VisibleKeyInput label="Access Key ID" value={localR2AccessKeyId} onChange={setLocalR2AccessKeyId} placeholder="R2 API Token 的 Access Key" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                    <VisibleKeyInput label="Secret Access Key" value={localR2SecretAccessKey} onChange={setLocalR2SecretAccessKey} placeholder="R2 API Token 的 Secret（**只显示一次**）" visible={showImgbbKey} onToggle={() => setShowImgbbKey(v => !v)} className="w-full px-4 py-2 pr-20 bg-slate-50 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500/20 border border-slate-200" />
+                    <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Bucket 名</label><input type="text" value={localR2Bucket} onChange={(e) => setLocalR2Bucket(e.target.value)} placeholder="例 sullyos-images" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                    <div className="group"><label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">公网 URL</label><input type="text" value={localR2PublicUrl} onChange={(e) => setLocalR2PublicUrl(e.target.value)} placeholder="https://pub-xxxxx.r2.dev" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs font-mono focus:bg-white transition-all" /></div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveImagebed} className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-amber-500/20 bg-amber-500 active:scale-95 transition-all">{imagebedStatusMsg || '保存 R2 配置'}</button>
+                    <button onClick={() => { if (confirm('清空 R2 配置？')) { setLocalR2AccountId(''); setLocalR2AccessKeyId(''); setLocalR2SecretAccessKey(''); setLocalR2Bucket(''); setLocalR2PublicUrl(''); updateApiConfig({ ...apiConfig, r2AccountId: '', r2AccessKeyId: '', r2SecretAccessKey: '', r2Bucket: '', r2PublicUrl: '' }); setImagebedStatusMsg('已清空'); setTimeout(() => setImagebedStatusMsg(''), 1500); } }} className="px-4 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 active:scale-95 transition-all text-xs">一键清空</button>
+                  </div>
+                </>
+              )}
             </div>
           </section>
         </SettingsSection>

@@ -37,6 +37,7 @@ interface ChatModalsProps {
 
     // Selection Props
     selectedMessage: Message | null;
+    onReuploadImage?: (msgId: number, base64Content: string) => Promise<void>;
     selectedEmoji: {name: string, url: string} | null;
     selectedCategory: EmojiCategory | null;
     activeCharacter: CharacterProfile;
@@ -110,7 +111,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allHistoryMessages = [],
     onTransfer, onImportEmoji, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
+    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory, onReuploadImage,
     editEmojiNewName, setEditEmojiNewName, onEditEmojiConfirm,
     reorderList, onSaveReorder, onCancelReorder, onMoveEmoji,
     categories, activeCategory,
@@ -453,6 +454,13 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                         {selectedMessage?.content && selectedMessage?.type !== 'text' && (
                         <button onClick={handleSaveImageMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             保存图片
+                        </button>
+                    )}
+
+                    {/* 暮色 2026-08-20：重传图床（消息是 base64 兜底图时手动重传到 imgbb / Cloudinary） */}
+                    {selectedMessage?.content && selectedMessage?.type === 'image' && selectedMessage.content.startsWith('data:') && onReuploadImage && (
+                        <button onClick={async () => { if (selectedMessage) { await onReuploadImage(selectedMessage.id, selectedMessage.content); setModalType('none'); } }} className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2 col-span-2">
+                            重传图床（base64 → 图床 URL）
                         </button>
                     )}
 

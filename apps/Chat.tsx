@@ -2285,6 +2285,48 @@ if (keepN > 0) {
         setSelectedMessage(null);
     };
 
+    // 暮色 2026-08-20：重传图床（base64 兜底图 → 上传 imgbb / Cloudinary 拿永久 URL，更新消息 content）
+    const handleReuploadImage = async (msgId: number, base64Content: string) => {
+        const _imgbbKey = (apiConfig as any)?.imgbbApiKey;
+        const _cloudName = (apiConfig as any)?.cloudinaryCloudName;
+        const _cloudPreset = (apiConfig as any)?.cloudinaryUploadPreset;
+        if (!_imgbbKey && !(_cloudName && _cloudPreset)) {
+            addToast('没配图床凭证，没法重传', 'error');
+            return;
+        }
+        const _base64 = base64Content.replace(/^data:[^;]+;base64,/, '');
+        const _mime = (base64Content.match(/^data:([^;]+);/) || ['', 'image/png'])[1];
+        // 抽 imgbb 上传逻辑
+        const _tryImgbb = async () => {
+            if (!_imgbbKey) return null;
+            const _form = new FormData();
+            _form.append('image', _base64);
+            const _r = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, { method: 'POST', body: _form });
+            const _d = await _r.json().catch(() => ({} as any));
+            return _r.ok && _d?.data?.url ? _d.data.url as string : null;
+        };
+        // 抽 Cloudinary 上传逻辑
+        const _tryCloudinary = async () => {
+            if (!_cloudName || !_cloudPreset) return null;
+            const _form = new FormData();
+            _form.append('file', `data:${_mime};base64,${_base64}`);
+            _form.append('upload_preset', _cloudPreset);
+            const _r = await fetch(`https://api.cloudinary.com/v1_1/${_cloudName}/image/upload`, { method: 'POST', body: _form });
+            const _d = await _r.json().catch(() => ({} as any));
+            return _r.ok && _d?.secure_url ? _d.secure_url as string : null;
+        };
+        addToast('重传中...', 'info');
+        let _newUrl = await _tryImgbb();
+        if (!_newUrl) _newUrl = await _tryCloudinary();
+        if (!_newUrl) {
+            addToast('图床都挂了，重传失败', 'error');
+            return;
+        }
+        await DB.updateMessage(msgId, _newUrl);
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: _newUrl! } : m));
+        addToast('重传成功，消息已更新', 'success');
+    };
+
     const handleDeleteEmoji = async () => {
         if (!selectedEmoji) return;
         await DB.deleteEmoji(selectedEmoji.name);
@@ -2775,7 +2817,7 @@ if (keepN > 0) {
                 onClearHistory={handleClearHistory} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
-                onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
+                onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }} onReuploadImage={handleReuploadImage}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
                 editEmojiNewName={editEmojiNewName} setEditEmojiNewName={setEditEmojiNewName} onEditEmojiConfirm={handleEditEmoji}
                 reorderList={reorderList} onSaveReorder={handleSaveReorder} onCancelReorder={handleCancelReorder} onMoveEmoji={(from, to) => {

@@ -1653,6 +1653,20 @@ ${visionDesc}
 
 
 
+            // toolsList 提前到这里——Gemini 协议下也要用（line 1682 / 1720 都要引用）
+            // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
+            // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
+            const toolsList: any[] = [];
+            if (mcdMiniOpen) {
+                toolsList.push(MCD_PROPOSE_TOOL);
+            }
+            if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel && char.imageGenEnabled !== false) {
+                toolsList.push(IMAGE_GENERATION_TOOL);
+            }
+            // play_song 工具：musicApi 不依赖任何配置（直接调网易云 API）—— 始终注册
+            if (char.playSongEnabled !== false) {
+                toolsList.push(PLAY_SONG_TOOL);
+            }
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;
@@ -1661,7 +1675,7 @@ ${visionDesc}
             //   - systemInstruction 顶层字段（不是 role:system 插在 messages 里）
             //   - 端点: ${baseUrl}/models/{model}:generateContent?key=xxx
             //   - 不带 Authorization header（key 走 URL 参数）
-            //   - 不挂 tool（Gemini function calling 格式不同；想用 tool 切回 OpenAI 中转）
+            //   - tools 字段格式: {tools: [{functionDeclarations: [{name, description, parameters}]}]}（跟 OpenAI 嵌套不一样）
             let geminiRequestBody: any = null;
             let geminiUrl = '';
             if (useGeminiProtocol) {
@@ -1687,6 +1701,15 @@ ${visionDesc}
                         maxOutputTokens: 8000,
                     },
                 };
+                if (toolsList.length > 0) {
+                    (geminiRequestBody as any).tools = [{
+                        functionDeclarations: toolsList.map((t: any) => ({
+                            name: t.function.name,
+                            description: t.function.description,
+                            parameters: t.function.parameters,
+                        })),
+                    }];
+                }
                 // 暮色 2026-08-04：Gemini key 池轮询（多 key + 失败自动切下一个）
                 //   - extractGeminiKeys 兼容老字段 geminiApiKey（单字符串）→ 自动包成 1 元素数组
                 //   - pickGeminiKey round-robin + 跳过限流中的 key
@@ -1717,28 +1740,12 @@ ${visionDesc}
                 baseReqBody.stream_options = { include_usage: true };
             }
             // 任务 2：删 Claude 协议强制 stream=false 的分支
-            // 任务 2：删 Claude 协议不挂 tool 的分支（!useClaudeProtocol 永远 true）
-            // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
-            // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
-            // 组装 tools 列表
-const toolsList: any[] = [];
-if (mcdMiniOpen) {
-    toolsList.push(MCD_PROPOSE_TOOL);
-}
-if (effectiveApi.imageBaseUrl && effectiveApi.imageApiKey && effectiveApi.imageModel && char.imageGenEnabled !== false) {
-    toolsList.push(IMAGE_GENERATION_TOOL);
-}
-// 暮色 2026-08-02 16:32：play_song 功能工具注册（handoff #1）
-// 跟生图工具一样：Gemini 协议也不挂 tool（Gemini function calling 格式不同）
-// musicApi 不依赖任何配置（直接调网易云 API），所以不判断"音乐 API 是否配了"——始终注册
-// 暮色 2026-08-14：加 playSongEnabled 开关——关掉时请求体里不带
-if (!useGeminiProtocol && char.playSongEnabled !== false) {
-    toolsList.push(PLAY_SONG_TOOL);
-}
-if (toolsList.length > 0) {
-    baseReqBody.tools = toolsList;
-    baseReqBody.tool_choice = 'auto';
-}
+            // toolsList 已在 line 1656 之前构造（Gemini 协议要共用）
+            // baseReqBody 挂 tools 留这里
+            if (toolsList.length > 0) {
+                baseReqBody.tools = toolsList;
+                baseReqBody.tool_choice = 'auto';
+            }
 
             // ⚠️ 2026-07-17 暮色提议：完整请求体日志（发给即享技术看 cache_control 是否透传）
             //   - console.log 输出
@@ -1805,88 +1812,158 @@ if (toolsList.length > 0) {
                 }
             }
 
-            let data: any;
-            if (useGeminiProtocol && geminiRequestBody) {
-                // 暮色 2026-07-27：Gemini 协议直连 fetch（不走 OpenAI 兼容的 safeFetchJson）
-                //   - Gemini 返回的字段是 candidates[].content.parts[].text
-                //   - 转成 OpenAI 格式 choices[].message.content，后续代码无感
-                //   - 解析 usageMetadata → usage（token 徽标能用）
-                // 暮色 2026-08-04：key 池 + 重试
-                //   - 失败时 reportGeminiFailure 标状态：429 → 切下一个重试 / 401 → 标 dead + 弹 toast 不重试 / 其他 → 切下一个重试
-                //   - 最多重试 2 次（避免无限循环，但 16 个 key 池 1 次太少 — 暮色 2026-08-05 反馈）
-                //   - 关键：不是所有 key 都坏，多切几个才能跨过 1 个坏 key
+            // 抽 doGeminiRequest 函数——Gemini 协议下所有 follow-up（生图成功/失败、放歌失败）
+            // 也能走 Gemini 直连，不再依赖 OpenAI 兼容中转
+            //   配套辅助 messagesToGeminiRequest：把 OpenAI 风格 messages 转 Gemini 风格请求体
+            //   - 不带 tools（follow-up 删了 tools 字段）
+            //   - role: 'assistant' → 'model'，role: 'tool' → user/functionResponse
+            //   - 收集 tool_call_id → function name 映射，让 functionResponse 知道工具名
+            const messagesToGeminiRequest = (openaiMessages: any[], baseSystemText: string): any => {
+                const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
+                const systemAppend = systemMsgs.map((m: any) =>
+                    typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+                ).join('\n\n');
+                const systemText = systemAppend ? `${baseSystemText}\n\n${systemAppend}` : baseSystemText;
+                // 收集 tool_call_id → function name 映射（从 assistant 的 tool_calls 里找）
+                const toolCallNameMap: Record<string, string> = {};
+                openaiMessages.forEach((m: any) => {
+                    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+                        m.tool_calls.forEach((tc: any) => {
+                            if (tc.id && tc.function?.name) {
+                                toolCallNameMap[tc.id] = tc.function.name;
+                            }
+                        });
+                    }
+                });
+                const contents: any[] = [];
+                for (const m of openaiMessages) {
+                    if (m.role === 'user') {
+                        const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                        contents.push({
+                            role: 'user',
+                            parts: [{ text: text.slice(0, 30000) }],
+                        });
+                    } else if (m.role === 'assistant') {
+                        const text = typeof m.content === 'string' ? m.content : '';
+                        const parts: any[] = [];
+                        if (text) parts.push({ text: text.slice(0, 30000) });
+                        // assistant 调了 tool 的要转 functionCall
+                        if (Array.isArray(m.tool_calls)) {
+                            m.tool_calls.forEach((tc: any) => {
+                                let args: any = {};
+                                try {
+                                    args = typeof tc.function?.arguments === 'string'
+                                        ? JSON.parse(tc.function.arguments)
+                                        : (tc.function?.arguments || {});
+                                } catch {
+                                    args = {};
+                                }
+                                parts.push({
+                                    functionCall: {
+                                        name: tc.function?.name,
+                                        args,
+                                    },
+                                });
+                            });
+                        }
+                        contents.push({
+                            role: 'model',
+                            parts: parts.length > 0 ? parts : [{ text: '' }],
+                        });
+                    } else if (m.role === 'tool') {
+                        // OpenAI tool result → Gemini functionResponse（Gemini 里 tool result 是 user role）
+                        const fname = toolCallNameMap[m.tool_call_id] || 'unknown';
+                        const responseContent = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                        contents.push({
+                            role: 'user',
+                            parts: [{
+                                functionResponse: {
+                                    name: fname,
+                                    response: { result: responseContent.slice(0, 30000) },
+                                },
+                            }],
+                        });
+                    }
+                    // system 消息已拼到 systemText，跳过
+                }
+                if (contents.length === 0 || contents[0].role !== 'user') {
+                    contents.unshift({ role: 'user', parts: [{ text: '(开始对话)' }] });
+                }
+                return {
+                    contents,
+                    systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                    generationConfig: { temperature: userTemp, maxOutputTokens: 8000 },
+                };
+            };
+            const doGeminiRequest = async (reqBody: any, logLabel: string): Promise<any> => {
                 const mainGeminiKeys = extractGeminiKeys(effectiveApi, 'geminiApiKey', 'geminiApiKeys');
+                const cleanBase = (effectiveApi.baseUrl || '').replace(/\/+$/, '');
                 let lastErr: Error | null = null;
                 let lastStatus = 0;
                 let lastErrText = '';
-                let succeeded = false;
-                // 第 1 次用的 key 索引已经在 (geminiRequestBody as any).__pickedKeyIndex 里
-                //   重试时 pickGeminiKey 会自动取下一个（cursor 已推进）
                 for (let attempt = 0; attempt < 3; attempt++) {
-                    const currentPicked = (() => {
-                        if (attempt === 0) {
-                            return { keyIndex: (geminiRequestBody as any).__pickedKeyIndex as number, key: '' };
-                        }
-                        const np = pickGeminiKey('main', mainGeminiKeys);
-                        if (!np) return null;
-                        return { keyIndex: np.keyIndex, key: np.key };
-                    })();
-                    if (!currentPicked) {
-                        // 池里没有可用 key 了
-                        lastErr = new Error('Gemini 协议：key 池里所有 key 都不可用（失效/限流中）');
+                    const picked = pickGeminiKey('main', mainGeminiKeys);
+                    if (!picked) {
+                        lastErr = new Error('Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
                         break;
                     }
-                    // 第 1 次重试时重建 URL 用新 key
-                    const tryKey = attempt === 0
-                        ? decodeURIComponent(geminiUrl.split('?key=')[1] || '')
-                        : currentPicked.key;
-                    const tryUrl = `${(effectiveApi.baseUrl || '').replace(/\/+$/, '')}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(tryKey)}`;
-                    const geminiHeaders = { 'Content-Type': 'application/json' };
+                    const tryUrl = `${cleanBase}/models/${encodeURIComponent(effectiveApi.model)}:generateContent?key=${encodeURIComponent(picked.key)}`;
                     const geminiRes = await fetch(tryUrl, {
                         method: 'POST',
-                        headers: geminiHeaders,
-                        // 暮色 2026-08-06：修 Gemini 400 真凶 — 之前 8-4 加 key 池时往 geminiRequestBody 上挂了
-                        //   __pickedKeyIndex / __pickedKeyShort 闭包变量，line 1785-1786 直接
-                        //   (geminiRequestBody as any).__pickedKeyIndex = picked.keyIndex
-                        //   fetch 时 JSON.stringify(geminiRequestBody) 把这俩字段也发出去了
-                        //   Google 收到未知字段 → 400 INVALID_ARGUMENT
-                        //   修法：序列化前先剥掉这俩内部字段，只发 Gemini 标准字段
-                        body: JSON.stringify({
-                            contents: geminiRequestBody.contents,
-                            systemInstruction: geminiRequestBody.systemInstruction,
-                            generationConfig: geminiRequestBody.generationConfig,
-                        }),
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(reqBody),
                     });
                     if (!geminiRes.ok) {
                         const errText = await geminiRes.text().catch(() => '');
                         lastStatus = geminiRes.status;
                         lastErrText = errText;
-                        const verdict = reportGeminiFailure('main', currentPicked.keyIndex, geminiRes.status, errText);
+                        const verdict = reportGeminiFailure('main', picked.keyIndex, geminiRes.status, errText);
                         if (verdict === 'fail-permanent') {
-                            // 401 / 403：key 永久失效，不重试 + 弹 toast
-                            addToast(`🔑 Gemini key 失效（${shortKey(tryKey)}）— 请去 API 浮窗更新`, 'error');
+                            addToast(`🔑 Gemini key 失效（${shortKey(picked.key)}）— 请去 API 浮窗更新`, 'error');
                             lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
                             break;
                         }
                         if (verdict === 'fail-recoverable') {
-                            // 所有 key 都限流了，不重试
                             addToast(`⏳ Gemini key 池全部限流中，等会儿自动恢复`, 'info');
                             lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
                             break;
                         }
-                        // 'retry'：切下一个 + 重试
-                        console.warn(`🌐 [Gemini] 池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length} ${geminiRes.status}，切下一个重试`);
+                        console.warn(`🌐 [Gemini ${logLabel}] 池 ${picked.keyIndex + 1}/${mainGeminiKeys.length} ${geminiRes.status}，切下一个重试`);
                         lastErr = new Error(`Gemini API ${geminiRes.status}: ${errText.slice(0, 300)}`);
                         continue;
                     }
-                    // 成功
-                    reportGeminiSuccess('main', currentPicked.keyIndex);
+                    reportGeminiSuccess('main', picked.keyIndex);
                     const geminiJson: any = await geminiRes.json();
-                    const geminiText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    const geminiFinish = geminiJson?.candidates?.[0]?.finishReason || 'stop';
-                    data = {
+                    // 解析 Gemini 响应：识别 text + functionCall，functionCall 转 OpenAI 兼容 tool_calls
+                    const geminiParts = geminiJson?.candidates?.[0]?.content?.parts || [];
+                    let geminiText = '';
+                    const geminiToolCalls: any[] = [];
+                    geminiParts.forEach((part: any) => {
+                        if (part?.text) geminiText += part.text;
+                        if (part?.functionCall) {
+                            const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                            geminiToolCalls.push({
+                                id: callId,
+                                type: 'function',
+                                function: {
+                                    name: part.functionCall.name,
+                                    arguments: JSON.stringify(part.functionCall.args || {}),
+                                },
+                            });
+                        }
+                    });
+                    const geminiFinishRaw = geminiJson?.candidates?.[0]?.finishReason || 'stop';
+                    const hasToolCalls = geminiToolCalls.length > 0;
+                    const geminiFinish = hasToolCalls
+                        ? 'tool_calls'
+                        : (geminiFinishRaw === 'STOP' ? 'stop' : geminiFinishRaw.toLowerCase());
+                    const data = {
                         choices: [{
-                            message: { role: 'assistant', content: geminiText },
+                            message: {
+                                role: 'assistant',
+                                content: geminiText || (hasToolCalls ? null : ''),
+                                ...(hasToolCalls ? { tool_calls: geminiToolCalls } : {}),
+                            },
                             finish_reason: geminiFinish,
                         }],
                         usage: geminiJson?.usageMetadata ? {
@@ -1895,13 +1972,15 @@ if (toolsList.length > 0) {
                             total_tokens: geminiJson.usageMetadata.totalTokenCount || 0,
                         } : undefined,
                     };
-                    console.log(`🌐 [Gemini] 响应 ${geminiText.length} 字 | usage=${JSON.stringify(data.usage)} (池 ${currentPicked.keyIndex + 1}/${mainGeminiKeys.length}: ${shortKey(tryKey)})`);
-                    succeeded = true;
-                    break;
+                    console.log(`🌐 [Gemini ${logLabel}] 响应 ${geminiText.length} 字${hasToolCalls ? ` + ${geminiToolCalls.length} 个 tool_call` : ''} | usage=${JSON.stringify(data.usage)} (池 ${picked.keyIndex + 1}/${mainGeminiKeys.length}: ${shortKey(picked.key)})`);
+                    return data;
                 }
-                if (!succeeded) {
-                    throw lastErr || new Error(`Gemini API 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
-                }
+                throw lastErr || new Error(`Gemini API 失败 (last ${lastStatus}): ${lastErrText.slice(0, 300)}`);
+            };
+
+            let data: any;
+            if (useGeminiProtocol && geminiRequestBody) {
+                data = await doGeminiRequest(geminiRequestBody, 'initial');
             } else {
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                     method: 'POST', headers,
@@ -2265,11 +2344,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete failBody.tool_choice;
 
             allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：生图失败 followup 不解析小纸条
-            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(failBody),
-            });
+            if (useGeminiProtocol) {
+                // Gemini 协议下 follow-up 也走 Gemini 直连（不依赖 OpenAI 兼容中转）
+                const followGeminiBody = messagesToGeminiRequest(failMessages, `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`);
+                data = await doGeminiRequest(followGeminiBody, 'image-gen-failed-followup');
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(failBody),
+                });
+            }
 
             updateTokenUsage(data, historyMsgCount, 'image-gen-failed-followup');
         }
@@ -2293,11 +2378,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete followBody.tool_choice;
 
             allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：生图成功 followup 不解析小纸条
-            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(followBody),
-            });
+            if (useGeminiProtocol) {
+                // Gemini 协议下 follow-up 也走 Gemini 直连
+                const followGeminiBody = messagesToGeminiRequest(followMessages, `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`);
+                data = await doGeminiRequest(followGeminiBody, 'image-gen-followup');
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(followBody),
+                });
+            }
 
             updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
         }
@@ -2406,11 +2497,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             delete followBody.tool_choice;
 
             allowXiaoZhiTiaoParse = false; // 暮色 2026-08-07：play_song 失败 followup 是工具调用的二次 fetch，不解析小纸条
-            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(followBody),
-            });
+            if (useGeminiProtocol) {
+                // Gemini 协议下 follow-up 也走 Gemini 直连
+                const followGeminiBody = messagesToGeminiRequest(followMessages, `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`);
+                data = await doGeminiRequest(followGeminiBody, 'play-song-followup');
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(followBody),
+                });
+            }
             updateTokenUsage(data, historyMsgCount, 'play-song-followup');
         }
     }

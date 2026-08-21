@@ -7,13 +7,17 @@ import { safeResponseJson } from '../utils/safeApi';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 
 const Gallery: React.FC = () => {
-    const { closeApp, characters, apiConfig, addToast } = useOS();
+    const { closeApp, characters, apiConfig, addToast, userProfile } = useOS();
     const [view, setView] = useState<'albums' | 'grid' | 'detail'>('albums');
     const [activeCharId, setActiveCharId] = useState<string | null>(null);
     const [images, setImages] = useState<GalleryImage[]>([]);
     const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
+
+    // 暮色 2026-08-21：tab 切「用户图」/「AI 图」— chip 本身就是 tab
+    const [activeTab, setActiveTab] = useState<'user' | 'ai'>('ai');
+    const [tabCounts, setTabCounts] = useState<{ user: number; ai: number }>({ user: 0, ai: 0 });
 
     // Multi-select state
     const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -42,8 +46,14 @@ const Gallery: React.FC = () => {
 
     useEffect(() => {
         if (activeCharId) {
-            DB.getGalleryImages(activeCharId).then(imgs => {
-                setImages(imgs.sort((a, b) => b.timestamp - a.timestamp));
+            // 并行查：用户数 / AI 数 / 全量（给网格用，前端 filter）
+            Promise.all([
+                DB.getGalleryImages(activeCharId, 'user'),
+                DB.getGalleryImages(activeCharId, 'ai'),
+                DB.getGalleryImages(activeCharId),
+            ]).then(([userImgs, aiImgs, allImgs]) => {
+                setTabCounts({ user: userImgs.length, ai: aiImgs.length });
+                setImages(allImgs.sort((a, b) => b.timestamp - a.timestamp));
             });
         }
     }, [activeCharId]);
@@ -52,6 +62,19 @@ const Gallery: React.FC = () => {
         setActiveCharId(id);
         setView('grid');
     };
+
+    // 暮色 2026-08-21：chip 切 tab — 切时清空多选
+    const handleTabSwitch = (tab: 'user' | 'ai') => {
+        if (tab === activeTab) return;
+        setActiveTab(tab);
+        if (isSelectionMode) {
+            setIsSelectionMode(false);
+            setSelectedIds(new Set());
+        }
+    };
+
+    // 当前 tab 下的可见图（前端 filter）
+    const visibleImages = images.filter(img => (img.source || 'user') === activeTab);
 
     const handleImageClick = (img: GalleryImage) => {
         if (isSelectionMode) {
@@ -349,15 +372,15 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
 
     const renderGrid = () => (
         <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in relative">
-            {images.length === 0 ? (
+            {visibleImages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                    <span className="text-sm">还没有照片</span>
+                    <span className="text-sm">{images.length === 0 ? '还没有照片' : `还没有${activeTab === 'ai' ? 'AI 生的图' : '用户发的图'}`}</span>
                 </div>
             ) : (
                 <>
                     <div className="grid grid-cols-3 gap-1">
-                        {images.map(img => {
+                        {visibleImages.map(img => {
                             const selected = selectedIds.has(img.id);
                             return (
                                 <div
@@ -387,7 +410,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                                 onClick={handleSelectAll}
                                 className="px-4 py-2 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
                             >
-                                {selectedIds.size === images.length ? '取消全选' : '全选'}
+                                {selectedIds.size === visibleImages.length ? '取消全选' : '全选'}
                             </button>
                             <button
                                 onClick={handleBatchDelete}
@@ -517,17 +540,32 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                             </button>
-                            <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
-                                {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
-                            </h1>
-                            {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
-                            {view === 'grid' && images.length > 0 && (
-                                <button
-                                    onClick={handleEnterSelection}
-                                    className="ml-auto px-3 py-1.5 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
-                                >
-                                    选择
-                                </button>
+                            {view === 'albums' ? (
+                                <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">相册</h1>
+                            ) : (
+                                <>
+                                    {/* 暮色 2026-08-21：两个 chip 本身就是 tab — 中央留空 + 切 tab */}
+                                    <div className="flex-1 flex items-center justify-center gap-2">
+                                        <button
+                                            onClick={() => handleTabSwitch('user')}
+                                            className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all ${activeTab === 'user' ? 'bg-indigo-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            用户:{userProfile.name || 'User'} {tabCounts.user}
+                                        </button>
+                                        <button
+                                            onClick={() => handleTabSwitch('ai')}
+                                            className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all ${activeTab === 'ai' ? 'bg-indigo-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            AI:{characters.find(c => c.id === activeCharId)?.name || ''} {tabCounts.ai}
+                                        </button>
+                                    </div>
+                                    <button
+                                        onClick={handleEnterSelection}
+                                        className="ml-2 px-3 py-1.5 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
+                                    >
+                                        选择
+                                    </button>
+                                </>
                             )}
                         </>
                     )}

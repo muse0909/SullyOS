@@ -1338,6 +1338,7 @@ export interface GalleryImage {
     charId: string;
     url: string;
     timestamp: number;
+    source?: 'user' | 'ai'; // 老数据 undefined 当 'user' 处理
     review?: string;
     reviewTimestamp?: number;
     savedDate?: string; // YYYY-MM-DD format

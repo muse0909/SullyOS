@@ -66,19 +66,6 @@ export interface ScheduledMessage {
     createdAt: number;
 }
 
-// Built-in Presets
-const SULLY_CATEGORY_ID = 'cat_sully_exclusive';
-const SULLY_PRESET_EMOJIS = [
-    { name: 'Sully晚安', url: 'https://sharkpan.xyz/f/pWg6HQ/night.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully无语', url: 'https://sharkpan.xyz/f/75wvuj/w.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully偷看', url: 'https://sharkpan.xyz/f/MK77Ia/see.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully打气', url: 'https://sharkpan.xyz/f/3WwMHe/fight.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully生气', url: 'https://sharkpan.xyz/f/5nwxCj/an.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully疑惑', url: 'https://sharkpan.xyz/f/ylWpfN/sDN.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully道歉', url: 'https://sharkpan.xyz/f/QdnaU6/sorry.png', categoryId: SULLY_CATEGORY_ID },
-    { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
-];
-
 /**
  * 生成 UUID v4（云端同步用作消息稳定 ID）。
  * 优先用 crypto.randomUUID（Chrome 92+ / Safari 15.4+ 全支持），老环境走 fallback。
@@ -803,12 +790,18 @@ export const DB = {
       if (!cats.some(c => c.id === 'default')) {
           await DB.saveEmojiCategory({ id: 'default', name: '默认', isSystem: true });
       }
-      if (!cats.some(c => c.id === SULLY_CATEGORY_ID)) {
-          await DB.saveEmojiCategory({ id: SULLY_CATEGORY_ID, name: 'Sully 专属', isSystem: true });
+      // 一次性清理：老数据里如果还存着 Sully 专属分类 + 该分类下所有 emoji（URL 走 sharkpan.xyz 经常挂），自动删
+      if (cats.some(c => c.id === 'cat_sully_exclusive')) {
           const db = await openDB();
-          const tx = db.transaction(STORE_EMOJIS, 'readwrite');
-          const store = tx.objectStore(STORE_EMOJIS);
-          SULLY_PRESET_EMOJIS.forEach(emoji => store.put(emoji));
+          const tx = db.transaction([STORE_EMOJIS, STORE_EMOJI_CATEGORIES], 'readwrite');
+          const emojiStore = tx.objectStore(STORE_EMOJIS);
+          const catStore = tx.objectStore(STORE_EMOJI_CATEGORIES);
+          const allEmojisReq = emojiStore.getAll();
+          allEmojisReq.onsuccess = () => {
+              const toDelete = (allEmojisReq.result || []).filter((e: any) => e.categoryId === 'cat_sully_exclusive');
+              toDelete.forEach((e: any) => emojiStore.delete(e.name));
+          };
+          catStore.delete('cat_sully_exclusive');
           await new Promise(resolve => { tx.oncomplete = resolve; });
       }
   },

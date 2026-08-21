@@ -1116,6 +1116,13 @@ export const DB = {
       });
   },
 
+  // 暮色 2026-08-21：只取角色独白日记（source='char-only'），内存过滤
+  // 复用 charId 索引查全量再 filter — 数据量小（角色日均 0-1 篇），无需新建 source 索引
+  getCharOnlyDiariesByCharId: async (charId: string): Promise<DiaryEntry[]> => {
+      const all = await DB.getDiariesByCharId(charId);
+      return all.filter(d => d.source === 'char-only');
+  },
+
   saveDiary: async (diary: DiaryEntry): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_DIARIES, 'readwrite');

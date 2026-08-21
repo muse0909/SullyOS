@@ -1364,10 +1364,13 @@ export interface DiaryEntry {
     id: string;
     charId: string;
     date: string;
-    userPage: DiaryPage;
+    userPage?: DiaryPage;        // 'exchange' 时有，'char-only' 时无
     charPage?: DiaryPage;
     timestamp: number;
     isArchived: boolean;
+    // 暮色 2026-08-21：新增 source 区分"交换日记"和"角色独白"
+    source?: 'exchange' | 'char-only';   // 老数据兜底：userPage 存在则 'exchange'，否则 'char-only'
+    mood?: string;                        // miya 风格：日记心情关键词
 }
 
 // ─── HANDBOOK / 手账 (跨角色聚合·零负担留痕本) ───

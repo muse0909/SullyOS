@@ -133,13 +133,20 @@ function formatMessageLine(m: Message, charName: string): string | null {
     return null;
 }
 
+// 暮色 2026-08-21：去思维链污染（DeepSeek / Qwen / GLM 等模型默认带 <think>...</think>）
+// 提取 JSON 之前先把整段 think 标签剥掉，避免 JSON 解析失败
+function stripThinkTags(text: string): string {
+    return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
 // JSON 容错（miya 同款 3 重）：完整 → 宽松 → 兜底
 export function parseDiaryFromApi(text: string): { title: string; mood: string; content: string } {
-    const fallback = { title: getLocalDateStr(), mood: '平静', content: text };
+    const cleaned = stripThinkTags(text);
+    const fallback = { title: getLocalDateStr(), mood: '平静', content: cleaned };
 
     // 1. 完整 JSON
     try {
-        const obj = JSON.parse(text);
+        const obj = JSON.parse(cleaned);
         if (obj && typeof obj === 'object' && obj.content) {
             return {
                 title: typeof obj.title === 'string' ? obj.title : '',
@@ -152,7 +159,7 @@ export function parseDiaryFromApi(text: string): { title: string; mood: string; 
     }
 
     // 2. 宽松提取
-    const m = text.match(/\{[\s\S]*\}/);
+    const m = cleaned.match(/\{[\s\S]*\}/);
     if (m) {
         try {
             const obj = JSON.parse(m[0]);
@@ -232,6 +239,7 @@ export async function generateCharDiary(
         isArchived: false,
         source: 'char-only',
         mood: parsed.mood,
+        title: parsed.title,
     };
 
     await DB.saveDiary(entry);

@@ -183,7 +183,7 @@ const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
 
 interface OSContextType {
   activeApp: AppID;
-  openApp: (appId: AppID) => void;
+  openApp: (appId: AppID, parent?: AppID) => void;
   closeApp: () => void;
   theme: OSTheme;
   updateTheme: (updates: Partial<OSTheme>) => void;
@@ -546,6 +546,8 @@ const OSContext = createContext<OSContextType | undefined>(undefined);
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
+  // 暮色 2026-08-21：openApp 加 parent 参数 — closeApp 据此决定回父 app 或桌面
+  const [parentApp, setParentApp] = useState<AppID | null>(null);
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
@@ -3883,8 +3885,19 @@ if (!isVisible || !isChattingWithThisChar) {
           addToast('重置失败，请手动清除浏览器数据', 'error');
       }
   };
-  const openApp = (appId: AppID) => setActiveApp(appId);
-  const closeApp = () => setActiveApp(AppID.Launcher);
+  const openApp = (appId: AppID, parent?: AppID) => {
+      setParentApp(parent ?? null);
+      setActiveApp(appId);
+  };
+  const closeApp = () => {
+      if (parentApp) {
+          const target = parentApp;
+          setParentApp(null);
+          setActiveApp(target);
+      } else {
+          setActiveApp(AppID.Launcher);
+      }
+  };
   const unlock = () => setIsLocked(false);
 
   // Direct chat jump — 设一次性 pending flag + direct entry 标记，WeChat mount 时 consume

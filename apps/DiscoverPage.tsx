@@ -2,7 +2,7 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState } from 'react';
-import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon } from '@phosphor-icons/react';
+import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID } from '../types';
 import MomentsPage from './MomentsPage';
@@ -130,7 +130,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <CaretRight size={16} className="text-slate-300" />
           </button>
           <div className="border-t border-slate-100" />
+          {/* 暮色 2026-08-21：相册入口 — 跟情侣空间同模式（从发现页打开，parent=Chat 让 closeApp 回 WeChat） */}
+          <GalleryEntry onClose={onClose} />
+          <div className="border-t border-slate-100" />
           {/* 暮色 2026-07-31：情侣空间入口 — 直接打开独立 app，不在 DiscoverPage 内嵌 */}
+          {/* 暮色 2026-08-21：补传 parent=AppID.Chat — 跟相册统一"从发现页打开→返回发现页" */}
           <CoupleSpaceEntry onClose={onClose} />
         </div>
       </div>
@@ -138,8 +142,32 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
+// 暮色 2026-08-21：相册入口
+// 跟 CoupleSpaceEntry 同模式：关掉发现页 + 打开相册，传 parent=AppID.Chat
+// closeApp 时回 WeChat（看到发现页），不是回桌面
+const GalleryEntry: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { openApp } = useOS();
+  return (
+    <button
+      onClick={() => {
+        onClose();
+        // 下一帧再 openApp，避免 DiscoverPage onClose 路由冲突
+        setTimeout(() => openApp(AppID.Gallery, AppID.Chat), 50);
+      }}
+      className="w-full flex items-center gap-3 px-4 py-4 active:bg-indigo-50 transition-colors text-left"
+    >
+      <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center">
+        <Images size={16} weight="regular" className="text-indigo-500" />
+      </div>
+      <span className="flex-1 text-sm font-medium text-slate-800">相册</span>
+      <CaretRight size={16} className="text-slate-300" />
+    </button>
+  );
+};
+
 // 暮色 2026-07-31：情侣空间入口
 // 在 DiscoverPage 入口列表里加一项，点直接关掉发现页 + 打开 CoupleSpaceApp
+// 暮色 2026-08-21：补传 parent=AppID.Chat — 跟相册统一规则
 const CoupleSpaceEntry: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { openApp } = useOS();
   return (
@@ -147,7 +175,7 @@ const CoupleSpaceEntry: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       onClick={() => {
         onClose();
         // 下一帧再 openApp，避免 DiscoverPage onClose 路由冲突
-        setTimeout(() => openApp(AppID.CoupleSpace), 50);
+        setTimeout(() => openApp(AppID.CoupleSpace, AppID.Chat), 50);
       }}
       className="w-full flex items-center gap-3 px-4 py-4 active:bg-rose-50 transition-colors text-left"
     >

@@ -9,6 +9,7 @@ import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Sparkle } from '@phosphor-icons/react';
+import { generateCharDiary } from '../utils/charDiary';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -71,6 +72,9 @@ const JournalApp: React.FC = () => {
     const [deletingDiary, setDeletingDiary] = useState<DiaryEntry | null>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // 暮色 2026-08-21：角色独白日记（"现在让 TA 写一篇"按钮）
+    const [isGeneratingDiary, setIsGeneratingDiary] = useState(false);
+
     // --- Data Loading ---
 
     useEffect(() => {
@@ -95,6 +99,25 @@ const JournalApp: React.FC = () => {
         setSelectedChar(char);
         setMode('calendar');
         loadDiaries(char.id);
+    };
+
+    // 暮色 2026-08-21：让角色自己写一篇今日日记（miya 风格）
+    const handleGenerateCharDiary = async () => {
+        if (!selectedChar || isGeneratingDiary) return;
+        if (!apiConfig.apiKey || !apiConfig.baseUrl) {
+            addToast('请先在系统设置里配置 API', 'error');
+            return;
+        }
+        setIsGeneratingDiary(true);
+        try {
+            const newEntry = await generateCharDiary(selectedChar, apiConfig, { userProfile });
+            setDiaries(prev => [newEntry, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
+            addToast(`${selectedChar.name} 写好了一篇日记`, 'success');
+        } catch (e: any) {
+            addToast(`生成失败: ${e?.message || String(e)}`, 'error');
+        } finally {
+            setIsGeneratingDiary(false);
+        }
     };
 
     const openEntry = (date: string) => {
@@ -617,24 +640,48 @@ Structure:
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
-                    <button onClick={() => openEntry(getLocalDateStr())} className="w-full py-5 mb-8 border-2 border-dashed border-amber-200 rounded-2xl text-amber-500 font-bold flex items-center justify-center gap-2 hover:bg-amber-50 active:scale-95 transition-all">
+                    <button onClick={() => openEntry(getLocalDateStr())} className="w-full py-5 mb-3 border-2 border-dashed border-amber-200 rounded-2xl text-amber-500 font-bold flex items-center justify-center gap-2 hover:bg-amber-50 active:scale-95 transition-all">
                         <span className="text-xl">+</span> 写今天的日记
                     </button>
-                    
+                    <button
+                        onClick={handleGenerateCharDiary}
+                        disabled={isGeneratingDiary}
+                        className="w-full py-4 mb-8 border-2 border-dashed border-indigo-200 rounded-2xl text-indigo-500 font-bold flex items-center justify-center gap-2 hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isGeneratingDiary ? (
+                            <><div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div> 写作中...</>
+                        ) : (
+                            <><Sparkle size={18} weight="fill" /> 现在让 TA 写一篇</>
+                        )}
+                    </button>
+
                     <div className="space-y-4">
-                        {diaries.map(d => (
-                            <div key={d.id} onClick={() => openEntry(d.date)} className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm active:scale-95 transition-all hover:shadow-md cursor-pointer relative overflow-hidden group">
-                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400"></div>
-                                <div className="w-14 h-14 bg-amber-50 rounded-xl flex flex-col items-center justify-center text-amber-800 shrink-0 border border-amber-100">
+                        {diaries.map(d => {
+                            const isCharOnly = d.source === 'char-only' || (!d.userPage && d.charPage);
+                            const preview = d.userPage?.text || d.charPage?.text || '(空)';
+                            return (
+                            <div key={d.id}
+                                onClick={() => {
+                                    if (isCharOnly) {
+                                        // 步骤 3 暂不实现详情页，步骤 4 上
+                                        addToast('TA 的日记详情页稍后提供', 'info');
+                                        return;
+                                    }
+                                    openEntry(d.date);
+                                }}
+                                className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm active:scale-95 transition-all hover:shadow-md cursor-pointer relative overflow-hidden group">
+                                <div className={`absolute left-0 top-0 bottom-0 w-1 ${isCharOnly ? 'bg-indigo-400' : 'bg-amber-400'}`}></div>
+                                <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center shrink-0 border ${isCharOnly ? 'bg-indigo-50 text-indigo-800 border-indigo-100' : 'bg-amber-50 text-amber-800 border-amber-100'}`}>
                                     <span className="text-[10px] font-bold opacity-60">{d.date.split('-')[1]}月</span>
                                     <span className="text-xl font-bold leading-none">{d.date.split('-')[2]}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-700 truncate font-medium">{d.userPage.text || '(空)'}</p>
+                                    <p className="text-sm text-slate-700 truncate font-medium">{preview}</p>
                                     <div className="flex justify-between items-center mt-1">
                                         <p className="text-xs text-slate-400 font-mono">{d.date.split('-')[0]}</p>
                                         <div className="flex gap-2">
-                                            {d.charPage && <span className="px-2 py-0.5 bg-green-100 text-green-600 rounded-full text-[9px] font-bold">已回复</span>}
+                                            {isCharOnly && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full text-[9px] font-bold">TA 的日记</span>}
+                                            {!isCharOnly && d.charPage && <span className="px-2 py-0.5 bg-green-100 text-green-600 rounded-full text-[9px] font-bold">已回复</span>}
                                             {d.isArchived && <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[9px] font-bold">已归档</span>}
                                         </div>
                                     </div>
@@ -653,7 +700,8 @@ Structure:
                                     </svg>
                                 </button>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
 

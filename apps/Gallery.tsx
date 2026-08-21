@@ -23,6 +23,7 @@ const Gallery: React.FC = () => {
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+    const [isBatchDownloading, setIsBatchDownloading] = useState(false);
 
     // Long-press delete state
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,6 +136,44 @@ const Gallery: React.FC = () => {
                 }
             }
         });
+    };
+
+    // 暮色 2026-08-21：下载工具 — 详情页 / 多选工具栏共用
+    // 跨域图床会被 CORS 拒；iOS Safari 的 a.download 不生效（项目里不特殊处理）
+    const downloadImage = async (img: GalleryImage) => {
+        try {
+            const res = await fetch(img.url);
+            const blob = await res.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `sully_${img.charId}_${img.savedDate || new Date(img.timestamp).toISOString().slice(0, 10)}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        } catch (e: any) {
+            addToast(`下载失败: ${e.message}`, 'error');
+            throw e;
+        }
+    };
+
+    const handleDownload = (img: GalleryImage) => {
+        downloadImage(img).catch(() => { /* toast 已在 downloadImage 里 */ });
+    };
+
+    const handleBatchDownload = async () => {
+        const targets = images.filter(img => selectedIds.has(img.id));
+        if (targets.length === 0) return;
+        setIsBatchDownloading(true);
+        let ok = 0, fail = 0;
+        // 串行触发 — 避免浏览器拦截多下载
+        for (const img of targets) {
+            try { await downloadImage(img); ok++; }
+            catch { fail++; }
+        }
+        setIsBatchDownloading(false);
+        if (fail === 0) addToast(`已下载 ${ok} 张`, 'success');
+        else addToast(`下载完成 ${ok} 张，${fail} 张失败`, 'warning');
     };
 
     const handleBack = () => {
@@ -405,17 +444,30 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                     </div>
                     {/* 底部操作栏 — 仅多选模式显示 */}
                     {isSelectionMode && (
-                        <div className="sticky bottom-0 left-0 right-0 mt-3 -mx-1.5 px-4 py-3 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 flex items-center justify-center gap-3 z-10">
+                        <div className="sticky bottom-0 left-0 right-0 mt-3 -mx-1.5 px-4 py-3 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 flex items-center justify-center gap-2 z-10">
+                            <button
+                                onClick={handleExitSelection}
+                                className="px-3 py-2 rounded-full text-xs font-medium text-slate-500 hover:bg-slate-100 active:scale-95 transition-all"
+                            >
+                                取消选择
+                            </button>
                             <button
                                 onClick={handleSelectAll}
-                                className="px-4 py-2 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
+                                className="px-3 py-2 rounded-full text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
                             >
                                 {selectedIds.size === visibleImages.length ? '取消全选' : '全选'}
                             </button>
                             <button
+                                onClick={handleBatchDownload}
+                                disabled={selectedIds.size === 0 || isBatchDownloading}
+                                className={`px-3 py-2 rounded-full text-xs font-medium transition-all ${selectedIds.size === 0 || isBatchDownloading ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-sky-100 text-sky-600 hover:bg-sky-200 active:scale-95'}`}
+                            >
+                                {isBatchDownloading ? '下载中...' : `下载 ${selectedIds.size} 张`}
+                            </button>
+                            <button
                                 onClick={handleBatchDelete}
                                 disabled={selectedIds.size === 0 || isBatchDeleting}
-                                className={`px-5 py-2 rounded-full text-xs font-bold transition-all ${selectedIds.size === 0 || isBatchDeleting ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-rose-400 text-white shadow-md hover:bg-rose-500 active:scale-95'}`}
+                                className={`px-3 py-2 rounded-full text-xs font-bold transition-all ${selectedIds.size === 0 || isBatchDeleting ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-rose-400 text-white shadow-md hover:bg-rose-500 active:scale-95'}`}
                             >
                                 {isBatchDeleting ? '删除中...' : `删除 ${selectedIds.size} 张`}
                             </button>
@@ -433,9 +485,15 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 <button onClick={() => setView('grid')} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-black/60 border border-white/10">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                 </button>
-                <button onClick={handleDeleteImage} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-red-600/60 border border-white/10">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                </button>
+                <div className="flex gap-2 pointer-events-auto">
+                    <button onClick={() => selectedImage && handleDownload(selectedImage)} className="text-white bg-black/40 backdrop-blur-md px-3 py-2 rounded-full text-[11px] font-medium pointer-events-auto active:scale-95 transition-transform hover:bg-black/60 border border-white/10 flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                        下载
+                    </button>
+                    <button onClick={handleDeleteImage} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-red-600/60 border border-white/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                    </button>
+                </div>
             </div>
 
             {/* Date badge */}

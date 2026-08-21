@@ -84,7 +84,7 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       </div>
 
       {/* 入口列表 */}
-      <div className="flex-1 overflow-y-auto px-3 pt-3">
+      <div className="flex-1 overflow-y-auto px-5 pt-3">
         <div className="bg-white rounded-2xl mb-3 shadow-sm overflow-hidden">
           <button
             onClick={() => setSubPage('moments')}

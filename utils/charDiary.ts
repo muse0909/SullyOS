@@ -135,14 +135,37 @@ function formatMessageLine(m: Message, charName: string): string | null {
 
 // 暮色 2026-08-21：去思维链污染（DeepSeek / Qwen / GLM 等模型默认带 <think>...</think>）
 // 提取 JSON 之前先把整段 think 标签剥掉，避免 JSON 解析失败
-function stripThinkTags(text: string): string {
+export function stripThinkTags(text: string): string {
     return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-// JSON 容错（miya 同款 3 重）：完整 → 宽松 → 兜底
+// 暮色 2026-08-21：栈式 JSON 提取，替换之前的贪婪正则
+// 解决 LLM 在 content 字符串里写未转义 { } 导致 parse 失败的问题
+// （之前用 /\{[\s\S]*\}/ 会贪婪匹配整段，把所有内容当 fallback）
+export function extractJson(text: string): string | null {
+    const start = text.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+        const c = text[i];
+        if (escape) { escape = false; continue; }
+        if (c === '\\') { escape = true; continue; }
+        if (c === '"' && !escape) { inString = !inString; continue; }
+        if (inString) continue;
+        if (c === '{') depth++;
+        else if (c === '}') {
+            depth--;
+            if (depth === 0) return text.slice(start, i + 1);
+        }
+    }
+    return null;
+}
+
+// JSON 容错（miya 同款 3 重）：完整 → 栈式提取 → 兜底
 export function parseDiaryFromApi(text: string): { title: string; mood: string; content: string } {
     const cleaned = stripThinkTags(text);
-    const fallback = { title: getLocalDateStr(), mood: '平静', content: cleaned };
 
     // 1. 完整 JSON
     try {
@@ -158,11 +181,11 @@ export function parseDiaryFromApi(text: string): { title: string; mood: string; 
         // ignore
     }
 
-    // 2. 宽松提取
-    const m = cleaned.match(/\{[\s\S]*\}/);
-    if (m) {
+    // 2. 栈式 JSON 提取（处理 content 里未转义 { } 的情况）
+    const jsonStr = extractJson(cleaned);
+    if (jsonStr) {
         try {
-            const obj = JSON.parse(m[0]);
+            const obj = JSON.parse(jsonStr);
             if (obj && typeof obj === 'object' && obj.content) {
                 return {
                     title: typeof obj.title === 'string' ? obj.title : '',
@@ -175,8 +198,8 @@ export function parseDiaryFromApi(text: string): { title: string; mood: string; 
         }
     }
 
-    // 3. 兜底
-    return fallback;
+    // 3. 兜底：去掉首尾空白，content 用 raw text
+    return { title: getLocalDateStr(), mood: '平静', content: cleaned.trim() };
 }
 
 // 主入口：调用方传 apiConfig + userProfile（避免在 utils 里 useOS）

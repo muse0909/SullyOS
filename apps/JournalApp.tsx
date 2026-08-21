@@ -9,7 +9,7 @@ import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Sparkle } from '@phosphor-icons/react';
-import { generateCharDiary } from '../utils/charDiary';
+import { generateCharDiary, stripThinkTags, extractJson } from '../utils/charDiary';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -405,14 +405,21 @@ Structure:
 
             if (!response.ok) throw new Error('API Error');
             const data = await safeResponseJson(response);
-            let content = data.choices[0].message.content.trim();
-            content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            
-            let parsed;
-            try {
-                parsed = JSON.parse(content);
-            } catch (e) {
-                parsed = { text: content, paperStyle: 'plain', stickers: [] };
+            // 暮色 2026-08-21：跟 char-only 用同一份容错 — 去 think 标签 + 栈式 JSON 提取
+            // 之前用贪婪正则 /\{[\s\S]*\}/ + 裸 JSON.parse，content 里未转义 { } 就直接挂
+            const rawContent = data.choices[0].message.content || '';
+            const cleaned = stripThinkTags(rawContent).replace(/```json/g, '').replace(/```/g, '').trim();
+            const jsonStr = extractJson(cleaned);
+
+            let parsed: { text?: string; paperStyle?: string; stickers?: string[] };
+            if (jsonStr) {
+                try {
+                    parsed = JSON.parse(jsonStr);
+                } catch {
+                    parsed = { text: cleaned, paperStyle: 'plain', stickers: [] };
+                }
+            } else {
+                parsed = { text: cleaned, paperStyle: 'plain', stickers: [] };
             }
 
             const charStickers: StickerData[] = (parsed.stickers || []).map((s: string) => ({
@@ -736,7 +743,7 @@ Structure:
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                             </button>
-                            <h1 className="text-sm font-medium text-white/80">{viewingCharOnly.date}</h1>
+                            <h1 className="text-base font-semibold text-white">{selectedChar?.name || ''}</h1>
                             <button
                                 onClick={() => setDeletingDiary(viewingCharOnly)}
                                 className="p-2 -mr-2 text-white/60 hover:text-red-400 rounded-full active:bg-white/10 transition-colors"

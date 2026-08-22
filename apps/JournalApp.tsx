@@ -218,6 +218,24 @@ const JournalApp: React.FC = () => {
         addToast('日记已保存', 'success');
     };
 
+    // 暮色 2026-08-22：写模式"保存"按钮 — 如果还没回复，自动触发角色回复
+    const handleSave = async () => {
+        if (!currentEntry) return;
+        if (!currentEntry.userPage?.text?.trim()) {
+            addToast('请先写下日记', 'info');
+            return;
+        }
+        if (currentEntry.charPage) {
+            // 已有回复，只保存 userPage 改动
+            await DB.saveDiary(currentEntry);
+            await loadDiaries(currentEntry.charId);
+            addToast('日记已保存', 'success');
+            return;
+        }
+        // 还没回复，调 handleExchange（它会保存 + 生成 charPage + 再保存）
+        await handleExchange();
+    };
+
     const handleDeleteDiary = async () => {
         if (!deletingDiary || !selectedChar) return;
         await DB.deleteDiary(deletingDiary.id);
@@ -458,17 +476,19 @@ Structure:
         
         try {
             // 1. Build Context using ContextBuilder to ensure AI knows WHO it is
-            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
+            // 暮色 2026-08-22：userPage 改 optional 之后加保护（老 entry 可能 userPage 是 undefined）
+            const userText = currentEntry.userPage?.text || '';
+            await injectMemoryPalace(selectedChar, undefined, userText);
             const baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const prompt = `${baseContext}
 
 ### [System Instruction: Diary Archival]
-当前任务: 将这篇【交换日记】(${currentEntry.date}) 总结为一条属于你的“核心记忆”。
+当前任务: 将这篇【交换日记】(${currentEntry.date}) 总结为一条属于你的"核心记忆"。
 
 ### 输入内容 (Input)
 用户 (${userProfile.name}) 的日记:
-"${currentEntry.userPage.text}"
+"${userText}"
 
 你 (${selectedChar.name}) 的回复:
 "${currentEntry.charPage?.text || '(无)'}"
@@ -778,165 +798,151 @@ Structure:
     }
 
     // --- WRITE MODE ---
+    // 暮色 2026-08-22 重构：取消底部两个 tab，user + char 接在同一个 paper 卡片里
+    // 顶栏：[<] [4信纸圈] [+贴纸] [归档记忆] [保存]
+    // 主区域：一张 paper 卡片（用户日记 + AI 回复上下接排）
+    // 底部：textarea 拉长 + 底部留白
+    const currentPaperStyle = PAPER_STYLES.find(s => s.id === currentEntry?.userPage?.paperStyle) || PAPER_STYLES[0];
     return (
+        <>
         <div className="h-full w-full bg-[#1a1a1a] flex flex-col relative overflow-hidden">
-            
-            {/* Editor Header */}
-            <div className="pt-12 pb-3 px-4 bg-[#1a1a1a]/90 backdrop-blur-md flex items-center justify-between text-white shrink-0 z-30 h-24 box-border">
-                <button onClick={() => setMode('calendar')} className="p-2 -ml-2 text-white/60 hover:text-white rounded-full active:bg-white/10 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+
+            {/* 顶栏（紧凑，紧贴状态栏） */}
+            <div className="pt-10 pb-2 px-3 bg-[#1a1a1a]/95 backdrop-blur-md flex items-center gap-2 text-white shrink-0 z-30">
+                <button onClick={() => setMode('calendar')} className="p-2 -ml-1 text-white/60 hover:text-white rounded-full active:bg-white/10 transition-colors" aria-label="返回">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                 </button>
-                <div className="flex gap-3">
-                    {/* Toggle Char Sticker Visibility Button */}
-                    {activeTab === 'char' && (
-                        <button 
-                            onClick={() => setHideCharStickers(!hideCharStickers)} 
-                            className={`p-2 rounded-full transition-colors ${hideCharStickers ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/60'}`}
-                            title={hideCharStickers ? "显示贴纸" : "隐藏贴纸"}
-                        >
-                            {hideCharStickers ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
+
+                {/* 4 信纸圈 */}
+                <div className="flex gap-1 bg-[#111] p-1 rounded-full border border-white/10">
+                    {PAPER_STYLES.slice(0, 4).map(s => (
+                        <button
+                            key={s.id}
+                            onClick={() => updatePage({ paperStyle: s.id }, 'user')}
+                            className={`w-6 h-6 rounded-full border border-white/15 active:scale-90 ${s.css}`}
+                            title={s.name}
+                        />
+                    ))}
+                </div>
+
+                {/* 贴纸 */}
+                <button
+                    onClick={() => setShowStickerPanel(!showStickerPanel)}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md active:scale-90 transition-transform ${showStickerPanel ? 'bg-white text-black' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'}`}
+                    title="贴纸"
+                >
+                    <Sparkle size={16} weight="fill" />
+                </button>
+
+                {/* 归档记忆（只在 charPage 存在且未归档时显示） */}
+                {currentEntry?.charPage && !currentEntry.isArchived && (
+                    <button
+                        onClick={handleArchive}
+                        disabled={isArchiving}
+                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all flex items-center gap-1 ml-auto ${isArchiving ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-600/90 text-white active:scale-95'}`}
+                    >
+                        {isArchiving && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
+                        {isArchiving ? '归档中...' : '归档记忆'}
+                    </button>
+                )}
+
+                {/* 保存（自动触发回复） */}
+                <button
+                    onClick={handleSave}
+                    disabled={isThinking}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-transform ${isThinking ? 'bg-white/5 text-white/40' : 'bg-white/10 text-white hover:bg-white/20 active:scale-95'}`}
+                >
+                    {isThinking ? '生成中...' : (currentEntry?.charPage ? '保存' : '保存')}
+                </button>
+            </div>
+
+            {/* 主区域：一张 paper 卡片（顶到顶栏下方，没有 margin-top） */}
+            <div className="flex-1 min-h-0 px-2 pt-0 pb-2">
+                <div
+                    className={`w-full h-full max-w-xl mx-auto ${currentPaperStyle.css} rounded-3xl shadow-md flex flex-col overflow-hidden`}
+                    style={{ ...currentPaperStyle.style }}
+                >
+                    <div className="flex-1 overflow-y-auto p-5 no-scrollbar">
+                        {/* MY DIARY 段 */}
+                        <div className="mb-4 pb-3 border-b border-black/10">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className={`text-[10px] font-bold uppercase tracking-widest opacity-50 ${currentPaperStyle.text}`}>MY DIARY</span>
+                                <span className={`text-[9px] opacity-40 font-mono ${currentPaperStyle.text}`}>{currentEntry?.date}</span>
+                            </div>
+                            <div className={`text-[15px] leading-loose whitespace-pre-wrap min-h-[80px] ${currentPaperStyle.text} ${currentEntry?.userPage?.text ? '' : 'text-slate-300 text-sm'}`}>
+                                {currentEntry?.userPage?.text || '在下方输入框写下今天的日记...'}
+                            </div>
+                        </div>
+
+                        {/* REPLY 段（中间不隔开，紧接 MY DIARY） */}
+                        <div>
+                            <div className="flex justify-between items-center mb-2">
+                                <span className={`text-[10px] font-bold uppercase tracking-widest opacity-50 ${currentPaperStyle.text}`}>REPLY · {selectedChar?.name}</span>
+                            </div>
+                            {isThinking ? (
+                                <div className="flex flex-col items-center justify-center text-amber-500 gap-2 py-6">
+                                    <div className="flex gap-1">
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce"></div>
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-100"></div>
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-200"></div>
+                                    </div>
+                                    <p className="text-xs font-medium">{selectedChar?.name} 正在阅读你的日记...</p>
+                                </div>
+                            ) : currentEntry?.charPage ? (
+                                <div className={`text-[15px] leading-loose whitespace-pre-wrap ${currentPaperStyle.text}`}>
+                                    {currentEntry.charPage.text}
+                                </div>
                             ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                                <div className="text-slate-300 text-xs py-3 text-center">
+                                    写完点保存，TA 会回复
+                                </div>
                             )}
-                        </button>
-                    )}
-
-                    {currentEntry?.charPage && !currentEntry.isArchived && (
-                        <button 
-                            onClick={handleArchive} 
-                            disabled={isArchiving}
-                            className={`px-4 py-1.5 rounded-full text-xs font-bold shadow-lg transition-all flex items-center gap-2 ${isArchiving ? 'bg-emerald-800 text-emerald-200 cursor-not-allowed' : 'bg-emerald-600/90 text-white shadow-emerald-900/50 active:scale-95'}`}
-                        >
-                            {isArchiving && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
-                            {isArchiving ? '归档中...' : '归档记忆'}
-                        </button>
-                    )}
-                    <button onClick={saveEntry} className="px-4 py-1.5 bg-white/10 rounded-full text-xs font-bold hover:bg-white/20 active:scale-95 transition-transform">
-                        保存
-                    </button>
-                </div>
-            </div>
-
-            {/* Main Page Area */}
-            <div className="flex-1 relative w-full overflow-hidden flex flex-col">
-                <div className="flex-1 w-full max-w-xl mx-auto px-2 pb-4 pt-2 flex flex-col relative">
-                    <div className="flex-1 relative rounded-3xl transition-all duration-500">
-                        {activeTab === 'user' && (
-                            currentEntry?.userPage ? renderPage(currentEntry.userPage, 'user') : (
-                                <div className="w-full h-full bg-[#252525] rounded-3xl border border-white/5 flex items-center justify-center text-white/40 text-sm">
-                                    等待你的日记
-                                </div>
-                            )
-                        )}
-                        
-                        {activeTab === 'char' && (
-                            currentEntry?.charPage ? renderPage(currentEntry.charPage, 'char') : (
-                                <div className="w-full h-full bg-[#252525] rounded-3xl border border-white/5 flex flex-col items-center justify-center text-white/40 gap-4 p-8 text-center">
-                                    <div className="opacity-20 animate-pulse"><img src={twemojiUrl('1f48c')} alt="letter" className="w-12 h-12" /></div>
-                                    {isThinking ? (
-                                        <div className="space-y-2">
-                                            <p className="text-sm font-medium text-amber-500">对方正在阅读你的日记...</p>
-                                            <div className="flex justify-center gap-1">
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce"></div>
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-100"></div>
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-200"></div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <p className="text-sm">写完日记后，点击下方按钮<br/>邀请 {selectedChar?.name} 交换日记。</p>
-                                            <button 
-                                                onClick={handleExchange} 
-                                                className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-white text-sm font-bold rounded-full shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95 transition-all mt-2"
-                                            >
-                                                查看 TA 的今日
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            )
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Bottom Controls */}
-            <div className="shrink-0 bg-[#222] border-t border-white/5 pb-safe pt-2 z-30">
-                <div className="flex justify-center gap-4 mb-4 px-4">
-                    <button 
-                        onClick={() => { setActiveTab('user'); setSelectedStickerId(null); }}
-                        className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all duration-300 relative overflow-hidden ${activeTab === 'user' ? 'bg-white text-black shadow-lg' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                    >
-                        My Diary
-                    </button>
-                    <button 
-                        onClick={() => { setActiveTab('char'); setSelectedStickerId(null); }}
-                        className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all duration-300 relative overflow-hidden ${activeTab === 'char' ? 'bg-amber-500 text-white shadow-lg shadow-amber-900/50' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                    >
-                        {selectedChar?.name || 'Partner'}
-                        {currentEntry?.charPage && activeTab !== 'char' && <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full shadow-sm animate-pulse"></div>}
-                    </button>
-                </div>
-
-                <div className="flex items-center justify-between px-6 pb-4">
-                    <div className="flex gap-3 bg-[#111] p-1.5 rounded-full border border-white/10">
-                        {PAPER_STYLES.slice(0, 4).map(s => (
-                            <button 
-                                key={s.id} 
-                                onClick={() => updatePage({ paperStyle: s.id }, activeTab)}
-                                className={`w-8 h-8 rounded-full border border-white/10 transition-transform active:scale-90 ${s.css}`}
-                                title={s.name}
-                            />
-                        ))}
-                    </div>
-                    
-                    <div className="flex gap-3">
-                        {activeTab === 'char' && currentEntry?.charPage && !isThinking && (
-                            <button onClick={handleExchange} className="w-11 h-11 bg-white/10 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform border border-white/5">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                            </button>
-                        )}
-                        
-                        <button 
-                            onClick={() => setShowStickerPanel(!showStickerPanel)} 
-                            className={`w-11 h-11 rounded-full flex items-center justify-center text-xl shadow-lg active:scale-90 transition-transform ${showStickerPanel ? 'bg-white text-black' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'}`}
-                        >
-                            <Sparkle size={24} weight="fill" />
-                        </button>
-                    </div>
-                </div>
-
-                {showStickerPanel && (
-                    <div className="bg-[#1a1a1a] border-t border-white/10 p-4 animate-slide-up h-48 overflow-y-auto no-scrollbar">
-                        <div className="grid grid-cols-6 gap-3">
-                            <button onClick={() => setShowImportModal(true)} className="flex items-center justify-center bg-white/10 rounded-xl border-2 border-dashed border-white/20 text-white/50 text-xl font-bold hover:bg-white/20 hover:text-white transition-all aspect-square">
-                                +
-                            </button>
-                            {DEFAULT_STICKERS.map((s, i) => (
-                                <button key={`def-${i}`} onClick={() => addSticker(s)} className="hover:scale-110 transition-transform p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
-                                    <img src={s} alt="" className="w-8 h-8 object-contain pointer-events-none" />
-                                </button>
-                            ))}
-                            {customStickers.map((s, i) => (
-                                <button 
-                                    key={`cust-${i}`} 
-                                    onClick={() => addSticker(s.url)} 
-                                    onTouchStart={() => handleDrawerTouchStart(s)}
-                                    onTouchEnd={handleDrawerTouchEnd}
-                                    onMouseDown={() => handleDrawerTouchStart(s)}
-                                    onMouseUp={handleDrawerTouchEnd}
-                                    onMouseLeave={handleDrawerTouchEnd}
-                                    onContextMenu={(e) => { e.preventDefault(); setDeletingSticker(s); }}
-                                    className="p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center relative active:scale-95 transition-transform"
-                                >
-                                    <img src={s.url} className="w-8 h-8 object-contain pointer-events-none" />
-                                </button>
-                            ))}
                         </div>
                     </div>
-                )}
+                </div>
             </div>
+
+            {/* 底部：textarea 输入框（拉长到底部） */}
+            <div className="shrink-0 bg-[#222] border-t border-white/5 pt-2 pb-3 px-3 z-30" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}>
+                <textarea
+                    value={currentEntry?.userPage?.text || ''}
+                    onChange={e => updatePage({ text: e.target.value }, 'user')}
+                    placeholder="写下今天的日记..."
+                    className="w-full bg-[#111] text-white rounded-2xl px-4 py-3 outline-none resize-none leading-loose text-[15px] placeholder:text-white/30 no-scrollbar min-h-[100px]"
+                    rows={4}
+                />
+            </div>
+
+            {/* 贴纸面板（按需显示，浮在底部之上） */}
+            {showStickerPanel && (
+                <div className="absolute bottom-[140px] left-2 right-2 z-40 bg-[#1a1a1a] border border-white/10 rounded-2xl p-3 animate-slide-up max-h-48 overflow-y-auto no-scrollbar shadow-2xl">
+                    <div className="grid grid-cols-6 gap-2">
+                        <button onClick={() => setShowImportModal(true)} className="flex items-center justify-center bg-white/10 rounded-xl border-2 border-dashed border-white/20 text-white/50 text-lg font-bold hover:bg-white/20 hover:text-white transition-all aspect-square">
+                            +
+                        </button>
+                        {DEFAULT_STICKERS.map((s, i) => (
+                            <button key={`def-${i}`} onClick={() => addSticker(s)} className="hover:scale-110 transition-transform p-1.5 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
+                                <img src={s} alt="" className="w-7 h-7 object-contain pointer-events-none" />
+                            </button>
+                        ))}
+                        {customStickers.map((s, i) => (
+                            <button
+                                key={`cust-${i}`}
+                                onClick={() => addSticker(s.url)}
+                                onTouchStart={() => handleDrawerTouchStart(s)}
+                                onTouchEnd={handleDrawerTouchEnd}
+                                onMouseDown={() => handleDrawerTouchStart(s)}
+                                onMouseUp={handleDrawerTouchEnd}
+                                onMouseLeave={handleDrawerTouchEnd}
+                                onContextMenu={(e) => { e.preventDefault(); setDeletingSticker(s); }}
+                                className="p-1.5 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center relative active:scale-95 transition-transform"
+                            >
+                                <img src={s.url} className="w-7 h-7 object-contain pointer-events-none" />
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Sticker Import Modal */}
             <Modal 
@@ -965,6 +971,7 @@ Structure:
                 </div>
             </Modal>
         </div>
+        </>
     );
 };
 

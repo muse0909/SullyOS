@@ -4,6 +4,7 @@
 import { CharacterProfile, UserProfile, DiaryEntry, APIConfig, Message } from '../types';
 import { DB } from './db';
 import { safeResponseJson } from './safeApi';
+import { injectMemoryPalace } from './memoryPalace/pipeline';
 
 const getLocalDateStr = (): string => {
     const d = new Date();
@@ -266,5 +267,13 @@ export async function generateCharDiary(
     };
 
     await DB.saveDiary(entry);
+    // 暮色 2026-08-22：char-only 也归档到记忆宫殿（跟交换日记归档逻辑一致，但不弹按钮）
+    if (parsed.content && parsed.content.trim()) {
+        try {
+            await injectMemoryPalace(char, undefined, parsed.content);
+        } catch (e) {
+            console.warn('char-only 归档到记忆失败（不影响主流程）:', e);
+        }
+    }
     return entry;
 }

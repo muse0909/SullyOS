@@ -10,6 +10,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Sparkle } from '@phosphor-icons/react';
 import { generateCharDiary, stripThinkTags, extractJson } from '../utils/charDiary';
+import { setJournalLastSeenAt } from '../utils/journalSeenAt';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -90,6 +91,14 @@ const JournalApp: React.FC = () => {
         // Load custom stickers from new journal store
         DB.getJournalStickers().then(setCustomStickers);
     }, [activeCharacterId]);
+
+    // 暮色 2026-08-22：进入日记 App → 标记已读（DiscoverPage 小红点消除）
+    //   只在 calendar / write / detail 视图触发；选角色页面（select）不写
+    useEffect(() => {
+        if (mode === 'calendar' || mode === 'write') {
+            setJournalLastSeenAt();
+        }
+    }, [mode]);
 
     const loadDiaries = async (charId: string) => {
         const list = await DB.getDiariesByCharId(charId);

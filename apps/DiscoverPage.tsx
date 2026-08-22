@@ -1,20 +1,46 @@
 // DiscoverPage — 发现页（WeChat 内嵌子页）
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
-import React, { useState } from 'react';
-import { CaretRight, BookOpen, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images } from '@phosphor-icons/react';
+import React, { useState, useEffect } from 'react';
+import { CaretRight, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID } from '../types';
+import { DB } from '../utils/db';
+import { getJournalLastSeenAt } from '../utils/journalSeenAt';
 import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
 import MomentsSettingsPage from './MomentsSettingsPage';
 import XiaoZhiTiaoPage from './XiaoZhiTiaoPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'journal' | 'moments-settings' | 'xiao-zhi-tiao';
+type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { addToast } = useOS();
+  const { addToast, characters } = useOS();
   const [subPage, setSubPage] = useState<SubPage>('list');
+
+  // 暮色 2026-08-22：日记小红点 — 查所有角色最新 diary 的最大 timestamp
+  //   跟 journal_last_seen_at 比：latest > seen → 显示小红点
+  //   每次 DiscoverPage mount（从别的页面切回来）重查一次
+  const [hasNewDiary, setHasNewDiary] = useState(false);
+
+  useEffect(() => {
+    if (subPage !== 'list') return;
+    if (characters.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const seenAt = getJournalLastSeenAt();
+      const lists = await Promise.all(characters.map(c => DB.getDiariesByCharId(c.id)));
+      if (cancelled) return;
+      let maxTs = 0;
+      for (const list of lists) {
+        for (const d of list) {
+          if ((d.timestamp || 0) > maxTs) maxTs = d.timestamp || 0;
+        }
+      }
+      setHasNewDiary(seenAt > 0 && maxTs > seenAt);
+    })();
+    return () => { cancelled = true; };
+  }, [subPage, characters]);
 
   // 子页：朋友圈
   if (subPage === 'moments') {
@@ -36,33 +62,7 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     return <MomentsSettingsPage onBack={() => setSubPage('list')} />;
   }
 
-  // 子页：日记（暂未实现）
-  if (subPage === 'journal') {
-    return (
-      <div className="absolute inset-0 flex flex-col bg-[#ededed]">
-        <div className="flex items-center justify-between px-2 py-3 bg-white border-b border-slate-200/60 shrink-0">
-          <button
-            onClick={() => setSubPage('list')}
-            className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
-            aria-label="返回"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-              <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <h1 className="text-base font-semibold text-slate-800 tracking-wide">日记</h1>
-          <div className="w-9 h-9" />
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
-          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center mb-4 shadow-sm">
-            <BookOpen size={28} weight="regular" className="text-slate-300" />
-          </div>
-          <div className="text-sm text-slate-500">日记 — 敬请期待</div>
-          <div className="text-[11px] text-slate-400 mt-1">先把朋友圈跑通，下一轮做</div>
-        </div>
-      </div>
-    );
-  }
+  // 子页：日记（暮色 2026-08-22：去掉 placeholder，由 JournalEntry 直接 openApp(AppID.Journal)）
 
   // 默认：3 入口列表
   return (
@@ -119,16 +119,8 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <CaretRight size={16} className="text-slate-300" />
           </button>
           <div className="border-t border-slate-100" />
-          <button
-            onClick={() => setSubPage('journal')}
-            className="w-full flex items-center gap-3 px-4 py-4 active:bg-slate-50 transition-colors text-left"
-          >
-            <div className="w-7 h-7 rounded-full bg-amber-50 flex items-center justify-center">
-              <BookOpen size={16} weight="regular" className="text-amber-500" />
-            </div>
-            <span className="flex-1 text-sm font-medium text-slate-800">日记</span>
-            <CaretRight size={16} className="text-slate-300" />
-          </button>
+          {/* 暮色 2026-08-22：日记入口（接通 AppID.Journal，跟相册/情侣空间同模式） */}
+          <JournalEntry onClose={onClose} hasNew={hasNewDiary} />
           <div className="border-t border-slate-100" />
           {/* 暮色 2026-08-21：相册入口 — 跟情侣空间同模式（从发现页打开，parent=Chat 让 closeApp 回 WeChat） */}
           <GalleryEntry onClose={onClose} />
@@ -183,6 +175,32 @@ const CoupleSpaceEntry: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         <HeartIcon size={16} weight="fill" className="text-rose-500" />
       </div>
       <span className="flex-1 text-sm font-medium text-slate-800">情侣空间</span>
+      <CaretRight size={16} className="text-slate-300" />
+    </button>
+  );
+};
+
+// 暮色 2026-08-22：日记入口
+// 跟 GalleryEntry / CoupleSpaceEntry 同模式：onClose + setTimeout(openApp(AppID.Journal, AppID.Chat), 50)
+//   暮色：默认进当前角色（JournalApp 启动 useEffect 会从 activeCharacterId 拿）
+//   小红点：有未读日记时 CaretRight 左边显示小红点
+const JournalEntry: React.FC<{ onClose: () => void; hasNew: boolean }> = ({ onClose, hasNew }) => {
+  const { openApp } = useOS();
+  return (
+    <button
+      onClick={() => {
+        onClose();
+        setTimeout(() => openApp(AppID.Journal, AppID.Chat), 50);
+      }}
+      className="w-full flex items-center gap-3 px-4 py-4 active:bg-amber-50 transition-colors text-left"
+    >
+      <div className="w-7 h-7 rounded-full bg-amber-50 flex items-center justify-center">
+        <Notebook size={16} weight="regular" className="text-amber-500" />
+      </div>
+      <span className="flex-1 text-sm font-medium text-slate-800">日记</span>
+      {hasNew && (
+        <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" aria-label="有新日记" />
+      )}
       <CaretRight size={16} className="text-slate-300" />
     </button>
   );

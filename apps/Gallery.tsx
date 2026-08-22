@@ -608,13 +608,13 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                                             onClick={() => handleTabSwitch('user')}
                                             className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all ${activeTab === 'user' ? 'bg-indigo-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                                         >
-                                            用户:{userProfile.name || 'User'} {tabCounts.user}
+                                            {userProfile.name || 'User'} {tabCounts.user}
                                         </button>
                                         <button
                                             onClick={() => handleTabSwitch('ai')}
                                             className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all ${activeTab === 'ai' ? 'bg-indigo-500 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                                         >
-                                            AI:{characters.find(c => c.id === activeCharId)?.name || ''} {tabCounts.ai}
+                                            {characters.find(c => c.id === activeCharId)?.name || ''} {tabCounts.ai}
                                         </button>
                                     </div>
                                     <button

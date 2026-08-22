@@ -704,16 +704,23 @@ Structure:
     if (mode === 'calendar' && selectedChar) {
         return (
             <div className="h-full w-full bg-white flex flex-col font-light relative">
-                {/* 暮色 2026-08-22：顶栏两行 — 第一行返回+名字，第二行两个按钮 */}
-                <div className="pt-12 pb-4 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
-                    <div className="flex items-center justify-between mb-4">
+                {/* 暮色 2026-08-22：顶栏两行 — 第一行返回+名字+胶囊，第二行两个按钮 */}
+                <div className="pt-3 pb-4 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
+                    <div className="flex items-center justify-between mb-3 gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                             <button onClick={() => setMode('select')} className="text-white/80 hover:text-white transition-colors shrink-0">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
                             </button>
                             <h1 className="text-2xl font-bold tracking-tight text-white truncate">{selectedChar.name}</h1>
                         </div>
-                        <div className="text-white/70 text-xs font-mono shrink-0 ml-2">{diaries.filter(d => d.source !== 'char-only').length}</div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold whitespace-nowrap">
+                                {userProfile.name || 'User'}：{diaries.filter(d => d.source !== 'char-only').length}
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/40 text-white text-[10px] font-bold whitespace-nowrap">
+                                {selectedChar.name}：{diaries.filter(d => d.source === 'char-only').length}
+                            </span>
+                        </div>
                     </div>
                     {/* 第二行：两个按钮（横排，紫色 + 橙色） */}
                     <div className="flex gap-2">

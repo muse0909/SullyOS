@@ -122,10 +122,10 @@ const JournalApp: React.FC = () => {
     };
 
     const openEntry = (date: string) => {
-        const existing = diaries.find(d => d.date === date);
+        // 暮色 2026-08-22：列表点 exchange 卡片复用已有 entry（只读不混 source）
+        const existing = diaries.find(d => d.date === date && d.source !== 'char-only');
         if (existing) {
             setCurrentEntry(existing);
-            // Default to char tab if they replied
             setActiveTab(existing.charPage ? 'char' : 'user');
         } else {
             // New Entry
@@ -141,7 +141,26 @@ const JournalApp: React.FC = () => {
         }
         setMode('write');
         setSelectedDate(date);
-        setSelectedStickerId(null); // Reset selection
+        setSelectedStickerId(null);
+    };
+
+    // 暮色 2026-08-22：写今天的日记 — 总是新建 exchange entry
+    // 修复：之前 openEntry(today) 会复用 char-only entry 的 charPage 污染 REPLY 段
+    const openExchangeForToday = () => {
+        if (!selectedChar) return;
+        setCurrentEntry({
+            id: `diary-${Date.now()}`,
+            charId: selectedChar.id,
+            date: getLocalDateStr(),
+            userPage: { text: '', paperStyle: 'grid', stickers: [] },
+            timestamp: Date.now(),
+            isArchived: false,
+            source: 'exchange',
+        });
+        setActiveTab('user');
+        setMode('write');
+        setSelectedDate(getLocalDateStr());
+        setSelectedStickerId(null);
     };
 
     // --- Editor Logic ---
@@ -685,35 +704,40 @@ Structure:
     if (mode === 'calendar' && selectedChar) {
         return (
             <div className="h-full w-full bg-white flex flex-col font-light relative">
-                <div className="pt-12 pb-6 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
-                    <div className="flex justify-between items-start mb-4">
-                         <button onClick={() => setMode('select')} className="text-white/80 hover:text-white transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
-                         </button>
-                         <div className="w-6"></div>
+                {/* 暮色 2026-08-22：顶栏两行 — 第一行返回+名字，第二行两个按钮 */}
+                <div className="pt-12 pb-4 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <button onClick={() => setMode('select')} className="text-white/80 hover:text-white transition-colors shrink-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
+                            </button>
+                            <h1 className="text-2xl font-bold tracking-tight text-white truncate">{selectedChar.name}</h1>
+                        </div>
+                        <div className="text-white/70 text-xs font-mono shrink-0 ml-2">{diaries.filter(d => d.source !== 'char-only').length}</div>
                     </div>
-                    <div className="text-white">
-                        <div className="text-xs opacity-70 uppercase tracking-widest font-bold mb-1">Exchange Diary</div>
-                        <div className="text-3xl font-bold tracking-tight">{selectedChar.name}</div>
+                    {/* 第二行：两个按钮（横排，紫色 + 橙色） */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={openExchangeForToday}
+                            className="flex-1 py-2.5 border-2 border-dashed border-white/40 rounded-xl text-white text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-white/10 active:scale-95 transition-all"
+                        >
+                            <span className="text-base">+</span> 写今天的日记
+                        </button>
+                        <button
+                            onClick={handleGenerateCharDiary}
+                            disabled={isGeneratingDiary}
+                            className="flex-1 py-2.5 border-2 border-dashed border-indigo-200 rounded-xl text-indigo-100 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isGeneratingDiary ? (
+                                <><div className="w-3 h-3 border-2 border-indigo-200 border-t-indigo-100 rounded-full animate-spin"></div> 写作中...</>
+                            ) : (
+                                <><Sparkle size={14} weight="fill" /> 让他写一篇</>
+                            )}
+                        </button>
                     </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
-                    <button onClick={() => openEntry(getLocalDateStr())} className="w-full py-5 mb-3 border-2 border-dashed border-amber-200 rounded-2xl text-amber-500 font-bold flex items-center justify-center gap-2 hover:bg-amber-50 active:scale-95 transition-all">
-                        <span className="text-xl">+</span> 写今天的日记
-                    </button>
-                    <button
-                        onClick={handleGenerateCharDiary}
-                        disabled={isGeneratingDiary}
-                        className="w-full py-4 mb-8 border-2 border-dashed border-indigo-200 rounded-2xl text-indigo-500 font-bold flex items-center justify-center gap-2 hover:bg-indigo-50 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {isGeneratingDiary ? (
-                            <><div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div> 写作中...</>
-                        ) : (
-                            <><Sparkle size={18} weight="fill" /> 现在让 TA 写一篇</>
-                        )}
-                    </button>
-
                     <div className="space-y-4">
                         {diaries.map(d => {
                             const isCharOnly = d.source === 'char-only' || (!d.userPage && d.charPage);

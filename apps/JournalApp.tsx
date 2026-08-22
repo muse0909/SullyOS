@@ -541,6 +541,30 @@ Structure:
         }
     };
 
+    // 暮色 2026-08-22：char-only 详情页手动归档
+    // 区别于 handleArchive（写模式归档需要 AI 摘要，char-only 直接归档原文）
+    const handleArchiveCharOnly = async () => {
+        if (!viewingCharOnly || !selectedChar) return;
+        const content = viewingCharOnly.charPage?.text;
+        if (!content) {
+            addToast('没有内容可归档', 'info');
+            return;
+        }
+        setIsArchiving(true);
+        try {
+            await injectMemoryPalace(selectedChar, undefined, content);
+            const updated = { ...viewingCharOnly, isArchived: true };
+            setViewingCharOnly(updated);
+            await DB.saveDiary(updated);
+            await loadDiaries(selectedChar.id);
+            addToast('已归档至记忆库', 'success');
+        } catch (e: any) {
+            addToast(`归档失败: ${e.message}`, 'error');
+        } finally {
+            setIsArchiving(false);
+        }
+    };
+
     // --- Renderers ---
 
     // 暮色 2026-08-21：userPage/charPage 改 optional 后加保护
@@ -767,6 +791,20 @@ Structure:
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                             </button>
                             <h1 className="text-xl font-bold text-white tracking-wide">{selectedChar?.name || ''}</h1>
+                            {/* 暮色 2026-08-22：char-only 手动归档按钮（已归档不显示） */}
+                            {!viewingCharOnly.isArchived && (
+                                <button
+                                    onClick={handleArchiveCharOnly}
+                                    disabled={isArchiving}
+                                    className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all flex items-center gap-1 ${isArchiving ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-600/90 text-white active:scale-95'}`}
+                                >
+                                    {isArchiving ? (
+                                        <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>归档中...</>
+                                    ) : (
+                                        '归档'
+                                    )}
+                                </button>
+                            )}
                             <button
                                 onClick={() => setDeletingDiary(viewingCharOnly)}
                                 className="p-2 -mr-2 text-white/60 hover:text-red-400 rounded-full active:bg-white/10 transition-colors"
@@ -856,22 +894,26 @@ Structure:
                 </button>
             </div>
 
-            {/* 主区域：一张 paper 卡片（顶到顶栏下方，没有 margin-top） */}
+            {/* 主区域：一张 paper 卡片（顶到顶栏下方，直接延伸到屏幕底部，无底部 textarea） */}
             <div className="flex-1 min-h-0 px-2 pt-0 pb-2">
                 <div
                     className={`w-full h-full max-w-xl mx-auto ${currentPaperStyle.css} rounded-3xl shadow-md flex flex-col overflow-hidden`}
                     style={{ ...currentPaperStyle.style }}
                 >
                     <div className="flex-1 overflow-y-auto p-5 no-scrollbar">
-                        {/* MY DIARY 段 */}
+                        {/* MY DIARY 段 — 用 textarea 替代，bg 透明，光标直接在 paper 上 */}
                         <div className="mb-4 pb-3 border-b border-black/10">
                             <div className="flex justify-between items-center mb-2">
                                 <span className={`text-[10px] font-bold uppercase tracking-widest opacity-50 ${currentPaperStyle.text}`}>MY DIARY</span>
                                 <span className={`text-[9px] opacity-40 font-mono ${currentPaperStyle.text}`}>{currentEntry?.date}</span>
                             </div>
-                            <div className={`text-[15px] leading-loose whitespace-pre-wrap min-h-[80px] ${currentPaperStyle.text} ${currentEntry?.userPage?.text ? '' : 'text-slate-300 text-sm'}`}>
-                                {currentEntry?.userPage?.text || '在下方输入框写下今天的日记...'}
-                            </div>
+                            <textarea
+                                value={currentEntry?.userPage?.text || ''}
+                                onChange={e => updatePage({ text: e.target.value }, 'user')}
+                                placeholder="写下今天的日记..."
+                                className={`w-full bg-transparent resize-none outline-none leading-loose text-[15px] placeholder:opacity-30 no-scrollbar ${currentPaperStyle.text}`}
+                                style={{ minHeight: '180px' }}
+                            />
                         </div>
 
                         {/* REPLY 段（中间不隔开，紧接 MY DIARY） */}
@@ -902,16 +944,8 @@ Structure:
                 </div>
             </div>
 
-            {/* 底部：textarea 输入框（拉长到底部） */}
-            <div className="shrink-0 bg-[#222] border-t border-white/5 pt-2 pb-3 px-3 z-30" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))' }}>
-                <textarea
-                    value={currentEntry?.userPage?.text || ''}
-                    onChange={e => updatePage({ text: e.target.value }, 'user')}
-                    placeholder="写下今天的日记..."
-                    className="w-full bg-[#111] text-white rounded-2xl px-4 py-3 outline-none resize-none leading-loose text-[15px] placeholder:text-white/30 no-scrollbar min-h-[100px]"
-                    rows={4}
-                />
-            </div>
+            {/* 暮色 2026-08-22：底部 textarea 拿掉，输入直接落在 paper 卡片上的 MY DIARY 段里
+                （paper 卡片本身 flex-1 填满到屏幕底部，光标在 paper 上 = 在信纸上） */}
 
             {/* 贴纸面板（按需显示，浮在底部之上） */}
             {showStickerPanel && (

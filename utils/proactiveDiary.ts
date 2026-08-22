@@ -254,17 +254,23 @@ export const ProactiveDiary = {
 
   /**
    * 测试用：立即触发指定角色（不走定时器）
-   *   控制台：ProactiveDiary.fireNow(charId)
+   *   不传 charId → 从 os_last_active_char_id 拿当前 activeCharacterId（暮色 2026-08-22 友好）
+   *   控制台：ProactiveDiary.fireNow() / .fireNow('char-xxx')
    */
-  async fireNow(charId: string) {
+  async fireNow(charId?: string) {
+    const targetId = charId || localStorage.getItem('os_last_active_char_id') || '';
+    if (!targetId) {
+      console.warn('[ProactiveDiary] fireNow: no charId provided and os_last_active_char_id empty');
+      return;
+    }
     const schedules = loadSchedules();
     const now = Date.now();
-    if (schedules[charId]) {
-      schedules[charId].lastFire = now;
-      schedules[charId].nextFire = nextTriggerAt(now);
+    if (schedules[targetId]) {
+      schedules[targetId].lastFire = now;
+      schedules[targetId].nextFire = nextTriggerAt(now);
       saveSchedules(schedules);
     }
-    await runDiaryForChar(charId);
+    await runDiaryForChar(targetId);
   },
 };
 

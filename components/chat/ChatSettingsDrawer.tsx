@@ -129,6 +129,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
     imageGenEnabled, onToggleImageGen, playSongEnabled, onTogglePlaySong,
+    autoDiaryEnabled, onToggleAutoDiary,
     contextLimit, onSetContextLimit,
     // 暮色 2026-08-05：角色自定义时区
     customTimezone, onSetCustomTimezone,

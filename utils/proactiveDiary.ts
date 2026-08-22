@@ -54,20 +54,22 @@ let depsProvider: (() => {
 }) | null = null;
 
 async function defaultTrigger(charId: string) {
+  console.log(`[ProactiveDiary] defaultTrigger start: ${charId}`);
   if (!depsProvider) {
-    console.warn('[ProactiveDiary] depsProvider not registered');
+    console.warn('[ProactiveDiary] depsProvider not registered — 切到任意聊天页让 Chat.tsx 挂 setDeps');
     return;
   }
   const { characters, apiConfig, userProfile, addToast } = depsProvider();
   const char = characters.find(c => c.id === charId);
   if (!char) {
-    console.warn(`[ProactiveDiary] Character ${charId} not found`);
+    console.warn(`[ProactiveDiary] Character ${charId} not found in characters[${characters.length}]`);
     return;
   }
-  if (!apiConfig.apiKey || !apiConfig.baseUrl) {
-    console.warn('[ProactiveDiary] API not configured');
+  if (!apiConfig?.apiKey || !apiConfig?.baseUrl) {
+    console.warn(`[ProactiveDiary] API not configured: apiKey=${!!apiConfig?.apiKey} baseUrl=${!!apiConfig?.baseUrl}`);
     return;
   }
+  console.log(`[ProactiveDiary] generateCharDiary start for ${char.name}`);
   try {
     const entry = await generateCharDiary(char, apiConfig, { userProfile });
     addToast?.(`${char.name} 写了一篇日记`, 'success');
@@ -87,8 +89,10 @@ let focusListener: (() => void) | null = null;
 const MAIN_THREAD_CHECK_INTERVAL = 20_000;
 
 async function runDiaryForChar(charId: string) {
+  console.log(`[ProactiveDiary] runDiaryForChar start: ${charId}`);
   try {
     await triggerCallback(charId);
+    console.log(`[ProactiveDiary] runDiaryForChar done: ${charId}`);
   } catch (e) {
     console.warn(`[ProactiveDiary] Trigger failed for ${charId}:`, e);
   }

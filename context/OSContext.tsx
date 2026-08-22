@@ -183,7 +183,7 @@ const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
 
 interface OSContextType {
   activeApp: AppID;
-  openApp: (appId: AppID) => void;
+  openApp: (appId: AppID, parent?: AppID) => void;
   closeApp: () => void;
   theme: OSTheme;
   updateTheme: (updates: Partial<OSTheme>) => void;
@@ -318,6 +318,10 @@ interface OSContextType {
   // Navigation Logic
   registerBackHandler: (handler: () => boolean) => () => void; // Returns unregister function
   handleBack: () => void;
+  // 暮色 2026-08-21：WeChat 当前 tab 提到 OSContext — 独立 app 跳走/返回时保留 tab
+  // 否则相册/情侣空间返回 → WeChat 重新 mount → tab 重置到 'messages'（联系人页），看不到发现页
+  wechatTab: 'messages' | 'discover' | 'me';
+  setWechatTab: (tab: 'messages' | 'discover' | 'me') => void;
   // Direct chat jump: 让 launcher 上的角色 widget 能跳过"联系人列表"直接进入聊天
   // — 一次性 transient ref，WeChat mount 时 consume 然后清空
   jumpToChat: (charId: string) => void;
@@ -546,6 +550,10 @@ const OSContext = createContext<OSContextType | undefined>(undefined);
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
+  // 暮色 2026-08-21：openApp 加 parent 参数 — closeApp 据此决定回父 app 或桌面
+  const [parentApp, setParentApp] = useState<AppID | null>(null);
+  // 暮色 2026-08-21：WeChat tab 持久化 — 让独立 app 返回时 WeChat 还是 'discover' tab
+  const [wechatTab, setWechatTab] = useState<'messages' | 'discover' | 'me'>('messages');
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
@@ -3883,8 +3891,19 @@ if (!isVisible || !isChattingWithThisChar) {
           addToast('重置失败，请手动清除浏览器数据', 'error');
       }
   };
-  const openApp = (appId: AppID) => setActiveApp(appId);
-  const closeApp = () => setActiveApp(AppID.Launcher);
+  const openApp = (appId: AppID, parent?: AppID) => {
+      setParentApp(parent ?? null);
+      setActiveApp(appId);
+  };
+  const closeApp = () => {
+      if (parentApp) {
+          const target = parentApp;
+          setParentApp(null);
+          setActiveApp(target);
+      } else {
+          setActiveApp(AppID.Launcher);
+      }
+  };
   const unlock = () => setIsLocked(false);
 
   // Direct chat jump — 设一次性 pending flag + direct entry 标记，WeChat mount 时 consume
@@ -4063,6 +4082,8 @@ if (!isVisible || !isChattingWithThisChar) {
     clearLogs,
     registerBackHandler,
     handleBack,
+    wechatTab,
+    setWechatTab,
     suspendedCall,
     suspendCall,
     resumeCall,

@@ -1233,6 +1233,12 @@ export interface CharacterProfile {
   imageGenEnabled?: boolean;
   playSongEnabled?: boolean;
 
+  // 暮色 2026-08-22：自动写日记开关（per-character）
+  //   - true：开，角色每天 22:00 自动写一篇日记
+  //   - false / undefined：关（默认关，用户主动开才生效）
+  //   单角色独立：开 A 不影响 B；通过 ProactiveDiary.start/stop 触发实际定时器
+  autoDiaryEnabled?: boolean;
+
   /**
    * HTML 模块模式（per-character）。
    * - htmlModeEnabled：开启后，给 LLM 注入"用 [html]...[/html] 包裹的富 HTML 卡片"提示词，
@@ -1338,6 +1344,7 @@ export interface GalleryImage {
     charId: string;
     url: string;
     timestamp: number;
+    source?: 'user' | 'ai'; // 老数据 undefined 当 'user' 处理
     review?: string;
     reviewTimestamp?: number;
     savedDate?: string; // YYYY-MM-DD format
@@ -1363,10 +1370,14 @@ export interface DiaryEntry {
     id: string;
     charId: string;
     date: string;
-    userPage: DiaryPage;
+    userPage?: DiaryPage;        // 'exchange' 时有，'char-only' 时无
     charPage?: DiaryPage;
     timestamp: number;
     isArchived: boolean;
+    // 暮色 2026-08-21：新增 source 区分"交换日记"和"角色独白"
+    source?: 'exchange' | 'char-only';   // 老数据兜底：userPage 存在则 'exchange'，否则 'char-only'
+    mood?: string;                        // miya 风格：日记心情关键词
+    title?: string;                       // 日记标题（角色独白日记存 JSON 里的 title）
 }
 
 // ─── HANDBOOK / 手账 (跨角色聚合·零负担留痕本) ───

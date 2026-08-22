@@ -9,6 +9,8 @@ import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Sparkle } from '@phosphor-icons/react';
+import { generateCharDiary, stripThinkTags, extractJson } from '../utils/charDiary';
+import { setJournalLastSeenAt } from '../utils/journalSeenAt';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -71,6 +73,10 @@ const JournalApp: React.FC = () => {
     const [deletingDiary, setDeletingDiary] = useState<DiaryEntry | null>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // 暮色 2026-08-21：角色独白日记（"现在让 TA 写一篇"按钮）
+    const [isGeneratingDiary, setIsGeneratingDiary] = useState(false);
+    const [viewingCharOnly, setViewingCharOnly] = useState<DiaryEntry | null>(null);
+
     // --- Data Loading ---
 
     useEffect(() => {
@@ -86,6 +92,14 @@ const JournalApp: React.FC = () => {
         DB.getJournalStickers().then(setCustomStickers);
     }, [activeCharacterId]);
 
+    // 暮色 2026-08-22：进入日记 App → 标记已读（DiscoverPage 小红点消除）
+    //   只在 calendar / write / detail 视图触发；选角色页面（select）不写
+    useEffect(() => {
+        if (mode === 'calendar' || mode === 'write') {
+            setJournalLastSeenAt();
+        }
+    }, [mode]);
+
     const loadDiaries = async (charId: string) => {
         const list = await DB.getDiariesByCharId(charId);
         setDiaries(list.sort((a, b) => b.date.localeCompare(a.date)));
@@ -97,11 +111,30 @@ const JournalApp: React.FC = () => {
         loadDiaries(char.id);
     };
 
+    // 暮色 2026-08-21：让角色自己写一篇今日日记（miya 风格）
+    const handleGenerateCharDiary = async () => {
+        if (!selectedChar || isGeneratingDiary) return;
+        if (!apiConfig.apiKey || !apiConfig.baseUrl) {
+            addToast('请先在系统设置里配置 API', 'error');
+            return;
+        }
+        setIsGeneratingDiary(true);
+        try {
+            const newEntry = await generateCharDiary(selectedChar, apiConfig, { userProfile });
+            setDiaries(prev => [newEntry, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
+            addToast(`${selectedChar.name} 写好了一篇日记`, 'success');
+        } catch (e: any) {
+            addToast(`生成失败: ${e?.message || String(e)}`, 'error');
+        } finally {
+            setIsGeneratingDiary(false);
+        }
+    };
+
     const openEntry = (date: string) => {
-        const existing = diaries.find(d => d.date === date);
+        // 暮色 2026-08-22：列表点 exchange 卡片复用已有 entry（只读不混 source）
+        const existing = diaries.find(d => d.date === date && d.source !== 'char-only');
         if (existing) {
             setCurrentEntry(existing);
-            // Default to char tab if they replied
             setActiveTab(existing.charPage ? 'char' : 'user');
         } else {
             // New Entry
@@ -117,7 +150,26 @@ const JournalApp: React.FC = () => {
         }
         setMode('write');
         setSelectedDate(date);
-        setSelectedStickerId(null); // Reset selection
+        setSelectedStickerId(null);
+    };
+
+    // 暮色 2026-08-22：写今天的日记 — 总是新建 exchange entry
+    // 修复：之前 openEntry(today) 会复用 char-only entry 的 charPage 污染 REPLY 段
+    const openExchangeForToday = () => {
+        if (!selectedChar) return;
+        setCurrentEntry({
+            id: `diary-${Date.now()}`,
+            charId: selectedChar.id,
+            date: getLocalDateStr(),
+            userPage: { text: '', paperStyle: 'grid', stickers: [] },
+            timestamp: Date.now(),
+            isArchived: false,
+            source: 'exchange',
+        });
+        setActiveTab('user');
+        setMode('write');
+        setSelectedDate(getLocalDateStr());
+        setSelectedStickerId(null);
     };
 
     // --- Editor Logic ---
@@ -194,11 +246,33 @@ const JournalApp: React.FC = () => {
         addToast('日记已保存', 'success');
     };
 
+    // 暮色 2026-08-22：写模式"保存"按钮 — 如果还没回复，自动触发角色回复
+    const handleSave = async () => {
+        if (!currentEntry) return;
+        if (!currentEntry.userPage?.text?.trim()) {
+            addToast('请先写下日记', 'info');
+            return;
+        }
+        if (currentEntry.charPage) {
+            // 已有回复，只保存 userPage 改动
+            await DB.saveDiary(currentEntry);
+            await loadDiaries(currentEntry.charId);
+            addToast('日记已保存', 'success');
+            return;
+        }
+        // 还没回复，调 handleExchange（它会保存 + 生成 charPage + 再保存）
+        await handleExchange();
+    };
+
     const handleDeleteDiary = async () => {
         if (!deletingDiary || !selectedChar) return;
         await DB.deleteDiary(deletingDiary.id);
         await loadDiaries(selectedChar.id);
         setDeletingDiary(null);
+        // 暮色 2026-08-21：如果是 char-only 详情页里删除，关闭详情页
+        if (viewingCharOnly?.id === deletingDiary.id) {
+            setViewingCharOnly(null);
+        }
         addToast('日记已删除', 'success');
     };
 
@@ -377,14 +451,21 @@ Structure:
 
             if (!response.ok) throw new Error('API Error');
             const data = await safeResponseJson(response);
-            let content = data.choices[0].message.content.trim();
-            content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            
-            let parsed;
-            try {
-                parsed = JSON.parse(content);
-            } catch (e) {
-                parsed = { text: content, paperStyle: 'plain', stickers: [] };
+            // 暮色 2026-08-21：跟 char-only 用同一份容错 — 去 think 标签 + 栈式 JSON 提取
+            // 之前用贪婪正则 /\{[\s\S]*\}/ + 裸 JSON.parse，content 里未转义 { } 就直接挂
+            const rawContent = data.choices[0].message.content || '';
+            const cleaned = stripThinkTags(rawContent).replace(/```json/g, '').replace(/```/g, '').trim();
+            const jsonStr = extractJson(cleaned);
+
+            let parsed: { text?: string; paperStyle?: string; stickers?: string[] };
+            if (jsonStr) {
+                try {
+                    parsed = JSON.parse(jsonStr);
+                } catch {
+                    parsed = { text: cleaned, paperStyle: 'plain', stickers: [] };
+                }
+            } else {
+                parsed = { text: cleaned, paperStyle: 'plain', stickers: [] };
             }
 
             const charStickers: StickerData[] = (parsed.stickers || []).map((s: string) => ({
@@ -423,17 +504,19 @@ Structure:
         
         try {
             // 1. Build Context using ContextBuilder to ensure AI knows WHO it is
-            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
+            // 暮色 2026-08-22：userPage 改 optional 之后加保护（老 entry 可能 userPage 是 undefined）
+            const userText = currentEntry.userPage?.text || '';
+            await injectMemoryPalace(selectedChar, undefined, userText);
             const baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const prompt = `${baseContext}
 
 ### [System Instruction: Diary Archival]
-当前任务: 将这篇【交换日记】(${currentEntry.date}) 总结为一条属于你的“核心记忆”。
+当前任务: 将这篇【交换日记】(${currentEntry.date}) 总结为一条属于你的"核心记忆"。
 
 ### 输入内容 (Input)
 用户 (${userProfile.name}) 的日记:
-"${currentEntry.userPage.text}"
+"${userText}"
 
 你 (${selectedChar.name}) 的回复:
 "${currentEntry.charPage?.text || '(无)'}"
@@ -486,9 +569,36 @@ Structure:
         }
     };
 
+    // 暮色 2026-08-22：char-only 详情页手动归档
+    // 区别于 handleArchive（写模式归档需要 AI 摘要，char-only 直接归档原文）
+    const handleArchiveCharOnly = async () => {
+        if (!viewingCharOnly || !selectedChar) return;
+        const content = viewingCharOnly.charPage?.text;
+        if (!content) {
+            addToast('没有内容可归档', 'info');
+            return;
+        }
+        setIsArchiving(true);
+        try {
+            await injectMemoryPalace(selectedChar, undefined, content);
+            const updated = { ...viewingCharOnly, isArchived: true };
+            setViewingCharOnly(updated);
+            await DB.saveDiary(updated);
+            await loadDiaries(selectedChar.id);
+            addToast('已归档至记忆库', 'success');
+        } catch (e: any) {
+            addToast(`归档失败: ${e.message}`, 'error');
+        } finally {
+            setIsArchiving(false);
+        }
+    };
+
     // --- Renderers ---
 
-    const renderPage = (page: DiaryPage, side: 'user' | 'char') => {
+    // 暮色 2026-08-21：userPage/charPage 改 optional 后加保护
+    // 老 entry 加载时可能 userPage 是 undefined，传进 renderPage 访问 paperStyle 崩
+    const renderPage = (page: DiaryPage | undefined, side: 'user' | 'char') => {
+        if (!page) return null;
         const style = PAPER_STYLES.find(s => s.id === page.paperStyle) || PAPER_STYLES[0];
         const isInteractive = true; // Always interactive now for editing
 
@@ -603,38 +713,73 @@ Structure:
     if (mode === 'calendar' && selectedChar) {
         return (
             <div className="h-full w-full bg-white flex flex-col font-light relative">
-                <div className="pt-12 pb-6 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
-                    <div className="flex justify-between items-start mb-4">
-                         <button onClick={() => setMode('select')} className="text-white/80 hover:text-white transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
-                         </button>
-                         <div className="w-6"></div>
+                {/* 暮色 2026-08-22：顶栏两行 — 第一行返回+名字+胶囊，第二行两个按钮 */}
+                <div className="pt-3 pb-4 px-6 bg-amber-500 shadow-lg shrink-0 rounded-b-[2rem] z-20">
+                    <div className="flex items-center justify-between mb-3 gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <button onClick={() => setMode('select')} className="text-white/80 hover:text-white transition-colors shrink-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
+                            </button>
+                            <h1 className="text-2xl font-bold tracking-tight text-white truncate">{selectedChar.name}</h1>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold whitespace-nowrap">
+                                {userProfile.name || 'User'}：{diaries.filter(d => d.source !== 'char-only').length}
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/40 text-white text-[10px] font-bold whitespace-nowrap">
+                                {selectedChar.name}：{diaries.filter(d => d.source === 'char-only').length}
+                            </span>
+                        </div>
                     </div>
-                    <div className="text-white">
-                        <div className="text-xs opacity-70 uppercase tracking-widest font-bold mb-1">Exchange Diary</div>
-                        <div className="text-3xl font-bold tracking-tight">{selectedChar.name}</div>
+                    {/* 第二行：两个按钮（横排，紫色 + 橙色） */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={openExchangeForToday}
+                            className="flex-1 py-2.5 border-2 border-dashed border-white/40 rounded-xl text-white text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-white/10 active:scale-95 transition-all"
+                        >
+                            <span className="text-base">+</span> 写今天的日记
+                        </button>
+                        <button
+                            onClick={handleGenerateCharDiary}
+                            disabled={isGeneratingDiary}
+                            className="flex-1 py-2.5 border-2 border-dashed border-indigo-200 rounded-xl text-indigo-100 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-500/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isGeneratingDiary ? (
+                                <><div className="w-3 h-3 border-2 border-indigo-200 border-t-indigo-100 rounded-full animate-spin"></div> 写作中...</>
+                            ) : (
+                                <><Sparkle size={14} weight="fill" /> 让他写一篇</>
+                            )}
+                        </button>
                     </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
-                    <button onClick={() => openEntry(getLocalDateStr())} className="w-full py-5 mb-8 border-2 border-dashed border-amber-200 rounded-2xl text-amber-500 font-bold flex items-center justify-center gap-2 hover:bg-amber-50 active:scale-95 transition-all">
-                        <span className="text-xl">+</span> 写今天的日记
-                    </button>
-                    
                     <div className="space-y-4">
-                        {diaries.map(d => (
-                            <div key={d.id} onClick={() => openEntry(d.date)} className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm active:scale-95 transition-all hover:shadow-md cursor-pointer relative overflow-hidden group">
-                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400"></div>
-                                <div className="w-14 h-14 bg-amber-50 rounded-xl flex flex-col items-center justify-center text-amber-800 shrink-0 border border-amber-100">
+                        {diaries.map(d => {
+                            const isCharOnly = d.source === 'char-only' || (!d.userPage && d.charPage);
+                            const preview = d.userPage?.text || d.charPage?.text || '(空)';
+                            return (
+                            <div key={d.id}
+                                onClick={() => {
+                                    if (isCharOnly) {
+                                        setViewingCharOnly(d);
+                                        return;
+                                    }
+                                    openEntry(d.date);
+                                }}
+                                className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm active:scale-95 transition-all hover:shadow-md cursor-pointer relative overflow-hidden group">
+                                <div className={`absolute left-0 top-0 bottom-0 w-1 ${isCharOnly ? 'bg-indigo-400' : 'bg-amber-400'}`}></div>
+                                <div className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center shrink-0 border ${isCharOnly ? 'bg-indigo-50 text-indigo-800 border-indigo-100' : 'bg-amber-50 text-amber-800 border-amber-100'}`}>
                                     <span className="text-[10px] font-bold opacity-60">{d.date.split('-')[1]}月</span>
                                     <span className="text-xl font-bold leading-none">{d.date.split('-')[2]}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-700 truncate font-medium">{d.userPage.text || '(空)'}</p>
+                                    <p className="text-sm text-slate-700 truncate font-medium">{preview}</p>
                                     <div className="flex justify-between items-center mt-1">
                                         <p className="text-xs text-slate-400 font-mono">{d.date.split('-')[0]}</p>
                                         <div className="flex gap-2">
-                                            {d.charPage && <span className="px-2 py-0.5 bg-green-100 text-green-600 rounded-full text-[9px] font-bold">已回复</span>}
+                                            {isCharOnly && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full text-[9px] font-bold">TA 的日记</span>}
+                                            {!isCharOnly && d.charPage && <span className="px-2 py-0.5 bg-green-100 text-green-600 rounded-full text-[9px] font-bold">已回复</span>}
                                             {d.isArchived && <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[9px] font-bold">已归档</span>}
                                         </div>
                                     </div>
@@ -653,7 +798,8 @@ Structure:
                                     </svg>
                                 </button>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
 
@@ -672,164 +818,210 @@ Structure:
                         确定删除 {deletingDiary?.date} 的日记吗？删除后无法恢复。
                     </p>
                 </Modal>
+
+                {/* 暮色 2026-08-21：char-only 详情页浮层（只读，看标题/心情/正文） */}
+                {viewingCharOnly && (
+                    <div className="absolute inset-0 z-50 bg-[#1a1a1a] flex flex-col animate-fade-in">
+                        {/* 暮色 2026-08-22：顶栏 — 返回 + 角色名靠左 + 归档+删除靠右 */}
+                        <div className="pt-10 pb-2 px-4 flex items-center text-white shrink-0 z-10">
+                            <button
+                                onClick={() => setViewingCharOnly(null)}
+                                className="p-2 -ml-2 text-white/60 hover:text-white rounded-full active:bg-white/10 transition-colors"
+                                aria-label="返回"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                            </button>
+                            <h1 className="text-xl font-bold text-white tracking-wide ml-2">{selectedChar?.name || ''}</h1>
+                            <div className="ml-auto flex items-center gap-2">
+                                {!viewingCharOnly.isArchived && (
+                                    <button
+                                        onClick={handleArchiveCharOnly}
+                                        disabled={isArchiving}
+                                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all flex items-center gap-1 ${isArchiving ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-600/90 text-white active:scale-95'}`}
+                                    >
+                                        {isArchiving ? (
+                                            <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>归档中...</>
+                                        ) : (
+                                            '归档'
+                                        )}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setDeletingDiary(viewingCharOnly)}
+                                    className="p-2 -mr-2 text-white/60 hover:text-red-400 rounded-full active:bg-white/10 transition-colors"
+                                    aria-label="删除"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        {/* 暮色 2026-08-22：信纸固定框（不拉满），文字区独立滚动 */}
+                        <div className="flex-1 overflow-hidden px-4 pb-4 flex flex-col">
+                            <div className="bg-[#fffdf5] rounded-3xl shadow-md p-5 flex-1 min-h-0 flex flex-col overflow-hidden" style={{ backgroundImage: 'radial-gradient(#d1d5db 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+                                <div className="shrink-0">
+                                    {viewingCharOnly.title && (
+                                        <h2 className="text-2xl font-bold text-slate-800 mb-2 leading-tight">{viewingCharOnly.title}</h2>
+                                    )}
+                                    <div className="flex items-center gap-3 mb-3 pb-2 border-b border-slate-200">
+                                        {viewingCharOnly.mood && (
+                                            <span className="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full font-medium">心情 · {viewingCharOnly.mood}</span>
+                                        )}
+                                        <span className="text-[10px] text-slate-400 font-mono">{viewingCharOnly.date}</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto no-scrollbar text-slate-700 leading-relaxed whitespace-pre-wrap text-[15px]">
+                                    {viewingCharOnly.charPage?.text || '（空）'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
 
     // --- WRITE MODE ---
+    // 暮色 2026-08-22 重构：取消底部两个 tab，user + char 接在同一个 paper 卡片里
+    // 顶栏：[<] [4信纸圈] [+贴纸] [归档记忆] [保存]
+    // 主区域：一张 paper 卡片（用户日记 + AI 回复上下接排）
+    // 底部：textarea 拉长 + 底部留白
+    const currentPaperStyle = PAPER_STYLES.find(s => s.id === currentEntry?.userPage?.paperStyle) || PAPER_STYLES[0];
     return (
+        <>
         <div className="h-full w-full bg-[#1a1a1a] flex flex-col relative overflow-hidden">
-            
-            {/* Editor Header */}
-            <div className="pt-12 pb-3 px-4 bg-[#1a1a1a]/90 backdrop-blur-md flex items-center justify-between text-white shrink-0 z-30 h-24 box-border">
-                <button onClick={() => setMode('calendar')} className="p-2 -ml-2 text-white/60 hover:text-white rounded-full active:bg-white/10 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+
+            {/* 顶栏（紧凑，紧贴状态栏） */}
+            <div className="pt-10 pb-2 px-3 bg-[#1a1a1a]/95 backdrop-blur-md flex items-center gap-2 text-white shrink-0 z-30">
+                <button onClick={() => setMode('calendar')} className="p-2 -ml-1 text-white/60 hover:text-white rounded-full active:bg-white/10 transition-colors" aria-label="返回">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                 </button>
-                <div className="flex gap-3">
-                    {/* Toggle Char Sticker Visibility Button */}
-                    {activeTab === 'char' && (
-                        <button 
-                            onClick={() => setHideCharStickers(!hideCharStickers)} 
-                            className={`p-2 rounded-full transition-colors ${hideCharStickers ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/60'}`}
-                            title={hideCharStickers ? "显示贴纸" : "隐藏贴纸"}
-                        >
-                            {hideCharStickers ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                            )}
-                        </button>
-                    )}
 
-                    {currentEntry?.charPage && !currentEntry.isArchived && (
-                        <button 
-                            onClick={handleArchive} 
-                            disabled={isArchiving}
-                            className={`px-4 py-1.5 rounded-full text-xs font-bold shadow-lg transition-all flex items-center gap-2 ${isArchiving ? 'bg-emerald-800 text-emerald-200 cursor-not-allowed' : 'bg-emerald-600/90 text-white shadow-emerald-900/50 active:scale-95'}`}
-                        >
-                            {isArchiving && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
-                            {isArchiving ? '归档中...' : '归档记忆'}
-                        </button>
-                    )}
-                    <button onClick={saveEntry} className="px-4 py-1.5 bg-white/10 rounded-full text-xs font-bold hover:bg-white/20 active:scale-95 transition-transform">
-                        保存
-                    </button>
+                {/* 4 信纸圈 */}
+                <div className="flex gap-1 bg-[#111] p-1 rounded-full border border-white/10">
+                    {PAPER_STYLES.slice(0, 4).map(s => (
+                        <button
+                            key={s.id}
+                            onClick={() => updatePage({ paperStyle: s.id }, 'user')}
+                            className={`w-6 h-6 rounded-full border border-white/15 active:scale-90 ${s.css}`}
+                            title={s.name}
+                        />
+                    ))}
                 </div>
+
+                {/* 贴纸 */}
+                <button
+                    onClick={() => setShowStickerPanel(!showStickerPanel)}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md active:scale-90 transition-transform ${showStickerPanel ? 'bg-white text-black' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'}`}
+                    title="贴纸"
+                >
+                    <Sparkle size={16} weight="fill" />
+                </button>
+
+                {/* 归档记忆（只在 charPage 存在且未归档时显示） */}
+                {currentEntry?.charPage && !currentEntry.isArchived && (
+                    <button
+                        onClick={handleArchive}
+                        disabled={isArchiving}
+                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all flex items-center gap-1 ml-auto ${isArchiving ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-600/90 text-white active:scale-95'}`}
+                    >
+                        {isArchiving && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
+                        {isArchiving ? '归档中...' : '归档记忆'}
+                    </button>
+                )}
+
+                {/* 保存（自动触发回复） */}
+                <button
+                    onClick={handleSave}
+                    disabled={isThinking}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-transform ${isThinking ? 'bg-white/5 text-white/40' : 'bg-white/10 text-white hover:bg-white/20 active:scale-95'}`}
+                >
+                    {isThinking ? '生成中...' : (currentEntry?.charPage ? '保存' : '保存')}
+                </button>
             </div>
 
-            {/* Main Page Area */}
-            <div className="flex-1 relative w-full overflow-hidden flex flex-col">
-                <div className="flex-1 w-full max-w-xl mx-auto px-2 pb-4 pt-2 flex flex-col relative">
-                    <div className="flex-1 relative rounded-3xl transition-all duration-500">
-                        {activeTab === 'user' && currentEntry && renderPage(currentEntry.userPage, 'user')}
-                        
-                        {activeTab === 'char' && (
-                            currentEntry?.charPage ? renderPage(currentEntry.charPage, 'char') : (
-                                <div className="w-full h-full bg-[#252525] rounded-3xl border border-white/5 flex flex-col items-center justify-center text-white/40 gap-4 p-8 text-center">
-                                    <div className="opacity-20 animate-pulse"><img src={twemojiUrl('1f48c')} alt="letter" className="w-12 h-12" /></div>
-                                    {isThinking ? (
-                                        <div className="space-y-2">
-                                            <p className="text-sm font-medium text-amber-500">对方正在阅读你的日记...</p>
-                                            <div className="flex justify-center gap-1">
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce"></div>
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-100"></div>
-                                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-200"></div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <p className="text-sm">写完日记后，点击下方按钮<br/>邀请 {selectedChar?.name} 交换日记。</p>
-                                            <button 
-                                                onClick={handleExchange} 
-                                                className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-white text-sm font-bold rounded-full shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95 transition-all mt-2"
-                                            >
-                                                查看 TA 的今日
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            )
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Bottom Controls */}
-            <div className="shrink-0 bg-[#222] border-t border-white/5 pb-safe pt-2 z-30">
-                <div className="flex justify-center gap-4 mb-4 px-4">
-                    <button 
-                        onClick={() => { setActiveTab('user'); setSelectedStickerId(null); }}
-                        className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all duration-300 relative overflow-hidden ${activeTab === 'user' ? 'bg-white text-black shadow-lg' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                    >
-                        My Diary
-                    </button>
-                    <button 
-                        onClick={() => { setActiveTab('char'); setSelectedStickerId(null); }}
-                        className={`flex-1 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider transition-all duration-300 relative overflow-hidden ${activeTab === 'char' ? 'bg-amber-500 text-white shadow-lg shadow-amber-900/50' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                    >
-                        {selectedChar?.name || 'Partner'}
-                        {currentEntry?.charPage && activeTab !== 'char' && <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full shadow-sm animate-pulse"></div>}
-                    </button>
-                </div>
-
-                <div className="flex items-center justify-between px-6 pb-4">
-                    <div className="flex gap-3 bg-[#111] p-1.5 rounded-full border border-white/10">
-                        {PAPER_STYLES.slice(0, 4).map(s => (
-                            <button 
-                                key={s.id} 
-                                onClick={() => updatePage({ paperStyle: s.id }, activeTab)}
-                                className={`w-8 h-8 rounded-full border border-white/10 transition-transform active:scale-90 ${s.css}`}
-                                title={s.name}
+            {/* 主区域：一张 paper 卡片（顶到顶栏下方，直接延伸到屏幕底部，无底部 textarea） */}
+            <div className="flex-1 min-h-0 px-2 pt-0 pb-2">
+                <div
+                    className={`w-full h-full max-w-xl mx-auto ${currentPaperStyle.css} rounded-3xl shadow-md flex flex-col overflow-hidden`}
+                    style={{ ...currentPaperStyle.style }}
+                >
+                    <div className="flex-1 overflow-y-auto p-5 no-scrollbar">
+                        {/* MY DIARY 段 — 用 textarea 替代，bg 透明，光标直接在 paper 上 */}
+                        <div className="mb-4 pb-3 border-b border-black/10">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className={`text-[10px] font-bold uppercase tracking-widest opacity-50 ${currentPaperStyle.text}`}>MY DIARY</span>
+                                <span className={`text-[9px] opacity-40 font-mono ${currentPaperStyle.text}`}>{currentEntry?.date}</span>
+                            </div>
+                            <textarea
+                                value={currentEntry?.userPage?.text || ''}
+                                onChange={e => updatePage({ text: e.target.value }, 'user')}
+                                placeholder="写下今天的日记..."
+                                className={`w-full bg-transparent resize-none outline-none leading-loose text-[15px] placeholder:opacity-30 no-scrollbar ${currentPaperStyle.text}`}
+                                style={{ minHeight: '180px' }}
                             />
-                        ))}
-                    </div>
-                    
-                    <div className="flex gap-3">
-                        {activeTab === 'char' && currentEntry?.charPage && !isThinking && (
-                            <button onClick={handleExchange} className="w-11 h-11 bg-white/10 text-white rounded-full flex items-center justify-center active:scale-90 transition-transform border border-white/5">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                            </button>
-                        )}
-                        
-                        <button 
-                            onClick={() => setShowStickerPanel(!showStickerPanel)} 
-                            className={`w-11 h-11 rounded-full flex items-center justify-center text-xl shadow-lg active:scale-90 transition-transform ${showStickerPanel ? 'bg-white text-black' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'}`}
-                        >
-                            <Sparkle size={24} weight="fill" />
-                        </button>
-                    </div>
-                </div>
+                        </div>
 
-                {showStickerPanel && (
-                    <div className="bg-[#1a1a1a] border-t border-white/10 p-4 animate-slide-up h-48 overflow-y-auto no-scrollbar">
-                        <div className="grid grid-cols-6 gap-3">
-                            <button onClick={() => setShowImportModal(true)} className="flex items-center justify-center bg-white/10 rounded-xl border-2 border-dashed border-white/20 text-white/50 text-xl font-bold hover:bg-white/20 hover:text-white transition-all aspect-square">
-                                +
-                            </button>
-                            {DEFAULT_STICKERS.map((s, i) => (
-                                <button key={`def-${i}`} onClick={() => addSticker(s)} className="hover:scale-110 transition-transform p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
-                                    <img src={s} alt="" className="w-8 h-8 object-contain pointer-events-none" />
-                                </button>
-                            ))}
-                            {customStickers.map((s, i) => (
-                                <button 
-                                    key={`cust-${i}`} 
-                                    onClick={() => addSticker(s.url)} 
-                                    onTouchStart={() => handleDrawerTouchStart(s)}
-                                    onTouchEnd={handleDrawerTouchEnd}
-                                    onMouseDown={() => handleDrawerTouchStart(s)}
-                                    onMouseUp={handleDrawerTouchEnd}
-                                    onMouseLeave={handleDrawerTouchEnd}
-                                    onContextMenu={(e) => { e.preventDefault(); setDeletingSticker(s); }}
-                                    className="p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center relative active:scale-95 transition-transform"
-                                >
-                                    <img src={s.url} className="w-8 h-8 object-contain pointer-events-none" />
-                                </button>
-                            ))}
+                        {/* REPLY 段（中间不隔开，紧接 MY DIARY） */}
+                        <div>
+                            <div className="flex justify-between items-center mb-2">
+                                <span className={`text-[10px] font-bold uppercase tracking-widest opacity-50 ${currentPaperStyle.text}`}>REPLY · {selectedChar?.name}</span>
+                            </div>
+                            {isThinking ? (
+                                <div className="flex flex-col items-center justify-center text-amber-500 gap-2 py-6">
+                                    <div className="flex gap-1">
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce"></div>
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-100"></div>
+                                        <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce delay-200"></div>
+                                    </div>
+                                    <p className="text-xs font-medium">{selectedChar?.name} 正在阅读你的日记...</p>
+                                </div>
+                            ) : currentEntry?.charPage ? (
+                                <div className={`text-[15px] leading-loose whitespace-pre-wrap ${currentPaperStyle.text}`}>
+                                    {currentEntry.charPage.text}
+                                </div>
+                            ) : (
+                                <div className="text-slate-300 text-xs py-3 text-center">
+                                    写完点保存，TA 会回复
+                                </div>
+                            )}
                         </div>
                     </div>
-                )}
+                </div>
             </div>
+
+            {/* 暮色 2026-08-22：底部 textarea 拿掉，输入直接落在 paper 卡片上的 MY DIARY 段里
+                （paper 卡片本身 flex-1 填满到屏幕底部，光标在 paper 上 = 在信纸上） */}
+
+            {/* 贴纸面板（按需显示，浮在底部之上） */}
+            {showStickerPanel && (
+                <div className="absolute bottom-[140px] left-2 right-2 z-40 bg-[#1a1a1a] border border-white/10 rounded-2xl p-3 animate-slide-up max-h-48 overflow-y-auto no-scrollbar shadow-2xl">
+                    <div className="grid grid-cols-6 gap-2">
+                        <button onClick={() => setShowImportModal(true)} className="flex items-center justify-center bg-white/10 rounded-xl border-2 border-dashed border-white/20 text-white/50 text-lg font-bold hover:bg-white/20 hover:text-white transition-all aspect-square">
+                            +
+                        </button>
+                        {DEFAULT_STICKERS.map((s, i) => (
+                            <button key={`def-${i}`} onClick={() => addSticker(s)} className="hover:scale-110 transition-transform p-1.5 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
+                                <img src={s} alt="" className="w-7 h-7 object-contain pointer-events-none" />
+                            </button>
+                        ))}
+                        {customStickers.map((s, i) => (
+                            <button
+                                key={`cust-${i}`}
+                                onClick={() => addSticker(s.url)}
+                                onTouchStart={() => handleDrawerTouchStart(s)}
+                                onTouchEnd={handleDrawerTouchEnd}
+                                onMouseDown={() => handleDrawerTouchStart(s)}
+                                onMouseUp={handleDrawerTouchEnd}
+                                onMouseLeave={handleDrawerTouchEnd}
+                                onContextMenu={(e) => { e.preventDefault(); setDeletingSticker(s); }}
+                                className="p-1.5 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center relative active:scale-95 transition-transform"
+                            >
+                                <img src={s.url} className="w-7 h-7 object-contain pointer-events-none" />
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Sticker Import Modal */}
             <Modal 
@@ -858,6 +1050,7 @@ Structure:
                 </div>
             </Modal>
         </div>
+        </>
     );
 };
 

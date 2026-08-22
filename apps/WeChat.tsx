@@ -18,10 +18,10 @@ const TABS: { key: TabKey; label: string }[] = [
 // 占位发现 tab + 联系人 tab 走真实 characters
 // "我" tab 直接渲染 UserApp（个人档案）
 const WeChat: React.FC = () => {
-  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp, consumePendingDirectChat, consumeDirectEntry } = useOS();
+  const { characters, activeCharacterId, setActiveCharacterId, registerBackHandler, closeApp, consumePendingDirectChat, consumeDirectEntry, wechatTab, setWechatTab } = useOS();
 
-  // 当前 Tab
-  const [tab, setTab] = useState<TabKey>('messages');
+  // 暮色 2026-08-21：tab 提到 OSContext — 相册/情侣空间返回时 WeChat 重新 mount 不丢 tab
+  // 之前内部 useState<tab> 在 activeApp 切走又切回时重置成 'messages'，导致看不到发现页
   // 已点开的角色 id（null = 还在联系人列表）
   const [openedCharId, setOpenedCharId] = useState<string | null>(null);
   // 入口标记：widget 直跳进来 → 按返回直接回桌面；联系人列表点入 → 按返回回联系人列表
@@ -98,13 +98,13 @@ const WeChat: React.FC = () => {
 
   // 暮色 2026-07-12：ChatHeaderShell 右上角星星按钮触发 → 回联系人列表 + 切到发现 tab
   // 监听 discoverTabRequestId：ChatHeaderShell 调 requestOpenDiscoverTab() 会自增这个 counter
-  // 这里 consume + setOpenedCharId(null) + setTab('discover')
+  // 这里 consume + setOpenedCharId(null) + setWechatTab('discover')
   const { consumePendingDiscoverTab, discoverTabRequestId } = useOS();
   useEffect(() => {
     if (discoverTabRequestId === 0) return; // 初始值 0 跳过
     if (consumePendingDiscoverTab()) {
       setOpenedCharId(null);
-      setTab('discover');
+      setWechatTab('discover');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discoverTabRequestId]);
@@ -149,13 +149,13 @@ const WeChat: React.FC = () => {
 
       {/* 内容区 */}
       <div className="flex-1 overflow-y-auto">
-        {tab === 'messages' && (
+        {wechatTab === 'messages' && (
           <MessagesTab characters={characters} onOpenChar={setOpenedCharId} />
         )}
-        {tab === 'discover' && (
-          <DiscoverPage onClose={() => setTab('messages')} />
+        {wechatTab === 'discover' && (
+          <DiscoverPage onClose={() => setWechatTab('messages')} />
         )}
-        {tab === 'me' && <UserApp />}
+        {wechatTab === 'me' && <UserApp />}
       </div>
 
       {/* 底部 Tab bar — 仿微信底部三 Tab（磨砂白底，暮色 v4 反馈） */}
@@ -166,13 +166,13 @@ const WeChat: React.FC = () => {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => setWechatTab(t.key)}
             className={`flex-1 relative py-2.5 text-[13px] font-medium transition-colors ${
-              tab === t.key ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-700'
+              wechatTab === t.key ? 'text-emerald-600' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             {t.label}
-            {tab === t.key && (
+            {wechatTab === t.key && (
               <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-5 h-0.5 bg-emerald-500 rounded-full" />
             )}
           </button>

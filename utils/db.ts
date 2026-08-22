@@ -910,7 +910,7 @@ export const DB = {
       transaction.objectStore(STORE_GALLERY).put(img);
   },
 
-  getGalleryImages: async (charId?: string): Promise<GalleryImage[]> => {
+  getGalleryImages: async (charId?: string, source?: 'user' | 'ai'): Promise<GalleryImage[]> => {
       const db = await openDB();
       return new Promise((resolve, reject) => {
           const transaction = db.transaction(STORE_GALLERY, 'readonly');
@@ -922,7 +922,14 @@ export const DB = {
           } else {
               request = store.getAll();
           }
-          request.onsuccess = () => resolve(request.result || []);
+          request.onsuccess = () => {
+              let result = request.result || [];
+              // 老数据 source undefined → 视为 'user'
+              if (source) {
+                  result = result.filter(img => (img.source || 'user') === source);
+              }
+              resolve(result);
+          };
           request.onerror = () => reject(request.error);
       });
   },
@@ -1107,6 +1114,13 @@ export const DB = {
           request.onsuccess = () => resolve(request.result || []);
           request.onerror = () => reject(request.error);
       });
+  },
+
+  // 暮色 2026-08-21：只取角色独白日记（source='char-only'），内存过滤
+  // 复用 charId 索引查全量再 filter — 数据量小（角色日均 0-1 篇），无需新建 source 索引
+  getCharOnlyDiariesByCharId: async (charId: string): Promise<DiaryEntry[]> => {
+      const all = await DB.getDiariesByCharId(charId);
+      return all.filter(d => d.source === 'char-only');
   },
 
   saveDiary: async (diary: DiaryEntry): Promise<void> => {

@@ -2353,6 +2353,16 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         content: imageUrl,
                     });
 
+                    // 暮色 2026-08-21：AI 生图同步进相册（source='ai'），用户能在相册里查看到
+                    // 不带 review — AI 不点评自己生成的图
+                    await DB.saveGalleryImage({
+                        id: `ai_${char.id}_${Date.now()}`,
+                        charId: char.id,
+                        url: imageUrl,
+                        timestamp: Date.now(),
+                        source: 'ai',
+                    });
+
                     setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                     imageGenerated = true;
                     console.log('🎨 [ImageGen] 生图成功:', imageUrl);

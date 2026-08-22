@@ -20,6 +20,7 @@ const notifiedListenTogether = new Set<string>();
 import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
+import { ProactiveDiary } from '../utils/proactiveDiary';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
@@ -1730,6 +1731,34 @@ const Chat: React.FC = () => {
         addToast(!isOn ? '放歌已开启' : '放歌已关闭', !isOn ? 'success' : 'info');
     };
 
+    // 暮色 2026-08-22：自动写日记（单角色独立，每天 22:00 写一篇）
+    //   默认关（char.autoDiaryEnabled === true 才算开）
+    //   切换：开 → ProactiveDiary.start(charId) 起 schedule；关 → ProactiveDiary.stop(charId) 清 schedule
+    const handleToggleAutoDiary = () => {
+        if (!char) return;
+        const isOn = char.autoDiaryEnabled === true;
+        updateCharacter(char.id, { autoDiaryEnabled: !isOn } as any);
+        if (isOn) {
+            ProactiveDiary.stop(char.id);
+            addToast('自动写日记已关闭', 'info');
+        } else {
+            ProactiveDiary.start(char.id);
+            addToast('自动写日记已开启，明天 22:00 生效', 'success');
+        }
+    };
+
+    // 暮色 2026-08-22：把 OSContext 数据喂给 ProactiveDiary 默认 callback
+    //   每次 char 切换都重设一次（确保 deps 跟当前 char 一致；userProfile / characters 不变）
+    useEffect(() => {
+        if (!char) return;
+        ProactiveDiary.setDeps(() => ({
+            characters,
+            apiConfig,
+            userProfile,
+            addToast,
+        }));
+    }, [char?.id, characters, apiConfig, userProfile, addToast]);
+
     // 打开聊天设置抽屉（头像右上角 GearSix 按钮触发）
     const handleOpenChatSettings = () => {
         setShowPanel('none'); // 顺手关掉 + 号面板，避免叠层
@@ -2919,6 +2948,8 @@ if (keepN > 0) {
                 onToggleImageGen={handleToggleImageGen}
                 playSongEnabled={char.playSongEnabled !== false}
                 onTogglePlaySong={handleTogglePlaySong}
+                autoDiaryEnabled={char.autoDiaryEnabled === true}
+                onToggleAutoDiary={handleToggleAutoDiary}
                 contextLimit={char.contextLimit || 500}
                 onSetContextLimit={(n) => updateCharacter(char.id, { contextLimit: n } as any)}
                 // 暮色 2026-08-05：角色自定义时区（异国恋 / 角色身处异国）

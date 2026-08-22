@@ -37,6 +37,10 @@ interface ChatSettingsDrawerProps {
     playSongEnabled: boolean;
     onTogglePlaySong: () => void;
 
+    // 暮色 2026-08-22：自动写日记（每天 22:00 写一篇）
+    autoDiaryEnabled: boolean;
+    onToggleAutoDiary: () => void;
+
     // 上下文条数
     contextLimit: number;
     onSetContextLimit: (n: number) => void;
@@ -444,6 +448,19 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
                             开启后，角色会在聊天中自动生成一段第一人称的内心独白。
+                        </p>
+                    </section>
+
+                    {/* === 自动写日记（每天 22:00 一篇）— 暮色 2026-08-22 单角色独立开关 === */}
+                    <section>
+                        <div className="flex items-center justify-between cursor-pointer" onClick={onToggleAutoDiary}>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">自动写日记</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${autoDiaryEnabled ? 'bg-violet-400' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${autoDiaryEnabled ? 'translate-x-4' : ''}`} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            开启后，角色会在每天 22:00 自动写一篇第一人称日记。仅当前角色生效。
                         </p>
                     </section>
 

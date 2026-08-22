@@ -260,6 +260,10 @@ export const ProactiveDiary = {
    * 测试用：立即触发指定角色（不走定时器）
    *   不传 charId → 从 os_last_active_char_id 拿当前 activeCharacterId（暮色 2026-08-22 友好）
    *   控制台：ProactiveDiary.fireNow() / .fireNow('char-xxx')
+   *
+   *   暮色 2026-08-22：fire-and-forget — fireNow 立即返回（Promise 不 pending），
+   *   生成在后台跑。生成完后 toast 自动弹"xxx 写了一篇日记"。
+   *   这跟 22:00 定时触发的行为一致（fireDueSchedules 内部也是 void runDiaryForChar）。
    */
   async fireNow(charId?: string) {
     const targetId = charId || localStorage.getItem('os_last_active_char_id') || '';
@@ -274,7 +278,8 @@ export const ProactiveDiary = {
       schedules[targetId].nextFire = nextTriggerAt(now);
       saveSchedules(schedules);
     }
-    await runDiaryForChar(targetId);
+    // 不 await — 控制台立即 fulfilled，日记在后台跑
+    void runDiaryForChar(targetId);
   },
 };
 

@@ -105,12 +105,8 @@ const McpToolRow: React.FC<{
     const toggle = (e?: React.ChangeEvent<HTMLInputElement>) => {
         if (blocked) return;   // server disabled 时禁止
         e?.stopPropagation();   // 暮色 2026-08-23 23:51 修复：阻止 change 事件冒泡
-        //   避免任何父级 onClick 监听意外触发（之前 toggle 没 stopPropagation）
-        //   上一版有"点工具开关屏幕被遮住"的 bug — 调查方向：
-        //     1. 触发了 McpAllowSensitiveConfirm 弹窗（已排除 — code 路径无 setAllowSensitiveConfirmOpen(true)）
-        //     2. 事件冒泡到某层 onClick 监听（stopPropagation 是兜底保险）
-        //   debug 工具已加 console.log 帮定位
-        console.log('[MCP Debug] McpToolRow toggle:', tool.name, '→', !enabled);
+        // 保险：阻止 change 事件冒泡
+        e?.stopPropagation();
         mcpStorage.updateToolEnabled(serverId, tool.name, !enabled);
         onChanged();
     };
@@ -187,7 +183,6 @@ const McpAllowSensitiveConfirm: React.FC<{
     onConfirm: () => void;
     onCancel: () => void;
 }> = ({ serverName, sensitiveToolNames, onConfirm, onCancel }) => {
-    console.log('[MCP Debug] McpAllowSensitiveConfirm RENDERED for', serverName);
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCancel}>
             <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
@@ -307,10 +302,7 @@ const McpServerRow: React.FC<{
     const hasSensitiveTools = sensitiveToolNames.length > 0;
 
     return (
-        <div
-            className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2"
-            onClick={(e) => console.log('[MCP Debug] McpServerRow root click target=', e.target, 'currentTarget=', e.currentTarget)}
-        >
+        <div className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2">
             {!isEditing ? (
                 <>
                     <div className="flex items-start gap-3">
@@ -647,10 +639,7 @@ const McpSettings: React.FC = () => {
     };
 
     return (
-        <div
-            className="px-3 pb-3"
-            onClick={(e) => console.log('[MCP Debug] McpSettings root click target=', e.target)}
-        >
+        <div className="px-3 pb-3">
             <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
                 MCP（Model Context Protocol）服务器管理。第一版只做配置 + 测试连接，
                 工具调用接入 chat 在第二版。鉴权头和 token 不会被写入日志。

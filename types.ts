@@ -2018,6 +2018,12 @@ export interface McpTool {
     name: string;
     description?: string;
     inputSchema: any;   // JSON Schema，原样保存
+    // 暮色 2026-08-23 v2：工具级开关
+    //   兼容旧数据：旧工具没 enabled 字段时按 true 处理（mcpStorage.mergeTools 处理）
+    //   server enabled=false 时，下面所有工具即使单独 enabled 也不能被注入模型（AND 逻辑）
+    enabled?: boolean;
+    // 暮色 2026-08-23 v2：风险标记（工具名匹配敏感关键词自动标，第一版只标记不自动禁用）
+    isSensitive?: boolean;
 }
 
 export interface McpServerConfig {

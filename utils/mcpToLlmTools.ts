@@ -184,7 +184,12 @@ export const mcpToOpenAITools = (configs: McpServerConfig[], options: McpToLlmOp
         type: 'function',
         function: {
             name: buildMcpToolName(server.id, tool.name, allServerIds),
-            description: tool.description ?? `MCP tool: ${tool.name}`,
+            // 暮色 2026-08-23 23:32：截断 description 到 80 字符
+            //   原因：完整 description 注入 LLM 后，LLM 第二次响应会"复读" description
+            //   截图显示的"readable markdown format. Perfect for reading articles..."
+            //   100+ 字符的 jina 官方 description 被 LLM 复读到 chat 消息里
+            //   80 字符足够 LLM 理解工具用途，但不会被复读
+            description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
             parameters: tool.inputSchema ?? { type: 'object', properties: {} },
         },
     }));
@@ -212,10 +217,16 @@ export const mcpToGeminiTools = (configs: McpServerConfig[], options: McpToLlmOp
     return {
         functionDeclarations: limited.map(({ server, tool }) => ({
             name: buildMcpToolName(server.id, tool.name, allServerIds),
-            description: tool.description ?? `MCP tool: ${tool.name}`,
+            description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
             parameters: tool.inputSchema ?? { type: 'object', properties: {} },
         })),
     };
+};
+
+/** 截断工具 description 到 max 字符（带省略号） */
+const truncateDescription = (desc: string, max: number): string => {
+    if (desc.length <= max) return desc;
+    return desc.slice(0, max - 1) + '…';
 };
 
 // ==================== 工具：检查工具是否被允许注入 ====================

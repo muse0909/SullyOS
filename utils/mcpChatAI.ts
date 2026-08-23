@@ -147,9 +147,17 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
         });
 
         // 重新调 LLM（非流式 — 暮色规格：流式模式也不在 MCP 循环里走流，避免边流边调）
+        // 暮色 2026-08-23 23:32：messages 末尾追加"不要复读工具描述"引导
+        //   原因：截图显示 LLM 第二次响应复读了 read_url tool 的完整 description
+        //   （100+ 字符的 jina 官方 description 被复读到 chat 消息里）
+        //   引导让 LLM 给"基于工具结果"的简洁回答，不复读工具功能说明
+        const followMessages = [
+            ...messages,
+            { role: 'system', content: '【系统提示】基于上面的工具调用结果给用户简洁、友好的回答。不要复读或复述工具的 description/功能说明。直接告诉用户工具调用的结果。' },
+        ];
         const followBody: any = {
             model: opts.effectiveApi.model,
-            messages,
+            messages: followMessages,
             temperature: opts.effectiveApi.temperature ?? 0.85,
             max_tokens: 8000,
             stream: false,

@@ -5,6 +5,7 @@ import { DB } from '../utils/db';
 // 暮色 2026-08-16：格式化系统保留云端备份
 import { factoryReset } from '../utils/factoryReset';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { parseMomentsActions } from '../utils/momentsActionParser';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
 import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
@@ -1962,6 +1963,12 @@ if (!isVisible || !isChattingWithThisChar) {
 
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
+
+              // 暮色 2026-08-23：主动消息里也解析 [[MOMENT_POST: ...]] / [[MOMENT_COMMENT: ...]] / [[MOMENT_LIKE: ...]]
+              //   之前漏解析（只在 useChatAI 主聊天流程里实现），AI 输出的 [[MOMENT_POST: ...]]
+              //   标签会作为字面文本保存到消息里，朋友圈没真发出去
+              //   跟 useChatAI 共用 parseMomentsActions，保证行为一致
+              aiContent = parseMomentsActions(aiContent, { char, addToast });
 
               // 暮色 2026-08-07：主动消息路径解析 [[XIAO_ZHI_TIAO: ...]]（收窄后唯一两条路径之一）
               //   跟 useChatAI 同步：1 天最多 5 条 + 1 小时内相同内容跳过

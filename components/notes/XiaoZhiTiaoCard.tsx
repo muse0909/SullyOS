@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { XiaoZhiTiao } from '../../types';
-import { sanitizeNoteHtml } from '../../utils/xiaoZhiTiaoStyles';
+import { sanitizeNoteHtml, isOldXiaoZhiTiao } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoCardProps {
@@ -35,14 +35,17 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
     };
 
     // 暮色 2026-08-23 v3：便签样式优先级
-    //   1. styleImageUrl 存在 → 走图（用户上传图）
+    //   1. styleImageUrl 存在且不是老便签 → 走图（用户上传图）
     //   2. style 存在 → 走 CSS（cjjc 8 套便签）
     //   3. 都没 → 默认 note-pink（暮色反馈"老纸条也用新样式"）
-    const useImage = !!note.styleImageUrl;
+    // 暮色 8-23 反馈：老数据有 styleImageUrl 的也走新 CSS（暮色 7-22 上传图那时没 CSS 选项；现在 8 套便签足够）
+    const isOld = isOldXiaoZhiTiao(note);
+    const useImage = !!note.styleImageUrl && !isOld;
     const noteClassName = useImage ? '' : (note.style || DEFAULT_FALLBACK_STYLE);
 
-    // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 空白（不显示文字，不显示任何标记）
-    const isRevealed = note.revealedAt != null;
+    // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 空白
+    // 暮色 8-23 反馈：老便签没 revealedAt 字段时当作"已看"（否则老便签全显示"未拆封"）
+    const isRevealed = note.revealedAt != null || isOld;
 
     return (
         <div

@@ -84,6 +84,19 @@ export function sanitizeNoteHtml(text: string): string {
         .replace(/&lt;\/s&gt;/g, '</s>');  // 还原 /s 标签
 }
 
+// 暮色 2026-08-23 v3 反馈修复：老数据兼容
+// 升级时间戳（v3 commit 1 时间 — 904029f3）
+// 之前写的小纸条：
+//   1. 没 revealedAt 字段 → 视作"已看"（否则老便签全显示"未拆封"）
+//   2. 有 styleImageUrl（暮色 7-22 上传的"暮色手绘便签"图）→ 忽略，强制走新便签 CSS
+//   理由：暮色 7-22 上传图是因为当时没 CSS 选项；现在有 8 套便签了
+// 之后写的新便签走正常流程（revealedAt 字段 / 不忽略 styleImageUrl）
+export const XIAO_ZHI_TIAO_V3_RELEASE_TS = new Date('2026-08-23T15:00:00+08:00').getTime();
+
+export function isOldXiaoZhiTiao(note: { timestamp: number }): boolean {
+    return note.timestamp < XIAO_ZHI_TIAO_V3_RELEASE_TS;
+}
+
 // 暮色 2026-08-23 v3：定时投递检查 — 主消息流触发时调用
 //   读该角色所有隐藏 + isTimed 藏信，hiddenUntil <= now 的改成 visible + 写 DB + addToast
 //   失败静默（同日记 / 主动消息约定）

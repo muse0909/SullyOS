@@ -15,7 +15,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight, ChatCircleText } from '@phosphor-icons/react';
 import { XiaoZhiTiao, XiaoZhiTiaoReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
-import { sanitizeNoteHtml } from '../../utils/xiaoZhiTiaoStyles';
+import { sanitizeNoteHtml, isOldXiaoZhiTiao } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoDetailProps {
@@ -192,9 +192,9 @@ const FullXiaoZhiTiaoCard: React.FC<{
     onReplyClick?: () => void;
     hideReplyButton?: boolean;
 }> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
-    const useImage = !!note.styleImageUrl;
+    const useImage = !!note.styleImageUrl && !isOldXiaoZhiTiao(note);
     const noteClassName = useImage ? '' : (note.style || 'note-pink');
-    const isRevealed = note.revealedAt != null;
+    const isRevealed = note.revealedAt != null || isOldXiaoZhiTiao(note);
     return (
         <div
             // 暮色原图直接显示（不加底/框/阴影）

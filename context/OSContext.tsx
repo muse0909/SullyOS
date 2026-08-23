@@ -32,7 +32,7 @@ const isApiLogEnabled = (): boolean => {
 };
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
-import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
+import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle } from '../utils/xiaoZhiTiaoStyles';
 import type { XiaoZhiTiao } from '../types';
 // 暮色 2026-08-01：情侣空间 AI 主动打卡接 runProactive
 import { shouldTriggerAiCheckin, pickRandomTask, addCheckin } from '../utils/coupleSpaceStorage';
@@ -1973,9 +1973,10 @@ if (!isVisible || !isChattingWithThisChar) {
               // 暮色 2026-08-07：主动消息路径解析 [[XIAO_ZHI_TIAO: ...]]（收窄后唯一两条路径之一）
               //   跟 useChatAI 同步：1 天最多 5 条 + 1 小时内相同内容跳过
               //   提醒走 addToast 顶部弹窗（不显示内容详情）
+              // 暮色 2026-08-23 v3：3 种 token 解析（跟 useChatAI 同步）
               try {
                   // AI 没输出小纸条标记 → 跳过 IDB 查询 / 计数 / 解析
-                  if (aiContent.includes('[[XIAO_ZHI_TIAO:')) {
+                  if (aiContent.includes('[[XIAO_ZHI_TIAO')) {
                       const todayStart = new Date();
                       todayStart.setHours(0, 0, 0, 0);
                       const oneHourAgo = Date.now() - 60 * 60 * 1000;
@@ -1984,29 +1985,79 @@ if (!isVisible || !isChattingWithThisChar) {
                       if (todaysXZT.length >= 5) {
                           console.log(`📝 [XiaoZhiTiao/Proactive] 今天已写 ${todaysXZT.length} 条，跳过`);
                       } else {
-                          const xztMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
-                          if (xztMatch) {
-                              const content = xztMatch[1].trim();
+                          // 暮色 2026-08-23 v3：3 种 token 解析（共用 5/天上限）
+                          let xztContent: string | null = null;
+                          let xztVariant: 'visible' | 'hidden' = 'visible';
+                          let xztTimedUntil: number | null = null;
+
+                          const visibleMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
+                          if (visibleMatch) {
+                              xztContent = visibleMatch[1].trim();
+                              xztVariant = 'visible';
+                          }
+                          if (!xztContent) {
+                              const hiddenMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*([\s\S]+?)\s*\]\]/);
+                              if (hiddenMatch) {
+                                  xztContent = hiddenMatch[1].trim();
+                                  xztVariant = 'hidden';
+                              }
+                          }
+                          if (!xztContent) {
+                              const timedMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_TIMED:\s*(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*\|\s*([\s\S]+?)\s*\]\]/);
+                              if (timedMatch) {
+                                  const timeStr = timedMatch[1].trim();
+                                  const content = timedMatch[2].trim();
+                                  const untilMs = new Date(timeStr).getTime();
+                                  if (Number.isFinite(untilMs) && untilMs > Date.now()) {
+                                      xztContent = content;
+                                      xztVariant = 'hidden';
+                                      xztTimedUntil = untilMs;
+                                  } else {
+                                      console.log(`📝 [XiaoZhiTiao/Proactive] TIMED 时间解析失败或过期: ${timeStr}`);
+                                      xztContent = content;
+                                      xztVariant = 'visible';
+                                  }
+                              }
+                          }
+
+                          if (xztContent) {
                               const recentDuplicate = todaysXZT.find(n =>
-                                  n.timestamp >= oneHourAgo && n.content === content
+                                  n.timestamp >= oneHourAgo && n.content === xztContent
                               );
                               if (recentDuplicate) {
                                   console.log(`📝 [XiaoZhiTiao/Proactive] 1h 内已写过相同内容，跳过`);
-                              } else if (content) {
+                              } else {
+                                  // 暮色 2026-08-23 v3：样式合并 — pickNoteStyle 8 套便签 / 图
+                                  const styles = getStoredXiaoZhiTiaoStyles();
+                                  const picked = pickNoteStyle(styles);
                                   const newNote: XiaoZhiTiao = {
                                       id: `xzt-${Date.now()}`,
                                       charId,
                                       timestamp: Date.now(),
-                                      content,
-                                      styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                                      content: xztContent,
+                                      visibility: xztVariant,
+                                      isTimed: xztTimedUntil != null,
+                                      ...(xztTimedUntil ? { hiddenUntil: xztTimedUntil } : {}),
                                   };
+                                  if (picked?.kind === 'css') {
+                                      newNote.style = picked.className;
+                                  } else if (picked?.kind === 'image') {
+                                      newNote.styleImageUrl = picked.url;
+                                  }
                                   await DB.saveXiaoZhiTiao(newNote);
-                                  console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
-                                  addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                  console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条${xztVariant === 'hidden' ? (xztTimedUntil ? '定时' : '藏起来的') : ''}小纸条: ${xztContent.slice(0, 30)}...`);
+                                  // 暮色 2026-08-23 v3：藏信不通知；visible 正常 addToast
+                                  if (xztVariant === 'visible') {
+                                      addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                  }
                               }
                           }
-                          // 主动消息里把 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
-                          aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
+                          // 主动消息里把 3 种 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
+                          aiContent = aiContent
+                              .replace(/\[\[XIAO_ZHI_TIAO:\s*[\s\S]+?\]\]/g, '')
+                              .replace(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*[\s\S]+?\]\]/g, '')
+                              .replace(/\[\[XIAO_ZHI_TIAO_TIMED:[\s\S]*?\]\]/g, '')
+                              .trim();
                       }
                   }
               } catch (e) {

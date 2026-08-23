@@ -170,6 +170,58 @@ const McpToolRow: React.FC<{
     );
 };
 
+// 暮色 2026-08-23 v3：敏感工具授权二次确认弹窗
+//   isSensitive 工具（如 show_api_key）默认不注入 LLM
+//   用户必须点"启用风险工具"→ 弹窗确认 → 写 server.allowSensitive=true
+//   弹窗里列出会被授权的具体工具名 + 风险提示
+const McpAllowSensitiveConfirm: React.FC<{
+    serverName: string;
+    sensitiveToolNames: string[];
+    onConfirm: () => void;
+    onCancel: () => void;
+}> = ({ serverName, sensitiveToolNames, onConfirm, onCancel }) => {
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCancel}>
+            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">⚠️</div>
+                    <div>
+                        <div className="text-base font-bold text-slate-800">启用风险工具</div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">服务器「{serverName}」</div>
+                    </div>
+                </div>
+                <div className="text-[12px] text-slate-700 leading-relaxed mb-3">
+                    以下工具已知会暴露敏感信息（API key、token 等）。启用后这些工具会被注入 LLM，
+                    <span className="font-bold text-rose-700">AI 可以随时调用它们</span>。
+                </div>
+                <div className="bg-amber-50 border border-amber-200/60 rounded-xl px-3 py-2 mb-3 max-h-32 overflow-y-auto">
+                    {sensitiveToolNames.map((n) => (
+                        <div key={n} className="text-[11px] font-mono text-amber-900 py-0.5">• {n}</div>
+                    ))}
+                </div>
+                <div className="text-[10px] text-slate-500 leading-relaxed mb-4">
+                    提示：如果你不确定这些工具的作用，建议保持默认（不注入）。可以单独禁用某个工具的开关
+                    （在下方"工具"列表里关掉），不必启用整个"风险工具"授权。
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={onCancel}
+                        className="flex-1 text-[12px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 py-2 rounded-lg transition-colors"
+                    >
+                        取消
+                    </button>
+                    <button
+                        onClick={onConfirm}
+                        className="flex-1 text-[12px] font-bold text-white bg-amber-600 hover:bg-amber-700 py-2 rounded-lg transition-colors"
+                    >
+                        我已了解风险，启用
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const McpServerRow: React.FC<{
     config: McpServerConfig;
     onChanged: () => void;
@@ -182,6 +234,7 @@ const McpServerRow: React.FC<{
     const [testing, setTesting] = useState(false);
     const [confirmingDelete, setConfirmingDelete] = useState(false);
     const [toolsExpanded, setToolsExpanded] = useState(false);   // 暮色 2026-08-23 v2：工具列表展开
+    const [allowSensitiveConfirmOpen, setAllowSensitiveConfirmOpen] = useState(false);   // 暮色 2026-08-23 v3：敏感工具授权二次确认
 
     const isEditing = editingId === config.id;
     const badge = statusBadge(config);
@@ -242,6 +295,9 @@ const McpServerRow: React.FC<{
         onChanged();
     };
 
+    const sensitiveToolNames = (config.tools ?? []).filter((t) => t.isSensitive).map((t) => t.name);
+    const hasSensitiveTools = sensitiveToolNames.length > 0;
+
     return (
         <div className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2">
             {!isEditing ? (
@@ -254,6 +310,16 @@ const McpServerRow: React.FC<{
                                 {config.enabled ? null : (
                                     <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">已禁用</span>
                                 )}
+                                {hasSensitiveTools ? (
+                                    <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded" title="此服务器包含风险工具（API key / token 等），默认不注入 LLM">
+                                        ⚠ {sensitiveToolNames.length} 个风险工具
+                                    </span>
+                                ) : null}
+                                {config.allowSensitive ? (
+                                    <span className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded" title="已授权将风险工具注入 LLM">
+                                        风险已授权
+                                    </span>
+                                ) : null}
                             </div>
                             <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5" title={config.url}>{config.url}</div>
                             <div className={`text-[10px] mt-1.5 ${badge.color}`} title={config.lastError || badge.text}>
@@ -304,6 +370,35 @@ const McpServerRow: React.FC<{
                         )}
                     </div>
 
+                    {/* 暮色 2026-08-23 v3：风险工具授权开关（仅当 server 有敏感工具时显示） */}
+                    {hasSensitiveTools ? (
+                        <div className="mt-2 flex items-center justify-between gap-2 px-1">
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[11px] font-bold text-amber-800">风险工具授权</div>
+                                <div className="text-[9px] text-slate-500 leading-relaxed">
+                                    {config.allowSensitive
+                                        ? `已授权 ${sensitiveToolNames.length} 个工具注入 LLM`
+                                        : `默认不注入 ${sensitiveToolNames.length} 个敏感工具（API key / token 等）`}
+                                </div>
+                            </div>
+                            {config.allowSensitive ? (
+                                <button
+                                    onClick={() => mcpStorage.update(config.id, { allowSensitive: false }) || onChanged()}
+                                    className="text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition-colors"
+                                >
+                                    撤销授权
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => setAllowSensitiveConfirmOpen(true)}
+                                    className="text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors"
+                                >
+                                    启用
+                                </button>
+                            )}
+                        </div>
+                    ) : null}
+
                     {/* 暮色 2026-08-23 v2：工具列表展开 */}
                     {config.tools && config.tools.length > 0 ? (
                         <div className="mt-2.5">
@@ -342,6 +437,18 @@ const McpServerRow: React.FC<{
                     testing={testing}
                 />
             )}
+            {allowSensitiveConfirmOpen ? (
+                <McpAllowSensitiveConfirm
+                    serverName={config.name}
+                    sensitiveToolNames={sensitiveToolNames}
+                    onConfirm={() => {
+                        mcpStorage.update(config.id, { allowSensitive: true });
+                        setAllowSensitiveConfirmOpen(false);
+                        onChanged();
+                    }}
+                    onCancel={() => setAllowSensitiveConfirmOpen(false)}
+                />
+            ) : null}
         </div>
     );
 };

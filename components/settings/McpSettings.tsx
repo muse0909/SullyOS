@@ -104,6 +104,9 @@ const McpToolRow: React.FC<{
 
     const toggle = () => {
         if (blocked) return;   // server disabled 时禁止
+        // 暮色 2026-08-23 v3 修复：tool.enabled 是 McpTool 字段，allowSensitive 是 McpServerConfig 字段
+        //   updateToolEnabled 只改 tools 数组里那个 tool 的 enabled，不动 server.allowSensitive
+        //   两个字段独立：禁用某个工具不影响"风险已授权"状态，撤销授权不影响其他工具的 enabled
         mcpStorage.updateToolEnabled(serverId, tool.name, !enabled);
         onChanged();
     };
@@ -383,7 +386,13 @@ const McpServerRow: React.FC<{
                             </div>
                             {config.allowSensitive ? (
                                 <button
-                                    onClick={() => mcpStorage.update(config.id, { allowSensitive: false }) || onChanged()}
+                                    onClick={() => {
+                                        // 暮色 2026-08-23 v3 修复：撤销授权必须刷新 UI
+                                        //   之前写成 update(...) || onChanged()，但 update 返回 truthy 对象
+                                        //   || 短路，onChanged() 永远不被调用 → 按钮"无响应"
+                                        mcpStorage.update(config.id, { allowSensitive: false });
+                                        onChanged();
+                                    }}
                                     className="text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition-colors"
                                 >
                                     撤销授权

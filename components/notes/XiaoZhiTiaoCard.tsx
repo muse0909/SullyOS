@@ -4,7 +4,8 @@
 // 保留轻微旋转 + hover 归正放大
 // 暮色 2026-08-23 v3：
 //   - 8 套 cjjc 便签 CSS（note.style）+ 用户上传图（note.styleImageUrl）并存；图优先
-//   - revealedAt == null 时不显示文字（不管 visible/hidden/是否定时统一规则）
+//   - revealedAt == null 时**不显示文字**（空白便签，暮色反馈"不要未拆封，空白就行"）
+//   - 老数据兜底：!styleImageUrl && !note.style 时默认走 note-pink（暮色反馈"老纸条也用新样式"）
 //   - 划线渲染：sanitizeNoteHtml + dangerouslySetInnerHTML（白名单 <s> 标签）
 
 import React from 'react';
@@ -20,6 +21,9 @@ interface XiaoZhiTiaoCardProps {
     style?: React.CSSProperties;
 }
 
+// 暮色 2026-08-23 v3 反馈 2：老纸条没 style 字段时，默认走 note-pink（让老纸条也用新便签样式）
+const DEFAULT_FALLBACK_STYLE = 'note-pink';
+
 const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDelete, charName: _charName, style }) => {
     // 轻微随机旋转（用 note.id hash 一下，保证稳定不抖动）
     const seedHash = note.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -33,11 +37,11 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
     // 暮色 2026-08-23 v3：便签样式优先级
     //   1. styleImageUrl 存在 → 走图（用户上传图）
     //   2. style 存在 → 走 CSS（cjjc 8 套便签）
-    //   3. 都没 → 纯白兜底
+    //   3. 都没 → 默认 note-pink（暮色反馈"老纸条也用新样式"）
     const useImage = !!note.styleImageUrl;
-    const noteClassName = !useImage && note.style ? note.style : '';
+    const noteClassName = useImage ? '' : (note.style || DEFAULT_FALLBACK_STYLE);
 
-    // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 不显示文字
+    // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 空白（不显示文字，不显示任何标记）
     const isRevealed = note.revealedAt != null;
 
     return (
@@ -60,13 +64,13 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                             backgroundPosition: 'center',
                             backgroundRepeat: 'no-repeat',
                         }
-                        // 暮色 2026-08-23 v3：无图 + 无 CSS 类名时纯白兜底；有 CSS 类名时由 builtinNoteStyles.css 决定
-                        : noteClassName ? undefined : { backgroundColor: '#ffffff' }
+                        // 暮色 2026-08-23 v3：CSS 类名时由 builtinNoteStyles.css 决定；不强制 backgroundColor
+                        : undefined
                 }
             >
                 {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
-                {/* 2026-08-23 v3：未看过 → 显示 📩 "未拆封"占位，不显示文字内容 */}
-                {isRevealed ? (
+                {/* 暮色 2026-08-23 v3 反馈 1：未拆封态 = 空白（不显示任何东西） */}
+                {isRevealed && (
                     <div className="absolute inset-0 flex items-center justify-center p-5">
                         <div className="max-w-[60%] text-center">
                             <div
@@ -74,11 +78,6 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                                 dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
                             />
                         </div>
-                    </div>
-                ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-400">
-                        <div className="text-3xl">📩</div>
-                        <div className="text-[10px]">未拆封</div>
                     </div>
                 )}
             </div>

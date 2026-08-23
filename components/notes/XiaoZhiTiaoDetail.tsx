@@ -33,7 +33,7 @@ const formatStamp = (ts: number): string => {
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, onBack, onDelete, onAddReply }) => {
+const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, onBack, onDelete, onAddReply, onMarkRevealed }) => {
     const [replyText, setReplyText] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [isReplying, setIsReplying] = useState(false);
@@ -183,8 +183,8 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
 // 暮色 2026-08-23 v3：便签样式优先级
 //   1. styleImageUrl 存在 → 走图
 //   2. style 存在 → 走 CSS（cjjc 8 套）
-//   3. 都没 → 纯白
-// 暮色 2026-08-23 v3：未拆封态（revealedAt == null）→ 不显示文字
+//   3. 都没 → 默认 note-pink（暮色反馈"老纸条也用新样式"）
+// 暮色 2026-08-23 v3：未拆封态（revealedAt == null）→ 空白（暮色反馈"不要未拆封，空白就行"）
 //   暮色 8-23 反馈"打开即已读" — 父组件 useEffect 调 onMarkRevealed 自动标
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
@@ -193,7 +193,7 @@ const FullXiaoZhiTiaoCard: React.FC<{
     hideReplyButton?: boolean;
 }> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
     const useImage = !!note.styleImageUrl;
-    const noteClassName = !useImage && note.style ? note.style : '';
+    const noteClassName = useImage ? '' : (note.style || 'note-pink');
     const isRevealed = note.revealedAt != null;
     return (
         <div
@@ -208,8 +208,8 @@ const FullXiaoZhiTiaoCard: React.FC<{
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
                     }
-                    // 暮色 2026-08-23 v3：无图 + 无 CSS 类名时纯白兜底；有 CSS 类名时由 builtinNoteStyles.css 决定
-                    : noteClassName ? undefined : { backgroundColor: '#ffffff' }
+                    // 暮色 2026-08-23 v3：CSS 类名时由 builtinNoteStyles.css 决定；不强制 backgroundColor
+                    : undefined
             }
         >
             {/* 顶部日期+时间（纯文字，无作者名） */}
@@ -217,8 +217,8 @@ const FullXiaoZhiTiaoCard: React.FC<{
                 {formatStamp(note.timestamp)}
             </div>
 
-            {/* 文字 / 未拆封占位（暮色 2026-08-23 v3：revealedAt == null → 不显示文字） */}
-            {isRevealed ? (
+            {/* 文字 / 未拆封 = 空白（暮色 2026-08-23 v3：revealedAt == null → 什么也不显示） */}
+            {isRevealed && (
                 <div className="absolute inset-0 flex items-center justify-center p-6">
                     <div className="max-w-[60%] text-center">
                         <div
@@ -226,11 +226,6 @@ const FullXiaoZhiTiaoCard: React.FC<{
                             dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
                         />
                     </div>
-                </div>
-            ) : (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400">
-                    <div className="text-6xl">📩</div>
-                    <div className="text-xs">未拆封</div>
                 </div>
             )}
 

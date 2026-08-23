@@ -3275,7 +3275,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 修复：AI 在 chat reply 里输出 [[MOMENT_POST: ...]] [[MOMENT_COMMENT: postId | content]] [[MOMENT_LIKE: postId]]
             //      → 这里解析 → 调用 momentsAI.publishPostAsChar/commentPostAsChar/likePostAsChar
             // 暮色 2026-08-23：抽到 utils/momentsActionParser.ts，OSContext 主动消息流程也调
-            aiContent = parseMomentsActions(aiContent, { char, addToast });
+            // 暮色 2026-08-23 v3：拿 posted 数给 OSContext 算发现页红点
+            const momentsResult = parseMomentsActions(aiContent, { char, addToast });
+            aiContent = momentsResult.cleaned;
+            if (momentsResult.posted > 0) {
+                try { (window as any).__SULLYOS_INCREMENT_DISCOVER__?.('momentsNew', momentsResult.posted); } catch {}
+            }
 
             // 暮色 2026-08-23 v3：定时投递检查（主消息流入口顺带触发）
             //   找到该角色所有到期藏信 → 改 visible + 写 DB + addToast "X 投递了一张小纸条"
@@ -3382,8 +3387,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 await DB.saveXiaoZhiTiao(newNote);
                                 console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条${xztVariant === 'hidden' ? (xztTimedUntil ? '定时' : '藏起来的') : ''}小纸条: ${xztContent.slice(0, 30)}...`);
                                 // 暮色 2026-08-23 v3：藏信（HIDDEN/TIMED）不通知；visible 正常 addToast
+                                //   visible 计入发现页红点（藏信不计 — 暮色"藏的功能体现在不通知"）
                                 if (xztVariant === 'visible') {
                                     addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                    try { (window as any).__SULLYOS_INCREMENT_DISCOVER__?.('xztVisibleUnread', 1); } catch {}
                                 }
                             }
                         }

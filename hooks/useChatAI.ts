@@ -53,6 +53,10 @@ const isApiLogEnabled = (): boolean => {
     }
 };
 
+// 暮色 2026-08-23 v3：MCP 工具调用多轮循环（OpenAI 协议第一版）
+//   实现已抽到 utils/mcpChatAI.ts（可独立测试 + 维护）
+import { processMcpToolCalls } from '../utils/mcpChatAI';
+
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
 const normalizeApiUrl = (url?: string): string => {
     const raw = (url || '').trim().replace(/\/+$/, '');
@@ -2130,7 +2134,26 @@ ${visionDesc}
                 }
             }
 
-                      
+            // 暮色 2026-08-23 v3：MCP 工具调用多轮循环（OpenAI 协议第一版）
+            //   只在 OpenAI 协议下做（Gemini / Claude 留后续 commit）
+            //   流式模式：主 LLM 调用已经完整收尾，data 完整，MCP 循环在 data 之后跑
+            //   退出条件：data 里没有 mcp__ tool_calls（让外层现有 tool_call 解析继续处理 nonMcp）
+            if (apiProtocol === 'openai' && getToolCalls(data).some((tc: any) => (tc.function?.name || '').startsWith('mcp__'))) {
+                const mcpResult = await processMcpToolCalls({
+                    initialData: data,
+                    baseMessages: fullMessages,
+                    effectiveApi,
+                    baseUrl,
+                    headers,
+                    apiProtocol,
+                    addToast,
+                    updateTokenUsage,
+                    historyMsgCount,
+                });
+                data = mcpResult.data;
+            }
+
+
           // 3.5 生图工具 generate_image 处理
 if (!mcdMiniOpen && getToolCalls(data).length) {
     const toolCalls = getToolCalls(data);

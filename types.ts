@@ -496,6 +496,16 @@ export interface XiaoZhiTiao {
     // 暮色 2026-07-22：自定义小纸条样式（写入时从激活组随机选一张图存，便签背景用图覆盖）
     styleImageUrl?: string;
     replies?: XiaoZhiTiaoReply[];
+    // 暮色 2026-08-23 v3：未拆封机制（三种 token 对应三种状态）
+    //   visibility 缺失 = 'visible'（默认）
+    //   藏信（HIDDEN/TIMED）不 addToast 通知；暮色主动点开详情才 revealedAt = Date.now()
+    //   列表卡片：revealedAt 缺省 = 不显示文字（不管 visible 还是 hidden，统一规则）
+    visibility?: 'visible' | 'hidden';
+    hiddenUntil?: number;                 // 定时投递的解锁时间戳（仅 isTimed=true 有意义）
+    isTimed?: boolean;                    // true=定时投递 false=等翻（仅 visibility='hidden' 有意义）
+    revealedAt?: number;                  // 暮色查看时间戳；undefined = 没看过
+    // 暮色 2026-08-23 v3：样式合并 — 8 套 cjjc 便签 CSS（与 styleImageUrl 并存；styleImageUrl 优先）
+    style?: string;                       // 便签 CSS className（如 'note-pink'）
 }
 
 export interface XiaoZhiTiaoReply {

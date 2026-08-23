@@ -5,11 +5,13 @@
 //   - 卡片撑满屏幕（min-h 加大）
 //   - 字不压边框（保持 60% max-w，字号 12px）
 //   - 底部居中"回复"胶囊（图标+文字"回复"）
+// 暮色 2026-08-23 v3：8 套 cjjc 便签 CSS（note.style）+ 用户上传图并存；图优先
 
 import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight, ChatCircleText } from '@phosphor-icons/react';
 import { XiaoZhiTiao, XiaoZhiTiaoReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
+import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoDetailProps {
     note: XiaoZhiTiao;
@@ -162,18 +164,24 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
 //   - 底部居中"回复"胶囊（图标+回复文字）
 //   - 字 12px + max-w-[60%] 不压边框
 //   - min-h 加大撑满屏幕
+// 暮色 2026-08-23 v3：便签样式优先级
+//   1. styleImageUrl 存在 → 走图
+//   2. style 存在 → 走 CSS（cjjc 8 套）
+//   3. 都没 → 纯白
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
     charName?: string;
     onReplyClick?: () => void;
     hideReplyButton?: boolean;
 }> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
+    const useImage = !!note.styleImageUrl;
+    const noteClassName = !useImage && note.style ? note.style : '';
     return (
         <div
             // 暮色原图直接显示（不加底/框/阴影）
-            className="relative w-full min-h-[70vh] bg-no-repeat"
+            className={`relative w-full min-h-[70vh] bg-no-repeat ${noteClassName}`}
             style={
-                note.styleImageUrl
+                useImage
                     // 透明底 PNG 直接显示
                     ? {
                         backgroundImage: `url(${note.styleImageUrl})`,
@@ -181,8 +189,8 @@ const FullXiaoZhiTiaoCard: React.FC<{
                         backgroundPosition: 'center',
                         backgroundRepeat: 'no-repeat',
                     }
-                    // 无图兜底
-                    : { backgroundColor: '#ffffff' }
+                    // 暮色 2026-08-23 v3：无图 + 无 CSS 类名时纯白兜底；有 CSS 类名时由 builtinNoteStyles.css 决定
+                    : noteClassName ? undefined : { backgroundColor: '#ffffff' }
             }
         >
             {/* 顶部日期+时间（纯文字，无作者名） */}

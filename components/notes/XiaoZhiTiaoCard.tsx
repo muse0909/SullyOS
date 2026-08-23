@@ -2,9 +2,11 @@
 // 暮色 2026-07-23：列表卡只显示 5 行字，日期/作者/回复数全删（暮色要纯净）
 // 暮色原图直接显示（不加任何底/框/阴影）
 // 保留轻微旋转 + hover 归正放大
+// 暮色 2026-08-23 v3：8 套 cjjc 便签 CSS（note.style）+ 用户上传图（note.styleImageUrl）并存；图优先
 
 import React from 'react';
 import { XiaoZhiTiao } from '../../types';
+import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoCardProps {
     note: XiaoZhiTiao;
@@ -24,6 +26,13 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
         ...style,
     };
 
+    // 暮色 2026-08-23 v3：便签样式优先级
+    //   1. styleImageUrl 存在 → 走图（用户上传图）
+    //   2. style 存在 → 走 CSS（cjjc 8 套便签）
+    //   3. 都没 → 纯白兜底
+    const useImage = !!note.styleImageUrl;
+    const noteClassName = !useImage && note.style ? note.style : '';
+
     return (
         <div
             onClick={onClick}
@@ -34,9 +43,9 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
         >
             {/* 便签纸：暮色原图直接显示（不加任何底/框/阴影） */}
             <div
-                className="relative w-full h-48 bg-no-repeat"
+                className={`relative w-full h-48 bg-no-repeat ${noteClassName}`}
                 style={
-                    note.styleImageUrl
+                    useImage
                         // 透明底 PNG 直接显示，不加 backgroundColor
                         ? {
                             backgroundImage: `url(${note.styleImageUrl})`,
@@ -44,8 +53,8 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                             backgroundPosition: 'center',
                             backgroundRepeat: 'no-repeat',
                         }
-                        // 无图兜底
-                        : { backgroundColor: '#ffffff' }
+                        // 暮色 2026-08-23 v3：无图 + 无 CSS 类名时纯白兜底；有 CSS 类名时由 builtinNoteStyles.css 决定
+                        : noteClassName ? undefined : { backgroundColor: '#ffffff' }
                 }
             >
                 {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}

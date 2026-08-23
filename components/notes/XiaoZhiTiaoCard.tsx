@@ -2,10 +2,14 @@
 // 暮色 2026-07-23：列表卡只显示 5 行字，日期/作者/回复数全删（暮色要纯净）
 // 暮色原图直接显示（不加任何底/框/阴影）
 // 保留轻微旋转 + hover 归正放大
-// 暮色 2026-08-23 v3：8 套 cjjc 便签 CSS（note.style）+ 用户上传图（note.styleImageUrl）并存；图优先
+// 暮色 2026-08-23 v3：
+//   - 8 套 cjjc 便签 CSS（note.style）+ 用户上传图（note.styleImageUrl）并存；图优先
+//   - revealedAt == null 时不显示文字（不管 visible/hidden/是否定时统一规则）
+//   - 划线渲染：sanitizeNoteHtml + dangerouslySetInnerHTML（白名单 <s> 标签）
 
 import React from 'react';
 import { XiaoZhiTiao } from '../../types';
+import { sanitizeNoteHtml } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoCardProps {
@@ -33,6 +37,9 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
     const useImage = !!note.styleImageUrl;
     const noteClassName = !useImage && note.style ? note.style : '';
 
+    // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 不显示文字
+    const isRevealed = note.revealedAt != null;
+
     return (
         <div
             onClick={onClick}
@@ -58,14 +65,22 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
                 }
             >
                 {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
-                {/* 2026-07-23：line-clamp 3→5，暮色"上下空白还很大，增加到5行" */}
-                <div className="absolute inset-0 flex items-center justify-center p-5">
-                    <div className="max-w-[60%] text-center">
-                        <div className="text-[10px] leading-snug line-clamp-5 overflow-hidden text-slate-800">
-                            {note.content}
+                {/* 2026-08-23 v3：未看过 → 显示 📩 "未拆封"占位，不显示文字内容 */}
+                {isRevealed ? (
+                    <div className="absolute inset-0 flex items-center justify-center p-5">
+                        <div className="max-w-[60%] text-center">
+                            <div
+                                className="text-[10px] leading-snug line-clamp-5 overflow-hidden text-slate-800"
+                                dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
+                            />
                         </div>
                     </div>
-                </div>
+                ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-slate-400">
+                        <div className="text-3xl">📩</div>
+                        <div className="text-[10px]">未拆封</div>
+                    </div>
+                )}
             </div>
 
             {onDelete && (

@@ -95,6 +95,14 @@ const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     setView('list');
                     setSelectedNoteId(null);
                 }}
+                // 暮色 2026-08-23 v3：打开即已读（revealedAt == null 时调一次）
+                onMarkRevealed={async () => {
+                    if (selectedNote.revealedAt != null) return;
+                    await DB.saveXiaoZhiTiao({ ...selectedNote, revealedAt: Date.now() });
+                    // 重新加载 notes 让列表卡片同步显示内容
+                    const all = await DB.getXiaoZhiTiaos(undefined);
+                    setNotes(all.sort((a, b) => b.timestamp - a.timestamp));
+                }}
                 onAddReply={async (content) => {
                     await addReply(selectedNote.id, {
                         author: 'user',

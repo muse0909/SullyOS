@@ -5,12 +5,17 @@
 //   - 卡片撑满屏幕（min-h 加大）
 //   - 字不压边框（保持 60% max-w，字号 12px）
 //   - 底部居中"回复"胶囊（图标+文字"回复"）
-// 暮色 2026-08-23 v3：8 套 cjjc 便签 CSS（note.style）+ 用户上传图并存；图优先
+// 暮色 2026-08-23 v3：
+//   - 8 套 cjjc 便签 CSS（note.style）+ 用户上传图并存；图优先
+//   - revealedAt == null 时不显示文字（同 XiaoZhiTiaoCard）
+//   - 打开时 onMarkRevealed 回调把 note.revealedAt 设为 now + 写 DB（暮色确认"打开即已读"）
+//   - 划线渲染：sanitizeNoteHtml + dangerouslySetInnerHTML
 
 import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight, ChatCircleText } from '@phosphor-icons/react';
 import { XiaoZhiTiao, XiaoZhiTiaoReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
+import { sanitizeNoteHtml } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoDetailProps {
@@ -64,6 +69,17 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
             return () => clearTimeout(t);
         }
     }, [isReplying]);
+
+    // 暮色 2026-08-23 v3：打开即已读（revealedAt == null 时调一次 markRevealed）
+    //   不滑到底 / 不需要确认 — 进详情页就算"看过"
+    //   父组件负责写 DB + 重渲染列表（onMarkRevealed 回调）
+    const markedRef = useRef(false);
+    useEffect(() => {
+        if (note.revealedAt == null && !markedRef.current && onMarkRevealed) {
+            markedRef.current = true;
+            onMarkRevealed();
+        }
+    }, [note.id]);  // 只在 note.id 变化时检查一次（避免重复触发）
 
     const submitReply = async () => {
         const text = replyText.trim();
@@ -168,6 +184,8 @@ const XiaoZhiTiaoDetail: React.FC<XiaoZhiTiaoDetailProps> = ({ note, charName, o
 //   1. styleImageUrl 存在 → 走图
 //   2. style 存在 → 走 CSS（cjjc 8 套）
 //   3. 都没 → 纯白
+// 暮色 2026-08-23 v3：未拆封态（revealedAt == null）→ 不显示文字
+//   暮色 8-23 反馈"打开即已读" — 父组件 useEffect 调 onMarkRevealed 自动标
 const FullXiaoZhiTiaoCard: React.FC<{
     note: XiaoZhiTiao;
     charName?: string;
@@ -176,6 +194,7 @@ const FullXiaoZhiTiaoCard: React.FC<{
 }> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
     const useImage = !!note.styleImageUrl;
     const noteClassName = !useImage && note.style ? note.style : '';
+    const isRevealed = note.revealedAt != null;
     return (
         <div
             // 暮色原图直接显示（不加底/框/阴影）
@@ -198,14 +217,22 @@ const FullXiaoZhiTiaoCard: React.FC<{
                 {formatStamp(note.timestamp)}
             </div>
 
-            {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
-            <div className="absolute inset-0 flex items-center justify-center p-6">
-                <div className="max-w-[60%] text-center">
-                    <div className="text-[12px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6">
-                        {note.content}
+            {/* 文字 / 未拆封占位（暮色 2026-08-23 v3：revealedAt == null → 不显示文字） */}
+            {isRevealed ? (
+                <div className="absolute inset-0 flex items-center justify-center p-6">
+                    <div className="max-w-[60%] text-center">
+                        <div
+                            className="text-[12px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6"
+                            dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
+                        />
                     </div>
                 </div>
-            </div>
+            ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400">
+                    <div className="text-6xl">📩</div>
+                    <div className="text-xs">未拆封</div>
+                </div>
+            )}
 
             {/* 底部居中"回复"胶囊（暮色要：图标+回复文字，胶囊包住） */}
             {!hideReplyButton && onReplyClick && (

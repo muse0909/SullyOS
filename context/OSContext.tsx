@@ -1474,6 +1474,32 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
+          // 暮色 2026-08-23：睡眠时间检查（在 sleep 期间 → 推迟 schedule 到 endHour，不调 API）
+          //   跨午夜：startHour > endHour（如 23-08 = 23:00 到次日 08:00 算睡眠）
+          //   配错：startHour === endHour → 不睡眠
+          //   snoozeUntil 把 nextFire 直接推到 endHour，sleep 期间完全不查
+          if (char.proactiveConfig?.quietHours?.enabled) {
+              const qh = char.proactiveConfig.quietHours;
+              const now = new Date();
+              const h = now.getHours();
+              const inQuiet = qh.startHour === qh.endHour
+                  ? false
+                  : qh.startHour < qh.endHour
+                      ? (h >= qh.startHour && h < qh.endHour)
+                      : (h >= qh.startHour || h < qh.endHour);
+              if (inQuiet) {
+                  const wake = new Date(now);
+                  wake.setHours(qh.endHour, 0, 0, 0);
+                  if (wake.getTime() <= now.getTime()) {
+                      wake.setDate(wake.getDate() + 1);
+                  }
+                  ProactiveChat.snoozeUntil(charId, wake.getTime());
+                  drainQueuedProactive();
+                  console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: in quiet hours (${qh.startHour}:00-${qh.endHour}:00), wake at ${wake.toLocaleString()}`);
+                  return;
+              }
+          }
+
           // 暮色 2026-08-05 Phase 3：每角色每天主动消息条数硬上限（防刷闸）
           //   原 v1.0 主动消息只有"节流"（ProactiveChat.markUserContact 每 N 分钟才触发），
           //   但没有"每天 N 条"硬上限——理论上角色可以无限触发。

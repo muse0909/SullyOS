@@ -1,5 +1,6 @@
 import ApiLogPanel from "../components/settings/ApiLogPanel";
 import SyncSettings from "../components/settings/SyncSettings";
+import McpSettings from "../components/settings/McpSettings";
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
@@ -1790,6 +1791,13 @@ const handleSaveTts = () => {
                 {testApiResult && (<div className={`mt-2 text-xs px-3 py-2 rounded-xl ${testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{testApiResult}</div>)}
             </div>
         </section>
+        </SettingsSection>
+
+        {/* MCP 服务器（2026-08-23）— 跟 API 区块同级的"外部工具" */}
+        <SettingsSection id="mcp" icon="🧩" title="MCP 服务器" subtitle="外部工具协议·多服务器管理" isOpen={openSectionId === 'mcp'} onToggle={toggleSection}>
+            <section className="bg-white/80 rounded-3xl p-3 shadow-sm border border-white/50 mb-4">
+                <McpSettings />
+            </section>
         </SettingsSection>
 
         {/* 4 - 识图配置 */}

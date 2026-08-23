@@ -2005,6 +2005,37 @@ export interface CloudBackupFile {
     lastModified: string;       // ISO date string
     href: string;               // WebDAV: remote path. GitHub: 'releaseId:assetId'
 }
+// ==================== MCP (Model Context Protocol) 服务器配置 ====================
+// 暮色 2026-08-23：cjjc 截图带来"自己添加 MCP"需求
+// 第一版：配置存储 + UI 管理 + 测试连接（不接 useChatAI 实际 tool_call 链）
+// 第二版：把 enabled 服务的 tools 转成模型可用 tools + 解析 tool_call + 回传 result
+//   工具名内部采用 mcp__${serverId}__${toolName}（接口预留 listMcpTools / callMcpTool）
+export type McpTransport = 'streamable-http';   // 第一版只实现 streamable-http；'sse' 占位不实现
+export type McpAuthType = 'none' | 'bearer' | 'headers';
+export type McpErrorType = 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList' | 'unknown';
+
+export interface McpTool {
+    name: string;
+    description?: string;
+    inputSchema: any;   // JSON Schema，原样保存
+}
+
+export interface McpServerConfig {
+    id: string;                          // stable unique id (crypto.randomUUID)
+    name: string;                        // 展示名（不作为唯一键）
+    url: string;                         // MCP server URL
+    enabled: boolean;                    // 单独启用/禁用
+    transport: McpTransport;             // 第一版恒为 'streamable-http'
+    authType: McpAuthType;
+    bearerToken?: string;                // 敏感字段，UI 脱敏，日志严禁打印
+    customHeaders?: Record<string, string>;  // 敏感字段，UI 脱敏，日志严禁打印
+    createdAt: number;
+    lastConnectedAt?: number;            // 最近一次成功连接时间
+    lastTestedAt?: number;               // 最近一次测试时间（成功或失败都更新）
+    lastError?: string;                  // 最近一次错误信息（脱敏后）
+    lastErrorType?: McpErrorType;        // 最近一次错误分类
+    tools?: McpTool[];                   // tools/list 返回的工具列表
+}
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---
 export interface GuidebookOption {

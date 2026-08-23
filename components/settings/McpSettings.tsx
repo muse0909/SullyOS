@@ -1,0 +1,476 @@
+// McpSettings — MCP 服务器管理 UI（2026-08-23）
+// 暮色 2026-08-23：cjjc 截图带来"自己添加 MCP"需求
+// 第一版：配置存储 + UI 管理 + 测试连接
+//   - 多服务器
+//   - Bearer Token / Custom Headers 鉴权（脱敏）
+//   - 可选代理（每 server 单独配；默认从 getProxyWorkerUrl() 拿）
+//   - 错误分类展示
+// 不接 useChatAI 实际 tool_call 调用链（第二版）
+
+import React, { useEffect, useState } from 'react';
+import { McpServerConfig, McpAuthType, McpErrorType, McpTool } from '../../types';
+import { mcpStorage } from '../../utils/mcpStorage';
+import { mcpClient, getMcpDefaultProxyHint } from '../../utils/mcpClient';
+
+const KEY_INPUT_CLASS = "w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white transition-all";
+
+type EditDraft = {
+    name: string;
+    url: string;
+    authType: McpAuthType;
+    bearerToken: string;
+    customHeadersRaw: string;     // 文本形式 "K1: V1\nK2: V2"，编辑态用
+    proxyUrl: string;
+    enabled: boolean;
+};
+
+const blankDraft = (): EditDraft => ({
+    name: '',
+    url: '',
+    authType: 'none',
+    bearerToken: '',
+    customHeadersRaw: '',
+    proxyUrl: '',
+    enabled: true,
+});
+
+const draftFromConfig = (c: McpServerConfig): EditDraft => ({
+    name: c.name,
+    url: c.url,
+    authType: c.authType,
+    bearerToken: c.bearerToken ?? '',
+    customHeadersRaw: c.customHeaders
+        ? Object.entries(c.customHeaders).map(([k, v]) => `${k}: ${v}`).join('\n')
+        : '',
+    proxyUrl: c.proxyUrl ?? '',
+    enabled: c.enabled,
+});
+
+const parseCustomHeaders = (raw: string): Record<string, string> | undefined => {
+    const out: Record<string, string> = {};
+    for (const line of raw.split(/\r?\n/)) {
+        const idx = line.indexOf(':');
+        if (idx < 0) continue;
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        if (k && v) out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+};
+
+const ERROR_HINT: Record<McpErrorType, string> = {
+    cors: '提示：浏览器 CORS 限制。配置代理或让 MCP 服务器允许跨域。',
+    network: '提示：网络层错误（DNS / 连接 / 超时）。检查 URL 或网络。',
+    auth: '提示：鉴权失败。检查 Bearer Token / 自定义 Header 是否正确。',
+    protocol: '提示：MCP 协议层错误（响应格式不对 / 状态码 4xx/5xx）。',
+    toolsList: '提示：连接成功但 tools/list 失败。MCP 服务器实现可能不完整。',
+    unknown: '',
+};
+
+const statusBadge = (c: McpServerConfig): { text: string; color: string; dot: string } => {
+    if (!c.lastTestedAt) {
+        return { text: '未测试', color: 'text-slate-400', dot: 'bg-slate-300' };
+    }
+    if (c.lastError) {
+        return {
+            text: ERROR_HINT[c.lastErrorType ?? 'unknown'] || c.lastError.slice(0, 30),
+            color: 'text-rose-600',
+            dot: 'bg-rose-500',
+        };
+    }
+    return { text: '已连接', color: 'text-emerald-600', dot: 'bg-emerald-500' };
+};
+
+const McpServerRow: React.FC<{
+    config: McpServerConfig;
+    onChanged: () => void;
+    onEdit: (c: McpServerConfig) => void;
+    editingId: string | null;
+    cancelEdit: () => void;
+}> = ({ config, onChanged, onEdit, editingId, cancelEdit }) => {
+    const [draft, setDraft] = useState<EditDraft>(draftFromConfig(config));
+    const [showBearer, setShowBearer] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+    const isEditing = editingId === config.id;
+    const badge = statusBadge(config);
+
+    useEffect(() => {
+        if (isEditing) setDraft(draftFromConfig(config));
+    }, [isEditing, config]);
+
+    const handleSave = () => {
+        if (!draft.url.trim()) return;
+        mcpStorage.update(config.id, {
+            name: draft.name.trim() || '未命名 MCP',
+            url: draft.url.trim(),
+            authType: draft.authType,
+            bearerToken: draft.bearerToken.trim() || undefined,
+            customHeaders: draft.authType === 'headers' ? parseCustomHeaders(draft.customHeadersRaw) : undefined,
+            proxyUrl: draft.proxyUrl.trim() || undefined,
+            enabled: draft.enabled,
+        });
+        cancelEdit();
+        onChanged();
+    };
+
+    const handleTest = async () => {
+        setTesting(true);
+        try {
+            // 用最新 draft 测（编辑态下也能测）
+            const live = isEditing ? mcpStorage.update(config.id, {
+                name: draft.name.trim() || '未命名 MCP',
+                url: draft.url.trim(),
+                authType: draft.authType,
+                bearerToken: draft.bearerToken.trim() || undefined,
+                customHeaders: draft.authType === 'headers' ? parseCustomHeaders(draft.customHeadersRaw) : undefined,
+                proxyUrl: draft.proxyUrl.trim() || undefined,
+                enabled: draft.enabled,
+            }) || config : config;
+            const result = await mcpClient.testConnection(live);
+            if (result.ok) {
+                mcpStorage.recordTestResult(config.id, { ok: true, tools: result.tools });
+            } else {
+                mcpStorage.recordTestResult(config.id, { ok: false, error: result.error, errorType: result.errorType });
+            }
+            onChanged();
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const handleDelete = () => {
+        mcpClient.resetSession(config.id);
+        mcpStorage.remove(config.id);
+        setConfirmingDelete(false);
+        onChanged();
+    };
+
+    const handleToggleEnabled = () => {
+        mcpStorage.update(config.id, { enabled: !config.enabled });
+        onChanged();
+    };
+
+    return (
+        <div className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2">
+            {!isEditing ? (
+                <>
+                    <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${badge.dot} shrink-0`} />
+                                <span className="text-sm font-bold text-slate-800 truncate">{config.name}</span>
+                                {config.enabled ? null : (
+                                    <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">已禁用</span>
+                                )}
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono truncate mt-0.5" title={config.url}>{config.url}</div>
+                            <div className={`text-[10px] mt-1.5 ${badge.color}`} title={config.lastError || badge.text}>
+                                {badge.text}
+                                {config.tools && config.tools.length > 0 ? ` · ${config.tools.length} 个工具` : ''}
+                            </div>
+                        </div>
+                        <label className="flex items-center cursor-pointer shrink-0">
+                            <input
+                                type="checkbox"
+                                checked={config.enabled}
+                                onChange={handleToggleEnabled}
+                                className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 relative transition-colors">
+                                <div className="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                            </div>
+                        </label>
+                    </div>
+                    <div className="flex gap-1.5 mt-2.5">
+                        <button
+                            onClick={handleTest}
+                            disabled={testing}
+                            className="flex-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 py-1.5 rounded-lg transition-colors"
+                        >
+                            {testing ? '测试中…' : '测试连接'}
+                        </button>
+                        <button
+                            onClick={() => onEdit(config)}
+                            className="flex-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 py-1.5 rounded-lg transition-colors"
+                        >
+                            编辑
+                        </button>
+                        {!confirmingDelete ? (
+                            <button
+                                onClick={() => setConfirmingDelete(true)}
+                                className="text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                                删除
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleDelete}
+                                className="text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                                确认删除
+                            </button>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <McpEditor
+                    draft={draft}
+                    setDraft={setDraft}
+                    showBearer={showBearer}
+                    setShowBearer={setShowBearer}
+                    onSave={handleSave}
+                    onCancel={cancelEdit}
+                    onTest={handleTest}
+                    testing={testing}
+                />
+            )}
+        </div>
+    );
+};
+
+const McpEditor: React.FC<{
+    draft: EditDraft;
+    setDraft: (d: EditDraft) => void;
+    showBearer: boolean;
+    setShowBearer: (b: boolean) => void;
+    onSave: () => void;
+    onCancel: () => void;
+    onTest: () => void;
+    testing: boolean;
+}> = ({ draft, setDraft, showBearer, setShowBearer, onSave, onCancel, onTest, testing }) => {
+    const defaultProxy = getMcpDefaultProxyHint();
+    return (
+        <div className="space-y-2.5">
+            <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">名称</label>
+                <input
+                    type="text"
+                    value={draft.name}
+                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                    placeholder="如：cjjc 小红书"
+                    className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2 text-sm focus:bg-white transition-all"
+                />
+            </div>
+            <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">URL</label>
+                <input
+                    type="text"
+                    value={draft.url}
+                    onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                    placeholder="https://example.com/mcp"
+                    className={KEY_INPUT_CLASS}
+                />
+            </div>
+            <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">鉴权方式</label>
+                <div className="flex gap-1.5">
+                    {(['none', 'bearer', 'headers'] as McpAuthType[]).map((t) => (
+                        <button
+                            key={t}
+                            type="button"
+                            onClick={() => setDraft({ ...draft, authType: t })}
+                            className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${
+                                draft.authType === t
+                                    ? 'bg-slate-800 text-white'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                        >
+                            {t === 'none' ? '无' : t === 'bearer' ? 'Bearer' : '自定义头'}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            {draft.authType === 'bearer' ? (
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Bearer Token</label>
+                    <div className="relative">
+                        <input
+                            type={showBearer ? 'text' : 'password'}
+                            value={draft.bearerToken}
+                            onChange={(e) => setDraft({ ...draft, bearerToken: e.target.value })}
+                            placeholder="sk-..."
+                            className={KEY_INPUT_CLASS}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowBearer(!showBearer)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100"
+                        >
+                            {showBearer ? '隐藏' : '显示'}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+            {draft.authType === 'headers' ? (
+                <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">
+                        自定义 Headers（每行一个，格式：键: 值）
+                    </label>
+                    <textarea
+                        value={draft.customHeadersRaw}
+                        onChange={(e) => setDraft({ ...draft, customHeadersRaw: e.target.value })}
+                        placeholder={'X-API-Key: abc123\nX-Tenant: foo'}
+                        rows={3}
+                        className={KEY_INPUT_CLASS}
+                    />
+                </div>
+            ) : null}
+            <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">
+                    代理 URL（可选，留空走默认）
+                </label>
+                <input
+                    type="text"
+                    value={draft.proxyUrl}
+                    onChange={(e) => setDraft({ ...draft, proxyUrl: e.target.value })}
+                    placeholder={defaultProxy}
+                    className={KEY_INPUT_CLASS}
+                />
+                <div className="text-[10px] text-slate-400 mt-1 pl-1">
+                    默认代理：<span className="font-mono">{defaultProxy}</span>
+                </div>
+            </div>
+            <div className="flex gap-1.5 pt-1">
+                <button
+                    onClick={onSave}
+                    disabled={!draft.url.trim()}
+                    className="flex-1 text-[11px] font-bold text-white bg-slate-800 hover:bg-slate-900 disabled:opacity-40 py-1.5 rounded-lg transition-colors"
+                >
+                    保存
+                </button>
+                <button
+                    onClick={onTest}
+                    disabled={testing || !draft.url.trim()}
+                    className="flex-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 py-1.5 rounded-lg transition-colors"
+                >
+                    {testing ? '测试中…' : '测试'}
+                </button>
+                <button
+                    onClick={onCancel}
+                    className="flex-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 py-1.5 rounded-lg transition-colors"
+                >
+                    取消
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const McpSettings: React.FC = () => {
+    const [configs, setConfigs] = useState<McpServerConfig[]>(() => mcpStorage.getAll());
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [showAdd, setShowAdd] = useState(false);
+    const [addDraft, setAddDraft] = useState<EditDraft>(blankDraft());
+    const [addShowBearer, setAddShowBearer] = useState(false);
+
+    const refresh = () => setConfigs(mcpStorage.getAll());
+
+    const handleAdd = () => {
+        if (!addDraft.url.trim()) return;
+        mcpStorage.add({
+            name: addDraft.name.trim() || '未命名 MCP',
+            url: addDraft.url.trim(),
+            enabled: addDraft.enabled,
+            transport: 'streamable-http',
+            authType: addDraft.authType,
+            bearerToken: addDraft.bearerToken.trim() || undefined,
+            customHeaders: addDraft.authType === 'headers' ? parseCustomHeaders(addDraft.customHeadersRaw) : undefined,
+        });
+        setAddDraft(blankDraft());
+        setShowAdd(false);
+        refresh();
+    };
+
+    const handleTestNew = async () => {
+        // 新增态先临时 add 再测，测完保留（也可加"测完即丢弃"但第一版简化为测完保留）
+        if (!addDraft.url.trim()) return;
+        const temp = mcpStorage.add({
+            name: addDraft.name.trim() || '未命名 MCP',
+            url: addDraft.url.trim(),
+            enabled: addDraft.enabled,
+            transport: 'streamable-http',
+            authType: addDraft.authType,
+            bearerToken: addDraft.bearerToken.trim() || undefined,
+            customHeaders: addDraft.authType === 'headers' ? parseCustomHeaders(addDraft.customHeadersRaw) : undefined,
+        });
+        const result = await mcpClient.testConnection(temp);
+        if (result.ok) {
+            mcpStorage.recordTestResult(temp.id, { ok: true, tools: result.tools });
+        } else {
+            mcpStorage.recordTestResult(temp.id, { ok: false, error: result.error, errorType: result.errorType });
+        }
+        setAddDraft(blankDraft());
+        setShowAdd(false);
+        refresh();
+    };
+
+    return (
+        <div className="px-3 pb-3">
+            <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+                MCP（Model Context Protocol）服务器管理。第一版只做配置 + 测试连接，
+                工具调用接入 chat 在第二版。鉴权头和 token 不会被写入日志。
+            </div>
+
+            {configs.length === 0 && !showAdd ? (
+                <div className="text-center text-[11px] text-slate-400 py-6">
+                    还没有 MCP 服务器。点下方"添加"开始。
+                </div>
+            ) : null}
+
+            {configs.map((c) => (
+                <McpServerRow
+                    key={c.id}
+                    config={c}
+                    onChanged={refresh}
+                    onEdit={(cfg) => { setShowAdd(false); setEditingId(cfg.id); }}
+                    editingId={editingId}
+                    cancelEdit={() => setEditingId(null)}
+                />
+            ))}
+
+            {showAdd ? (
+                <div className="bg-white/70 rounded-2xl border-2 border-emerald-200 p-3 mb-2">
+                    <div className="text-[11px] font-bold text-emerald-700 mb-2">添加 MCP 服务器</div>
+                    <McpEditor
+                        draft={addDraft}
+                        setDraft={setAddDraft}
+                        showBearer={addShowBearer}
+                        setShowBearer={setAddShowBearer}
+                        onSave={handleAdd}
+                        onCancel={() => { setShowAdd(false); setAddDraft(blankDraft()); }}
+                        onTest={handleTestNew}
+                        testing={false}
+                    />
+                </div>
+            ) : (
+                <button
+                    onClick={() => { setEditingId(null); setShowAdd(true); }}
+                    className="w-full text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 py-2 rounded-xl transition-colors"
+                >
+                    + 添加 MCP 服务器
+                </button>
+            )}
+
+            {configs.some((c) => c.tools && c.tools.length > 0) ? (
+                <details className="mt-3">
+                    <summary className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer pl-1">
+                        查看已发现的工具
+                    </summary>
+                    <div className="mt-2 space-y-1.5">
+                        {configs.flatMap((c) => (c.tools ?? []).map((t) => (
+                            <div key={`${c.id}__${t.name}`} className="bg-slate-50/70 rounded-lg px-2.5 py-1.5 text-[10px]">
+                                <div className="font-mono font-bold text-slate-700">{t.name}</div>
+                                {t.description ? <div className="text-slate-500 mt-0.5">{t.description}</div> : null}
+                                <div className="text-slate-400 mt-0.5">来自：{c.name}</div>
+                            </div>
+                        )))}
+                    </div>
+                </details>
+            ) : null}
+        </div>
+    );
+};
+
+export default McpSettings;

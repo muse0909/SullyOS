@@ -20,6 +20,7 @@ import {
     DEFAULT_XIAO_ZHI_TIAO_GROUP_NAME,
     BUILTIN_NOTE_GROUP_NAME,
 } from './xiaoZhiTiaoDefaults';
+import { DB } from './db';  // 8-23：commit a873d2aa 漏 import，DB is not defined 已修
 
 export const XIAO_ZHI_TIAO_STYLES_STORAGE_KEY = 'sullyos_xiaoZhiTiaoStyles';
 

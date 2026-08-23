@@ -441,11 +441,23 @@ export const mcpClient = {
         // 1. 合并超时：options > config > default
         const effectiveTimeoutMs = options.timeoutMs ?? config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(new Error('timeout')), effectiveTimeoutMs);
+        // 暮色 2026-08-23 22:11 v2 规格：独立布尔标记记录"是谁先触发了 abort"
+        //   setTimeout 触发 → isTimeout=true（system-side 超时）
+        //   外部 signal 触发 → isTimeout 保持 false（user-side 取消）
+        //   catch 优先级：isTimeout flag 优先于 signal.aborted 状态检查
+        //   这样即使两个 signal 最终都 aborted，也能准确区分来源
+        let isTimeout = false;
 
-        // 2. 合并外部 signal
+        const timer = setTimeout(() => {
+            isTimeout = true;       // 先设 flag，再 abort
+            controller.abort();
+        }, effectiveTimeoutMs);
+
+        // 2. 合并外部 signal — 不设 isTimeout
         const externalSignal = options.signal;
-        const onExternalAbort = () => controller.abort(externalSignal?.reason);
+        const onExternalAbort = () => {
+            controller.abort();
+        };
         if (externalSignal) {
             if (externalSignal.aborted) {
                 clearTimeout(timer);
@@ -475,19 +487,19 @@ export const mcpClient = {
             try {
                 postResult = await post(config, req, true, session, controller.signal);
             } catch (e: any) {
-                // 区分 timeout / cancelled / 其他
-                if (e?.mcpErrorType === 'cancelled' || (controller.signal.aborted && !externalSignal?.aborted)) {
-                    return {
-                        success: false,
-                        content: [],
-                        error: {
-                            category: 'timeout',
-                            code: `TIMEOUT_${effectiveTimeoutMs}MS`,
-                            message: `工具调用超时（${effectiveTimeoutMs}ms）`,
-                        },
-                    };
-                }
-                if (controller.signal.aborted && externalSignal?.aborted) {
+                // 区分 timeout / cancelled：isTimeout flag 优先
+                if (controller.signal.aborted) {
+                    if (isTimeout) {
+                        return {
+                            success: false,
+                            content: [],
+                            error: {
+                                category: 'timeout',
+                                code: `TIMEOUT_${effectiveTimeoutMs}MS`,
+                                message: `工具调用超时（${effectiveTimeoutMs}ms）`,
+                            },
+                        };
+                    }
                     return {
                         success: false,
                         content: [],

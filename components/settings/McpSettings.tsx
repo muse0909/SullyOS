@@ -1,10 +1,16 @@
 // McpSettings — MCP 服务器管理 UI（2026-08-23）
 // 暮色 2026-08-23：cjjc 截图带来"自己添加 MCP"需求
-// 第一版：配置存储 + UI 管理 + 测试连接
+// v1：配置存储 + UI 管理 + 测试连接
 //   - 多服务器
 //   - Bearer Token / Custom Headers 鉴权（脱敏）
 //   - 可选代理（每 server 单独配；默认从 getProxyWorkerUrl() 拿）
 //   - 错误分类展示
+// v2：工具级管理
+//   - 每个服务器展开后列出该 server 的 tools
+//   - 工具独立启用/禁用 + 删除（删除后下次 tools/list 可重新出现）
+//   - server enabled=false 时所有工具即使单独 enabled 也不能注入（AND 逻辑）
+//   - 敏感工具（API key / token 等）自动打风险标记
+//   - 工具状态按 serverId+toolName 稳定键保存，避免不同 server 同名互相覆盖
 // 不接 useChatAI 实际 tool_call 调用链（第二版）
 
 import React, { useEffect, useState } from 'react';
@@ -81,6 +87,86 @@ const statusBadge = (c: McpServerConfig): { text: string; color: string; dot: st
     return { text: '已连接', color: 'text-emerald-600', dot: 'bg-emerald-500' };
 };
 
+// 暮色 2026-08-23 v2：单个工具行
+//   - enabled 开关（server disabled 时强制关闭，不可点）
+//   - 删除按钮（二次确认）
+//   - 敏感工具标记
+//   - inputSchema 状态展示
+const McpToolRow: React.FC<{
+    serverId: string;
+    tool: McpTool;
+    serverEnabled: boolean;
+    onChanged: () => void;
+}> = ({ serverId, tool, serverEnabled, onChanged }) => {
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
+    const enabled = tool.enabled ?? true;   // 兼容旧数据
+    const blocked = !serverEnabled;
+
+    const toggle = () => {
+        if (blocked) return;   // server disabled 时禁止
+        mcpStorage.updateToolEnabled(serverId, tool.name, !enabled);
+        onChanged();
+    };
+    const handleDelete = () => {
+        mcpStorage.removeTool(serverId, tool.name);
+        setConfirmingDelete(false);
+        onChanged();
+    };
+
+    return (
+        <div className={`rounded-xl border p-2.5 mb-1.5 ${blocked ? 'bg-slate-50/70 border-slate-200/40' : 'bg-white/80 border-slate-200/60'}`}>
+            <div className="flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[12px] font-mono font-bold text-slate-800 truncate">{tool.name}</span>
+                        {tool.isSensitive ? (
+                            <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">⚠ 风险</span>
+                        ) : null}
+                        {blocked ? (
+                            <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">服务器已禁用</span>
+                        ) : null}
+                    </div>
+                    {tool.description ? (
+                        <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{tool.description}</div>
+                    ) : null}
+                    <div className="text-[9px] text-slate-400 mt-0.5">
+                        {tool.inputSchema ? '✓ 有 inputSchema' : '无 schema'}
+                    </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                    <label className={`flex items-center cursor-pointer ${blocked ? 'opacity-40 pointer-events-none' : ''}`}>
+                        <input
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={toggle}
+                            className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 relative transition-colors">
+                            <div className="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                        </div>
+                    </label>
+                    {!confirmingDelete ? (
+                        <button
+                            onClick={() => setConfirmingDelete(true)}
+                            className="text-[10px] font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-1.5 py-0.5 rounded"
+                            title="删除（下次 tools/list 拿到会重新出现）"
+                        >
+                            删
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleDelete}
+                            className="text-[10px] font-bold text-white bg-rose-600 hover:bg-rose-700 px-1.5 py-0.5 rounded"
+                        >
+                            确认
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const McpServerRow: React.FC<{
     config: McpServerConfig;
     onChanged: () => void;
@@ -92,6 +178,7 @@ const McpServerRow: React.FC<{
     const [showBearer, setShowBearer] = useState(false);
     const [testing, setTesting] = useState(false);
     const [confirmingDelete, setConfirmingDelete] = useState(false);
+    const [toolsExpanded, setToolsExpanded] = useState(false);   // 暮色 2026-08-23 v2：工具列表展开
 
     const isEditing = editingId === config.id;
     const badge = statusBadge(config);
@@ -213,6 +300,32 @@ const McpServerRow: React.FC<{
                             </button>
                         )}
                     </div>
+
+                    {/* 暮色 2026-08-23 v2：工具列表展开 */}
+                    {config.tools && config.tools.length > 0 ? (
+                        <div className="mt-2.5">
+                            <button
+                                onClick={() => setToolsExpanded((v) => !v)}
+                                className="w-full flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1 py-1 hover:text-slate-700"
+                            >
+                                <span>工具 ({config.tools.length})</span>
+                                <span className="text-slate-400">{toolsExpanded ? '收起 ▴' : '展开 ▾'}</span>
+                            </button>
+                            {toolsExpanded ? (
+                                <div className="mt-1.5">
+                                    {config.tools.map((t) => (
+                                        <McpToolRow
+                                            key={t.name}
+                                            serverId={config.id}
+                                            tool={t}
+                                            serverEnabled={config.enabled}
+                                            onChanged={onChanged}
+                                        />
+                                    ))}
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
                 </>
             ) : (
                 <McpEditor
@@ -452,23 +565,6 @@ const McpSettings: React.FC = () => {
                     + 添加 MCP 服务器
                 </button>
             )}
-
-            {configs.some((c) => c.tools && c.tools.length > 0) ? (
-                <details className="mt-3">
-                    <summary className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer pl-1">
-                        查看已发现的工具
-                    </summary>
-                    <div className="mt-2 space-y-1.5">
-                        {configs.flatMap((c) => (c.tools ?? []).map((t) => (
-                            <div key={`${c.id}__${t.name}`} className="bg-slate-50/70 rounded-lg px-2.5 py-1.5 text-[10px]">
-                                <div className="font-mono font-bold text-slate-700">{t.name}</div>
-                                {t.description ? <div className="text-slate-500 mt-0.5">{t.description}</div> : null}
-                                <div className="text-slate-400 mt-0.5">来自：{c.name}</div>
-                            </div>
-                        )))}
-                    </div>
-                </details>
-            ) : null}
         </div>
     );
 };

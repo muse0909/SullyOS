@@ -93,12 +93,15 @@ const compressImage = (file: File): Promise<string> => {
 };
 
 // 背景区选择器（小卡片网格），给设置面板用
+// 暮色 2026-08-23：加 onSave 回调 — UI 加"保存"按钮，跟"上传背景图"并排
+//   onChange 仍自动持久化（保留双保险），onSave 是显式触发（让用户知道"我保存了"）
 export const BgStylePicker: React.FC<{
     url: string | null;
     builtin: BuiltinBg;
     onChange: (next: { url: string | null; builtin: BuiltinBg }) => void;
+    onSave?: () => void;
     onClose?: () => void;
-}> = ({ url, builtin, onChange, onClose }) => {
+}> = ({ url, builtin, onChange, onSave, onClose }) => {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
     const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,14 +147,24 @@ export const BgStylePicker: React.FC<{
                 })}
             </div>
 
+            {/* 暮色 2026-08-23：上传背景图 + 保存 — 两个按钮并排，保存显式触发 */}
             <div className="flex gap-2">
                 <button
                     onClick={() => fileInputRef.current?.click()}
                     className="flex-1 py-3 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform"
                 >
                     <ImageIcon size={16} weight="fill" />
-                    上传自己的图
+                    上传背景图
                 </button>
+                {onSave && (
+                    <button
+                        onClick={onSave}
+                        className="flex-1 py-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform"
+                    >
+                        <Check size={16} weight="bold" />
+                        保存
+                    </button>
+                )}
                 {url && (
                     <button
                         onClick={() => onChange({ url: null, builtin })}

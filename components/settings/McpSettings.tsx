@@ -102,11 +102,15 @@ const McpToolRow: React.FC<{
     const enabled = tool.enabled ?? true;   // 兼容旧数据
     const blocked = !serverEnabled;
 
-    const toggle = () => {
+    const toggle = (e?: React.ChangeEvent<HTMLInputElement>) => {
         if (blocked) return;   // server disabled 时禁止
-        // 暮色 2026-08-23 v3 修复：tool.enabled 是 McpTool 字段，allowSensitive 是 McpServerConfig 字段
-        //   updateToolEnabled 只改 tools 数组里那个 tool 的 enabled，不动 server.allowSensitive
-        //   两个字段独立：禁用某个工具不影响"风险已授权"状态，撤销授权不影响其他工具的 enabled
+        e?.stopPropagation();   // 暮色 2026-08-23 23:51 修复：阻止 change 事件冒泡
+        //   避免任何父级 onClick 监听意外触发（之前 toggle 没 stopPropagation）
+        //   上一版有"点工具开关屏幕被遮住"的 bug — 调查方向：
+        //     1. 触发了 McpAllowSensitiveConfirm 弹窗（已排除 — code 路径无 setAllowSensitiveConfirmOpen(true)）
+        //     2. 事件冒泡到某层 onClick 监听（stopPropagation 是兜底保险）
+        //   debug 工具已加 console.log 帮定位
+        console.log('[MCP Debug] McpToolRow toggle:', tool.name, '→', !enabled);
         mcpStorage.updateToolEnabled(serverId, tool.name, !enabled);
         onChanged();
     };
@@ -133,9 +137,7 @@ const McpToolRow: React.FC<{
                         ) : null}
                     </div>
                     {tool.description ? (
-                        <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">
-                            {tool.description}
-                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{tool.description}</div>
                     ) : null}
                     <div className="text-[9px] text-slate-400 mt-0.5">
                         {tool.inputSchema ? '✓ 有 inputSchema' : '无 schema'}
@@ -185,6 +187,7 @@ const McpAllowSensitiveConfirm: React.FC<{
     onConfirm: () => void;
     onCancel: () => void;
 }> = ({ serverName, sensitiveToolNames, onConfirm, onCancel }) => {
+    console.log('[MCP Debug] McpAllowSensitiveConfirm RENDERED for', serverName);
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onCancel}>
             <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5" onClick={(e) => e.stopPropagation()}>
@@ -304,7 +307,10 @@ const McpServerRow: React.FC<{
     const hasSensitiveTools = sensitiveToolNames.length > 0;
 
     return (
-        <div className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2">
+        <div
+            className="bg-white/70 rounded-2xl border border-slate-200/60 p-3 mb-2"
+            onClick={(e) => console.log('[MCP Debug] McpServerRow root click target=', e.target, 'currentTarget=', e.currentTarget)}
+        >
             {!isEditing ? (
                 <>
                     <div className="flex items-start gap-3">
@@ -421,7 +427,7 @@ const McpServerRow: React.FC<{
                                 <span className="text-slate-400">{toolsExpanded ? '收起 ▴' : '展开 ▾'}</span>
                             </button>
                             {toolsExpanded ? (
-                                <div className="mt-1.5 max-h-96 overflow-y-auto">
+                                <div className="mt-1.5">
                                     {config.tools.map((t) => (
                                         <McpToolRow
                                             key={t.name}
@@ -641,7 +647,10 @@ const McpSettings: React.FC = () => {
     };
 
     return (
-        <div className="px-3 pb-3">
+        <div
+            className="px-3 pb-3"
+            onClick={(e) => console.log('[MCP Debug] McpSettings root click target=', e.target)}
+        >
             <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
                 MCP（Model Context Protocol）服务器管理。第一版只做配置 + 测试连接，
                 工具调用接入 chat 在第二版。鉴权头和 token 不会被写入日志。

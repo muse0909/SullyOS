@@ -28,6 +28,13 @@ import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByNa
 import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import { parseMomentsActions } from '../utils/momentsActionParser';
+// 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表
+//   暮色 8-23 22:11 规格：合并时 MCP 工具放在现有工具后面，不影响原有功能
+//   第一版只接 OpenAI 协议（Gemini / Claude 留下一版）
+import { mcpToOpenAITools, parseMcpToolName } from '../utils/mcpToLlmTools';
+import { mcpClient } from '../utils/mcpClient';
+import { mcpToOpenAIToolResult } from '../utils/mcpResultConverter';
+import { mcpStorage } from '../utils/mcpStorage';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -1660,6 +1667,18 @@ ${visionDesc}
             // play_song 工具：musicApi 不依赖任何配置（直接调网易云 API）—— 始终注册
             if (char.playSongEnabled !== false) {
                 toolsList.push(PLAY_SONG_TOOL);
+            }
+            // 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表（OpenAI 协议第一版）
+            //   暮色 8-23 22:11 规格：MCP 工具放在现有工具后面，不影响原有功能
+            //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤
+            //   + maxTools 默认 10 截断（22 个 jina 工具不全注入）
+            //   Gemini 协议下不注入（v3 commit 7 第一版只做 OpenAI）
+            if (apiProtocol === 'openai') {
+                const mcpConfigs = mcpStorage.getAll();
+                const mcpTools = mcpToOpenAITools(mcpConfigs);
+                if (mcpTools.length > 0) {
+                    toolsList.push(...mcpTools);
+                }
             }
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;

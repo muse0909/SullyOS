@@ -32,7 +32,7 @@ const isApiLogEnabled = (): boolean => {
 };
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
-import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle } from '../utils/xiaoZhiTiaoStyles';
+import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 import type { XiaoZhiTiao } from '../types';
 // 暮色 2026-08-01：情侣空间 AI 主动打卡接 runProactive
 import { shouldTriggerAiCheckin, pickRandomTask, addCheckin } from '../utils/coupleSpaceStorage';
@@ -1963,6 +1963,11 @@ if (!isVisible || !isChattingWithThisChar) {
 
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
+
+              // 暮色 2026-08-23 v3：定时投递检查（主动消息入口顺带触发）
+              //   跟 useChatAI 同款 — 简化版不定 schedule，依赖主消息流触发
+              //   失败静默
+              await checkAndDeliverTimedXiaoZhiTiaos(charId, char.name, addToast);
 
               // 暮色 2026-08-23：主动消息里也解析 [[MOMENT_POST: ...]] / [[MOMENT_COMMENT: ...]] / [[MOMENT_LIKE: ...]]
               //   之前漏解析（只在 useChatAI 主聊天流程里实现），AI 输出的 [[MOMENT_POST: ...]]

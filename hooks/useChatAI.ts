@@ -25,7 +25,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
-import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle } from '../utils/xiaoZhiTiaoStyles';
+import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import { parseMomentsActions } from '../utils/momentsActionParser';
 
@@ -3276,6 +3276,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //      → 这里解析 → 调用 momentsAI.publishPostAsChar/commentPostAsChar/likePostAsChar
             // 暮色 2026-08-23：抽到 utils/momentsActionParser.ts，OSContext 主动消息流程也调
             aiContent = parseMomentsActions(aiContent, { char, addToast });
+
+            // 暮色 2026-08-23 v3：定时投递检查（主消息流入口顺带触发）
+            //   找到该角色所有到期藏信 → 改 visible + 写 DB + addToast "X 投递了一张小纸条"
+            //   失败静默
+            await checkAndDeliverTimedXiaoZhiTiaos(char.id, char.name, addToast);
 
             // 5.9d Handle XiaoZhiTiao (小纸条) Actions
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件

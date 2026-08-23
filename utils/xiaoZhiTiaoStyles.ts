@@ -84,6 +84,39 @@ export function sanitizeNoteHtml(text: string): string {
         .replace(/&lt;\/s&gt;/g, '</s>');  // 还原 /s 标签
 }
 
+// 暮色 2026-08-23 v3：定时投递检查 — 主消息流触发时调用
+//   读该角色所有隐藏 + isTimed 藏信，hiddenUntil <= now 的改成 visible + 写 DB + addToast
+//   失败静默（同日记 / 主动消息约定）
+//   调用时机：useChatAI 收 AI 回复时 + OSContext.runProactive 拿到 aiContent 时
+//   简化版：不定 schedule，依赖主消息流触发 — 用户跟角色聊天时顺带触发
+//   缺点：用户长时间不跟角色聊时，到期藏信不会自动推送
+//   后续优化：加 schedule 触发（commit 后续）
+export async function checkAndDeliverTimedXiaoZhiTiaos(
+    charId: string,
+    charName: string,
+    addToast?: (msg: string, type?: 'success' | 'error' | 'info' | 'bell', duration?: number) => void
+): Promise<number> {
+    let delivered = 0;
+    try {
+        const all = await DB.getXiaoZhiTiaos(charId);
+        const now = Date.now();
+        for (const note of all) {
+            if (note.visibility === 'hidden' && note.isTimed && note.hiddenUntil && note.hiddenUntil <= now) {
+                note.visibility = 'visible';
+                await DB.saveXiaoZhiTiao(note);
+                delivered++;
+                if (addToast) {
+                    addToast(`${charName} 投递了一张小纸条`, 'bell', 3000);
+                }
+                console.log(`📝 [XiaoZhiTiao/Timed] ${charName} 投递定时小纸条: ${note.content.slice(0, 30)}...`);
+            }
+        }
+    } catch (e) {
+        console.warn('📝 [XiaoZhiTiao/Timed] 检查失败:', e);
+    }
+    return delivered;
+}
+
 const EMPTY_STYLES: XiaoZhiTiaoStyles = { groups: {}, activeGroup: null };
 
 /** 安全读：解析失败 / quota / 缺字段都 fallback 空对象

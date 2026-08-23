@@ -11,24 +11,29 @@ import { McpServerConfig, McpAuthType, McpTransport, McpTool } from '../types';
 const LS_KEY = 'os_mcp_servers_v1';
 
 /**
- * 敏感工具名检测（暮色 8-23：show_api_key 这类要标风险）
- * 规则：名字包含下列关键词任一 → 标记 isSensitive
- *   api_key / apikey / api-key
- *   token / secret / password
- *   credential / private_key / privatekey
- *   auth_header / authheader
- * 不区分大小写
+ * 暮色 2026-08-23 v3 明确要求：敏感工具**硬编码**列表，**不做自动检测**。
+ * 第一版不引入关键词匹配规则（"包含 token / secret / password 之类的就标 sensitive"）
+ * 这种方式误伤多（很多合法工具名字里有 token：get_token_from_url、token_counter 之类）
+ * 改用已知危险工具名硬编码集合，由暮色人工维护。
+ *
+ * mcpToLlmTools 默认不注入 sensitive 工具；
+ * UI 提供"启用风险工具"二次确认弹窗 + 持久化 server.allowSensitive
  */
-export const SENSITIVE_KEYWORDS = [
-    'api_key', 'apikey', 'api-key',
-    'token', 'secret', 'password',
-    'credential', 'private_key', 'privatekey',
-    'auth_header', 'authheader',
+export const KNOWN_SENSITIVE_TOOLS: string[] = [
+    'show_api_key',         // jina 那个 dump bearer token 的
+    'get_bearer_token',
+    'get_token',
+    'dump_credentials',
+    'dump_secrets',
+    'reveal_password',
+    'get_api_key',
+    'reveal_api_key',
+    'echo_auth_header',     // 通用：把 Authorization 头回显给模型
+    'list_api_keys',
 ];
 
 const isSensitiveToolName = (name: string): boolean => {
-    const lower = name.toLowerCase();
-    return SENSITIVE_KEYWORDS.some((kw) => lower.includes(kw));
+    return KNOWN_SENSITIVE_TOOLS.includes(name);
 };
 
 const genId = (): string => {
@@ -160,32 +165,37 @@ export const mcpStorage = {
 
     /**
      * 合并新 tools 列表到指定 server。
-     * 核心规则（暮色 8-23 规格）：
+     * 核心规则（暮色 8-23 v2 规格 + v2.1 删过标记）：
      *   - 按 serverId + toolName 稳定键合并（避免不同 server 同名工具互相覆盖）
      *   - 已有工具保留原 enabled 状态（兼容旧数据：缺 enabled 视为 true）
      *   - 新增工具默认 enabled=true
      *   - 不无条件覆盖用户已经禁用的状态
      *   - 删除 = 从 storage 移除（merge 时不再保留"已删除"标记）
      *     所以用户删过的工具下次 testConnection 拿到会重新出现（按新工具处理）
-     *   - 敏感工具名（API key / token / secret / password 等）自动打 isSensitive
+     *   - 敏感工具名（KNOWN_SENSITIVE_TOOLS 硬编码）自动打 isSensitive
+     *   - 暮色 2026-08-23 v2.1：merge 时根据 deletedToolHistory 设 wasDeleted=true
+     *     仅 UI 提示用，不阻止重新出现
      */
     mergeTools(serverId: string, newTools: McpTool[]): void {
         const config = this.get(serverId);
         if (!config) return;
         const oldTools = config.tools ?? [];
         const oldMap = new Map<string, McpTool>(oldTools.map((t) => [this.toolKey(serverId, t.name), t]));
+        const history = new Set(config.deletedToolHistory ?? []);
 
         const merged: McpTool[] = newTools.map((nt) => {
             const key = this.toolKey(serverId, nt.name);
             const old = oldMap.get(key);
             const enabled = old?.enabled ?? true;       // 兼容旧数据 + 保留用户已禁用
             const isSensitive = isSensitiveToolName(nt.name);
+            const wasDeleted = history.has(nt.name);   // v2.1 删过标记
             return {
                 name: nt.name,
                 description: nt.description,
                 inputSchema: nt.inputSchema,
                 enabled,
                 isSensitive,
+                wasDeleted,
             };
         });
 
@@ -200,12 +210,16 @@ export const mcpStorage = {
         this.update(serverId, { tools: next });
     },
 
-    /** 从 storage 移除一个工具（用户主动删除；下次 mergeTools 拿到会重新出现） */
+    /** 从 storage 移除一个工具（用户主动删除；下次 mergeTools 拿到会重新出现）
+     *  暮色 2026-08-23 v2.1：同时把 toolName 写进 deletedToolHistory（去重）
+     *  后续 mergeTools 拿到同名 tool 时设 wasDeleted=true 给 UI 提示
+     */
     removeTool(serverId: string, toolName: string): void {
         const config = this.get(serverId);
         if (!config?.tools) return;
         const next = config.tools.filter((t) => t.name !== toolName);
-        this.update(serverId, { tools: next });
+        const history = Array.from(new Set([...(config.deletedToolHistory ?? []), toolName]));
+        this.update(serverId, { tools: next, deletedToolHistory: history });
     },
 
     /** 稳定键：避免不同 server 同名工具互相覆盖 */

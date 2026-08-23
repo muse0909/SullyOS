@@ -2022,8 +2022,11 @@ export interface McpTool {
     //   兼容旧数据：旧工具没 enabled 字段时按 true 处理（mcpStorage.mergeTools 处理）
     //   server enabled=false 时，下面所有工具即使单独 enabled 也不能被注入模型（AND 逻辑）
     enabled?: boolean;
-    // 暮色 2026-08-23 v2：风险标记（工具名匹配敏感关键词自动标，第一版只标记不自动禁用）
+    // 暮色 2026-08-23 v2：风险标记（硬编码 KNOWN_SENSITIVE_TOOLS 决定，第一版只标记不自动禁用）
     isSensitive?: boolean;
+    // 暮色 2026-08-23 v2.1：之前删过标记（mergeTools 时根据 deletedToolHistory 计算）
+    //   不阻止重新出现，仅 UI 提示用户"这个工具之前被你删过"
+    wasDeleted?: boolean;
 }
 
 export interface McpServerConfig {
@@ -2041,6 +2044,17 @@ export interface McpServerConfig {
     lastError?: string;                  // 最近一次错误信息（脱敏后）
     lastErrorType?: McpErrorType;        // 最近一次错误分类
     tools?: McpTool[];                   // tools/list 返回的工具列表
+    // 暮色 2026-08-23 v2.1：删过工具的历史记录
+    //   删除时记录到此处，mergeTools 时设 wasDeleted=true 标记
+    //   不阻止重新出现（暮色规格"下次 testConnection 可重新出现"），仅作 UI 提示
+    deletedToolHistory?: string[];
+    // 暮色 2026-08-23 v3：启用风险工具授权（默认 false）
+    //   true 时，isSensitive 工具也会被注入 LLM
+    //   持久化在 server config 上，每 server 独立
+    allowSensitive?: boolean;
+    // 暮色 2026-08-23 v3：per-server 超时配置（覆盖默认 30s）
+    //   用于慢工具（如 search_web_deep）
+    timeoutMs?: number;
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---

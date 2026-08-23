@@ -1153,6 +1153,16 @@ export interface CharacterProfile {
     //   - 优先级：useSecondaryApi > useCharApi > 全局主 API
     //   - 三个开关都关 → 走全局主 API
     useCharApi?: boolean;
+    // 暮色 2026-08-23：睡眠时间（不触发主动消息的时间段）
+    //   - enabled: 是否启用
+    //   - startHour / endHour: 0-23（local 时区）
+    //   - 跨午夜：startHour > endHour（如 23-08 = 23:00 到次日 08:00）
+    //   - 默认：enabled=false, startHour=23, endHour=8
+    quietHours?: {
+      enabled: boolean;
+      startHour: number;
+      endHour: number;
+    };
   };
 
   // 情绪Buff系统

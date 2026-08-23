@@ -38,6 +38,10 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
     //   优先级：副 API > 角色独立 API > 主 API
     //   全部留空走主 API
     const [useCharApi, setUseCharApi] = useState(saved?.useCharApi ?? false);
+    // 暮色 2026-08-23：睡眠时间（默认 23:00-08:00）
+    const [quietHoursEnabled, setQuietHoursEnabled] = useState(saved?.quietHours?.enabled ?? false);
+    const [quietStartHour, setQuietStartHour] = useState(saved?.quietHours?.startHour ?? 23);
+    const [quietEndHour, setQuietEndHour] = useState(saved?.quietHours?.endHour ?? 8);
 
     // Reset form when modal opens with new char data
     useEffect(() => {
@@ -51,6 +55,9 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
             setSecModel(s?.secondaryApi?.model ?? '');
             setShowApiSection(s?.useSecondaryApi ?? false);
             setUseCharApi(s?.useCharApi ?? false);
+            setQuietHoursEnabled(s?.quietHours?.enabled ?? false);
+            setQuietStartHour(s?.quietHours?.startHour ?? 23);
+            setQuietEndHour(s?.quietHours?.endHour ?? 8);
         }
     }, [isOpen, char.id]);
 
@@ -65,6 +72,11 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                 model: secModel,
             } : undefined,
             useCharApi: useCharApi && !useSecondaryApi,  // 副 API 优先
+            quietHours: {
+                enabled: quietHoursEnabled,
+                startHour: quietStartHour,
+                endHour: quietEndHour,
+            },
         });
         onClose();
     };
@@ -135,6 +147,45 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                     </button>
                                 ))}
                             </div>
+                        </div>
+
+                        {/* 暮色 2026-08-23：睡眠时间（发送间隔下面、使用副 API 上面） */}
+                        <div className="pt-2 border-t border-slate-100">
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm font-bold text-slate-700">睡眠时间</span>
+                                <button
+                                    onClick={() => setQuietHoursEnabled(!quietHoursEnabled)}
+                                    className={`w-12 h-7 rounded-full transition-colors relative ${quietHoursEnabled ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                >
+                                    <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${quietHoursEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-slate-400 leading-relaxed">
+                                设置后这段时间不触发主动消息，到点自动恢复。跨午夜：开始 &gt; 结束（如 23-08 = 23:00 到次日 08:00）。
+                            </p>
+                            {quietHoursEnabled && (
+                                <div className="mt-3 flex items-center gap-2 bg-slate-50 rounded-2xl p-3">
+                                    <select
+                                        value={quietStartHour}
+                                        onChange={e => setQuietStartHour(parseInt(e.target.value, 10))}
+                                        className="flex-1 px-2 py-2 bg-white rounded-xl text-sm font-bold border border-slate-200 focus:border-violet-300 focus:outline-none text-center"
+                                    >
+                                        {Array.from({ length: 24 }, (_, h) => (
+                                            <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                                        ))}
+                                    </select>
+                                    <span className="text-xs text-slate-400 font-bold shrink-0">到</span>
+                                    <select
+                                        value={quietEndHour}
+                                        onChange={e => setQuietEndHour(parseInt(e.target.value, 10))}
+                                        className="flex-1 px-2 py-2 bg-white rounded-xl text-sm font-bold border border-slate-200 focus:border-violet-300 focus:outline-none text-center"
+                                    >
+                                        {Array.from({ length: 24 }, (_, h) => (
+                                            <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                         </div>
 
                         {/* Secondary API Toggle */}

@@ -97,6 +97,23 @@ export function isOldXiaoZhiTiao(note: { timestamp: number }): boolean {
     return note.timestamp < XIAO_ZHI_TIAO_V3_RELEASE_TS;
 }
 
+// 暮色 2026-08-23 反馈：老便签默认全一个样式不随机
+//   按 note.id hash 从 8 套便签里选一套（稳定但不重复看起来一样）
+//   新便签写时 pickNoteStyle 已经在 store 里随机（Math.random）— 真正随机
+//   老便签是按 id hash 选（每张固定）— 不同便签看起不同
+function hashStringToInt(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h);
+}
+
+export function pickFallbackBuiltinStyle(seed: string): string {
+    const idx = hashStringToInt(seed) % BUILTIN_NOTE_STYLES.length;
+    return BUILTIN_NOTE_STYLES[idx];
+}
+
 // 暮色 2026-08-23 v3：定时投递检查 — 主消息流触发时调用
 //   读该角色所有隐藏 + isTimed 藏信，hiddenUntil <= now 的改成 visible + 写 DB + addToast
 //   失败静默（同日记 / 主动消息约定）

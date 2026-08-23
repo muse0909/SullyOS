@@ -15,7 +15,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CaretLeft, Trash, PaperPlaneRight, ChatCircleText } from '@phosphor-icons/react';
 import { XiaoZhiTiao, XiaoZhiTiaoReply } from '../../types';
 import { getStoredNotebookBg, BUILTIN_BG, type BuiltinBg } from './NotebookBackground';
-import { sanitizeNoteHtml, isOldXiaoZhiTiao } from '../../utils/xiaoZhiTiaoStyles';
+import { sanitizeNoteHtml, isOldXiaoZhiTiao, pickFallbackBuiltinStyle } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoDetailProps {
@@ -193,12 +193,13 @@ const FullXiaoZhiTiaoCard: React.FC<{
     hideReplyButton?: boolean;
 }> = ({ note, charName: _charName, onReplyClick, hideReplyButton }) => {
     const useImage = !!note.styleImageUrl && !isOldXiaoZhiTiao(note);
-    const noteClassName = useImage ? '' : (note.style || 'note-pink');
+    const noteClassName = useImage ? '' : (note.style || pickFallbackBuiltinStyle(note.id));
     const isRevealed = note.revealedAt != null || isOldXiaoZhiTiao(note);
     return (
         <div
             // 暮色原图直接显示（不加底/框/阴影）
-            className={`relative w-full min-h-[70vh] bg-no-repeat ${noteClassName}`}
+            // 暮色 8-23 反馈：详情页便签 min-h 70vh → 60vh（不要挤满屏幕）
+            className={`relative w-full min-h-[60vh] bg-no-repeat ${noteClassName}`}
             style={
                 useImage
                     // 透明底 PNG 直接显示
@@ -218,11 +219,12 @@ const FullXiaoZhiTiaoCard: React.FC<{
             </div>
 
             {/* 文字 / 未拆封 = 空白（暮色 2026-08-23 v3：revealedAt == null → 什么也不显示） */}
+            {/* 暮色 8-23 反馈：字号 12px → 16px + 字体手写体（builtinNoteStyles.css） + 不限行 */}
             {isRevealed && (
-                <div className="absolute inset-0 flex items-center justify-center p-6">
+                <div className="absolute inset-0 flex items-center justify-center p-8">
                     <div className="max-w-[60%] text-center">
                         <div
-                            className="text-[12px] leading-relaxed whitespace-pre-wrap break-words text-slate-800 line-clamp-6"
+                            className="text-[16px] leading-relaxed whitespace-pre-wrap break-words text-slate-800"
                             dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
                         />
                     </div>

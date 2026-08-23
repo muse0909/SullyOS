@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { XiaoZhiTiao } from '../../types';
-import { sanitizeNoteHtml, isOldXiaoZhiTiao } from '../../utils/xiaoZhiTiaoStyles';
+import { sanitizeNoteHtml, isOldXiaoZhiTiao, pickFallbackBuiltinStyle } from '../../utils/xiaoZhiTiaoStyles';
 import './builtinNoteStyles.css';
 
 interface XiaoZhiTiaoCardProps {
@@ -20,9 +20,6 @@ interface XiaoZhiTiaoCardProps {
     charName?: string;
     style?: React.CSSProperties;
 }
-
-// 暮色 2026-08-23 v3 反馈 2：老纸条没 style 字段时，默认走 note-pink（让老纸条也用新便签样式）
-const DEFAULT_FALLBACK_STYLE = 'note-pink';
 
 const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDelete, charName: _charName, style }) => {
     // 轻微随机旋转（用 note.id hash 一下，保证稳定不抖动）
@@ -37,11 +34,11 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
     // 暮色 2026-08-23 v3：便签样式优先级
     //   1. styleImageUrl 存在且不是老便签 → 走图（用户上传图）
     //   2. style 存在 → 走 CSS（cjjc 8 套便签）
-    //   3. 都没 → 默认 note-pink（暮色反馈"老纸条也用新样式"）
-    // 暮色 8-23 反馈：老数据有 styleImageUrl 的也走新 CSS（暮色 7-22 上传图那时没 CSS 选项；现在 8 套便签足够）
+    //   3. 都没 → 按 note.id hash 从 8 套里选一套（老便签随机性 — 暮色 8-23 反馈"全一个样式"）
+    // 暮色 8-23 反馈：老数据有 styleImageUrl 的也走新 CSS
     const isOld = isOldXiaoZhiTiao(note);
     const useImage = !!note.styleImageUrl && !isOld;
-    const noteClassName = useImage ? '' : (note.style || DEFAULT_FALLBACK_STYLE);
+    const noteClassName = useImage ? '' : (note.style || pickFallbackBuiltinStyle(note.id));
 
     // 暮色 2026-08-23 v3：未看过（revealedAt == null）→ 空白
     // 暮色 8-23 反馈：老便签没 revealedAt 字段时当作"已看"（否则老便签全显示"未拆封"）
@@ -57,7 +54,7 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
         >
             {/* 便签纸：暮色原图直接显示（不加任何底/框/阴影） */}
             <div
-                className={`relative w-full h-48 bg-no-repeat ${noteClassName}`}
+                className={`relative w-full h-44 bg-no-repeat ${noteClassName}`}
                 style={
                     useImage
                         // 透明底 PNG 直接显示，不加 backgroundColor
@@ -73,11 +70,12 @@ const XiaoZhiTiaoCard: React.FC<XiaoZhiTiaoCardProps> = ({ note, onClick, onDele
             >
                 {/* 文字：纯文字（无底无框），居中放在图中央留白区 */}
                 {/* 暮色 2026-08-23 v3 反馈 1：未拆封态 = 空白（不显示任何东西） */}
+                {/* 暮色 2026-08-23 反馈 6：字号 10px → 14px + 字体手写体（builtinNoteStyles.css） */}
                 {isRevealed && (
                     <div className="absolute inset-0 flex items-center justify-center p-5">
                         <div className="max-w-[60%] text-center">
                             <div
-                                className="text-[10px] leading-snug line-clamp-5 overflow-hidden text-slate-800"
+                                className="text-[14px] leading-relaxed line-clamp-5 overflow-hidden text-slate-800"
                                 dangerouslySetInnerHTML={{ __html: sanitizeNoteHtml(note.content) }}
                             />
                         </div>

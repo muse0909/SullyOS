@@ -1,8 +1,23 @@
 /* 暮色 2026-08-23 v3：小纸条 8 套便签 CSS（直接照搬 cjjc WHISPER_NOTE_STYLES + 对应 CSS）
  * 暮色说"暂时先搬过去，但是这里有些我是不太喜欢的，等后面再细调"
- * 用途：XiaoZhiTiaoCard 渲染时根据 note.style 字段加对应 className */
+ * 用途：XiaoZhiTiaoCard 渲染时根据 note.style 字段加对应 className
+ * 暮色 2026-08-23 反馈：手写体（Google Fonts Ma Shan Zheng）+ 字号调大 + 阴影 + 留白
+ *   参考 cjjc .note-paper：font-size 18px / padding 20px 15px / box-shadow 2px 3px 10px rgba(0,0,0,0.15)
+ *   SullyOS 比 cjjc 便签大，字按比例放大（列表 14px / 详情 16px）
+ *   Google Fonts <link> 在 index.html <head> 引入 */
 
-.note-lined {
+/* 全局便签字体 / 字号 / 留白 — 应用到所有 .note-* 便签 */
+.note-lined,
+.note-pink,
+.note-grid,
+.note-kraft,
+.note-blue,
+.note-polka,
+.note-white,
+.note-bread {
+    font-family: 'Ma Shan Zheng', 'ZCOOL KuaiLe', cursive, sans-serif;
+    box-shadow: 2px 3px 10px rgba(0, 0, 0, 0.15);
+}
     background: #fffbe0;
     background-image: linear-gradient(#f0f0f0 1px, transparent 1px);
     background-size: 100% 20px;

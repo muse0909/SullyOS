@@ -183,13 +183,14 @@ const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             )}
 
             {/* 列表 */}
-            <div className="flex-1 overflow-y-auto px-4 pt-3 pb-6 no-scrollbar">
+            {/* 暮色 8-23 反馈：列表留白大一点 */}
+            <div className="flex-1 overflow-y-auto px-5 pt-4 pb-8 no-scrollbar">
                 {loading ? (
                     <div className="flex items-center justify-center h-40 text-xs text-slate-400">加载中…</div>
                 ) : filtered.length === 0 ? (
                     <EmptyState hasFilter={hasFilter} onOpenSettings={() => setShowSettings(true)} />
                 ) : (
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-5">
                         {filtered.map(note => (
                             <XiaoZhiTiaoCard
                                 key={note.id}

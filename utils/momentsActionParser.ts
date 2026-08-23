@@ -22,12 +22,22 @@ export interface ParseMomentsActionsOpts {
   skipActions?: boolean;
 }
 
-export function parseMomentsActions(aiContent: string, opts: ParseMomentsActionsOpts): string {
+export interface ParseMomentsActionsResult {
+    cleaned: string;        // aiContent 剥掉 MOMENT_* 标签后的纯文本
+    posted: number;          // 实际 publishPostAsChar 成功次数（暮色 2026-08-23 v3：给 caller 算发现页红点）
+    liked: number;           // 实际 likePostAsChar 成功次数
+    commented: number;       // 实际 commentPostAsChar 成功次数
+}
+
+export function parseMomentsActions(aiContent: string, opts: ParseMomentsActionsOpts): ParseMomentsActionsResult {
   let content = aiContent;
+  let posted = 0;
+  let liked = 0;
+  let commented = 0;
 
   if (opts.skipActions) {
     // 仅剥标签，不发任何 action
-    return stripMomentTags(content);
+    return { cleaned: stripMomentTags(content), posted: 0, liked: 0, commented: 0 };
   }
 
   try {
@@ -55,6 +65,7 @@ export function parseMomentsActions(aiContent: string, opts: ParseMomentsActions
         if (text) {
           // 不带图（AI 主动发的动态都是纯文字，图片要走 imageGenProvider 这里不做）
           publishPostAsChar(opts.char, text, undefined, 'none');
+          posted++;
           console.log(`📱 [Moments] ${opts.char.name} 发了一条朋友圈: ${text.slice(0, 30)}...`);
           opts.addToast?.(`📱 ${opts.char.name} 发了一条新朋友圈`, 'success', 2500);
         }
@@ -69,6 +80,7 @@ export function parseMomentsActions(aiContent: string, opts: ParseMomentsActions
       if (postId && c) {
         const updated = commentPostAsChar(postId, opts.char.id, c);
         if (updated) {
+          commented++;
           console.log(`💬 [Moments] ${opts.char.name} 评论了动态 ${postId}: ${c.slice(0, 30)}...`);
         } else {
           console.warn(`💬 [Moments] 评论失败：找不到动态 ${postId}`);
@@ -83,6 +95,7 @@ export function parseMomentsActions(aiContent: string, opts: ParseMomentsActions
       if (postId) {
         const updated = likePostAsChar(postId, opts.char.id);
         if (updated) {
+          liked++;
           console.log(`❤️ [Moments] ${opts.char.name} 点赞了动态 ${postId}`);
         } else {
           console.warn(`❤️ [Moments] 点赞失败：找不到动态 ${postId}`);
@@ -94,7 +107,7 @@ export function parseMomentsActions(aiContent: string, opts: ParseMomentsActions
   }
 
   // 无论发没发出去，所有 MOMENT_* 标签都从 aiContent 移除
-  return stripMomentTags(content);
+  return { cleaned: stripMomentTags(content), posted, liked, commented };
 }
 
 function stripMomentTags(content: string): string {

@@ -204,11 +204,13 @@ export function parseDiaryFromApi(text: string): { title: string; mood: string; 
 }
 
 // 主入口：调用方传 apiConfig + userProfile（避免在 utils 里 useOS）
+// 暮色 2026-08-23 v3：onCreated 回调 — 成功写完日记时调（给发现页红点用）
 export async function generateCharDiary(
     char: CharacterProfile,
     apiConfig: APIConfig,
     deps: {
         userProfile: UserProfile;
+        onCreated?: (entry: DiaryEntry) => void;
     }
 ): Promise<DiaryEntry> {
     const todayIso = getLocalDateStr();
@@ -275,5 +277,7 @@ export async function generateCharDiary(
             console.warn('char-only 归档到记忆失败（不影响主流程）:', e);
         }
     }
+    // 暮色 2026-08-23 v3：日记写完回调（给发现页红点用）
+    deps.onCreated?.(entry);
     return entry;
 }

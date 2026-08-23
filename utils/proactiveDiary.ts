@@ -71,7 +71,13 @@ async function defaultTrigger(charId: string) {
   }
   console.log(`[ProactiveDiary] generateCharDiary start for ${char.name}`);
   try {
-    const entry = await generateCharDiary(char, apiConfig, { userProfile });
+    const entry = await generateCharDiary(char, apiConfig, {
+      userProfile,
+      // 暮色 2026-08-23 v3：日记写完 → 触发发现页红点（暮色确认范围 = 朋友圈 + 日记 + 小纸条 visible）
+      onCreated: () => {
+        try { (window as any).__SULLYOS_INCREMENT_DISCOVER__?.('diaryNew', 1); } catch {}
+      },
+    });
     addToast?.(`${char.name} 写了一篇日记`, 'success');
     console.log(`[ProactiveDiary] ${char.name} wrote a diary for ${entry.date}`);
   } catch (e: any) {

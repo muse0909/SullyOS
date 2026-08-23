@@ -119,6 +119,9 @@ const McpToolRow: React.FC<{
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-[12px] font-mono font-bold text-slate-800 truncate">{tool.name}</span>
+                        {tool.wasDeleted ? (
+                            <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0" title="你之前删过这个工具，下次 testConnection 拿到时会自动重新出现">之前删过</span>
+                        ) : null}
                         {tool.isSensitive ? (
                             <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">⚠ 风险</span>
                         ) : null}

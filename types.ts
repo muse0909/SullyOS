@@ -2005,6 +2005,43 @@ export interface CloudBackupFile {
     lastModified: string;       // ISO date string
     href: string;               // WebDAV: remote path. GitHub: 'releaseId:assetId'
 }
+// ==================== MCP 工具调用结果（v3 暮色 8-23 22:11）====================
+//   暮色规格：超时/取消/HTTP 错误/协议错误统一返回 { success: false, content: [], error: { category, code, message } }
+//   错误消息脱敏：不出现 Authorization / Bearer Token / 自定义 Header / 完整请求配置
+//   isError 是 MCP 工具返回的（工具执行成功但业务失败），跟 success: false 区分
+export interface McpContentBlock {
+    type: string;            // 'text' | 'image' | 'audio' | 'resource' | 'resource_link'（MCP 2025-06-18）
+    text?: string;
+    data?: string;           // base64（image/audio）
+    mimeType?: string;
+    resource?: any;          // embedded resource
+    [k: string]: any;        // 透传 MCP 协议其他字段（向前兼容）
+}
+
+export type McpCallErrorCategory =
+    | 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList'
+    | 'timeout' | 'cancelled' | 'notFound' | 'notEnabled'
+    | 'isError' | 'unknown';
+
+export interface McpCallError {
+    category: McpCallErrorCategory;
+    code: string;            // 'HTTP_401' / 'TIMEOUT_30S' / 'CANCELLED' / 'JSONRPC_-32601' ...
+    message: string;         // 脱敏后用户可见
+}
+
+export type McpCallResult =
+    | {
+        success: true;
+        content: McpContentBlock[];
+        isError: boolean;     // MCP 工具返回的 isError（业务失败），调用本身是成功的
+        structuredContent?: any;
+    }
+    | {
+        success: false;
+        content: [];
+        error: McpCallError;
+    };
+
 // ==================== MCP (Model Context Protocol) 服务器配置 ====================
 // 暮色 2026-08-23：cjjc 截图带来"自己添加 MCP"需求
 // 第一版：配置存储 + UI 管理 + 测试连接（不接 useChatAI 实际 tool_call 链）

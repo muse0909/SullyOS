@@ -133,9 +133,7 @@ const McpToolRow: React.FC<{
                         ) : null}
                     </div>
                     {tool.description ? (
-                        <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">
-                            {tool.description}
-                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{tool.description}</div>
                     ) : null}
                     <div className="text-[9px] text-slate-400 mt-0.5">
                         {tool.inputSchema ? '✓ 有 inputSchema' : '无 schema'}
@@ -421,7 +419,7 @@ const McpServerRow: React.FC<{
                                 <span className="text-slate-400">{toolsExpanded ? '收起 ▴' : '展开 ▾'}</span>
                             </button>
                             {toolsExpanded ? (
-                                <div className="mt-1.5 max-h-96 overflow-y-auto">
+                                <div className="mt-1.5">
                                     {config.tools.map((t) => (
                                         <McpToolRow
                                             key={t.name}

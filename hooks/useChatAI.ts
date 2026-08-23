@@ -25,15 +25,9 @@ import type { DigestResult } from '../utils/memoryPalace';
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
-import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
+import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
-import {
-  publishPostAsChar,
-  commentPostAsChar,
-  likePostAsChar,
-  countTodayPostsByChar,
-} from '../utils/momentsAI';
-import { getSettings as getMomentsSettings } from '../utils/momentsStorage';
+import { parseMomentsActions } from '../utils/momentsActionParser';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -3280,74 +3274,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 日志原文："我没有那个发朋友圈的工具。只能把内容写好给你，你帮我贴上去。"
             // 修复：AI 在 chat reply 里输出 [[MOMENT_POST: ...]] [[MOMENT_COMMENT: postId | content]] [[MOMENT_LIKE: postId]]
             //      → 这里解析 → 调用 momentsAI.publishPostAsChar/commentPostAsChar/likePostAsChar
-            try {
-                const momentsSettings = getMomentsSettings();
+            // 暮色 2026-08-23：抽到 utils/momentsActionParser.ts，OSContext 主动消息流程也调
+            aiContent = parseMomentsActions(aiContent, { char, addToast });
 
-                // 📝 [[MOMENT_POST: 内容]] - 发朋友圈
-                const postMatches = [...aiContent.matchAll(/\[\[MOMENT_POST:\s*([\s\S]+?)\]\]/g)];
-                if (postMatches.length > 0 && !momentsSettings.autoPostByChar) {
-                    // 暮色 2026-07-12：autoPostByChar 现在语义是 "AI 能不能主动发"——关了就不发
-                    console.log(`📱 [Moments] autoPostByChar=off，跳过 ${postMatches.length} 个 POST`);
-                    addToast(`${char.name} 的主动发朋友圈已关闭`, 'info');
-                } else if (postMatches.length > 0) {
-                    // 检查 maxPerDay 上限
-                    const todayCount = countTodayPostsByChar(char.id, momentsSettings.maxPerDay);
-                    let canPost = todayCount < momentsSettings.maxPerDay;
-                    if (momentsSettings.maxPerDay <= 0) {
-                        canPost = false;
-                    }
-
-                    if (!canPost) {
-                        console.log(`📱 [Moments] 今日已发满 ${momentsSettings.maxPerDay} 条，跳过 ${postMatches.length} 个 POST`);
-                        addToast(`${char.name} 今日朋友圈已达上限`, 'info');
-                    } else {
-                        // 限制每次最多发 1 条（避免 AI 一次刷 N 条）
-                        const toPost = postMatches[0];
-                        const content = toPost[1].trim();
-                        if (content) {
-                            // 不带图（AI 主动发的动态都是纯文字，图片要走 imageGenProvider 这里不做）
-                            publishPostAsChar(char, content, undefined, 'none');
-                            console.log(`📱 [Moments] ${char.name} 发了一条朋友圈: ${content.slice(0, 30)}...`);
-                            addToast(`📱 ${char.name} 发了一条新朋友圈`, 'success', 2500);
-                        }
-                    }
-                }
-                // 移除所有 MOMENT_POST 标记（无论发没发出去）
-                aiContent = aiContent.replace(/\[\[MOMENT_POST:\s*[\s\S]+?\]\]/g, '').trim();
-
-                // 💬 [[MOMENT_COMMENT: postId | 评论内容]] - 评论朋友圈
-                const commentMatches = [...aiContent.matchAll(/\[\[MOMENT_COMMENT:\s*([^\s|]+)\s*\|\s*([\s\S]+?)\]\]/g)];
-                for (const m of commentMatches) {
-                    const postId = m[1].trim();
-                    const content = m[2].trim();
-                    if (postId && content) {
-                        const updated = commentPostAsChar(postId, char.id, content);
-                        if (updated) {
-                            console.log(`💬 [Moments] ${char.name} 评论了动态 ${postId}: ${content.slice(0, 30)}...`);
-                        } else {
-                            console.warn(`💬 [Moments] 评论失败：找不到动态 ${postId}`);
-                        }
-                    }
-                }
-                aiContent = aiContent.replace(/\[\[MOMENT_COMMENT:\s*[^\s|]+\s*\|\s*[\s\S]+?\]\]/g, '').trim();
-
-                // ❤️ [[MOMENT_LIKE: postId]] - 点赞朋友圈
-                const likeMatches = [...aiContent.matchAll(/\[\[MOMENT_LIKE:\s*([^\s\]]+)\s*\]\]/g)];
-                for (const m of likeMatches) {
-                    const postId = m[1].trim();
-                    if (postId) {
-                        const updated = likePostAsChar(postId, char.id);
-                        if (updated) {
-                            console.log(`❤️ [Moments] ${char.name} 点赞了动态 ${postId}`);
-                        } else {
-                            console.warn(`❤️ [Moments] 点赞失败：找不到动态 ${postId}`);
-                        }
-                    }
-                }
-                aiContent = aiContent.replace(/\[\[MOMENT_LIKE:\s*[^\s\]]+\s*\]\]/g, '').trim();
-            } catch (e) {
-                console.warn('📱 [Moments] 解析失败:', e);
-            }
+            // 暮色 2026-08-23 v3：定时投递检查（主消息流入口顺带触发）
+            //   找到该角色所有到期藏信 → 改 visible + 写 DB + addToast "X 投递了一张小纸条"
+            //   失败静默
+            await checkAndDeliverTimedXiaoZhiTiaos(char.id, char.name, addToast);
 
             // 5.9d Handle XiaoZhiTiao (小纸条) Actions
             // 暮色 2026-07-22：完全独立于 PrivateNote — 独立 token / 独立 store / 独立组件
@@ -3355,11 +3288,20 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 暮色 2026-08-07：每天最多 5 条 — 系统硬限制（即使 prompt 写了，AI 仍可能超）
             // 暮色 2026-08-07：触发路径收窄到"主动消息 + 正常聊天"——其余 5 个递归路径（read-note / search / diary / read-diary / fs-diary / fs-read-diary）不解析
             //   allowXiaoZhiTiaoParse 闭包 flag 由各递归路径自己设 false
+            // 暮色 2026-08-23 v3：未拆封机制 — 3 种 token
+            //   [[XIAO_ZHI_TIAO: 内容]] 立即可见 + addToast
+            //   [[XIAO_ZHI_TIAO_HIDDEN: 内容]] 藏起来 + 不通知
+            //   [[XIAO_ZHI_TIAO_TIMED: YYYY-MM-DD HH:MM | 内容]] 定时投递 + 不通知
+            //   三种共用每天 5 条上限
             if (!allowXiaoZhiTiaoParse || !isXiaoZhiTiaoEnabled()) {
-                aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
+                aiContent = aiContent
+                    .replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '')
+                    .replace(/\[\[XIAO_ZHI_TIAO_HIDDEN:[\s\S]*?\]\]/g, '')
+                    .replace(/\[\[XIAO_ZHI_TIAO_TIMED:[\s\S]*?\]\]/g, '')
+                    .trim();
             } else try {
                 // AI 没输出小纸条标记 → 跳过 IDB 查询 / 计数 / 解析
-                if (aiContent.includes('[[XIAO_ZHI_TIAO:')) {
+                if (aiContent.includes('[[XIAO_ZHI_TIAO')) {
                     const todayStart = new Date();
                     todayStart.setHours(0, 0, 0, 0);
                     const oneHourAgo = Date.now() - 60 * 60 * 1000;
@@ -3368,33 +3310,90 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     if (todaysXZT.length >= 5) {
                         console.log(`📝 [XiaoZhiTiao] 今天已写 ${todaysXZT.length} 条，跳过`);
                     } else {
-                        const xztMatches = [...aiContent.matchAll(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/g)];
-                        if (xztMatches.length > 0) {
-                            const m = xztMatches[0];
-                            const content = m[1].trim();
+                        // 暮色 2026-08-23 v3：3 种 token 解析（共用每天 5 条上限 — 写一条就 +1）
+                        //   优先级：visible > hidden > timed（AI 同时输多个时取第一个）
+                        //   实际：prompt 限制了"一次最多 1 条"，3 个正则里取第一个 match
+                        let xztContent: string | null = null;
+                        let xztVariant: 'visible' | 'hidden' = 'visible';
+                        let xztTimedUntil: number | null = null;
+
+                        // 1) 立即可见
+                        const visibleMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
+                        if (visibleMatch) {
+                            xztContent = visibleMatch[1].trim();
+                            xztVariant = 'visible';
+                        }
+
+                        // 2) 藏起来等翻
+                        if (!xztContent) {
+                            const hiddenMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*([\s\S]+?)\s*\]\]/);
+                            if (hiddenMatch) {
+                                xztContent = hiddenMatch[1].trim();
+                                xztVariant = 'hidden';
+                            }
+                        }
+
+                        // 3) 定时投递
+                        if (!xztContent) {
+                            const timedMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_TIMED:\s*(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*\|\s*([\s\S]+?)\s*\]\]/);
+                            if (timedMatch) {
+                                const timeStr = timedMatch[1].trim();
+                                const content = timedMatch[2].trim();
+                                const untilMs = new Date(timeStr).getTime();
+                                if (Number.isFinite(untilMs) && untilMs > Date.now()) {
+                                    xztContent = content;
+                                    xztVariant = 'hidden';
+                                    xztTimedUntil = untilMs;
+                                } else {
+                                    // 时间解析失败 / 已过期 → 走兜底（visible，不藏）
+                                    console.log(`📝 [XiaoZhiTiao] TIMED 时间解析失败或过期: ${timeStr}`);
+                                    xztContent = content;
+                                    xztVariant = 'visible';
+                                }
+                            }
+                        }
+
+                        if (xztContent) {
                             // 暮色 2026-08-07：1h 内已写过相同内容 → 跳过（兜底，主要靠路径收窄）
                             const recentDuplicate = todaysXZT.find(n =>
-                                n.timestamp >= oneHourAgo && n.content === content
+                                n.timestamp >= oneHourAgo && n.content === xztContent
                             );
                             if (recentDuplicate) {
                                 console.log(`📝 [XiaoZhiTiao] 1h 内已写过相同内容，跳过`);
-                            } else if (content) {
+                            } else {
+                                // 暮色 2026-08-23 v3：样式合并 — 8 套 cjjc 便签 / 用户上传图
+                                //   pickNoteStyle 根据激活组选：系统便签 = CSS；其他 = 图
+                                const styles = getStoredXiaoZhiTiaoStyles();
+                                const picked = pickNoteStyle(styles);
                                 const newNote: XiaoZhiTiao = {
                                     id: `xzt-${Date.now()}`,
                                     charId: char.id,
                                     timestamp: Date.now(),
-                                    content,
-                                    styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                                    content: xztContent,
+                                    visibility: xztVariant,
+                                    isTimed: xztTimedUntil != null,
+                                    ...(xztTimedUntil ? { hiddenUntil: xztTimedUntil } : {}),
                                 };
+                                if (picked?.kind === 'css') {
+                                    newNote.style = picked.className;
+                                } else if (picked?.kind === 'image') {
+                                    newNote.styleImageUrl = picked.url;
+                                }
                                 await DB.saveXiaoZhiTiao(newNote);
-                                console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
-                                // 暮色 2026-08-07：提醒改成顶部弹窗（不显示内容详情）
-                                addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                console.log(`📝 [XiaoZhiTiao] ${char.name} 写了一条${xztVariant === 'hidden' ? (xztTimedUntil ? '定时' : '藏起来的') : ''}小纸条: ${xztContent.slice(0, 30)}...`);
+                                // 暮色 2026-08-23 v3：藏信（HIDDEN/TIMED）不通知；visible 正常 addToast
+                                if (xztVariant === 'visible') {
+                                    addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                }
                             }
                         }
                     }
-                    // 移除所有 XIAO_ZHI_TIAO 标记
-                    aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:\s*[\s\S]+?\]\]/g, '').trim();
+                    // 移除所有 3 种 XIAO_ZHI_TIAO 标记
+                    aiContent = aiContent
+                        .replace(/\[\[XIAO_ZHI_TIAO:\s*[\s\S]+?\]\]/g, '')
+                        .replace(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*[\s\S]+?\]\]/g, '')
+                        .replace(/\[\[XIAO_ZHI_TIAO_TIMED:[\s\S]*?\]\]/g, '')
+                        .trim();
                 }
             } catch (e) {
                 console.warn('📝 [XiaoZhiTiao] 解析失败:', e);

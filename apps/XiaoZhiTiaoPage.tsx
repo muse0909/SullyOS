@@ -95,6 +95,14 @@ const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     setView('list');
                     setSelectedNoteId(null);
                 }}
+                // 暮色 2026-08-23 v3：打开即已读（revealedAt == null 时调一次）
+                onMarkRevealed={async () => {
+                    if (selectedNote.revealedAt != null) return;
+                    await DB.saveXiaoZhiTiao({ ...selectedNote, revealedAt: Date.now() });
+                    // 重新加载 notes 让列表卡片同步显示内容
+                    const all = await DB.getXiaoZhiTiaos(undefined);
+                    setNotes(all.sort((a, b) => b.timestamp - a.timestamp));
+                }}
                 onAddReply={async (content) => {
                     await addReply(selectedNote.id, {
                         author: 'user',
@@ -175,13 +183,14 @@ const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             )}
 
             {/* 列表 */}
-            <div className="flex-1 overflow-y-auto px-4 pt-3 pb-6 no-scrollbar">
+            {/* 暮色 8-23 反馈：列表留白大一点 */}
+            <div className="flex-1 overflow-y-auto px-5 pt-4 pb-8 no-scrollbar">
                 {loading ? (
                     <div className="flex items-center justify-center h-40 text-xs text-slate-400">加载中…</div>
                 ) : filtered.length === 0 ? (
                     <EmptyState hasFilter={hasFilter} onOpenSettings={() => setShowSettings(true)} />
                 ) : (
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-5">
                         {filtered.map(note => (
                             <XiaoZhiTiaoCard
                                 key={note.id}
@@ -238,6 +247,17 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
     dateFrom, onDateFromChange, dateTo, onDateToChange,
     onCustomPromptChange,
 }) => {
+    // 暮色 2026-08-23：拿 addToast 给"保存"按钮反馈
+    const { addToast } = useOS();
+
+    // 暮色 2026-08-23：背景显式保存回调（BgStylePicker onSave）
+    //   之前 onChange 自动持久化（onBgChange 内调 setStoredNotebookBg + setStoredNotebookBuiltin）
+    //   现在 onSave = 显式再触发一次 onBgChange（让用户知道"我保存了"）
+    //   双重保险：选/上传后自动存，点"保存"再存一次
+    const handleSaveBg = () => {
+        onBgChange({ url: bgUrl, builtin: bgBuiltin });
+        addToast('背景已保存', 'success');
+    };
     // 2026-07-22：自定义 prompt 状态（独立 key：小纸条）
     const [customPrompt, setCustomPrompt] = useState<string>('');
     const [statusMsg, setStatusMsg] = useState<string>('');
@@ -331,23 +351,21 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             const v = customPrompt.trim();
             if (v) {
                 localStorage.setItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY, v);
-                setStatusMsg('已保存');
+                addToast('AI 指导已保存', 'success');
             } else {
                 localStorage.removeItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY);
-                setStatusMsg('已清空');
+                addToast('AI 指导已清空（用默认）', 'info');
             }
             onCustomPromptChange?.();
-            setTimeout(() => setStatusMsg(''), 1500);
         } catch (e: any) {
-            setStatusMsg('保存失败：' + (e?.message || '未知错误'));
+            addToast('保存失败：' + (e?.message || '未知错误'), 'error');
         }
     };
     const handleReset = () => {
         setCustomPrompt('');
         try { localStorage.removeItem(XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY); } catch {}
         onCustomPromptChange?.();
-        setStatusMsg('已恢复默认（点保存生效）');
-        setTimeout(() => setStatusMsg(''), 2000);
+        addToast('已恢复默认（点保存或失焦生效）', 'info');
     };
 
     return (
@@ -419,6 +437,7 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             url={bgUrl}
                             builtin={bgBuiltin}
                             onChange={onBgChange}
+                            onSave={handleSaveBg}
                         />
                     </section>
 
@@ -487,13 +506,28 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                             </div>
                         )}
 
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={!styles.activeGroup}
-                            className="w-full py-2.5 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white text-xs font-bold shadow-md active:scale-95 transition-all disabled:opacity-40"
-                        >
-                            📷 上传图片到当前组
-                        </button>
+                        {/* 暮色 2026-08-23：上传图片 + 保存 — 两个按钮并排，保存显式触发 */}
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={!styles.activeGroup}
+                                className="flex-1 py-2.5 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white text-xs font-bold shadow-md active:scale-95 transition-all disabled:opacity-40"
+                            >
+                                📷 上传图片
+                            </button>
+                            <button
+                                onClick={() => {
+                                    // 显式保存当前激活组（persistStyles 内部已经立即写 IDB）
+                                    // 这里是双保险 + 给用户明确反馈
+                                    persistStyles({ ...styles, activeGroup: styles.activeGroup });
+                                    addToast('样式已保存', 'success');
+                                }}
+                                disabled={!styles.activeGroup}
+                                className="flex-1 py-2.5 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold shadow-md active:scale-95 transition-all disabled:opacity-40"
+                            >
+                                ✓ 保存
+                            </button>
+                        </div>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -510,24 +544,21 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                     </section>
 
                     {/* 2026-07-22：自定义提示词 */}
+                    {/* 暮色 2026-08-23：去掉"保存"按钮，textarea onBlur 自动存 */}
                     <section>
                         <div className="text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-widest">AI 写小纸条的指导</div>
                         <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
                             留空用默认。想让 AI 按你希望的方式写，就在这里改。
+                            <span className="text-amber-600 font-medium">改完失焦自动保存</span>，不需要点保存。
                         </p>
                         <textarea
                             value={customPrompt}
                             onChange={(e) => setCustomPrompt(e.target.value)}
+                            onBlur={handleSave}
                             placeholder="留空 = 用默认"
                             className="w-full h-32 bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-[11px] leading-relaxed focus:bg-white focus:border-slate-300 transition-all resize-y"
                         />
                         <div className="flex gap-2 mt-2">
-                            <button
-                                onClick={handleSave}
-                                className="flex-1 py-2 rounded-xl font-bold text-white shadow-md bg-gradient-to-br from-emerald-400 to-teal-500 active:scale-95 transition-all text-xs"
-                            >
-                                {statusMsg || '保存'}
-                            </button>
                             <button
                                 onClick={handleReset}
                                 className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-all"

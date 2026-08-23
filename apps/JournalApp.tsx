@@ -43,7 +43,7 @@ const getLocalDateStr = () => {
 };
 
 const JournalApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateCharacter } = useOS();
+    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateCharacter, incrementDiscoverUnread } = useOS();
     
     const [mode, setMode] = useState<'select' | 'calendar' | 'write'>('select');
     const [selectedChar, setSelectedChar] = useState<CharacterProfile | null>(null);
@@ -120,7 +120,11 @@ const JournalApp: React.FC = () => {
         }
         setIsGeneratingDiary(true);
         try {
-            const newEntry = await generateCharDiary(selectedChar, apiConfig, { userProfile });
+            const newEntry = await generateCharDiary(selectedChar, apiConfig, {
+                userProfile,
+                // 暮色 2026-08-23 v3：日记写完 → 触发发现页红点
+                onCreated: () => incrementDiscoverUnread('diaryNew', 1),
+            });
             setDiaries(prev => [newEntry, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
             addToast(`${selectedChar.name} 写好了一篇日记`, 'success');
         } catch (e: any) {

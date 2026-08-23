@@ -5,6 +5,7 @@ import { DB } from '../utils/db';
 // 暮色 2026-08-16：格式化系统保留云端备份
 import { factoryReset } from '../utils/factoryReset';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { parseMomentsActions } from '../utils/momentsActionParser';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
 import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
@@ -31,7 +32,7 @@ const isApiLogEnabled = (): boolean => {
 };
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { pruneMemoryLinksByTopN } from '../utils/memoryPalace/links';
-import { pickRandomXiaoZhiTiaoImage } from '../utils/xiaoZhiTiaoStyles';
+import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 import type { XiaoZhiTiao } from '../types';
 // 暮色 2026-08-01：情侣空间 AI 主动打卡接 runProactive
 import { shouldTriggerAiCheckin, pickRandomTask, addCheckin } from '../utils/coupleSpaceStorage';
@@ -283,6 +284,13 @@ interface OSContextType {
 
   toasts: Toast[];
   addToast: (message: string, type?: Toast['type']) => void;
+
+  // 暮色 2026-08-23 v3：发现页红点 — 暮色确认范围 = 朋友圈 + 日记 + 小纸条 visible 未读
+  //   藏信（HIDDEN/TIMED）不参与
+  //   进发现 tab → markDiscoverSeen 清零 + 写 localStorage
+  discoverUnread: { momentsNew: number; diaryNew: number; xztVisibleUnread: number };
+  incrementDiscoverUnread: (key: 'momentsNew' | 'diaryNew' | 'xztVisibleUnread', delta?: number) => void;
+  markDiscoverSeen: () => void;
 
   // Icons
   customIcons: Record<string, string>;
@@ -554,6 +562,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [parentApp, setParentApp] = useState<AppID | null>(null);
   // 暮色 2026-08-21：WeChat tab 持久化 — 让独立 app 返回时 WeChat 还是 'discover' tab
   const [wechatTab, setWechatTab] = useState<'messages' | 'discover' | 'me'>('messages');
+  // 暮色 2026-08-23 v3：发现页红点 — 暮色确认范围 = 朋友圈 + 日记 + 小纸条 visible 未读
+  //   藏信（HIDDEN/TIMED）不参与（暮色"藏的功能体现在不通知"）
+  //   进发现 tab → markDiscoverSeen 清零
+  const [discoverUnread, setDiscoverUnread] = useState<{ momentsNew: number; diaryNew: number; xztVisibleUnread: number }>({ momentsNew: 0, diaryNew: 0, xztVisibleUnread: 0 });
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
@@ -721,6 +733,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setDateQuickPhrases(dateQuickPhrases.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p));
   };
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // 暮色 2026-08-23 v3：发现页红点 — 3 个增量 + 1 个清零
+  const incrementDiscoverUnread = (key: 'momentsNew' | 'diaryNew' | 'xztVisibleUnread', delta: number = 1) => {
+    setDiscoverUnread(prev => ({ ...prev, [key]: Math.max(0, prev[key] + delta) }));
+    // 暮色 2026-08-23 v3：挂全局桥接 — 非 OSContext 组件（useChatAI）也能触发增量
+    if (typeof window !== 'undefined') {
+      (window as any).__SULLYOS_INCREMENT_DISCOVER__ = (k: string, d: number) => incrementDiscoverUnread(k as any, d);
+    }
+  };
+  const markDiscoverSeen = () => {
+    setDiscoverUnread({ momentsNew: 0, diaryNew: 0, xztVisibleUnread: 0 });
+    try { localStorage.setItem('discover_last_seen_at', String(Date.now())); } catch {}
+  };
+  // 启动时读上次 seen 时间戳
+  useEffect(() => {
+    try {
+      const seenAt = parseInt(localStorage.getItem('discover_last_seen_at') || '0', 10);
+      if (seenAt > 0) {
+        // 暮色说"看到红点 = 进发现 tab 清零" — 这里不主动算，保留 0 / 已有值
+        // 实际红点由写入侧（朋友圈 / 日记 / 小纸条）实时累加
+      }
+    } catch {}
+  }, []);
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
@@ -1474,6 +1509,32 @@ if (!isVisible || !isChattingWithThisChar) {
               return;
           }
 
+          // 暮色 2026-08-23：睡眠时间检查（在 sleep 期间 → 推迟 schedule 到 endHour，不调 API）
+          //   跨午夜：startHour > endHour（如 23-08 = 23:00 到次日 08:00 算睡眠）
+          //   配错：startHour === endHour → 不睡眠
+          //   snoozeUntil 把 nextFire 直接推到 endHour，sleep 期间完全不查
+          if (char.proactiveConfig?.quietHours?.enabled) {
+              const qh = char.proactiveConfig.quietHours;
+              const now = new Date();
+              const h = now.getHours();
+              const inQuiet = qh.startHour === qh.endHour
+                  ? false
+                  : qh.startHour < qh.endHour
+                      ? (h >= qh.startHour && h < qh.endHour)
+                      : (h >= qh.startHour || h < qh.endHour);
+              if (inQuiet) {
+                  const wake = new Date(now);
+                  wake.setHours(qh.endHour, 0, 0, 0);
+                  if (wake.getTime() <= now.getTime()) {
+                      wake.setDate(wake.getDate() + 1);
+                  }
+                  ProactiveChat.snoozeUntil(charId, wake.getTime());
+                  drainQueuedProactive();
+                  console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: in quiet hours (${qh.startHour}:00-${qh.endHour}:00), wake at ${wake.toLocaleString()}`);
+                  return;
+              }
+          }
+
           // 暮色 2026-08-05 Phase 3：每角色每天主动消息条数硬上限（防刷闸）
           //   原 v1.0 主动消息只有"节流"（ProactiveChat.markUserContact 每 N 分钟才触发），
           //   但没有"每天 N 条"硬上限——理论上角色可以无限触发。
@@ -1937,12 +1998,29 @@ if (!isVisible || !isChattingWithThisChar) {
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
 
+              // 暮色 2026-08-23 v3：定时投递检查（主动消息入口顺带触发）
+              //   跟 useChatAI 同款 — 简化版不定 schedule，依赖主消息流触发
+              //   失败静默
+              await checkAndDeliverTimedXiaoZhiTiaos(charId, char.name, addToast);
+
+              // 暮色 2026-08-23：主动消息里也解析 [[MOMENT_POST: ...]] / [[MOMENT_COMMENT: ...]] / [[MOMENT_LIKE: ...]]
+              //   之前漏解析（只在 useChatAI 主聊天流程里实现），AI 输出的 [[MOMENT_POST: ...]]
+              //   标签会作为字面文本保存到消息里，朋友圈没真发出去
+              //   跟 useChatAI 共用 parseMomentsActions，保证行为一致
+              // 暮色 2026-08-23 v3：拿 posted 计入发现页红点
+              const momentsResult = parseMomentsActions(aiContent, { char, addToast });
+              aiContent = momentsResult.cleaned;
+              if (momentsResult.posted > 0) {
+                  incrementDiscoverUnread('momentsNew', momentsResult.posted);
+              }
+
               // 暮色 2026-08-07：主动消息路径解析 [[XIAO_ZHI_TIAO: ...]]（收窄后唯一两条路径之一）
               //   跟 useChatAI 同步：1 天最多 5 条 + 1 小时内相同内容跳过
               //   提醒走 addToast 顶部弹窗（不显示内容详情）
+              // 暮色 2026-08-23 v3：3 种 token 解析（跟 useChatAI 同步）
               try {
                   // AI 没输出小纸条标记 → 跳过 IDB 查询 / 计数 / 解析
-                  if (aiContent.includes('[[XIAO_ZHI_TIAO:')) {
+                  if (aiContent.includes('[[XIAO_ZHI_TIAO')) {
                       const todayStart = new Date();
                       todayStart.setHours(0, 0, 0, 0);
                       const oneHourAgo = Date.now() - 60 * 60 * 1000;
@@ -1951,29 +2029,80 @@ if (!isVisible || !isChattingWithThisChar) {
                       if (todaysXZT.length >= 5) {
                           console.log(`📝 [XiaoZhiTiao/Proactive] 今天已写 ${todaysXZT.length} 条，跳过`);
                       } else {
-                          const xztMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
-                          if (xztMatch) {
-                              const content = xztMatch[1].trim();
+                          // 暮色 2026-08-23 v3：3 种 token 解析（共用 5/天上限）
+                          let xztContent: string | null = null;
+                          let xztVariant: 'visible' | 'hidden' = 'visible';
+                          let xztTimedUntil: number | null = null;
+
+                          const visibleMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO:\s*([\s\S]+?)\s*\]\]/);
+                          if (visibleMatch) {
+                              xztContent = visibleMatch[1].trim();
+                              xztVariant = 'visible';
+                          }
+                          if (!xztContent) {
+                              const hiddenMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*([\s\S]+?)\s*\]\]/);
+                              if (hiddenMatch) {
+                                  xztContent = hiddenMatch[1].trim();
+                                  xztVariant = 'hidden';
+                              }
+                          }
+                          if (!xztContent) {
+                              const timedMatch = aiContent.match(/\[\[XIAO_ZHI_TIAO_TIMED:\s*(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*\|\s*([\s\S]+?)\s*\]\]/);
+                              if (timedMatch) {
+                                  const timeStr = timedMatch[1].trim();
+                                  const content = timedMatch[2].trim();
+                                  const untilMs = new Date(timeStr).getTime();
+                                  if (Number.isFinite(untilMs) && untilMs > Date.now()) {
+                                      xztContent = content;
+                                      xztVariant = 'hidden';
+                                      xztTimedUntil = untilMs;
+                                  } else {
+                                      console.log(`📝 [XiaoZhiTiao/Proactive] TIMED 时间解析失败或过期: ${timeStr}`);
+                                      xztContent = content;
+                                      xztVariant = 'visible';
+                                  }
+                              }
+                          }
+
+                          if (xztContent) {
                               const recentDuplicate = todaysXZT.find(n =>
-                                  n.timestamp >= oneHourAgo && n.content === content
+                                  n.timestamp >= oneHourAgo && n.content === xztContent
                               );
                               if (recentDuplicate) {
                                   console.log(`📝 [XiaoZhiTiao/Proactive] 1h 内已写过相同内容，跳过`);
-                              } else if (content) {
+                              } else {
+                                  // 暮色 2026-08-23 v3：样式合并 — pickNoteStyle 8 套便签 / 图
+                                  const styles = getStoredXiaoZhiTiaoStyles();
+                                  const picked = pickNoteStyle(styles);
                                   const newNote: XiaoZhiTiao = {
                                       id: `xzt-${Date.now()}`,
                                       charId,
                                       timestamp: Date.now(),
-                                      content,
-                                      styleImageUrl: pickRandomXiaoZhiTiaoImage(),
+                                      content: xztContent,
+                                      visibility: xztVariant,
+                                      isTimed: xztTimedUntil != null,
+                                      ...(xztTimedUntil ? { hiddenUntil: xztTimedUntil } : {}),
                                   };
+                                  if (picked?.kind === 'css') {
+                                      newNote.style = picked.className;
+                                  } else if (picked?.kind === 'image') {
+                                      newNote.styleImageUrl = picked.url;
+                                  }
                                   await DB.saveXiaoZhiTiao(newNote);
-                                  console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条小纸条: ${content.slice(0, 30)}...`);
-                                  addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                  console.log(`📝 [XiaoZhiTiao/Proactive] ${char.name} 写了一条${xztVariant === 'hidden' ? (xztTimedUntil ? '定时' : '藏起来的') : ''}小纸条: ${xztContent.slice(0, 30)}...`);
+                                  // 暮色 2026-08-23 v3：藏信不通知；visible 正常 addToast + 红点
+                                  if (xztVariant === 'visible') {
+                                      addToast(`${char.name} 给你塞了张小纸条`, 'bell', 3000);
+                                      incrementDiscoverUnread('xztVisibleUnread', 1);
+                                  }
                               }
                           }
-                          // 主动消息里把 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
-                          aiContent = aiContent.replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '').trim();
+                          // 主动消息里把 3 种 XIAO_ZHI_TIAO token 移除，避免被 splitResponse 当成正文显示
+                          aiContent = aiContent
+                              .replace(/\[\[XIAO_ZHI_TIAO:\s*[\s\S]+?\]\]/g, '')
+                              .replace(/\[\[XIAO_ZHI_TIAO_HIDDEN:\s*[\s\S]+?\]\]/g, '')
+                              .replace(/\[\[XIAO_ZHI_TIAO_TIMED:[\s\S]*?\]\]/g, '')
+                              .trim();
                       }
                   }
               } catch (e) {
@@ -4058,6 +4187,9 @@ if (!isVisible || !isChattingWithThisChar) {
     importAppearancePreset,
     toasts,
     addToast,
+    discoverUnread,
+    incrementDiscoverUnread,
+    markDiscoverSeen,
     customIcons,
     setCustomIcon,
     dateQuickPhrases,

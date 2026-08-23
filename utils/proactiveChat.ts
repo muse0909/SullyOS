@@ -353,6 +353,22 @@ export const ProactiveChat = {
   },
 
   /**
+   * 暮色 2026-08-23：推迟 schedule 到指定时间点
+   *   - 把 lastFire 设为 wakeUpTs - intervalMs → nextFire = wakeUpTs
+   *   - 用法：quiet hours 时让 next wake-up 直接到 endHour，不在 sleep 期间每 N 分钟空跑检查
+   *   - 不影响 schedule 是否存在（不 stop / 不 start）
+   */
+  snoozeUntil(charId: string, wakeUpTs: number) {
+    const schedule = loadSchedules()[charId];
+    if (!schedule) return;
+    const lastFire = wakeUpTs - schedule.intervalMs;
+    setLastFireTime(charId, lastFire);
+    syncSchedulesToSW();
+    schedulePreciseTimer();
+    console.log(`[ProactiveChat] Snoozed ${charId} until ${new Date(wakeUpTs).toLocaleString()}`);
+  },
+
+  /**
    * Stop one character's proactive schedule.
    */
   stop(charId: string) {

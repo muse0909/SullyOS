@@ -420,6 +420,9 @@ const MessageItem = React.memo(({
 
     // 暮色 2026-08-24：MCP 工具调用摘要（灰色小气泡）
     //   暮色 12:11 反馈：之前靠左偏左不对称，改成居中（容器 flex justify-center）
+    //   暮色 12:56 反馈：整体偏大、跟江澈回复挤在一起
+    //     - 缩小 padding: px-3 py-1.5 → px-2.5 py-1
+    //     - 加大下方间距: mb-2 → mb-4（跟下面 assistant 消息拉开）
     //   其他要求不变：
     //     - 气泡大小根据内容自适应（inline-block + max-w-[90%] 兜底）
     //     - 浅灰色磨砂底透明度 80%（bg-slate-100/80 + backdrop-blur-sm）
@@ -431,9 +434,9 @@ const MessageItem = React.memo(({
     if (m.type === 'mcp_tool_call') {
         const records = m.mcpToolCalls ?? [];
         return (
-            <div className="flex justify-center mb-2 px-1">
+            <div className="flex justify-center mb-4 px-1">
                 <div
-                    className="bg-slate-100/80 backdrop-blur-sm text-slate-600 text-[11.5px] leading-relaxed px-3 py-1.5 rounded-2xl border border-slate-200/40 inline-block max-w-[90%]"
+                    className="bg-slate-100/80 backdrop-blur-sm text-slate-600 text-[11.5px] leading-relaxed px-2.5 py-1 rounded-2xl border border-slate-200/40 inline-block max-w-[90%]"
                     style={{ transform: 'translateZ(0)', willChange: 'transform' }}
                 >
                     🔧 已调用 {records.length} 个工具{records.length > 0 ? '：' : ''}

@@ -1853,6 +1853,221 @@ export const DB = {
           transaction.onerror = () => reject(transaction.error);
       });
   },
+
+  // ============ 暮色 2026-08-24：补完彼方其余 20 个 DB 方法 ============
+  // 暮色反馈：留言点着没反应、听歌报错、图书馆一直翻着书、WRScripts/VRGuestbook 抛 TypeError
+  // 根因：schema 创了 store，但 get/save/delete 方法只补了 8 个（vr_novels/卡/ApiConfig/ApiLog）
+  // 这里补剩下 20 个：annotations(3) + music(2) + guestbook(2) + scripts(3) + plays(3) + presets(3) + letters(4)
+
+  // --- 批注（vr_annotations, master 已有 novelId 索引）---
+  getVRAnnotations: async (novelId?: string): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_annotations')) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction('vr_annotations', 'readonly');
+          const store = transaction.objectStore('vr_annotations');
+          const request = novelId ? store.index('novelId').getAll(novelId) : store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveVRAnnotation: async (annotation: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_annotations', 'readwrite');
+      transaction.objectStore('vr_annotations').put(annotation);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  deleteVRAnnotation: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_annotations', 'readwrite');
+      transaction.objectStore('vr_annotations').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 听歌房共享状态（单例 id='state'） ---
+  getVRMusicRoom: async (): Promise<any | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_music')) return null;
+      return new Promise((resolve) => {
+          const transaction = db.transaction('vr_music', 'readonly');
+          const request = transaction.objectStore('vr_music').get('state');
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => resolve(null);
+      });
+  },
+
+  saveVRMusicRoom: async (state: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_music', 'readwrite');
+      transaction.objectStore('vr_music').put({ ...state, id: 'state' });
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 留言簿共享状态（单例 id='board'） ---
+  getVRGuestbook: async (): Promise<any | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_guestbook')) return null;
+      return new Promise((resolve) => {
+          const transaction = db.transaction('vr_guestbook', 'readonly');
+          const request = transaction.objectStore('vr_guestbook').get('board');
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => resolve(null);
+      });
+  },
+
+  saveVRGuestbook: async (state: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_guestbook', 'readwrite');
+      // 不限存储条数：留言墙已支持每 50 条翻页，旧留言全部保留可翻看
+      const messages = state.messages || [];
+      transaction.objectStore('vr_guestbook').put({ ...state, id: 'board', messages });
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 剧院·投稿剧本库（vr_scripts）---
+  getVRScripts: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_scripts')) return [];
+      return new Promise((resolve) => {
+          const request = db.transaction('vr_scripts', 'readonly').objectStore('vr_scripts').getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: any, b: any) => b.createdAt - a.createdAt));
+          request.onerror = () => resolve([]);
+      });
+  },
+  saveVRScript: async (script: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_scripts', 'readwrite');
+      transaction.objectStore('vr_scripts').put(script);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+  deleteVRScript: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_scripts', 'readwrite');
+      transaction.objectStore('vr_scripts').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 剧院·历史舞台剧（vr_plays）---
+  getVRStagedPlays: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_plays')) return [];
+      return new Promise((resolve) => {
+          const request = db.transaction('vr_plays', 'readonly').objectStore('vr_plays').getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: any, b: any) => b.createdAt - a.createdAt));
+          request.onerror = () => resolve([]);
+      });
+  },
+  saveVRStagedPlay: async (play: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_plays', 'readwrite');
+      transaction.objectStore('vr_plays').put(play);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+  deleteVRStagedPlay: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_plays', 'readwrite');
+      transaction.objectStore('vr_plays').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 剧院·用户自定义写作风格预设（vr_presets）---
+  getVRPresets: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_presets')) return [];
+      return new Promise((resolve) => {
+          const request = db.transaction('vr_presets', 'readonly').objectStore('vr_presets').getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => resolve([]);
+      });
+  },
+  saveVRPreset: async (preset: { key: string; name: string; prompt: string; blurb?: string }): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_presets', 'readwrite');
+      transaction.objectStore('vr_presets').put(preset);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+  deleteVRPreset: async (key: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_presets', 'readwrite');
+      transaction.objectStore('vr_presets').delete(key);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // --- 邮局信件（vr_letters）---
+  getVRLetters: async (): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('vr_letters')) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction('vr_letters', 'readonly');
+          const request = transaction.objectStore('vr_letters').getAll();
+          request.onsuccess = () => resolve((request.result || []).sort((a: any, b: any) => b.createdAt - a.createdAt));
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveVRLetter: async (letter: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_letters', 'readwrite');
+      transaction.objectStore('vr_letters').put(letter);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  saveVRLetters: async (letters: any[]): Promise<void> => {
+      if (letters.length === 0) return;
+      const db = await openDB();
+      const transaction = db.transaction('vr_letters', 'readwrite');
+      const store = transaction.objectStore('vr_letters');
+      for (const l of letters) store.put(l);
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  deleteVRLetter: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction('vr_letters', 'readwrite');
+      transaction.objectStore('vr_letters').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
   // ============ 彼方缺失方法 end ============
 
   exportFullData: async (): Promise<Partial<FullBackupData>> => {

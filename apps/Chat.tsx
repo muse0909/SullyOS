@@ -431,6 +431,12 @@ const Chat: React.FC = () => {
         updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
     });
 
+    // 暮色 2026-08-24 12:45 删：MCP 工具调用灰色小气泡的渲染
+    //   之前 Chat.tsx 用 useEffect 监听 lastMcpToolCalls，setMessages 加 mcp_tool_call 消息。
+    //   改成 useChatAI 在 processMcpToolCalls 后 await DB.saveMessage(mcp_tool_call) 存进 DB，
+    //   后续 triggerAI 分块保存的 setMessages 全量重读 DB → mcp_tool_call 自动按 timestamp
+    //   出现在 chunk 之前（正确位置）。这样不需要 Chat.tsx 主动 setMessages，避开跟分块保存的 race。
+
     // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
     // 暮色 2026-08-01 反馈四轮：
     //   1) 开启一起听后 LLM 不主动提一起听 → 原因是 system msg type='text' 被 useChatAI

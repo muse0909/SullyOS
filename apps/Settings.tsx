@@ -13,7 +13,7 @@ import { DB } from '../utils/db';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
-import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal } from '@phosphor-icons/react';
+import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Terminal, Eye, EyeSlash } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 // 暮色 2026-08-06：主动消息 2.0 全局配置弹窗（接 Cloudflare Worker）
@@ -275,6 +275,8 @@ const Settings: React.FC = () => {
   // directly. Only flip to false if the user has explicitly opted out before.
   const [ghUseProxy, setGhUseProxy] = useState(cloudBackupConfig.githubUseProxy !== false);
   const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
+  // 暮色 2026-08-24：Token 输入框小眼睛开关
+  const [showGhToken, setShowGhToken] = useState(false);
   const [ghTesting, setGhTesting] = useState(false);
   const [ghTestResult, setGhTestResult] = useState<string>('');
 
@@ -2406,7 +2408,17 @@ const handleSaveTts = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><p className="text-[11px] text-slate-700 leading-relaxed"><b>三步搞定，不用梯子：</b><br/>① 点下面按钮跳到 GitHub 创建 Token<br/>② 复制 token，回来粘到下面框里<br/>③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code></p></div>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3"><p className="text-[10px] text-amber-800 leading-relaxed"><b>⚠️ 在 GitHub 那一页只改一处:</b><br/>把 <b>Expiration</b>(有效期)下拉框 <b>从 90天 改成 No expiration</b>（永不过期）。不改的话 90 天后 token 过期，备份会突然 401。<br/>其它都别动 —— Note 已经填好「Sully 备份」，<b>repo</b> 权限已经勾上了，直接拉到最底点绿色 <b>Generate token</b> 即可。</p></div>
               <a href="https://github.com/settings/tokens/new?scopes=repo&description=Sully%20%E5%A4%87%E4%BB%BD" target="_blank" rel="noopener noreferrer" className="block w-full py-3 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold text-center shadow-sm active:scale-95 transition-all">① 去 GitHub 创建 Token ↗</a>
-              <div><label className="text-[11px] text-slate-500 font-medium mb-1 block">② Personal Access Token</label><input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 focus:ring-1 focus:ring-slate-300 outline-none" /><p className="text-[10px] text-slate-400 mt-1 leading-relaxed">Token 只存在你本机，永远不会发到我们服务器。</p></div>
+              <div><label className="text-[11px] text-slate-500 font-medium mb-1 block">② Personal Access Token</label><div className="relative">
+                  <input type={showGhToken ? 'text' : 'password'} value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" className="w-full px-3 py-2.5 pr-10 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 focus:ring-1 focus:ring-slate-300 outline-none" />
+                  <button
+                      type="button"
+                      onClick={() => setShowGhToken(v => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                      title={showGhToken ? '隐藏 Token' : '显示 Token'}
+                  >
+                      {showGhToken ? <EyeSlash size={14} weight="bold" /> : <Eye size={14} weight="bold" />}
+                  </button>
+              </div><p className="text-[10px] text-slate-400 mt-1 leading-relaxed">Token 只存在你本机，永远不会发到我们服务器。</p></div>
               <button onClick={handleTestGithub} disabled={ghTesting || !ghToken.trim()} className="w-full py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all disabled:opacity-40">{ghTesting ? '连接中...' : '③ 测试并连接'}</button>
               {ghTestResult && (<p className={`text-[11px] text-center font-medium ${ghTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>{ghTestResult}</p>)}
               {ghTestResult.startsWith('✓') && cloudBackupConfig.githubOwner && (<div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1.5"><p className="text-[11px] text-emerald-800 font-medium">🎉 备份会上传到这里:</p><a href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`} target="_blank" rel="noopener noreferrer" className="block text-[10px] text-emerald-700 font-mono break-all underline hover:text-emerald-900">github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases ↗</a><p className="text-[10px] text-emerald-700 leading-relaxed">每次备份会创建一个新的 release（带时间戳）。想看 / 删除旧备份就去这个网址。</p></div>)}

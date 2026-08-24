@@ -32,11 +32,20 @@ export interface McpToolCallLoopOpts {
     historyMsgCount: number;
 }
 
+export interface McpToolCallRecord {
+    name: string;
+    label?: string;
+    serverId: string;
+    ok: boolean;
+}
+
 export interface McpToolCallLoopResult {
     data: any;
     rounds: number;
     /** 哪些 tool_call 实际跑了（含 failed），用于调试 / UI */
     executed: number;
+    /** 暮色 2026-08-24：实际跑过的工具记录（含成功/失败），传给 chat UI 渲染灰色小气泡 */
+    toolCallRecords?: McpToolCallRecord[];
 }
 
 /**
@@ -53,6 +62,8 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
     let messages = [...opts.baseMessages];
     let rounds = 0;
     let executed = 0;
+    // 暮色 2026-08-24：累积每轮实际跑过的工具（成功/失败都算），传给 chat UI 渲染灰色小气泡
+    const toolCallRecords: McpToolCallRecord[] = [];
 
     for (let r = 0; r < MAX_MCP_TOOL_ROUNDS; r++) {
         const allCalls = getToolCalls(data);
@@ -65,17 +76,8 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
         // 每次循环前重读 storage（用户可能改了 server/tool 开关）
         const allConfigs = mcpStorage.getAll();
 
-        // UI 反馈：每个并行调用各显示一条
-        if (opts.addToast) {
-            for (const tc of limitedCalls) {
-                const parsed = parseMcpToolName(tc.function?.name || '', allConfigs);
-                const tool = parsed
-                    ? allConfigs.find((c) => c.id === parsed.serverId)?.tools?.find((t) => t.name === parsed.toolName)
-                    : null;
-                const label = (tool?.description || tool?.name || tc.function?.name || 'MCP 工具').slice(0, 36);
-                opts.addToast(`🔧 正在调用 ${label}...`, 'info');
-            }
-        }
+        // 暮色 2026-08-24 删顶部 addToast：现在改用聊天流里的灰色小气泡（useChatAI 把 records 推到 setLastMcpToolCalls，
+        //   Chat.tsx useEffect 监听到 setMessages 加 type='mcp_tool_call' 消息，MessageItem 渲染）
 
         // 并行执行
         const promises = limitedCalls.map(async (tc: any) => {
@@ -128,6 +130,25 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
 
         const settled = await Promise.allSettled(promises);
         executed += limitedCalls.length;
+
+        // 暮色 2026-08-24：累积 records。失败的 content 以前缀 [MCP 工具失败/调用失败 标识
+        for (let i = 0; i < limitedCalls.length; i++) {
+            const tc = limitedCalls[i];
+            const r = settled[i];
+            const fname = tc.function?.name || '';
+            const parsed = parseMcpToolName(fname, allConfigs);
+            if (!parsed) continue;
+            const tool = allConfigs.find((c) => c.id === parsed.serverId)?.tools?.find((t) => t.name === parsed.toolName);
+            const fulfilled = r.status === 'fulfilled';
+            const content = fulfilled ? (r.value?.content ?? '') : '';
+            const ok = fulfilled && !(typeof content === 'string' && /^\[MCP 工具(调用)?(失败|返回 isError)/.test(content));
+            toolCallRecords.push({
+                name: parsed.toolName,
+                label: (tool?.description || tool?.name || fname).slice(0, 36),
+                serverId: parsed.serverId,
+                ok,
+            });
+        }
 
         // 追加 messages：assistant (with tool_calls) + 每个 tool 角色消息
         //   OpenAI 协议要求 tool_calls 必须在 assistant role 消息里 + tool 角色回传带 tool_call_id
@@ -187,7 +208,7 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
         }
     }
 
-    return { data, rounds, executed };
+    return { data, rounds, executed, toolCallRecords };
 }
 
 /** 兼容旧 import 路径（useChatAI 内嵌实现已删，改为从这里 import） */

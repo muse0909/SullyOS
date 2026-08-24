@@ -1807,7 +1807,21 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call';
+
+// 暮色 2026-08-24：MCP 工具调用摘要（聊天页灰色小气泡）
+//   useChatAI 跑完 processMcpToolCalls 后，把 executed 的工具列表塞进 chat 消息
+//   只记录"调了哪些 / 调了几个"，不重复发 addToast（addToast 已经在 mcpChatAI 内发了）
+export interface McpToolCallRecord {
+    /** 工具原始名（含 mcp__<serverId>__ 前缀已剥离） */
+    name: string;
+    /** UI 友好名（来自 tool.description / tool.name 截断 36 字） */
+    label?: string;
+    /** 所属 server id */
+    serverId: string;
+    /** 工具是否成功执行（false = callMcpTool 返回 success:false） */
+    ok: boolean;
+}
 
 export interface Message {
     id: number;
@@ -1818,6 +1832,8 @@ export interface Message {
     content: string;
     timestamp: number;
     metadata?: any;
+    /** 暮色 2026-08-24：当 type='mcp_tool_call' 时，列出本轮 AI 调用的工具 */
+    mcpToolCalls?: McpToolCallRecord[];
     replyTo?: {
         id: number;
         content: string;
@@ -1971,6 +1987,10 @@ export interface FullBackupData {
     bm25Mode?: string;
     lastActiveCharId?: string;
     eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
+    // 暮色 2026-08-24：MCP 服务器配置（mcpStorage 持久化的内容）
+    //   text_only + full 模式都带（配置属于"基础数据"，纯文字同步应该带上）
+    //   media_only 不带（媒体模式只同步图片/美化素材）
+    mcpServers?: McpServerConfig[];
 }
 
 // --- CLOUD BACKUP TYPES ---
@@ -2059,6 +2079,12 @@ export interface McpTool {
     //   兼容旧数据：旧工具没 enabled 字段时按 true 处理（mcpStorage.mergeTools 处理）
     //   server enabled=false 时，下面所有工具即使单独 enabled 也不能被注入模型（AND 逻辑）
     enabled?: boolean;
+    // 暮色 2026-08-24 12:45：是否注入 LLM context（按需注入策略）
+    //   跟 enabled 独立：enabled 控制"能不能调",inject 控制"要不要塞进 schema 吃 token"
+    //   暮色指定默认（mergeTools 里设）：search_web / search_web_deep / read_url /
+    //   capture_screenshot_url inject=true（高频），其他 inject=false
+    //   未注入的工具在 system prompt 末尾以"工具名列表"形式告诉 LLM 存在
+    inject?: boolean;
     // 暮色 2026-08-23 v2：风险标记（硬编码 KNOWN_SENSITIVE_TOOLS 决定，第一版只标记不自动禁用）
     isSensitive?: boolean;
     // 暮色 2026-08-23 v2.1：之前删过标记（mergeTools 时根据 deletedToolHistory 计算）

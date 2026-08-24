@@ -5,7 +5,7 @@
  *
  * 行为：
  *  - 清空所有 IDB 数据库（AetherOS_Data / ActiveMsg / 其他）
- *  - 清空 localStorage 大部分 key，保留云端备份相关（os_cloud_sync_config / os_sync_device_id / os_sync_*）
+ *  - 清空 localStorage 大部分 key，保留云端备份相关（os_cloud_backup_config / os_cloud_sync_config / os_sync_device_id / os_sync_*）
  *  - 不清远程（云端数据 + 配对码仍可用）
  *
  * 双重 confirm + prompt 输入"格式化"才执行。
@@ -27,8 +27,12 @@ export interface FactoryResetResult {
 
 /** 保留的 localStorage key 全名（云端备份相关） */
 const PRESERVED_LS_KEYS = new Set([
-    'os_cloud_sync_config',  // 配对码 + 设备 ID + 同步时间戳
-    'os_sync_device_id',     // 设备 UUID v4
+    // 暮色 2026-08-24 修：之前只保留了"配对码 / 设备 ID"（os_cloud_sync_config / os_sync_device_id），
+    //   真正的"云端备份配置"——GitHub token / repo / owner / WebDAV 账号密码等——在 os_cloud_backup_config
+    //   这个 key 里，之前没保留 → 格式化后用户要重新填一遍 token，违背暮色"保留云端备份设置"本意
+    'os_cloud_backup_config',  // GitHub/WebDAV 备份配置（token / repo / owner / 账号密码 等）
+    'os_cloud_sync_config',    // 配对码 + 设备 ID + 同步时间戳（多设备同步）
+    'os_sync_device_id',       // 设备 UUID v4
 ]);
 
 /** 保留的 localStorage key 前缀（云端备份相关） */

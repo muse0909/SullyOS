@@ -100,6 +100,8 @@ const McpToolRow: React.FC<{
 }> = ({ serverId, tool, serverEnabled, onChanged }) => {
     const [confirmingDelete, setConfirmingDelete] = useState(false);
     const enabled = tool.enabled ?? true;   // 兼容旧数据
+    // 暮色 2026-08-24 12:45：按需注入。缺字段视为 true（跟高频工具默认 true 一致）
+    const inject = tool.inject ?? true;
     const blocked = !serverEnabled;
 
     const toggle = (e?: React.ChangeEvent<HTMLInputElement>) => {
@@ -108,6 +110,15 @@ const McpToolRow: React.FC<{
         // 保险：阻止 change 事件冒泡
         e?.stopPropagation();
         mcpStorage.updateToolEnabled(serverId, tool.name, !enabled);
+        onChanged();
+    };
+    // 暮色 2026-08-24 12:45：切换"自动注入"开关
+    //   enabled=true 时才能切 inject（disabled 时 inject 也不生效，没必要显示）
+    const toggleInject = (e?: React.ChangeEvent<HTMLInputElement>) => {
+        if (blocked || !enabled) return;   // server/tool 禁用时不允许
+        e?.stopPropagation();
+        e?.stopPropagation();
+        mcpStorage.updateToolInject(serverId, tool.name, !inject);
         onChanged();
     };
     const handleDelete = () => {
@@ -149,6 +160,24 @@ const McpToolRow: React.FC<{
                         />
                         <div className="w-8 h-4 bg-slate-200 rounded-full peer peer-checked:bg-emerald-500 relative transition-colors">
                             <div className="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4" />
+                        </div>
+                    </label>
+                    {/* 暮色 2026-08-24 12:45：自动注入开关（按需注入）
+                        - 独立小开关，蓝色 = 自动注入 LLM schema
+                        - server disabled / tool disabled 时灰掉
+                        - 不存工具名进 system prompt 末尾，让 LLM 知道"有但没展示参数" */}
+                    <label
+                        className={`flex items-center cursor-pointer ${blocked || !enabled ? 'opacity-40 pointer-events-none' : ''}`}
+                        title={inject ? '已注入：工具 schema 进 LLM context' : '未注入：只告诉 LLM 工具有，schema 不进 context'}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={inject}
+                            onChange={toggleInject}
+                            className="sr-only peer"
+                        />
+                        <div className="w-7 h-3.5 bg-slate-200 rounded-full peer peer-checked:bg-sky-500 relative transition-colors">
+                            <div className="absolute top-0.5 left-0.5 w-2.5 h-2.5 bg-white rounded-full transition-transform peer-checked:translate-x-3.5" />
                         </div>
                     </label>
                     {!confirmingDelete ? (

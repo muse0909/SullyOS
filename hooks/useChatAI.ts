@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT, McpToolCallRecord } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
@@ -1081,6 +1081,12 @@ export const useChatAI = ({
             //   - protocol === 'openai' (默认): system 放 messages[0]
             // 任务 2：删 Claude 协议 —— protocol 只剩 'openai' | 'gemini'
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
+            // 暮色 2026-08-24 16:25 修 TDZ：上一版 commit cc65d528 把 let mcpHiddenNames 放在 line 1685
+            //   （if 块前），但 line 1096 content 字符串拼接先用了它 → 触发
+            //   ReferenceError: Cannot access 'mcpHiddenNames' before initialization
+            //   修：声明移到 useChatAI 函数体靠前位置（apiProtocol 之后、fullMessages 之前）
+            //   这样 line 1096 引用时变量已声明
+            let mcpHiddenNames: string[] = [];
             // 暮色 2026-07-27：Gemini 直连协议从「看 URL」改为「读 protocol」字段
             //   - UI 上 2 tab 切换（OpenAI / Gemini）— 任务 2 删了 Claude tab
             //   - 选 Gemini 时存到 protocol 字段，baseUrl/apiKey/model 复用同一组
@@ -1093,7 +1099,15 @@ export const useChatAI = ({
             const fullMessages: any[] = [
                 {
                     role: 'system',
-                    content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                    content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}` +
+                        // 暮色 2026-08-24 12:45：按需注入的 hidden 工具名拼到 system message
+                        //   实际生效：让 LLM 知道这些工具存在但不展示参数
+                        //   LLM 看到后会让用户先确认要调哪个 + 什么参数
+                        (mcpHiddenNames.length > 0
+                            ? `\n\n【按需注入的工具】以下 MCP 工具可用但未展示完整参数：${mcpHiddenNames.join('、')}。\n` +
+                              `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
+                              `不要猜测这些工具的参数格式，向用户询问需要的参数。`
+                            : ''),
                 },
                 ...cleanedApiMessages
             ];
@@ -1677,12 +1691,21 @@ ${visionDesc}
             //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤
             //   + maxTools 默认 10 截断（22 个 jina 工具不全注入）
             //   Gemini 协议下不注入（v3 commit 7 第一版只做 OpenAI）
+            // 暮色 2026-08-24 16:03 修：按需注入的 hidden 工具名拼到 system message
+            //   之前 commit c8b98ad0 误把 hiddenNames 写到 systemAppend（未声明变量），触发 ReferenceError
+            //   改成：在 if 块外声明 mcpHiddenNames，块内赋值，下面 fullMessages 构造时拼进 system message content
+            //   （实际声明挪到了 line 1083 之后，避免 TDZ）
+            // 暮色 2026-08-24 12:45：按需注入（tool.inject 字段）
+            //   mcpToOpenAITools 返回 { tools, hiddenNames }
+            //   - tools 进 toolsList（带 schema）
+            //   - hiddenNames 存到 mcpHiddenNames 外层变量，下面拼到 system prompt
             if (apiProtocol === 'openai') {
                 const mcpConfigs = mcpStorage.getAll();
-                const mcpTools = mcpToOpenAITools(mcpConfigs);
-                if (mcpTools.length > 0) {
-                    toolsList.push(...mcpTools);
+                const mcpResult = mcpToOpenAITools(mcpConfigs);
+                if (mcpResult.tools.length > 0) {
+                    toolsList.push(...mcpResult.tools);
                 }
+                mcpHiddenNames = mcpResult.hiddenNames;
             }
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
@@ -2151,6 +2174,30 @@ ${visionDesc}
                     historyMsgCount,
                 });
                 data = mcpResult.data;
+                // 暮色 2026-08-24 12:45 改：mcp 跑完立即 await DB.saveMessage(mcp_tool_call_msg) 存进 DB
+                //   原因：triggerAI 后面会把 final content 拆 chunk 模拟打字（line 4456-4462），
+                //   每 chunk saveMessage + setMessages 全量重读 DB。
+                //   之前把 setLastMcpToolCalls 推到 finally 块，结果 mcp_tool_call 加在 messages 末尾
+                //   （在所有 chunk 之后，"最底下"）。改方案：
+                //   - 在这里 await DB.saveMessage → mcp_tool_call 持久化到 DB
+                //   - 不依赖 Chat.tsx useEffect 加消息（那会跟分块保存的 setMessages 打架）
+                //   - 后续分块保存的 setMessages 全量重读 DB → mcp_tool_call 按 timestamp 排序
+                //     自动出现在 chunk 之前（正确位置）
+                //   - 删 Chat.tsx useEffect 监听（不再需要）+ 删 lastMcpToolCalls state
+                if (mcpResult.toolCallRecords && mcpResult.toolCallRecords.length > 0) {
+                    try {
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'mcp_tool_call',
+                            content: '',
+                            timestamp: Date.now(),
+                            mcpToolCalls: mcpResult.toolCallRecords,
+                        });
+                    } catch (e) {
+                        console.error('[MCP] saveMessage failed:', e);
+                    }
+                }
             }
 
 

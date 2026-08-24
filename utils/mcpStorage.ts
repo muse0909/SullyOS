@@ -187,6 +187,10 @@ export const mcpStorage = {
             const key = this.toolKey(serverId, nt.name);
             const old = oldMap.get(key);
             const enabled = old?.enabled ?? true;       // 兼容旧数据 + 保留用户已禁用
+            // 暮色 2026-08-24 12:45：inject 默认值
+            //   - 老数据（无 inject 字段）→ 用 DEFAULT_INJECT_TOOLS 集合判断（高频工具 true）
+            //   - 用户手动设过 → 保留（old?.inject）
+            const inject = old?.inject ?? DEFAULT_INJECT_TOOLS.has(nt.name);
             const isSensitive = isSensitiveToolName(nt.name);
             const wasDeleted = history.has(nt.name);   // v2.1 删过标记
             return {
@@ -194,6 +198,7 @@ export const mcpStorage = {
                 description: nt.description,
                 inputSchema: nt.inputSchema,
                 enabled,
+                inject,
                 isSensitive,
                 wasDeleted,
             };
@@ -207,6 +212,14 @@ export const mcpStorage = {
         const config = this.get(serverId);
         if (!config?.tools) return;
         const next = config.tools.map((t) => (t.name === toolName ? { ...t, enabled } : t));
+        this.update(serverId, { tools: next });
+    },
+
+    /** 暮色 2026-08-24 12:45：改单个工具 inject（按需注入开关） */
+    updateToolInject(serverId: string, toolName: string, inject: boolean): void {
+        const config = this.get(serverId);
+        if (!config?.tools) return;
+        const next = config.tools.map((t) => (t.name === toolName ? { ...t, inject } : t));
         this.update(serverId, { tools: next });
     },
 

@@ -20,7 +20,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 63; // Bumped: v63 add xiao_zhi_tiaos store（小纸条独立于 room_notes）
+const DB_VERSION = 64; // Bumped: v64 add mcp_call_logs store（暮色 8-24 E 计划：MCP 调用统计）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -156,6 +156,15 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_XIAO_ZHI_TIAOS)) {
           const xztStore = db.createObjectStore(STORE_XIAO_ZHI_TIAOS, { keyPath: 'id' });
           xztStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // 2026-08-24：MCP 工具调用日志（暮色 8-24 E 计划）
+      //   记录每次 callMcpTool 的 serverId / toolName / success / duration / cached
+      //   30 天保留，懒清理（打开统计面板时清）
+      if (!db.objectStoreNames.contains('mcp_call_logs')) {
+          const logsStore = db.createObjectStore('mcp_call_logs', { keyPath: 'id', autoIncrement: true });
+          logsStore.createIndex('serverId', 'serverId', { unique: false });
+          logsStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
 
       createStore(STORE_GROUPS, { keyPath: 'id' });

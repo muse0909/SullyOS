@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import { McpServerConfig, McpAuthType, McpErrorType, McpTool } from '../../types';
 import { mcpStorage } from '../../utils/mcpStorage';
 import { mcpClient, getMcpDefaultProxyHint } from '../../utils/mcpClient';
+import { getRecentMcpLogs, getMcpServerStats, clearOldMcpLogs, exportMcpLogsAsJson, McpCallLog, McpServerStats } from '../../utils/mcpStats';
 
 const KEY_INPUT_CLASS = "w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white transition-all";
 
@@ -626,6 +627,40 @@ const McpSettings: React.FC = () => {
     const [addDraft, setAddDraft] = useState<EditDraft>(blankDraft());
     const [addShowBearer, setAddShowBearer] = useState(false);
 
+    // 暮色 8-24 E 计划：调用统计折叠面板
+    const [statsExpanded, setStatsExpanded] = useState(false);
+    const [stats, setStats] = useState<McpServerStats[]>([]);
+    const [recentLogs, setRecentLogs] = useState<McpCallLog[]>([]);
+    const [statsLoading, setStatsLoading] = useState(false);
+
+    const loadStats = async () => {
+        setStatsLoading(true);
+        try {
+            // 懒清理：先清 30 天前的旧 log
+            await clearOldMcpLogs(30);
+            const [s, l] = await Promise.all([getMcpServerStats(), getRecentMcpLogs(20)]);
+            setStats(s);
+            setRecentLogs(l);
+        } catch (e) {
+            console.warn('[McpSettings] loadStats failed:', e);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    const handleExportLogs = async () => {
+        const json = await exportMcpLogsAsJson();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mcp-call-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     const refresh = () => setConfigs(mcpStorage.getAll());
 
     const handleAdd = () => {
@@ -713,6 +748,81 @@ const McpSettings: React.FC = () => {
                     + 添加 MCP 服务器
                 </button>
             )}
+
+            {/* 暮色 8-24 E 计划：调用统计面板 */}
+            <div className="mt-3 border-t border-slate-200/60 pt-3">
+                <button
+                    onClick={() => {
+                        const next = !statsExpanded;
+                        setStatsExpanded(next);
+                        if (next) loadStats();
+                    }}
+                    className="w-full flex items-center justify-between text-[11px] font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 py-2 px-3 rounded-xl transition-colors"
+                >
+                    <span>📊 调用统计（最近 30 天）</span>
+                    <span className={`text-slate-400 transition-transform ${statsExpanded ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {statsExpanded && (
+                    <div className="mt-2 bg-white/60 rounded-xl p-3 text-[11px]">
+                        {statsLoading ? (
+                            <div className="text-slate-400 text-center py-2">加载中...</div>
+                        ) : (
+                            <>
+                                {/* 按 server 分组 */}
+                                {stats.length > 0 ? (
+                                    <div className="mb-3">
+                                        <div className="text-[10px] font-bold text-slate-500 mb-1.5">按服务器</div>
+                                        {stats.map((s) => {
+                                            const cfg = configs.find((c) => c.id === s.serverId);
+                                            const name = cfg?.name || s.serverId.slice(0, 8);
+                                            const successRate = s.total > 0 ? Math.round((s.success / s.total) * 100) : 0;
+                                            return (
+                                                <div key={s.serverId} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0">
+                                                    <span className="text-slate-700 truncate flex-1">{name}</span>
+                                                    <span className="text-slate-500 ml-2">
+                                                        {s.total} 次 · {successRate}% 成功{s.cached > 0 ? ` · ${s.cached} 缓存` : ''}{s.avgDuration > 0 ? ` · ${s.avgDuration}ms` : ''}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="text-slate-400 text-center py-2 mb-2">还没有调用记录</div>
+                                )}
+
+                                {/* 最近 20 条 */}
+                                {recentLogs.length > 0 && (
+                                    <div className="mb-3">
+                                        <div className="text-[10px] font-bold text-slate-500 mb-1.5">最近 20 条</div>
+                                        {recentLogs.map((log) => (
+                                            <div key={log.id} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0 gap-2">
+                                                <span className="text-slate-700 truncate flex-1">
+                                                    {log.toolName}
+                                                    {log.cached && <span className="ml-1 text-amber-600 text-[10px]">（缓存）</span>}
+                                                </span>
+                                                <span className="text-slate-400 text-[10px] shrink-0">
+                                                    {new Date(log.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                                </span>
+                                                <span className={`shrink-0 text-[10px] font-bold ${log.success ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                                    {log.success ? '✓' : '✗'} {log.duration}ms
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* 导出按钮 */}
+                                <button
+                                    onClick={handleExportLogs}
+                                    className="w-full text-[10px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 py-1.5 rounded-lg transition-colors"
+                                >
+                                    导出全部日志为 JSON
+                                </button>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

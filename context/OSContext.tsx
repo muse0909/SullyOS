@@ -5,6 +5,8 @@ import { DB } from '../utils/db';
 // 暮色 2026-08-16：格式化系统保留云端备份
 import { factoryReset } from '../utils/factoryReset';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { VRScheduler } from '../utils/vrWorld/scheduler';
+import { runVRSession } from '../utils/vrWorld/runSession';
 import { parseMomentsActions } from '../utils/momentsActionParser';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
@@ -2283,9 +2285,43 @@ if (!isVisible || !isChattingWithThisChar) {
           void runProactive(charId);
       });
 
+      // 暮色 8-24：注册彼方 VRScheduler 触发回调
+      //   之前 VRScheduler.onTrigger 从来没被调用过 → triggerNow / checkOverdue 永远 no-op
+      //   → runVRSession 永远不跑 → LLM 不调 → 调用记录 0 / 小人不动
+      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string) => {
+          const currentCharacters = charactersRef.current;
+          const currentApiConfig = apiConfigRef.current;
+          const currentUserProfile = userProfileRef.current;
+          const currentGroups = groupsRef.current;
+          const currentRealtimeConfig = realtimeConfigRef.current;
+          const currentMemoryPalaceConfig = memoryPalaceConfigRef.current;
+          const char = currentCharacters.find(c => c.id === charId);
+          if (!char) {
+              console.warn(`[VR/Context] 触发回调收到未知 charId: ${charId}`);
+              return;
+          }
+          void runVRSession({
+              char,
+              characters: currentCharacters,
+              apiConfig: currentApiConfig,
+              userProfile: currentUserProfile,
+              groups: currentGroups,
+              realtimeConfig: currentRealtimeConfig,
+              memoryPalaceConfig: currentMemoryPalaceConfig,
+              updateCharacter,
+              forcedRoom: room as any,
+              forcedLetterId: letterId,
+          }).then((res) => {
+              if (!res.ok) {
+                  console.warn(`[VR/Context] runVRSession 失败: ${res.reason}`);
+              }
+          });
+      });
+
       return () => {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
+          VRScheduler.onTrigger(() => {});
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);

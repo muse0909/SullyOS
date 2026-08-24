@@ -1093,7 +1093,15 @@ export const useChatAI = ({
             const fullMessages: any[] = [
                 {
                     role: 'system',
-                    content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`,
+                    content: `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}` +
+                        // 暮色 2026-08-24 12:45：按需注入的 hidden 工具名拼到 system message
+                        //   实际生效：让 LLM 知道这些工具存在但不展示参数
+                        //   LLM 看到后会让用户先确认要调哪个 + 什么参数
+                        (mcpHiddenNames.length > 0
+                            ? `\n\n【按需注入的工具】以下 MCP 工具可用但未展示完整参数：${mcpHiddenNames.join('、')}。\n` +
+                              `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
+                              `不要猜测这些工具的参数格式，向用户询问需要的参数。`
+                            : ''),
                 },
                 ...cleanedApiMessages
             ];
@@ -1677,23 +1685,21 @@ ${visionDesc}
             //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤
             //   + maxTools 默认 10 截断（22 个 jina 工具不全注入）
             //   Gemini 协议下不注入（v3 commit 7 第一版只做 OpenAI）
+            // 暮色 2026-08-24 16:03 修：按需注入的 hidden 工具名拼到 system message
+            //   之前 commit c8b98ad0 误把 hiddenNames 写到 systemAppend（未声明变量），触发 ReferenceError
+            //   改成：在 if 块外声明 mcpHiddenNames，块内赋值，下面 fullMessages 构造时拼进 system message content
+            let mcpHiddenNames: string[] = [];
             // 暮色 2026-08-24 12:45：按需注入（tool.inject 字段）
             //   mcpToOpenAITools 返回 { tools, hiddenNames }
             //   - tools 进 toolsList（带 schema）
-            //   - hiddenNames 拼到 system prompt 末尾，告诉 LLM 这些工具存在但不展示参数
+            //   - hiddenNames 存到 mcpHiddenNames 外层变量，下面拼到 system prompt
             if (apiProtocol === 'openai') {
                 const mcpConfigs = mcpStorage.getAll();
                 const mcpResult = mcpToOpenAITools(mcpConfigs);
                 if (mcpResult.tools.length > 0) {
                     toolsList.push(...mcpResult.tools);
                 }
-                if (mcpResult.hiddenNames.length > 0) {
-                    const hiddenList = mcpResult.hiddenNames.join('、');
-                    systemAppend = (systemAppend ? systemAppend + '\n\n' : '') +
-                        `【按需注入的工具】以下 MCP 工具可用但未展示完整参数：${hiddenList}。\n` +
-                        `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
-                        `不要猜测这些工具的参数格式，向用户询问需要的参数。`;
-                }
+                mcpHiddenNames = mcpResult.hiddenNames;
             }
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;

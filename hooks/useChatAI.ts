@@ -1081,6 +1081,12 @@ export const useChatAI = ({
             //   - protocol === 'openai' (默认): system 放 messages[0]
             // 任务 2：删 Claude 协议 —— protocol 只剩 'openai' | 'gemini'
             const apiProtocol = (effectiveApi as any).protocol ?? apiConfig.protocol ?? 'openai';
+            // 暮色 2026-08-24 16:25 修 TDZ：上一版 commit cc65d528 把 let mcpHiddenNames 放在 line 1685
+            //   （if 块前），但 line 1096 content 字符串拼接先用了它 → 触发
+            //   ReferenceError: Cannot access 'mcpHiddenNames' before initialization
+            //   修：声明移到 useChatAI 函数体靠前位置（apiProtocol 之后、fullMessages 之前）
+            //   这样 line 1096 引用时变量已声明
+            let mcpHiddenNames: string[] = [];
             // 暮色 2026-07-27：Gemini 直连协议从「看 URL」改为「读 protocol」字段
             //   - UI 上 2 tab 切换（OpenAI / Gemini）— 任务 2 删了 Claude tab
             //   - 选 Gemini 时存到 protocol 字段，baseUrl/apiKey/model 复用同一组
@@ -1688,7 +1694,7 @@ ${visionDesc}
             // 暮色 2026-08-24 16:03 修：按需注入的 hidden 工具名拼到 system message
             //   之前 commit c8b98ad0 误把 hiddenNames 写到 systemAppend（未声明变量），触发 ReferenceError
             //   改成：在 if 块外声明 mcpHiddenNames，块内赋值，下面 fullMessages 构造时拼进 system message content
-            let mcpHiddenNames: string[] = [];
+            //   （实际声明挪到了 line 1083 之后，避免 TDZ）
             // 暮色 2026-08-24 12:45：按需注入（tool.inject 字段）
             //   mcpToOpenAITools 返回 { tools, hiddenNames }
             //   - tools 进 toolsList（带 schema）

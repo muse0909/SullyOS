@@ -1807,7 +1807,21 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call';
+
+// 暮色 2026-08-24：MCP 工具调用摘要（聊天页灰色小气泡）
+//   useChatAI 跑完 processMcpToolCalls 后，把 executed 的工具列表塞进 chat 消息
+//   只记录"调了哪些 / 调了几个"，不重复发 addToast（addToast 已经在 mcpChatAI 内发了）
+export interface McpToolCallRecord {
+    /** 工具原始名（含 mcp__<serverId>__ 前缀已剥离） */
+    name: string;
+    /** UI 友好名（来自 tool.description / tool.name 截断 36 字） */
+    label?: string;
+    /** 所属 server id */
+    serverId: string;
+    /** 工具是否成功执行（false = callMcpTool 返回 success:false） */
+    ok: boolean;
+}
 
 export interface Message {
     id: number;
@@ -1818,6 +1832,8 @@ export interface Message {
     content: string;
     timestamp: number;
     metadata?: any;
+    /** 暮色 2026-08-24：当 type='mcp_tool_call' 时，列出本轮 AI 调用的工具 */
+    mcpToolCalls?: McpToolCallRecord[];
     replyTo?: {
         id: number;
         content: string;

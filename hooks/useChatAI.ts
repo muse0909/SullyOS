@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT, McpToolCallRecord } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
@@ -690,6 +690,9 @@ export const useChatAI = ({
     const [searchStatus, setSearchStatus] = useState<string>('');
     const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [xhsStatus, setXhsStatus] = useState<string>('');
+    // 暮色 2026-08-24：MCP 工具调用摘要。processMcpToolCalls 跑完调 setLastMcpToolCalls(records)，
+    //   Chat.tsx 用 useEffect 监听这个 state，把 records 渲染成一条 type='mcp_tool_call' 的灰色小气泡
+    const [lastMcpToolCalls, setLastMcpToolCalls] = useState<McpToolCallRecord[]>([]);
     const [emotionStatus, setEmotionStatus] = useState<string>('');
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
     const [memoryPalaceResult, setMemoryPalaceResult] = useState<import('../utils/memoryPalace/pipeline').PipelineResult | null>(null);
@@ -2151,6 +2154,11 @@ ${visionDesc}
                     historyMsgCount,
                 });
                 data = mcpResult.data;
+                // 暮色 2026-08-24：把 executed 详情推给 chat UI 渲染灰色小气泡
+                //   保留空数组情况（理论上不会发生，mcp__ 工具调了 processMcpToolCalls 一定会有 records）
+                if (mcpResult.toolCallRecords && mcpResult.toolCallRecords.length > 0) {
+                    setLastMcpToolCalls(mcpResult.toolCallRecords);
+                }
             }
 
 
@@ -4742,6 +4750,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         lastTokenUsage,
         tokenBreakdown,
         setLastTokenUsage, // Allow manual reset if needed
+        // 暮色 2026-08-24：MCP 工具调用摘要
+        lastMcpToolCalls,
+        setLastMcpToolCalls,
         triggerAI,
         startProactiveChat,
         stopProactiveChat,

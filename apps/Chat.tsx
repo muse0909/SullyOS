@@ -411,7 +411,7 @@ const Chat: React.FC = () => {
         }
     }, [char?.id]);
 
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, lastMcpToolCalls, setLastMcpToolCalls, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -430,6 +430,26 @@ const Chat: React.FC = () => {
         onImageBedWarning: pushImageBedWarning,
         updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
     });
+
+    // 暮色 2026-08-24：MCP 工具调用完成 → 在聊天流里插一条灰色小气泡（type='mcp_tool_call'）
+    //   useChatAI 内部 processMcpToolCalls 跑完调 setLastMcpToolCalls(records)
+    //   这里监听 state 变化，插消息后立刻清空避免重复触发
+    useEffect(() => {
+        if (!lastMcpToolCalls || lastMcpToolCalls.length === 0 || !char) return;
+        const records = lastMcpToolCalls;
+        const msgId = Date.now();
+        setMessages(curr => [...curr, {
+            id: msgId,
+            charId: char.id,
+            role: 'system',
+            type: 'mcp_tool_call',
+            content: '',
+            timestamp: Date.now(),
+            mcpToolCalls: records,
+        }]);
+        // 立刻清空，避免下次 triggerAI 没调工具时 setLastMcpToolCalls([]) 引用变化再触发一遍
+        setLastMcpToolCalls([]);
+    }, [lastMcpToolCalls, char?.id, setMessages, setLastMcpToolCalls]);
 
     // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
     // 暮色 2026-08-01 反馈四轮：

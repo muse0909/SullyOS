@@ -442,7 +442,7 @@ const MessageItem = React.memo(({
                     🔧 已调用 {records.length} 个工具{records.length > 0 ? '：' : ''}
                     {records.map((r, i) => (
                         <span key={`${r.serverId}-${r.name}-${i}`} className={r.ok ? '' : 'line-through opacity-60'}>
-                            {i > 0 ? ' · ' : ''}{r.label || r.name}{r.ok ? '' : ' (失败)'}
+                            {i > 0 ? ' · ' : ''}{r.label || r.name}{r.ok ? '' : ' (失败)'}{r.cached ? ' （缓存）' : ''}
                         </span>
                     ))}
                 </div>

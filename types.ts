@@ -1821,6 +1821,8 @@ export interface McpToolCallRecord {
     serverId: string;
     /** 工具是否成功执行（false = callMcpTool 返回 success:false） */
     ok: boolean;
+    /** 暮色 2026-08-24：是否命中缓存（5 分钟内同工具同参数复用结果，不重跑） */
+    cached?: boolean;
 }
 
 export interface Message {
@@ -2055,6 +2057,8 @@ export type McpCallResult =
         content: McpContentBlock[];
         isError: boolean;     // MCP 工具返回的 isError（业务失败），调用本身是成功的
         structuredContent?: any;
+        /** 暮色 2026-08-24：是否命中缓存（true = 没真跑,从 utils/mcpCache 取的旧结果） */
+        cached?: boolean;
     }
     | {
         success: false;

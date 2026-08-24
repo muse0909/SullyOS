@@ -21,6 +21,8 @@
 
 import { McpServerConfig, McpTool, McpErrorType, McpCallResult, McpContentBlock, McpCallError } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
+import { getCachedMcpResult, setCachedMcpResult } from './mcpCache';
+import { logMcpCall, summarizeArgsForLog } from './mcpStats';
 
 // ==================== 常量 ====================
 
@@ -438,6 +440,33 @@ export const mcpClient = {
         args: Record<string, any> = {},
         options: { timeoutMs?: number; signal?: AbortSignal } = {}
     ): Promise<McpCallResult> {
+        const argsPreview = summarizeArgsForLog(args);
+
+        // 0. 缓存拦截（暮色 8-24 D 计划：5 分钟内同工具同参数直接复用）
+        //   失败不缓存 → 缓存只在最末尾成功返回时写
+        //   暮色 8-24 E 计划：缓存命中也写一条日志（cached=true, duration=0）
+        const cached = getCachedMcpResult(config.id, toolName, args);
+        if (cached) {
+            logMcpCall({
+                serverId: config.id, toolName, argsPreview,
+                success: true, duration: 0, timestamp: Date.now(), cached: true,
+            });
+            return cached;
+        }
+
+        const startTime = Date.now();
+        // 暮色 8-24 E 计划：所有 return 路径都走 logAndReturn（成功/失败/超时/取消）
+        const logAndReturn = (r: McpCallResult): McpCallResult => {
+            const duration = Date.now() - startTime;
+            logMcpCall({
+                serverId: config.id, toolName, argsPreview,
+                success: r.success,
+                errorMsg: r.success ? undefined : r.error.message,
+                duration, timestamp: Date.now(), cached: false,
+            });
+            return r;
+        };
+
         // 1. 合并超时：options > config > default
         const effectiveTimeoutMs = options.timeoutMs ?? config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const controller = new AbortController();
@@ -461,11 +490,11 @@ export const mcpClient = {
         if (externalSignal) {
             if (externalSignal.aborted) {
                 clearTimeout(timer);
-                return {
+                return logAndReturn({
                     success: false,
                     content: [],
                     error: { category: 'cancelled', code: 'CANCELLED_BEFORE_START', message: '调用在开始前已被取消' },
-                };
+                });
             }
             externalSignal.addEventListener('abort', onExternalAbort, { once: true });
         }
@@ -477,7 +506,7 @@ export const mcpClient = {
                 try {
                     await this.initialize(config);
                 } catch (e: any) {
-                    return classifyAndWrap(e, 'INIT_FAILED');
+                    return logAndReturn(classifyAndWrap(e, 'INIT_FAILED'));
                 }
             }
 
@@ -490,7 +519,7 @@ export const mcpClient = {
                 // 区分 timeout / cancelled：isTimeout flag 优先
                 if (controller.signal.aborted) {
                     if (isTimeout) {
-                        return {
+                        return logAndReturn({
                             success: false,
                             content: [],
                             error: {
@@ -498,15 +527,15 @@ export const mcpClient = {
                                 code: `TIMEOUT_${effectiveTimeoutMs}MS`,
                                 message: `工具调用超时（${effectiveTimeoutMs}ms）`,
                             },
-                        };
+                        });
                     }
-                    return {
+                    return logAndReturn({
                         success: false,
                         content: [],
                         error: { category: 'cancelled', code: 'CANCELLED', message: '调用被外部取消' },
-                    };
+                    });
                 }
-                return classifyAndWrap(e, 'POST_FAILED');
+                return logAndReturn(classifyAndWrap(e, 'POST_FAILED'));
             }
 
             const { response } = postResult;
@@ -522,7 +551,7 @@ export const mcpClient = {
                     category = 'protocol';
                     errorCode = 'INVALID_PARAMS';
                 }
-                return {
+                return logAndReturn({
                     success: false,
                     content: [],
                     error: {
@@ -530,25 +559,28 @@ export const mcpClient = {
                         code: errorCode,
                         message: sanitizeErrorMessage(`工具 ${toolName} 错误: ${response.error.message || '未知错误'}`),
                     },
-                };
+                });
             }
 
             const result = response?.result;
             if (!result) {
-                return {
+                return logAndReturn({
                     success: false,
                     content: [],
                     error: { category: 'protocol', code: 'NO_RESULT', message: 'tools/call 无 result 字段' },
-                };
+                });
             }
 
             // 5. 正常返回 — 保留完整 content + isError + structuredContent
-            return {
+            //   暮色 8-24 D 计划：成功结果写缓存（5 分钟内同工具同参数直接复用）
+            const successResult: McpCallResult = {
                 success: true,
                 content: Array.isArray(result.content) ? result.content as McpContentBlock[] : [],
                 isError: !!result.isError,
                 structuredContent: result.structuredContent,
             };
+            setCachedMcpResult(config.id, toolName, args, successResult);
+            return logAndReturn(successResult);
         } finally {
             clearTimeout(timer);
             if (externalSignal) {

@@ -57,6 +57,89 @@ export interface McpToolCallLoopResult {
  *   解析：parseMcpToolName=null → "工具不存在或已被禁用" 错误回传
  *   校验：每次循环前重读 storage（用户可能改开关）
  */
+/** 暮色 2026-08-24 17:35：Gemini 协议响应解析（mcpChatAI 内部使用）
+ *   跟 useChatAI line 2003-2025 同款逻辑：识别 text + functionCall，functionCall 转 OpenAI 兼容 tool_calls
+ *   保留 thoughtSignature 用于 follow-up 重新构造请求
+ *   暮色 5 点补充：thoughtSignature 必填 */
+function parseGeminiResponse(geminiJson: any): {
+    text: string;
+    toolCalls: Array<{ id: string; type: string; function: { name: string; arguments: string }; thoughtSignature?: string }>;
+    finishReason: string;
+} {
+    const geminiParts = geminiJson?.candidates?.[0]?.content?.parts || [];
+    let text = '';
+    const toolCalls: any[] = [];
+    geminiParts.forEach((part: any) => {
+        if (part?.text) text += part.text;
+        if (part?.functionCall) {
+            const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            toolCalls.push({
+                id: callId,
+                type: 'function',
+                function: {
+                    name: part.functionCall.name,
+                    arguments: JSON.stringify(part.functionCall.args || {}),
+                },
+                thoughtSignature: part.thoughtSignature,
+            });
+        }
+    });
+    const finishRaw = geminiJson?.candidates?.[0]?.finishReason || 'STOP';
+    const hasToolCalls = toolCalls.length > 0;
+    const finishReason = hasToolCalls
+        ? 'tool_calls'
+        : (finishRaw === 'STOP' ? 'stop' : finishRaw.toLowerCase());
+    return { text, toolCalls, finishReason };
+}
+
+/** 暮色 2026-08-24 17:35：Gemini 协议 follow-up 请求（暮色 5 点补充完整版）
+ *   暮色 5 点补充：
+ *     1. functionResponse role=user（不是 tool）—— Gemini 协议特性
+ *     2. 并行调用：一条 user 消息的 parts 数组里塞对应数量 functionResponse，顺序对应
+ *     3. 最后一条 role=user 兜底
+ *     4. thoughtSignature 每轮传递
+ *     5. maxOutputTokens 工具调用模式下 4096（避免截断）
+ *   复用 useChatAI 的 parseGeminiResponse 思想（抽出来作为 mcpChatAI 内部函数） */
+async function doGeminiFollowUp(opts: McpToolCallLoopOpts, contents: any[]): Promise<{ text: string; toolCalls: any[]; finishReason: string } | null> {
+    const model = opts.effectiveApi.model;
+    const apiKey = (opts.effectiveApi as any).geminiApiKey || opts.effectiveApi.apiKey;
+    const baseUrl = (opts.effectiveApi as any).geminiBaseUrl || opts.baseUrl;
+    if (!apiKey || !baseUrl) {
+        console.error('[MCP/Gemini] 缺 apiKey 或 baseUrl');
+        return null;
+    }
+    const url = `${baseUrl.replace(/\/+$/, '')}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    const body: any = {
+        contents,
+        generationConfig: {
+            temperature: opts.effectiveApi.temperature ?? 0.85,
+            maxOutputTokens: 4096,
+        },
+    };
+    const systemMsg = opts.baseMessages.find((m: any) => m.role === 'system');
+    if (systemMsg) {
+        const text = typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content);
+        body.systemInstruction = { role: 'system', parts: [{ text }] };
+    }
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            console.error('[MCP/Gemini] follow-up HTTP', res.status, await res.text().catch(() => ''));
+            return null;
+        }
+        const json = await res.json();
+        return parseGeminiResponse(json);
+    } catch (e) {
+        console.error('[MCP/Gemini] follow-up 失败:', e);
+        return null;
+    }
+}
+
 export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<McpToolCallLoopResult> {
     let data = opts.initialData;
     let messages = [...opts.baseMessages];
@@ -152,52 +235,136 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
 
         // 追加 messages：assistant (with tool_calls) + 每个 tool 角色消息
         //   OpenAI 协议要求 tool_calls 必须在 assistant role 消息里 + tool 角色回传带 tool_call_id
-        messages.push({
-            role: 'assistant',
-            content: data.choices?.[0]?.message?.content || '',
-            tool_calls: limitedCalls.map((tc: any) => ({
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '{}' },
-            })),
-        });
-        settled.forEach((r, i) => {
-            const fallback = { toolCallId: limitedCalls[i]?.id || 'unknown', content: `[MCP 工具调用失败: ${(r as any).reason?.message || 'unknown'}]` };
-            const res = r.status === 'fulfilled' ? r.value : fallback;
-            messages.push({ role: 'tool', tool_call_id: res.toolCallId, content: res.content });
-        });
+        //   Gemini 协议用 functionCall parts + functionResponse parts（一条 user 消息里并行塞多个）
+        //   暮色 5 点补充：
+        //     - functionResponse role=user（不是 tool）
+        //     - 并行调用：一条 user 消息的 parts 数组塞对应数量 functionResponse，顺序对应
+        //     - thoughtSignature 每轮传递（functionCall part 上带）
+        //     - 最后一条 role=user 兜底
+        if (opts.apiProtocol === 'gemini') {
+            // Gemini 协议：assistant 用 functionCall parts（带 thoughtSignature）
+            const functionCallParts = limitedCalls.map((tc: any) => {
+                const part: any = {
+                    functionCall: {
+                        name: tc.function?.name || '',
+                        args: tc.function?.arguments ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments) : {},
+                    },
+                };
+                if (tc.thoughtSignature) {
+                    part.thoughtSignature = tc.thoughtSignature;
+                }
+                return part;
+            });
+            messages.push({ role: 'model', parts: functionCallParts });
+
+            // Gemini 协议：一条 user 消息，parts 数组里塞所有 functionResponse，顺序对应
+            const functionResponseParts: any[] = [];
+            settled.forEach((r, i) => {
+                const tc = limitedCalls[i];
+                const fallback = { toolCallId: tc?.id || 'unknown', content: `[MCP 工具调用失败: ${(r as any).reason?.message || 'unknown'}]` };
+                const res = r.status === 'fulfilled' ? r.value : fallback;
+                functionResponseParts.push({
+                    functionResponse: {
+                        name: tc?.function?.name || '',
+                        response: { content: res.content },
+                    },
+                });
+            });
+            messages.push({ role: 'user', parts: functionResponseParts });
+        } else {
+            // OpenAI 协议：assistant(tool_calls) + 每条 tool 消息
+            messages.push({
+                role: 'assistant',
+                content: data.choices?.[0]?.message?.content || '',
+                tool_calls: limitedCalls.map((tc: any) => ({
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '{}' },
+                })),
+            });
+            settled.forEach((r, i) => {
+                const fallback = { toolCallId: limitedCalls[i]?.id || 'unknown', content: `[MCP 工具调用失败: ${(r as any).reason?.message || 'unknown'}]` };
+                const res = r.status === 'fulfilled' ? r.value : fallback;
+                messages.push({ role: 'tool', tool_call_id: res.toolCallId, content: res.content });
+            });
+        }
 
         // 重新调 LLM（非流式 — 暮色规格：流式模式也不在 MCP 循环里走流，避免边流边调）
         // 暮色 2026-08-23 23:32：messages 末尾追加"不要复读工具描述"引导
         //   原因：截图显示 LLM 第二次响应复读了 read_url tool 的完整 description
         //   （100+ 字符的 jina 官方 description 被复读到 chat 消息里）
         //   引导让 LLM 给"基于工具结果"的简洁回答，不复读工具功能说明
-        const followMessages = [
-            ...messages,
-            { role: 'system', content: '【系统提示】基于上面的工具调用结果给用户简洁、友好的回答。不要复读或复述工具的 description/功能说明。直接告诉用户工具调用的结果。' },
-        ];
-        const followBody: any = {
-            model: opts.effectiveApi.model,
-            messages: followMessages,
-            temperature: opts.effectiveApi.temperature ?? 0.85,
-            max_tokens: 8000,
-            stream: false,
-        };
-        try {
-            data = await safeFetchJson(`${opts.baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers: opts.headers,
-                body: JSON.stringify(followBody),
-            }, 2, 0, opts.apiProtocol);
-            opts.updateTokenUsage(data, opts.historyMsgCount, `mcp-r${r + 1}`);
-            rounds++;
-        } catch (e: any) {
-            // 重发失败：保留最后一次响应（MCP 循环不应该崩聊天主流程）
-            console.error('[MCP Loop] 重发 LLM 失败:', e);
-            if (opts.addToast) {
-                opts.addToast(`MCP 工具调用后续请求失败：${e?.message || e}`, 'error');
+        // 暮色 2026-08-24：Gemini 协议 follow-up
+        //   暮色 5 点补充：thoughtSignature 每轮传递 + maxOutputTokens 4096 + 末尾 role=user 兜底
+        if (opts.apiProtocol === 'gemini') {
+            // 构造 Gemini contents 数组（从 OpenAI 风格 messages 转）
+            //   暮色 5 点补充：最后一条 role=user 兜底
+            const contents: any[] = [];
+            for (const m of messages) {
+                if (m.role === 'system') continue;  // Gemini 协议 system 在 systemInstruction 顶层
+                if (m.role === 'model') {
+                    contents.push(m);
+                } else if (m.role === 'user') {
+                    if (Array.isArray(m.parts)) {
+                        contents.push(m);
+                    } else {
+                        contents.push({
+                            role: 'user',
+                            parts: [{ text: m.content || '' }],
+                        });
+                    }
+                }
             }
-            break;
+            // 5 点补充兜底：最后一条 role 必须是 user
+            if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
+                contents.push({ role: 'user', parts: [{ text: '(继续)' }] });
+            }
+            const geminiRes = await doGeminiFollowUp(opts, contents);
+            if (geminiRes) {
+                data = {
+                    choices: [{
+                        message: {
+                            role: 'assistant',
+                            content: geminiRes.text || '',
+                            tool_calls: geminiRes.toolCalls.length > 0 ? geminiRes.toolCalls : undefined,
+                        },
+                        finish_reason: geminiRes.finishReason,
+                    }],
+                };
+                opts.updateTokenUsage({}, opts.historyMsgCount, `mcp-r${r + 1}`);
+                rounds++;
+            } else {
+                break;
+            }
+        } else {
+            // OpenAI 协议 follow-up
+            const followMessages = [
+                ...messages,
+                { role: 'system', content: '【系统提示】基于上面的工具调用结果给用户简洁、友好的回答。不要复读或复述工具的 description/功能说明。直接告诉用户工具调用的结果。' },
+            ];
+            const followBody: any = {
+                model: opts.effectiveApi.model,
+                messages: followMessages,
+                temperature: opts.effectiveApi.temperature ?? 0.85,
+                max_tokens: 8000,
+                stream: false,
+            };
+            try {
+                data = await safeFetchJson(`${opts.baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: opts.headers,
+                    body: JSON.stringify(followBody),
+                }, 2, 0, opts.apiProtocol);
+                opts.updateTokenUsage(data, opts.historyMsgCount, `mcp-r${r + 1}`);
+                rounds++;
+            } catch (e: any) {
+                // 重发失败：保留最后一次响应（MCP 循环不应该崩聊天主流程）
+                console.error('[MCP Loop] 重发 LLM 失败:', e);
+                if (opts.addToast) {
+                    opts.addToast(`MCP 工具调用后续请求失败：${e?.message || e}`, 'error');
+                }
+                break;
+            }
         }
     }
 

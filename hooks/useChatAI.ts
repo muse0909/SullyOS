@@ -2170,7 +2170,7 @@ ${visionDesc}
             //   只在 OpenAI 协议下做（Gemini / Claude 留后续 commit）
             //   流式模式：主 LLM 调用已经完整收尾，data 完整，MCP 循环在 data 之后跑
             //   退出条件：data 里没有 mcp__ tool_calls（让外层现有 tool_call 解析继续处理 nonMcp）
-            if (apiProtocol === 'openai' && getToolCalls(data).some((tc: any) => (tc.function?.name || '').startsWith('mcp__'))) {
+            if ((apiProtocol === 'openai' || apiProtocol === 'gemini') && getToolCalls(data).some((tc: any) => (tc.function?.name || '').startsWith('mcp__'))) {
                 const mcpResult = await processMcpToolCalls({
                     initialData: data,
                     baseMessages: fullMessages,

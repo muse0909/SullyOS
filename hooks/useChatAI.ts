@@ -823,6 +823,12 @@ export const useChatAI = ({
         }
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
+        // 暮色 2026-08-24 修：原来在 processMcpToolCalls 后立即 setLastMcpToolCalls，
+        //   但 triggerAI 后面还有 streaming chunk setMessages 全量重读 DB，
+        //   会覆盖 Chat.tsx useEffect 加的 mcp_tool_call 消息。
+        //   改成在 finally 块里 set（所有 setMessages 全量重读之后）。
+        let mcpToolCallRecords: McpToolCallRecord[] | null = null;
+
         setIsTyping(true);
         setRecallStatus('');
 
@@ -2154,10 +2160,12 @@ ${visionDesc}
                     historyMsgCount,
                 });
                 data = mcpResult.data;
-                // 暮色 2026-08-24：把 executed 详情推给 chat UI 渲染灰色小气泡
-                //   保留空数组情况（理论上不会发生，mcp__ 工具调了 processMcpToolCalls 一定会有 records）
+                // 暮色 2026-08-24 改：只把 records 存到外层变量，set 推迟到 finally 块
+                //   原因：triggerAI 后面还有 streaming chunk setMessages 全量重读，
+                //   立即 setLastMcpToolCalls 会让 Chat.tsx useEffect 提前 setMessages 加 mcp_tool_call 消息，
+                //   然后被后续 setMessages 全量重读覆盖掉
                 if (mcpResult.toolCallRecords && mcpResult.toolCallRecords.length > 0) {
-                    setLastMcpToolCalls(mcpResult.toolCallRecords);
+                    mcpToolCallRecords = mcpResult.toolCallRecords;
                 }
             }
 
@@ -4570,6 +4578,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            // 暮色 2026-08-24：在所有 setMessages 全量重读之后，再 setLastMcpToolCalls
+            //   这样 Chat.tsx useEffect 触发的 setMessages(curr => [...curr, mcp_tool_call_msg])
+            //   是最后一次 setMessages，不会被任何后续覆盖
+            if (mcpToolCallRecords && mcpToolCallRecords.length > 0) {
+                setLastMcpToolCalls(mcpToolCallRecords);
+            }
             KeepAlive.stop();
             setIsTyping(false);
             setRecallStatus('');

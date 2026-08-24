@@ -76,17 +76,8 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
         // 每次循环前重读 storage（用户可能改了 server/tool 开关）
         const allConfigs = mcpStorage.getAll();
 
-        // UI 反馈：每个并行调用各显示一条
-        if (opts.addToast) {
-            for (const tc of limitedCalls) {
-                const parsed = parseMcpToolName(tc.function?.name || '', allConfigs);
-                const tool = parsed
-                    ? allConfigs.find((c) => c.id === parsed.serverId)?.tools?.find((t) => t.name === parsed.toolName)
-                    : null;
-                const label = (tool?.description || tool?.name || tc.function?.name || 'MCP 工具').slice(0, 36);
-                opts.addToast(`🔧 正在调用 ${label}...`, 'info');
-            }
-        }
+        // 暮色 2026-08-24 删顶部 addToast：现在改用聊天流里的灰色小气泡（useChatAI 把 records 推到 setLastMcpToolCalls，
+        //   Chat.tsx useEffect 监听到 setMessages 加 type='mcp_tool_call' 消息，MessageItem 渲染）
 
         // 并行执行
         const promises = limitedCalls.map(async (tc: any) => {

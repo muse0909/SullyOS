@@ -259,12 +259,58 @@ export const mcpToGeminiTools = (configs: McpServerConfig[], options: McpToLlmOp
         tools: {
             functionDeclarations: limited.map(({ server, tool }) => ({
                 name: buildMcpToolName(server.id, tool.name, allServerIds),
-                description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
-                parameters: tool.inputSchema ?? { type: 'object', properties: {} },
+                // 暮色 2026-08-24 17:15：Gemini 工具 description 截 300 字符
+                //   之前用 80(给 OpenAI 用),Gemini 协议截 300 字符更安全
+                //   Gemini 文档允许 description 最大 1024 字符,但 22 个工具全量时太大
+                //   按需注入后只有 inject=true 的进 schema,但 description 还是很啰嗦
+                description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 300),
+                // 暮色 2026-08-24 17:15：Gemini 协议 schema 必须清洗
+                //   Gemini v1beta 用 OpenAPI 3.0,type 字段大写
+                //   不接受 additionalProperties / $schema(返回 400)
+                //   清洗函数 cleanSchemaForGemini 递归处理
+                parameters: cleanSchemaForGemini(tool.inputSchema ?? { type: 'object', properties: {} }),
             })),
         },
         hiddenNames: hidden.map(({ tool }) => tool.name),
     };
+};
+
+/**
+ * 暮色 2026-08-24 17:15：Gemini v1beta 协议 schema 清洗
+ *   暮色给的踩坑清单：
+ *     - 递归删 additionalProperties（Gemini 见到就 400）
+ *     - 删 $schema 字段
+ *     - type 字段全大写（STRING / NUMBER / OBJECT / ARRAY / BOOLEAN）
+ *   暮色 5 点补充第 1 条。
+ *   description 截 300 字符是单独处理（在 mcpToGeminiTools 那层，不进 schema 清洗）
+ */
+export const cleanSchemaForGemini = (schema: any): any => {
+    if (schema === null || schema === undefined) return schema;
+    if (Array.isArray(schema)) {
+        return schema.map((item) => cleanSchemaForGemini(item));
+    }
+    if (typeof schema !== 'object') return schema;
+
+    const out: Record<string, any> = {};
+    for (const [key, value] of Object.entries(schema)) {
+        // 1. 删 additionalProperties 和 $schema
+        if (key === 'additionalProperties' || key === '$schema') continue;
+
+        if (key === 'type' && typeof value === 'string') {
+            // 2. type 字段全大写（Gemini v1beta OpenAPI 3.0 要求）
+            const upper = value.toUpperCase();
+            if (['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT', 'NULL'].includes(upper)) {
+                out[key] = upper;
+            } else {
+                // 未知 type 字段（jina 偶尔传奇怪 type 如 "any"）→ 降级为 STRING 兜底
+                out[key] = 'STRING';
+            }
+        } else {
+            // 3. 递归处理子结构
+            out[key] = cleanSchemaForGemini(value);
+        }
+    }
+    return out;
 };
 
 /** 截断工具 description 到 max 字符（带省略号） */

@@ -31,7 +31,7 @@ import { parseMomentsActions } from '../utils/momentsActionParser';
 // 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表
 //   暮色 8-23 22:11 规格：合并时 MCP 工具放在现有工具后面，不影响原有功能
 //   第一版只接 OpenAI 协议（Gemini / Claude 留下一版）
-import { mcpToOpenAITools, parseMcpToolName } from '../utils/mcpToLlmTools';
+import { mcpToOpenAITools, mcpToGeminiTools, parseMcpToolName, cleanSchemaForGemini } from '../utils/mcpToLlmTools';
 import { mcpClient } from '../utils/mcpClient';
 import { mcpToOpenAIToolResult } from '../utils/mcpResultConverter';
 import { mcpStorage } from '../utils/mcpStorage';
@@ -1699,13 +1699,31 @@ ${visionDesc}
             //   mcpToOpenAITools 返回 { tools, hiddenNames }
             //   - tools 进 toolsList（带 schema）
             //   - hiddenNames 存到 mcpHiddenNames 外层变量，下面拼到 system prompt
-            if (apiProtocol === 'openai') {
+            // 暮色 2026-08-24 17:15：Gemini 协议也注入 mcp 工具（提交 1）
+            //   mcpToGeminiTools 返回 { tools: {functionDeclarations: [...]}, hiddenNames }
+            //   tools.tools.functionDeclarations 进 toolsList（结构跟 OpenAI 工具统一）
+            //   后续 line 1743 把 toolsList 转成 Gemini 协议 functionDeclarations 时用
+            //   cleanSchemaForGemini 清洗（删 additionalProperties / $schema + type 大写 + 截 300 字符）
+            if (apiProtocol === 'openai' || apiProtocol === 'gemini') {
                 const mcpConfigs = mcpStorage.getAll();
-                const mcpResult = mcpToOpenAITools(mcpConfigs);
-                if (mcpResult.tools.length > 0) {
-                    toolsList.push(...mcpResult.tools);
+                if (apiProtocol === 'openai') {
+                    const mcpResult = mcpToOpenAITools(mcpConfigs);
+                    if (mcpResult.tools.length > 0) {
+                        toolsList.push(...mcpResult.tools);
+                    }
+                    mcpHiddenNames = mcpResult.hiddenNames;
+                } else {
+                    // Gemini 协议：转成 OpenAIToolDef 格式进 toolsList（统一工具数组）
+                    //   后续 line 1743 用 cleanSchemaForGemini 转换
+                    const mcpResult = mcpToGeminiTools(mcpConfigs);
+                    if (mcpResult.tools.functionDeclarations.length > 0) {
+                        toolsList.push(...mcpResult.tools.functionDeclarations.map((fd) => ({
+                            type: 'function',
+                            function: { name: fd.name, description: fd.description, parameters: fd.parameters },
+                        })));
+                    }
+                    mcpHiddenNames = mcpResult.hiddenNames;
                 }
-                mcpHiddenNames = mcpResult.hiddenNames;
             }
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
@@ -1745,9 +1763,15 @@ ${visionDesc}
                         functionDeclarations: toolsList.map((t: any) => ({
                             name: t.function.name,
                             description: t.function.description,
-                            // OpenAI JSON Schema type 字段是小写（object/string/number/boolean/array/integer），
-                            // Gemini OpenAPI 3.0 要求大写（OBJECT/STRING/...）—— 直接传小写会被 Google 拒 400
-                            parameters: convertJsonSchemaToGemini(t.function.parameters),
+                            // 暮色 2026-08-24 17:15：改用 cleanSchemaForGemini（utils/mcpToLlmTools）
+                            //   暮色 5 点补充：
+                            //     - 删 additionalProperties（Gemini 见到 400）
+                            //     - 删 $schema 字段
+                            //     - type 字段全大写（OBJECT/STRING/NUMBER/...）
+                            //     - description 截 300 字符（Gemini 文档最大 1024，但太啰嗦截短）
+                            //   老的 convertJsonSchemaToGemini 只做了 type 大写，
+                            //   没删 additionalProperties / $schema → 已弃用，统一用 cleanSchemaForGemini
+                            parameters: cleanSchemaForGemini(t.function.parameters),
                         })),
                     }];
                 }
@@ -1848,25 +1872,10 @@ ${visionDesc}
             //   - role: 'assistant' → 'model'，role: 'tool' → user/functionResponse
             //   - 收集 tool_call_id → function name 映射，让 functionResponse 知道工具名
             //
-            //   配套 convertJsonSchemaToGemini：把 OpenAI JSON Schema 转 Gemini OpenAPI 3.0
-            //   - 关键差异：type 字段 OpenAI 小写（object/string）→ Gemini 大写（OBJECT/STRING）
-            //   - 直接传小写 Google 拒 400 INVALID_ARGUMENT
-            // 用 function 声明（hoisted）—— 避免被 line 1710 的 geminiRequestBody.tools 构造前置引用时报 TDZ
-            //   之前 const 箭头函数声明在 line 1820+，但 line 1710 已经调它 → ReferenceError
-            //   function 声明会被 JS 引擎 hoisted 到作用域顶部，前置引用安全
-            function convertJsonSchemaToGemini(schema: any): any {
-                if (!schema || typeof schema !== 'object') return schema;
-                if (Array.isArray(schema)) return schema.map(convertJsonSchemaToGemini);
-                const out: any = {};
-                for (const [key, value] of Object.entries(schema)) {
-                    if (key === 'type' && typeof value === 'string') {
-                        out[key] = value.toUpperCase();
-                    } else {
-                        out[key] = convertJsonSchemaToGemini(value);
-                    }
-                }
-                return out;
-            }
+            // 暮色 2026-08-24 17:15：完全弃用 useChatAI 内嵌的 convertJsonSchemaToGemini
+            //   改用 utils/mcpToLlmTools 的 cleanSchemaForGemini（更完整：删 additionalProperties /
+            //   $schema + type 大写 + 兜底 STRING）。老函数 2026-08-24 16:21 加 function 声明是为
+            //   修 ReferenceError，现在整体被替代了。
             function messagesToGeminiRequest(openaiMessages: any[], baseSystemText: string): any {
                 const systemMsgs = openaiMessages.filter((m: any) => m.role === 'system');
                 const systemAppend = systemMsgs.map((m: any) =>
@@ -2161,7 +2170,7 @@ ${visionDesc}
             //   只在 OpenAI 协议下做（Gemini / Claude 留后续 commit）
             //   流式模式：主 LLM 调用已经完整收尾，data 完整，MCP 循环在 data 之后跑
             //   退出条件：data 里没有 mcp__ tool_calls（让外层现有 tool_call 解析继续处理 nonMcp）
-            if (apiProtocol === 'openai' && getToolCalls(data).some((tc: any) => (tc.function?.name || '').startsWith('mcp__'))) {
+            if ((apiProtocol === 'openai' || apiProtocol === 'gemini') && getToolCalls(data).some((tc: any) => (tc.function?.name || '').startsWith('mcp__'))) {
                 const mcpResult = await processMcpToolCalls({
                     initialData: data,
                     baseMessages: fullMessages,

@@ -1677,11 +1677,22 @@ ${visionDesc}
             //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤
             //   + maxTools 默认 10 截断（22 个 jina 工具不全注入）
             //   Gemini 协议下不注入（v3 commit 7 第一版只做 OpenAI）
+            // 暮色 2026-08-24 12:45：按需注入（tool.inject 字段）
+            //   mcpToOpenAITools 返回 { tools, hiddenNames }
+            //   - tools 进 toolsList（带 schema）
+            //   - hiddenNames 拼到 system prompt 末尾，告诉 LLM 这些工具存在但不展示参数
             if (apiProtocol === 'openai') {
                 const mcpConfigs = mcpStorage.getAll();
-                const mcpTools = mcpToOpenAITools(mcpConfigs);
-                if (mcpTools.length > 0) {
-                    toolsList.push(...mcpTools);
+                const mcpResult = mcpToOpenAITools(mcpConfigs);
+                if (mcpResult.tools.length > 0) {
+                    toolsList.push(...mcpResult.tools);
+                }
+                if (mcpResult.hiddenNames.length > 0) {
+                    const hiddenList = mcpResult.hiddenNames.join('、');
+                    systemAppend = (systemAppend ? systemAppend + '\n\n' : '') +
+                        `【按需注入的工具】以下 MCP 工具可用但未展示完整参数：${hiddenList}。\n` +
+                        `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
+                        `不要猜测这些工具的参数格式，向用户询问需要的参数。`;
                 }
             }
             const apiT0 = performance.now();

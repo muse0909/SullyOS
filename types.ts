@@ -2079,6 +2079,12 @@ export interface McpTool {
     //   兼容旧数据：旧工具没 enabled 字段时按 true 处理（mcpStorage.mergeTools 处理）
     //   server enabled=false 时，下面所有工具即使单独 enabled 也不能被注入模型（AND 逻辑）
     enabled?: boolean;
+    // 暮色 2026-08-24 12:45：是否注入 LLM context（按需注入策略）
+    //   跟 enabled 独立：enabled 控制"能不能调",inject 控制"要不要塞进 schema 吃 token"
+    //   暮色指定默认（mergeTools 里设）：search_web / search_web_deep / read_url /
+    //   capture_screenshot_url inject=true（高频），其他 inject=false
+    //   未注入的工具在 system prompt 末尾以"工具名列表"形式告诉 LLM 存在
+    inject?: boolean;
     // 暮色 2026-08-23 v2：风险标记（硬编码 KNOWN_SENSITIVE_TOOLS 决定，第一版只标记不自动禁用）
     isSensitive?: boolean;
     // 暮色 2026-08-23 v2.1：之前删过标记（mergeTools 时根据 deletedToolHistory 计算）

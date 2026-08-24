@@ -8,9 +8,15 @@
 //   - 截断顺序：按用户启用顺序 / 最近使用频率 / A-Z
 //   - 不做 Claude（暮色已删）
 //
+// 暮色 2026-08-24 12:45：按需注入（tool.inject 字段）
+//   - 工具加 inject 字段（独立于 enabled）：enabled 控制"能不能调",inject 控制"要不要塞 schema"
+//   - inject=true 的进 tools 数组（带完整 schema）
+//   - inject=false 的**不**进 tools 数组，但 hiddenNames 列表返回工具名
+//   - useChatAI 把 hiddenNames 拼到 system prompt 末尾，告诉 LLM 这些工具存在但不展示参数
+//
 // 两套输出：
-//   - mcpToOpenAITools(configs) → { type: 'function', function: { name, description, parameters } }[]
-//   - mcpToGeminiTools(configs)  → { functionDeclarations: [{ name, description, parameters }] }
+//   - mcpToOpenAITools(configs) → { tools: OpenAIToolDef[], hiddenNames: string[] }
+//   - mcpToGeminiTools(configs)  → { tools: GeminiToolDef, hiddenNames: string[] }
 //
 // 反向：
 //   - parseMcpToolName(modelName, allConfigs) → { serverId, toolName } | null
@@ -130,19 +136,33 @@ export interface McpToLlmOptions {
  *   - server.enabled === true
  *   - tool.enabled !== false（兼容旧数据：缺字段视为 true）
  *   - !tool.isSensitive || server.allowSensitive === true
+ *   - tool.inject !== false（暮色 2026-08-24 12:45：按需注入，缺字段视为 true 兼容旧数据）
+ *
+ * 同时返回"未注入但 enabled"的工具名列表（hiddenNames）：
+ *   - 暮色 2026-08-24 12:45：未注入的工具在 system prompt 末尾告诉 LLM "还有这些工具可用"
+ *   - 工具 enabled=false 或 isSensitive 未授权 → 不算"可用"，不进 hiddenNames
  */
-export const filterInjectableTools = (configs: McpServerConfig[]): Array<{ server: McpServerConfig; tool: McpTool }> => {
-    const out: Array<{ server: McpServerConfig; tool: McpTool }> = [];
+export const filterInjectableTools = (configs: McpServerConfig[]): {
+    injectable: Array<{ server: McpServerConfig; tool: McpTool }>;
+    hidden: Array<{ server: McpServerConfig; tool: McpTool }>;
+} => {
+    const injectable: Array<{ server: McpServerConfig; tool: McpTool }> = [];
+    const hidden: Array<{ server: McpServerConfig; tool: McpTool }> = [];
     for (const server of configs) {
         if (!server.enabled) continue;
         if (!server.tools) continue;
         for (const tool of server.tools) {
-            if (tool.enabled === false) continue;  // 显式禁用
-            if (tool.isSensitive && !server.allowSensitive) continue;  // 敏感工具未授权
-            out.push({ server, tool });
+            if (tool.enabled === false) continue;  // 显式禁用 — 完全不参与（不进 injectable 也不进 hidden）
+            if (tool.isSensitive && !server.allowSensitive) continue;  // 敏感未授权 — 同上
+            if (tool.inject === false) {
+                // 暮色 2026-08-24 12:45：按需注入 false → 进 hidden（告诉 LLM 存在）
+                hidden.push({ server, tool });
+                continue;
+            }
+            injectable.push({ server, tool });
         }
     }
-    return out;
+    return { injectable, hidden };
 };
 
 /**
@@ -167,32 +187,49 @@ export interface OpenAIToolDef {
 }
 
 /**
- * 把 configs 转成 OpenAI tools 数组
+ * 暮色 2026-08-24 12:45：mcpToOpenAITools 返回结构
+ *   - tools: 进 LLM tools 数组的（有完整 schema）
+ *   - hiddenNames: 启用了但没注入的工具名（拼到 system prompt 末尾）
+ */
+export interface McpToLlmResult<T> {
+    tools: T;
+    hiddenNames: string[];
+}
+
+/**
+ * 把 configs 转成 OpenAI tools 数组 + hidden 列表
  * 暮色规格：22 个 jina 工具不全注入，按 maxTools 截断
  */
-export const mcpToOpenAITools = (configs: McpServerConfig[], options: McpToLlmOptions = {}): OpenAIToolDef[] => {
+export const mcpToOpenAITools = (configs: McpServerConfig[], options: McpToLlmOptions = {}): McpToLlmResult<OpenAIToolDef[]> => {
     const maxTools = options.maxTools ?? DEFAULT_MAX_TOOLS;
     const allServerIds = configs.map((c) => c.id);
-    const filtered = filterInjectableTools(configs);
+    const { injectable, hidden } = filterInjectableTools(configs);
     // 稳定排序：server.id → tool.name
-    filtered.sort((a, b) => {
+    injectable.sort((a, b) => {
         const s = a.server.id.localeCompare(b.server.id);
         return s !== 0 ? s : a.tool.name.localeCompare(b.tool.name);
     });
-    const limited = limitTools(filtered, maxTools);
-    return limited.map(({ server, tool }) => ({
-        type: 'function',
-        function: {
-            name: buildMcpToolName(server.id, tool.name, allServerIds),
-            // 暮色 2026-08-23 23:32：截断 description 到 80 字符
-            //   原因：完整 description 注入 LLM 后，LLM 第二次响应会"复读" description
-            //   截图显示的"readable markdown format. Perfect for reading articles..."
-            //   100+ 字符的 jina 官方 description 被 LLM 复读到 chat 消息里
-            //   80 字符足够 LLM 理解工具用途，但不会被复读
-            description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
-            parameters: tool.inputSchema ?? { type: 'object', properties: {} },
-        },
-    }));
+    hidden.sort((a, b) => {
+        const s = a.server.id.localeCompare(b.server.id);
+        return s !== 0 ? s : a.tool.name.localeCompare(b.tool.name);
+    });
+    const limited = limitTools(injectable, maxTools);
+    return {
+        tools: limited.map(({ server, tool }) => ({
+            type: 'function',
+            function: {
+                name: buildMcpToolName(server.id, tool.name, allServerIds),
+                // 暮色 2026-08-23 23:32：截断 description 到 80 字符
+                //   原因：完整 description 注入 LLM 后，LLM 第二次响应会"复读" description
+                //   截图显示的"readable markdown format. Perfect for reading articles..."
+                //   100+ 字符的 jina 官方 description 被 LLM 复读到 chat 消息里
+                //   80 字符足够 LLM 理解工具用途，但不会被复读
+                description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
+                parameters: tool.inputSchema ?? { type: 'object', properties: {} },
+            },
+        })),
+        hiddenNames: hidden.map(({ tool }) => tool.name),
+    };
 };
 
 // ==================== Gemini 协议 ====================
@@ -205,21 +242,28 @@ export interface GeminiToolDef {
     }>;
 }
 
-export const mcpToGeminiTools = (configs: McpServerConfig[], options: McpToLlmOptions = {}): GeminiToolDef => {
+export const mcpToGeminiTools = (configs: McpServerConfig[], options: McpToLlmOptions = {}): McpToLlmResult<GeminiToolDef> => {
     const maxTools = options.maxTools ?? DEFAULT_MAX_TOOLS;
     const allServerIds = configs.map((c) => c.id);
-    const filtered = filterInjectableTools(configs);
-    filtered.sort((a, b) => {
+    const { injectable, hidden } = filterInjectableTools(configs);
+    injectable.sort((a, b) => {
         const s = a.server.id.localeCompare(b.server.id);
         return s !== 0 ? s : a.tool.name.localeCompare(b.tool.name);
     });
-    const limited = limitTools(filtered, maxTools);
+    hidden.sort((a, b) => {
+        const s = a.server.id.localeCompare(b.server.id);
+        return s !== 0 ? s : a.tool.name.localeCompare(b.tool.name);
+    });
+    const limited = limitTools(injectable, maxTools);
     return {
-        functionDeclarations: limited.map(({ server, tool }) => ({
-            name: buildMcpToolName(server.id, tool.name, allServerIds),
-            description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
-            parameters: tool.inputSchema ?? { type: 'object', properties: {} },
-        })),
+        tools: {
+            functionDeclarations: limited.map(({ server, tool }) => ({
+                name: buildMcpToolName(server.id, tool.name, allServerIds),
+                description: truncateDescription(tool.description ?? `MCP tool: ${tool.name}`, 80),
+                parameters: tool.inputSchema ?? { type: 'object', properties: {} },
+            })),
+        },
+        hiddenNames: hidden.map(({ tool }) => tool.name),
     };
 };
 

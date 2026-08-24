@@ -690,9 +690,6 @@ export const useChatAI = ({
     const [searchStatus, setSearchStatus] = useState<string>('');
     const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [xhsStatus, setXhsStatus] = useState<string>('');
-    // 暮色 2026-08-24：MCP 工具调用摘要。processMcpToolCalls 跑完调 setLastMcpToolCalls(records)，
-    //   Chat.tsx 用 useEffect 监听这个 state，把 records 渲染成一条 type='mcp_tool_call' 的灰色小气泡
-    const [lastMcpToolCalls, setLastMcpToolCalls] = useState<McpToolCallRecord[]>([]);
     const [emotionStatus, setEmotionStatus] = useState<string>('');
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
     const [memoryPalaceResult, setMemoryPalaceResult] = useState<import('../utils/memoryPalace/pipeline').PipelineResult | null>(null);
@@ -822,12 +819,6 @@ export const useChatAI = ({
             }
         }
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); return; }
-
-        // 暮色 2026-08-24 修：原来在 processMcpToolCalls 后立即 setLastMcpToolCalls，
-        //   但 triggerAI 后面还有 streaming chunk setMessages 全量重读 DB，
-        //   会覆盖 Chat.tsx useEffect 加的 mcp_tool_call 消息。
-        //   改成在 finally 块里 set（所有 setMessages 全量重读之后）。
-        let mcpToolCallRecords: McpToolCallRecord[] | null = null;
 
         setIsTyping(true);
         setRecallStatus('');
@@ -2160,12 +2151,29 @@ ${visionDesc}
                     historyMsgCount,
                 });
                 data = mcpResult.data;
-                // 暮色 2026-08-24 改：只把 records 存到外层变量，set 推迟到 finally 块
-                //   原因：triggerAI 后面还有 streaming chunk setMessages 全量重读，
-                //   立即 setLastMcpToolCalls 会让 Chat.tsx useEffect 提前 setMessages 加 mcp_tool_call 消息，
-                //   然后被后续 setMessages 全量重读覆盖掉
+                // 暮色 2026-08-24 12:45 改：mcp 跑完立即 await DB.saveMessage(mcp_tool_call_msg) 存进 DB
+                //   原因：triggerAI 后面会把 final content 拆 chunk 模拟打字（line 4456-4462），
+                //   每 chunk saveMessage + setMessages 全量重读 DB。
+                //   之前把 setLastMcpToolCalls 推到 finally 块，结果 mcp_tool_call 加在 messages 末尾
+                //   （在所有 chunk 之后，"最底下"）。改方案：
+                //   - 在这里 await DB.saveMessage → mcp_tool_call 持久化到 DB
+                //   - 不依赖 Chat.tsx useEffect 加消息（那会跟分块保存的 setMessages 打架）
+                //   - 后续分块保存的 setMessages 全量重读 DB → mcp_tool_call 按 timestamp 排序
+                //     自动出现在 chunk 之前（正确位置）
+                //   - 删 Chat.tsx useEffect 监听（不再需要）+ 删 lastMcpToolCalls state
                 if (mcpResult.toolCallRecords && mcpResult.toolCallRecords.length > 0) {
-                    mcpToolCallRecords = mcpResult.toolCallRecords;
+                    try {
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'mcp_tool_call',
+                            content: '',
+                            timestamp: Date.now(),
+                            mcpToolCalls: mcpResult.toolCallRecords,
+                        });
+                    } catch (e) {
+                        console.error('[MCP] saveMessage failed:', e);
+                    }
                 }
             }
 
@@ -4578,12 +4586,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
-            // 暮色 2026-08-24：在所有 setMessages 全量重读之后，再 setLastMcpToolCalls
-            //   这样 Chat.tsx useEffect 触发的 setMessages(curr => [...curr, mcp_tool_call_msg])
-            //   是最后一次 setMessages，不会被任何后续覆盖
-            if (mcpToolCallRecords && mcpToolCallRecords.length > 0) {
-                setLastMcpToolCalls(mcpToolCallRecords);
-            }
             KeepAlive.stop();
             setIsTyping(false);
             setRecallStatus('');
@@ -4764,9 +4766,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         lastTokenUsage,
         tokenBreakdown,
         setLastTokenUsage, // Allow manual reset if needed
-        // 暮色 2026-08-24：MCP 工具调用摘要
-        lastMcpToolCalls,
-        setLastMcpToolCalls,
         triggerAI,
         startProactiveChat,
         stopProactiveChat,

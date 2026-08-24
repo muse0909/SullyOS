@@ -411,7 +411,7 @@ const Chat: React.FC = () => {
         }
     }, [char?.id]);
 
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, lastMcpToolCalls, setLastMcpToolCalls, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -431,53 +431,11 @@ const Chat: React.FC = () => {
         updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
     });
 
-    // 暮色 2026-08-24：MCP 工具调用完成 → 在聊天流里插一条灰色小气泡（type='mcp_tool_call'）
-    //   useChatAI 内部 processMcpToolCalls 跑完调 setLastMcpToolCalls(records)
-    //   这里监听 state 变化，**插在最近 user message 之后最靠后的 assistant 消息后面**
-    //   暮色 12:13 反馈：消息要"留在对话中"——所以除了 setMessages 还要存 DB，否则下次 triggerAI
-    //   全量重读（DB.getRecentMessagesByCharId）会覆盖掉内存里这条灰色气泡
-    useEffect(() => {
-        if (!lastMcpToolCalls || lastMcpToolCalls.length === 0 || !char) return;
-        const records = lastMcpToolCalls;
-        const msgId = Date.now();
-        const newMsg = {
-            id: msgId,
-            charId: char.id,
-            role: 'system' as const,
-            type: 'mcp_tool_call' as const,
-            content: '',
-            timestamp: msgId,
-            mcpToolCalls: records,
-        };
-        setMessages(curr => {
-            // 1. 找最近 user message 的索引
-            let userIdx = -1;
-            for (let i = curr.length - 1; i >= 0; i--) {
-                if (curr[i].role === 'user') { userIdx = i; break; }
-            }
-            // 找不到 user message（AI 主动消息 proactive chat 调 mcp）→ fallback 插末尾
-            if (userIdx === -1) {
-                return [...curr, newMsg];
-            }
-            // 2. 找 user message 之后最靠后的 assistant 消息（可能 AI 先输出了"好的让我读一下"等开场白，再调 mcp）
-            //    mcp_tool_call 插在那条 assistant 消息**之后**
-            let insertAfter = userIdx;
-            for (let i = userIdx + 1; i < curr.length; i++) {
-                if (curr[i].role === 'assistant') { insertAfter = i; }
-            }
-            return [
-                ...curr.slice(0, insertAfter + 1),
-                newMsg,
-                ...curr.slice(insertAfter + 1),
-            ];
-        });
-        // 暮色 2026-08-24 12:13：存 DB 让它持久化（不存的话下次 triggerAI 全量重读就消失）
-        //   DB.saveMessage 接受带 id 的对象，会用我们传的 id（store.add 行为）
-        //   失败时 console.error 不影响 UI 渲染（UI 已经有这条消息了）
-        DB.saveMessage(newMsg).catch((e) => console.error('[MCP] saveMessage failed:', e));
-        // 立刻清空，避免下次 triggerAI 没调工具时 setLastMcpToolCalls([]) 引用变化再触发一遍
-        setLastMcpToolCalls([]);
-    }, [lastMcpToolCalls, char?.id, setMessages, setLastMcpToolCalls]);
+    // 暮色 2026-08-24 12:45 删：MCP 工具调用灰色小气泡的渲染
+    //   之前 Chat.tsx 用 useEffect 监听 lastMcpToolCalls，setMessages 加 mcp_tool_call 消息。
+    //   改成 useChatAI 在 processMcpToolCalls 后 await DB.saveMessage(mcp_tool_call) 存进 DB，
+    //   后续 triggerAI 分块保存的 setMessages 全量重读 DB → mcp_tool_call 自动按 timestamp
+    //   出现在 chunk 之前（正确位置）。这样不需要 Chat.tsx 主动 setMessages，避开跟分块保存的 race。
 
     // ─── 一起听：用户开启 → 给当前角色发一条 system 通知 + 触发 AI 主动回应 ────────────
     // 暮色 2026-08-01 反馈四轮：

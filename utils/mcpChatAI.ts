@@ -37,6 +37,8 @@ export interface McpToolCallRecord {
     label?: string;
     serverId: string;
     ok: boolean;
+    /** 暮色 2026-08-24：是否命中缓存 */
+    cached?: boolean;
 }
 
 export interface McpToolCallLoopResult {
@@ -208,7 +210,7 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
             }
             // 实际调用（错误统一在 callMcpTool 内被收成 McpCallResult，不抛）
             const result = await mcpClient.callMcpTool(config, parsed.toolName, args, { timeoutMs: config.timeoutMs });
-            return { toolCallId, content: mcpToOpenAIToolResult(result, toolCallId).content };
+            return { toolCallId, content: mcpToOpenAIToolResult(result, toolCallId).content, __mcpRawResult: result };
         });
 
         const settled = await Promise.allSettled(promises);
@@ -225,11 +227,16 @@ export async function processMcpToolCalls(opts: McpToolCallLoopOpts): Promise<Mc
             const fulfilled = r.status === 'fulfilled';
             const content = fulfilled ? (r.value?.content ?? '') : '';
             const ok = fulfilled && !(typeof content === 'string' && /^\[MCP 工具(调用)?(失败|返回 isError)/.test(content));
+            // 暮色 8-24 D 计划：result.cached 标识本次是否命中缓存（callMcpTool 入口拦截）
+            //   从 fulfilled 的 value 里拿原始 result 才能拿到 cached 标记（mcpToOpenAIToolResult 包装过丢了字段）
+            const rawResult = (fulfilled && (r.value as any)?.__mcpRawResult) as McpCallResult | undefined;
+            const cached = !!(rawResult?.cached);
             toolCallRecords.push({
                 name: parsed.toolName,
                 label: (tool?.description || tool?.name || fname).slice(0, 36),
                 serverId: parsed.serverId,
                 ok,
+                cached,
             });
         }
 

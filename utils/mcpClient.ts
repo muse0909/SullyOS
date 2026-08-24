@@ -21,6 +21,7 @@
 
 import { McpServerConfig, McpTool, McpErrorType, McpCallResult, McpContentBlock, McpCallError } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
+import { getCachedMcpResult, setCachedMcpResult } from './mcpCache';
 
 // ==================== 常量 ====================
 
@@ -438,6 +439,11 @@ export const mcpClient = {
         args: Record<string, any> = {},
         options: { timeoutMs?: number; signal?: AbortSignal } = {}
     ): Promise<McpCallResult> {
+        // 0. 缓存拦截（暮色 8-24 D 计划：5 分钟内同工具同参数直接复用）
+        //   失败不缓存 → 缓存只在最末尾成功返回时写
+        const cached = getCachedMcpResult(config.id, toolName, args);
+        if (cached) return cached;
+
         // 1. 合并超时：options > config > default
         const effectiveTimeoutMs = options.timeoutMs ?? config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const controller = new AbortController();
@@ -543,12 +549,15 @@ export const mcpClient = {
             }
 
             // 5. 正常返回 — 保留完整 content + isError + structuredContent
-            return {
+            //   暮色 8-24 D 计划：成功结果写缓存（5 分钟内同工具同参数直接复用）
+            const successResult: McpCallResult = {
                 success: true,
                 content: Array.isArray(result.content) ? result.content as McpContentBlock[] : [],
                 isError: !!result.isError,
                 structuredContent: result.structuredContent,
             };
+            setCachedMcpResult(config.id, toolName, args, successResult);
+            return successResult;
         } finally {
             clearTimeout(timer);
             if (externalSignal) {

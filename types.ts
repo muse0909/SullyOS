@@ -1987,6 +1987,10 @@ export interface FullBackupData {
     bm25Mode?: string;
     lastActiveCharId?: string;
     eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
+    // 暮色 2026-08-24：MCP 服务器配置（mcpStorage 持久化的内容）
+    //   text_only + full 模式都带（配置属于"基础数据"，纯文字同步应该带上）
+    //   media_only 不带（媒体模式只同步图片/美化素材）
+    mcpServers?: McpServerConfig[];
 }
 
 // --- CLOUD BACKUP TYPES ---

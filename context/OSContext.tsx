@@ -3426,6 +3426,19 @@ if (!isVisible || !isChattingWithThisChar) {
                   }
                   return Object.keys(flags).length > 0 ? flags : undefined;
               })() : undefined,
+              // 暮色 2026-08-24：MCP 服务器配置同步到云端
+              //   mcpStorage 用 localStorage 存（os_mcp_servers_v1），从 localStorage 读
+              //   解析失败 / 没数据 → undefined（不写进 backupData，避免 import 时覆盖成空）
+              mcpServers: (mode === 'text_only' || mode === 'full') ? (() => {
+                  try {
+                      const raw = localStorage.getItem('os_mcp_servers_v1');
+                      if (!raw) return undefined;
+                      const parsed = JSON.parse(raw);
+                      return Array.isArray(parsed) ? parsed : undefined;
+                  } catch {
+                      return undefined;
+                  }
+              })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -3938,6 +3951,17 @@ if (!isVisible || !isChattingWithThisChar) {
                   if (typeof val === 'string' && key.startsWith('sullyos_')) {
                       localStorage.setItem(key, val);
                   }
+              }
+          }
+
+          // 暮色 2026-08-24：MCP 服务器配置恢复
+          //   mcpStorage 没有 "replaceAll" 公开接口，直接 localStorage.setItem 覆盖最稳
+          //   只在数组非空时写回，避免空数组覆盖掉本机已有的 mcp 配置
+          if (Array.isArray(data.mcpServers) && data.mcpServers.length > 0) {
+              try {
+                  localStorage.setItem('os_mcp_servers_v1', JSON.stringify(data.mcpServers));
+              } catch (e) {
+                  console.warn('[importSystem] restore mcpServers failed:', e);
               }
           }
           

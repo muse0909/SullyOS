@@ -2745,6 +2745,24 @@ export interface StorySessionSummary {
     lastUpdatedAt: number;
 }
 
+/**
+ * 剧情模式状态快照(暮色 8-25 第四步)
+ *   - 每条 assistant 消息的 metadata 里存一份
+ *   - 表层:角色当下表现(表情/动作) — 给"对方"看的
+ *   - 底层:角色真实内心(真实情绪/想什么) — 隐藏,默认折叠
+ *   - 字段都自由字符串(不做枚举),prompt 引导风格
+ */
+export interface StoryStatusSnapshot {
+    surface: {
+        emotion: string;    // 例:'心动' / '故作镇定' / '有点慌'
+        action: string;     // 例:'微微低头' / '攥紧裙边' / '挤出一个笑'
+    };
+    deep: {
+        realEmotion: string; // 例:'紧张' / '想靠近但不敢' / '其实很担心你'
+        thought: string;    // 例:'该不该告诉他那件事'
+    };
+}
+
 export interface StoryTheaterPreset {
     id: string;
     name: string;

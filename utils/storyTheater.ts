@@ -15,6 +15,7 @@ import type {
     CharacterProfile,
     Message,
     StorySessionSummary,
+    StoryStatusSnapshot,
     StoryTheaterEntry,
     UserProfile,
 } from '../types';
@@ -95,6 +96,90 @@ export async function appendSessionMessage(
         content,
         metadata: { ...metadata, source: 'story-theater', entryId },
     });
+}
+
+/* ─── LLM 回复解析:状态栏 + 正文(暮色 8-25 第四步) ── */
+
+/**
+ * 解析 LLM 回复,拆出 status(表层/底层)和 body(正文)
+ * 暮色 8-25:fallback 要稳 — 格式不严格时整段当 body,不报错不吞消息
+ *   - 完整 3 段 → 解析出 status + body
+ *   - 部分 tag(只有 [表层] 或 [底层] 或 [正文]) → 能解析多少算多少,剩下当 body
+ *   - 0 tag → 整段当 body,status = null
+ */
+export function parseStatusFromReply(rawContent: string): {
+    status: StoryStatusSnapshot | null;
+    body: string;
+} {
+    const lines = rawContent.split('\n');
+
+    let surfaceEmotion: string | null = null;
+    let surfaceAction: string | null = null;
+    let deepEmotion: string | null = null;
+    let deepThought: string | null = null;
+    let bodyLines: string[] = [];
+    let inBody = false;
+    let foundAnyTag = false;
+
+    for (const line of lines) {
+        // [表层] emotion=xxx action=yyy — action 后面允许带空格+自由文字(action 也可以是"挤出一个笑"这种多字)
+        const surfaceMatch = line.match(/^\[表层\]\s*emotion=(\S+)\s+action=(.+?)\s*$/);
+        // [底层] realEmotion=xxx thought=xxx — thought 是中文,可能含空格
+        const deepMatch = line.match(/^\[底层\]\s*realEmotion=(\S+)\s+thought=(.+?)\s*$/);
+        // [正文] 后面跟正文(可能多行,直到下一个 tag 或末尾)
+        const bodyMatch = line.match(/^\[正文\]\s*(.*)$/);
+
+        if (surfaceMatch) {
+            foundAnyTag = true;
+            surfaceEmotion = surfaceMatch[1].trim();
+            surfaceAction = surfaceMatch[2].trim();
+            continue;
+        }
+        if (deepMatch) {
+            foundAnyTag = true;
+            deepEmotion = deepMatch[1].trim();
+            deepThought = deepMatch[2].trim();
+            continue;
+        }
+        if (bodyMatch) {
+            foundAnyTag = true;
+            inBody = true;
+            const rest = bodyMatch[1];
+            if (rest) bodyLines.push(rest);
+            continue;
+        }
+        if (inBody) {
+            // [正文] 之后的所有行(包括空行)都算正文
+            bodyLines.push(line);
+        }
+    }
+
+    // 0 tag → 整段 fallback
+    if (!foundAnyTag) {
+        return { status: null, body: rawContent };
+    }
+
+    // 部分 tag 但 [正文] 缺 → 把所有非 tag 行拼起来当 body
+    if (bodyLines.length === 0) {
+        const bodyFallback = lines
+            .filter(l => !/^\[(表层|底层|正文)\]/.test(l))
+            .join('\n')
+            .trim();
+        if (bodyFallback) bodyLines = [bodyFallback];
+    }
+
+    // 拼 status — 只有 surface 和 deep 都齐了才算完整 status,部分缺就 null(单边没意义)
+    const status: StoryStatusSnapshot | null = (surfaceEmotion && surfaceAction && deepEmotion && deepThought)
+        ? {
+              surface: { emotion: surfaceEmotion, action: surfaceAction },
+              deep: { realEmotion: deepEmotion, thought: deepThought },
+          }
+        : null;
+
+    // body 兜底:解析出来空的话用原文(不可能发生,但安全)
+    const body = bodyLines.join('\n').trim() || rawContent;
+
+    return { status, body };
 }
 
 /* ─── lightLLM 调用(简易 openai 协议,后续再加 claude/gemini) ── */

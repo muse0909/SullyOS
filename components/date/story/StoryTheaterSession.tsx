@@ -18,7 +18,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen } from '@phosphor-icons/react';
+import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, Star, ChatCenteredText, Heart } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { safeFetchJson } from '../../../utils/safeApi';
@@ -28,11 +28,13 @@ import {
     appendSessionMessage,
     maybeSummarizeBatch,
     syncStoryToMainMemory,
+    parseStatusFromReply,
     KEEP_RECENT,
 } from '../../../utils/storyTheater';
-import { buildRPSystemPrompt } from '../../../utils/storyTheater/prompts';
+import { buildRPSystemPrompt, formatUserLayersForLLM, parseUserInputToLayers } from '../../../utils/storyTheater/prompts';
 import { SELECT_THEME } from './storyTheme';
-import type { CharacterProfile, Message, StoryTheaterEntry, UserProfile } from '../../../types';
+import StoryStatusPanel from './StoryStatusPanel';
+import type { CharacterProfile, Message, StoryTheaterEntry, StoryStatusSnapshot, UserProfile } from '../../../types';
 import type { MemoryPalaceGlobalConfig } from '../../../context/OSContext';
 import type { APIConfig } from '../../../types';
 
@@ -52,6 +54,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     const [showExitModal, setShowExitModal] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const char = characters.find(c => c.id === entry.characterId);
     if (!char) {
@@ -85,7 +88,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         setInput('');
         setSending(true);
 
-        // 1. 追加 user 消息
+        // 1. 追加 user 消息(存原文,保留用户的 * " ( 标记)
         await appendSessionMessage(entry.id, 'user', text);
         await reload();
 
@@ -109,16 +112,30 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         try {
             const allMsgs = await getSessionMessages(entry.id);
             const recent = allMsgs.slice(-KEEP_RECENT);
-            const reply = await callMainLLM({
+
+            // 暮色 8-25 第四步:用户消息按层格式化(标记转块),传 LLM 更结构化
+            //   - 全部 narrative → 直传原文(纯文本用户友好)
+            //   - 有标记 → 转 *动作* / "对话" / (心理) 块
+            const historyForLLM = recent.map(m => {
+                if (m.role === 'user') {
+                    const layers = parseUserInputToLayers(m.content);
+                    return { role: 'user' as const, content: formatUserLayersForLLM(layers) };
+                }
+                return { role: m.role as 'user' | 'assistant', content: m.content };
+            });
+
+            const rawReply = await callMainLLM({
                 char,
                 userProfile,
                 entry: { ...entry, summary: entry.summary },
-                history: recent.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+                history: historyForLLM,
                 apiConfig,
             });
 
-            if (reply) {
-                await appendSessionMessage(entry.id, 'assistant', reply);
+            if (rawReply) {
+                // 暮色 8-25 第四步:解析 LLM 输出拆 status/body,fallback 不会丢消息
+                const { status, body } = parseStatusFromReply(rawReply);
+                await appendSessionMessage(entry.id, 'assistant', body, status ? { storyStatus: status } : undefined);
                 await reload();
             }
         } catch (e: any) {
@@ -128,6 +145,25 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
             setSending(false);
         }
     }, [input, sending, entry, char, userProfile, apiConfig, memoryPalaceConfig, addToast, reload, onUpdateEntry]);
+
+    // 暮色 8-25 第四步:在光标处插入标记模板
+    const insertLayerTemplate = useCallback((type: 'action' | 'dialogue' | 'thought') => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        const start = ta.selectionStart || 0;
+        const end = ta.selectionEnd || 0;
+        const template = type === 'action' ? '*…*' : type === 'dialogue' ? '"…"' : '(…)';
+        const placeholder = type === 'action' ? '动作' : type === 'dialogue' ? '对话' : '心理';
+        // 在占位符位置插入,光标移到 … 中间
+        const inner = template.indexOf('…');
+        const newText = input.slice(0, start) + template + input.slice(end);
+        setInput(newText);
+        requestAnimationFrame(() => {
+            ta.focus();
+            const cursor = start + inner + placeholder.length;
+            ta.setSelectionRange(cursor, cursor);
+        });
+    }, [input]);
 
     // 退出流程
     const handleExitClick = useCallback(() => {
@@ -194,7 +230,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 ) : (
                     <div className="space-y-3">
                         {messages.map(m => (
-                            <MessageBubble key={m.id} message={m} charName={char.name} userName={userProfile?.name || '暮色'} />
+                            <MessageBubble
+                                key={m.id}
+                                message={m}
+                                status={(m.metadata as any)?.storyStatus as StoryStatusSnapshot | null}
+                                charName={char.name}
+                                userName={userProfile?.name || '暮色'}
+                            />
                         ))}
                         {sending && (
                             <div className="flex justify-start">
@@ -208,10 +250,17 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 )}
             </div>
 
-            {/* 输入框 */}
+            {/* 输入区 — 暮色 8-25 第四步:加 3 个小按钮(动/话/心)+ textarea + 发送 */}
             <div className="relative z-10 shrink-0 px-4 pb-4 pt-2" style={{ paddingBottom: 'max(1rem, var(--safe-bottom))' }}>
+                {/* 3 个小按钮(放输入框上方,暮色要求不占太大空间) */}
+                <div className="flex gap-1.5 mb-1.5">
+                    <LayerButton icon={<Star size={12} weight="fill" />} label="动" color="#7c3aed" onClick={() => insertLayerTemplate('action')} />
+                    <LayerButton icon={<ChatCenteredText size={12} weight="fill" />} label="话" color="#0ea5e9" onClick={() => insertLayerTemplate('dialogue')} />
+                    <LayerButton icon={<Heart size={12} weight="fill" />} label="心" color="#ec4899" onClick={() => insertLayerTemplate('thought')} />
+                </div>
                 <div className="flex items-end gap-2">
                     <textarea
+                        ref={textareaRef}
                         value={input}
                         onChange={e => setInput(e.target.value)}
                         onKeyDown={e => {
@@ -220,7 +269,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                                 void handleSend();
                             }
                         }}
-                        placeholder="暮色 写下你的台词、动作、心理..."
+                        placeholder='写下台词、动作、心理…标记是可选(动* / 话" / 心( 三个按钮可一键插入)'
                         rows={2}
                         disabled={sending}
                         className="flex-1 px-3.5 py-2.5 rounded-2xl text-[13px] resize-none focus:outline-none disabled:opacity-50"
@@ -272,8 +321,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     );
 };
 
-/* ── 单条消息气泡 ── */
-const MessageBubble: React.FC<{ message: Message; charName: string; userName: string }> = ({ message, charName, userName }) => {
+/* ── 单条消息气泡(暮色 8-25 第四步:加 status 显示) ── */
+const MessageBubble: React.FC<{
+    message: Message;
+    status: StoryStatusSnapshot | null;
+    charName: string;
+    userName: string;
+}> = ({ message, status, charName, userName }) => {
     const isUser = message.role === 'user';
     return (
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -294,10 +348,29 @@ const MessageBubble: React.FC<{ message: Message; charName: string; userName: st
                     {isUser ? userName : charName}
                 </div>
                 {message.content}
+                {/* 状态栏 — 只在 assistant 消息下显示,且 status 非空 */}
+                {!isUser && <StoryStatusPanel status={status} charName={charName} />}
             </div>
         </div>
     );
 };
+
+/* ── 输入框上方的快捷按钮(暮色 8-25 第四步:小图标+单字) ── */
+const LayerButton: React.FC<{
+    icon: React.ReactNode;
+    label: string;
+    color: string;
+    onClick: () => void;
+}> = ({ icon, label, color, onClick }) => (
+    <button
+        onClick={onClick}
+        className="flex items-center gap-1 px-2 py-1 rounded-lg active:scale-95 transition-all"
+        style={{ background: `${color}15`, border: `1px solid ${color}30` }}
+    >
+        <span style={{ color }}>{icon}</span>
+        <span className="text-[10px] font-bold" style={{ color }}>{label}</span>
+    </button>
+);
 
 /* ── 主 LLM 调用(非流式) ── */
 async function callMainLLM(args: {

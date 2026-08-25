@@ -1983,6 +1983,9 @@ export interface FullBackupData {
     // 暮色 8-25：捏人自定义部件（8-24 加的，base64 图片）
     ccCustomParts?: any[];
 
+    // 暮色 8-25：信箱（双向信件）
+    mailboxLetters?: any[];
+
     // Memory Palace 批次处理元数据
     memoryBatches?: any[];
 

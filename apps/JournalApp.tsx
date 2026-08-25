@@ -42,6 +42,14 @@ const getLocalDateStr = () => {
     return `${year}-${month}-${day}`;
 };
 
+// 暮色 8-25 反馈：日记列表加时间显示（之前只有年月日，看不出先后）
+//  用 entry.timestamp 提取时分
+const formatDiaryTime = (timestamp: number | undefined) => {
+    if (!timestamp) return '';
+    const d = new Date(timestamp);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
 const JournalApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateCharacter, incrementDiscoverUnread } = useOS();
     
@@ -780,7 +788,10 @@ Structure:
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm text-slate-700 truncate font-medium">{preview}</p>
                                     <div className="flex justify-between items-center mt-1">
-                                        <p className="text-xs text-slate-400 font-mono">{d.date.split('-')[0]}</p>
+                                        {/* 暮色 8-25 反馈：日记加时间 — 年份 + 时分 */}
+                                        <p className="text-xs text-slate-400 font-mono">
+                                            {d.date.split('-')[0]} · {formatDiaryTime(d.timestamp)}
+                                        </p>
                                         <div className="flex gap-2">
                                             {isCharOnly && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full text-[9px] font-bold">TA 的日记</span>}
                                             {!isCharOnly && d.charPage && <span className="px-2 py-0.5 bg-green-100 text-green-600 rounded-full text-[9px] font-bold">已回复</span>}

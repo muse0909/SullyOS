@@ -26,6 +26,9 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
+// 暮色 8-25：信箱（双向信件）token 解析 + 调度器启动
+import { createLetter as createMailboxLetter, markRead as mailboxMarkRead, MailboxEnvelope } from '../utils/mailboxStorage';
+import { startMailboxScheduler, checkAndDeliverPendingMailbox } from '../utils/mailboxScheduler';
 import { buildHtmlPrompt, extractHtmlBlocks } from '../utils/htmlPrompt';
 import { parseMomentsActions } from '../utils/momentsActionParser';
 // 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表
@@ -3502,6 +3505,91 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 }
             } catch (e) {
                 console.warn('📝 [XiaoZhiTiao] 解析失败:', e);
+            }
+
+            // 暮色 8-25：信箱（双向信件）token 解析
+            //   [[MAILBOX_LETTER: title § content § envelope]] — 角色写信给暮色
+            //   [[MAILBOX_READ: letterId]] — 角色读信（标已读）
+            //   [[MAILBOX_REPLY: letterId § title § content § envelope]] — 角色回信
+            //   分隔符用 §（因为正文里大概率有 |，§ 在中文/正文里几乎不出现）
+            try {
+                // 1) 角色写信
+                const writeMatch = aiContent.match(/\[\[MAILBOX_LETTER:\s*([\s\S]+?)\s*\]\]/);
+                if (writeMatch) {
+                    // 限制 split 数量 3 段：title | content | envelope
+                    // 最后一段是 envelope（一定存在），前面全部算 title + content
+                    const parts = writeMatch[1].split('§');
+                    const envelopeRaw = (parts.pop() || '').trim() as MailboxEnvelope;
+                    const validEnvelopes: MailboxEnvelope[] = ['classic', 'love', 'handwrite', 'wax'];
+                    const envelope: MailboxEnvelope = validEnvelopes.includes(envelopeRaw as MailboxEnvelope)
+                        ? (envelopeRaw as MailboxEnvelope) : 'classic';
+                    // 剩下至少 1 段（content），title 可空
+                    const titleAndContent = parts.join('§');
+                    const titleSplit = titleAndContent.split('§');
+                    const title = (titleSplit[0] || '').trim() || '无题';
+                    const content = (titleSplit.slice(1).join('§') || '').trim();
+                    if (content) {
+                        await createMailboxLetter({
+                            charId: char.id,
+                            fromUser: 'char',
+                            title,
+                            content,
+                            envelope,
+                        });
+                        addToast?.(`${char.name} 给你写了一封信`, 'bell', 3000);
+                        console.log(`📬 [Mailbox] 角色写信: title="${title}" env=${envelope} chars=${content.length}`);
+                    }
+                }
+                // 2) 角色读信
+                const readMatch = aiContent.match(/\[\[MAILBOX_READ:\s*([a-zA-Z0-9_]+)\s*\]\]/);
+                if (readMatch) {
+                    const letterId = readMatch[1].trim();
+                    const updated = await mailboxMarkRead(letterId);
+                    if (updated) {
+                        console.log(`📬 [Mailbox] 角色读信: id=${letterId} title="${updated.title}"`);
+                    }
+                }
+                // 3) 角色回信
+                const replyMatch = aiContent.match(/\[\[MAILBOX_REPLY:\s*([a-zA-Z0-9_]+)\s*§\s*([\s\S]+?)\s*\]\]/);
+                if (replyMatch) {
+                    const replyToId = replyMatch[1].trim();
+                    const replyBody = replyMatch[2];
+                    const parts = replyBody.split('§');
+                    const envelopeRaw = (parts.pop() || '').trim() as MailboxEnvelope;
+                    const validEnvelopes: MailboxEnvelope[] = ['classic', 'love', 'handwrite', 'wax'];
+                    const envelope: MailboxEnvelope = validEnvelopes.includes(envelopeRaw as MailboxEnvelope)
+                        ? (envelopeRaw as MailboxEnvelope) : 'classic';
+                    const titleAndContent = parts.join('§');
+                    const titleSplit = titleAndContent.split('§');
+                    const title = (titleSplit[0] || '').trim() || '无题';
+                    const content = (titleSplit.slice(1).join('§') || '').trim();
+                    if (content) {
+                        await createMailboxLetter({
+                            charId: char.id,
+                            fromUser: 'char',
+                            title,
+                            content,
+                            envelope,
+                            replyToId,
+                        });
+                        addToast?.(`${char.name} 回了一封信`, 'bell', 3000);
+                        console.log(`📬 [Mailbox] 角色回信: replyTo=${replyToId} title="${title}" chars=${content.length}`);
+                    }
+                }
+                // 剥掉所有 mailbox token（不污染聊天显示）
+                aiContent = aiContent
+                    .replace(/\[\[MAILBOX_LETTER:[\s\S]+?\]\]/g, '')
+                    .replace(/\[\[MAILBOX_READ:\s*[a-zA-Z0-9_]+\s*\]\]/g, '')
+                    .replace(/\[\[MAILBOX_REPLY:[\s\S]+?\]\]/g, '')
+                    .trim();
+            } catch (e) {
+                console.warn('📬 [Mailbox] 解析失败:', e);
+                // 即使解析失败也剥掉 token（避免显示给暮色看）
+                aiContent = aiContent
+                    .replace(/\[\[MAILBOX_LETTER:[\s\S]+?\]\]/g, '')
+                    .replace(/\[\[MAILBOX_READ:\s*[a-zA-Z0-9_]+\s*\]\]/g, '')
+                    .replace(/\[\[MAILBOX_REPLY:[\s\S]+?\]\]/g, '')
+                    .trim();
             }
 
             // 5.10 Handle XHS (小红书) Actions

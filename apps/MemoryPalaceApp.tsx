@@ -16,6 +16,7 @@ import {
 } from '../utils/memoryPalace';
 import { dissolveEventBox, reviveAllArchivedInBox, scanGhostSummaries, deleteGhostSummary } from '../utils/memoryPalace/eventBox';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
+import StatusPanelCard from '../components/memoryPalace/StatusPanelCard';
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
 type LinkedMemoryUI = {
@@ -4055,7 +4056,8 @@ create table if not exists memory_vectors (
                     )}
                 </div>
 
-                {/* 便利贴置顶已下线，由状态面板替代（statusPanel.ts） */}
+                {/* 便利贴置顶已下线，由状态面板替代（statusPanel.ts） — 暮色 8-25 状态面板展示/编辑入口 */}
+                <StatusPanelCard />
 
                 {/* 搜索结果 or 七个房间 */}
                 {globalSearchQuery.trim().length >= 2 ? (

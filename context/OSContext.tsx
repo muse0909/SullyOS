@@ -8,6 +8,8 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
 import { parseMomentsActions } from '../utils/momentsActionParser';
+// 暮色 8-25：信箱定时调度器
+import { startMailboxScheduler, stopMailboxScheduler } from '../utils/mailboxScheduler';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
 import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
@@ -358,6 +360,38 @@ interface OSContextType {
 }
 
 export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
+
+// 暮色 8-25：同步原作者 7-20 commit f4d43a6c 的"新版默认主题"(米黄纸纹)
+//   — 默认桌面使用低对比暖米纸纹：只靠同色系层次与极细纤维感建立质感,不用粉绿撞色渐变
+//   — 暮色说"现在这个不动"= 不动现有 localStorage,这是新增的桌面风格选项
+export const PAPER_WALLPAPER = [
+  'radial-gradient(120% 85% at 12% 0%, rgba(255,255,255,0.64) 0%, rgba(255,255,255,0) 58%)',
+  'repeating-linear-gradient(0deg, rgba(76,69,60,0.010) 0px, rgba(76,69,60,0.010) 1px, transparent 1px, transparent 4px)',
+  'linear-gradient(145deg, #fdfcf9 0%, #f8f6f1 54%, #f1eee8 100%)',
+].join(', ');
+
+/** 暮色 8-25：判断当前壁纸是不是"米黄纸纹"主题 — DesktopClock / CharacterWidget 用这个分支决定渲染 */
+export const isPaperWallpaper = (wallpaper?: string): boolean => {
+  if (!wallpaper) return false;
+  if (wallpaper === PAPER_WALLPAPER) return true;
+  const compact = wallpaper.toLowerCase().replace(/\s+/g, '');
+  return (
+    compact.includes('#fdfcf9') ||
+    compact.includes('rgb(253,252,249)') ||
+    compact.includes('#f8f6f1') ||
+    compact.includes('#f1eee8')
+  );
+};
+
+/** 暮色 8-25：米黄默认主题对象(暖草绿主色 + 棕字 + 米黄纸纹壁纸) */
+export const NOSTALGIA_APPEARANCE: Partial<OSTheme> = {
+  hue: 88,
+  saturation: 14,
+  lightness: 46,
+  wallpaper: PAPER_WALLPAPER,
+  contentColor: '#4b4136',
+  nowPlayingWidgetLight: true,
+};
 
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
@@ -2322,9 +2356,14 @@ if (!isVisible || !isChattingWithThisChar) {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
           VRScheduler.onTrigger(() => {});
+          stopMailboxScheduler();
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);
+
+  // 暮色 8-25：信箱定时调度器 — 启动 + 60s 间隔扫一次
+  //   投递 status='pending' + deliverAt<=now 的信 → 改 'delivered'
+  startMailboxScheduler();
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -3331,6 +3370,8 @@ if (!isVisible || !isChattingWithThisChar) {
               'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
               // - 捏人自定义部件（图片类，media_only 模式带）
               'cc_custom_parts',
+              // 暮色 8-25：信箱（双向信件）
+              'mailbox_letters',
               // 注：mcp_call_logs / api_call_log 是临时统计日志，不备份（跟 proactiveLastError 一样）
           ];
 
@@ -3352,11 +3393,12 @@ if (!isVisible || !isChattingWithThisChar) {
                   'daily_schedule', 'memory_batches',
                   'trackers', 'tracker_entries', 'handbook',
                   'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+                  'mailbox_letters',
               ];
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
-                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts'];
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts', 'mailbox_letters'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -3745,6 +3787,8 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'vr_settings': backupData.vrSettings = processedData; break;
                   case 'vr_letters': backupData.vrLetters = processedData; break;
                   case 'cc_custom_parts': backupData.ccCustomParts = processedData; break;
+                  // 暮色 8-25：信箱（双向信件）
+                  case 'mailbox_letters': backupData.mailboxLetters = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));

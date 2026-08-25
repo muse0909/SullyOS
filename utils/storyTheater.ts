@@ -14,6 +14,7 @@ import type {
     APIConfig,
     CharacterProfile,
     Message,
+    StorySceneTemplate,
     StorySessionSummary,
     StoryStatusSnapshot,
     StoryTheaterEntry,
@@ -63,6 +64,7 @@ export const normalizeStoryTheater = (
         id: entry.id || generateClientId(),
         title: entry.title || '未命名剧场',
         premise: entry.premise || '',
+        writingStyle: entry.writingStyle,    // 暮色 8-25 第五步:中间页可改
         characterId: entry.characterId,
         writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
         summary: entry.summary,
@@ -403,4 +405,180 @@ export async function syncStoryToMainMemory(
     }
 
     return result;
+}
+
+/* ─── 场景模板 (暮色 8-25 第五步) ────────────────────── */
+
+// 内置 6 个场景 — 暮色 8-25 提供
+//   - premiseOptions: 3-5 个备选前情提要,中间页单选
+//   - writingStyle: 默认文风描述,buildRPSystemPrompt 注入
+//   - allowCustomPremise: 永远 true(中间页有自定义输入框)
+export const BUILTIN_SCENE_TEMPLATES: StorySceneTemplate[] = [
+    {
+        id: 'builtin-coffee',
+        name: '咖啡馆偶遇',
+        emoji: '☕',
+        description: '常去的咖啡馆,今天只剩一个座位。',
+        tags: ['现代', '日常', '浪漫'],
+        premiseOptions: [
+            '你们在常去的咖啡馆碰面,她今天心情不太好,一个人坐在角落。',
+            '你比约定时间早到了十分钟,正低头看手机,抬头发现她已经坐在对面看了你很久。',
+            '下雨天,咖啡馆只剩最后一个座位,你们谁都没让。',
+        ],
+        writingStyle: '现代口语、轻松自然、对话为主',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-xianxia',
+        name: '古风仙侠',
+        emoji: '🏯',
+        description: '山门初见,你是下山历练的剑客。',
+        tags: ['古风', '仙侠', '意境'],
+        premiseOptions: [
+            '你是下山历练的剑客,在山洞里发现被困已久的她。',
+            '你在悬崖边练剑,身后传来脚步声,回头看见一个浑身是伤的女子。',
+            '师门宴席上你第一次见到新来的师妹,她看你的眼神很奇怪。',
+        ],
+        writingStyle: '古风半文言、意境优先、动作描写细腻',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-nightcity',
+        name: '都市夜色',
+        emoji: '🌃',
+        description: '深夜的城市,只剩你们两个清醒的人。',
+        tags: ['现代', '都市', '氛围'],
+        premiseOptions: [
+            '深夜便利店,只有你们两个顾客,外面下着大雨她没带伞。',
+            '加班到凌晨两点,你在公司楼下碰见她也刚下班,你们住同一个方向。',
+            '你在天台抽烟,她推门上来了,手里拿着一罐啤酒。',
+        ],
+        writingStyle: '现代文学感、短句节奏、氛围感强',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-campus',
+        name: '校园青春',
+        emoji: '📚',
+        description: '高三分班前的最后一个夏天。',
+        tags: ['现代', '校园', '青春'],
+        premiseOptions: [
+            '高三分班前最后一个夏天,你们坐在天台看夕阳,她突然问了你一个问题。',
+            '图书馆关门前五分钟,她把一本书塞进你书包里就跑了。',
+            '体育课自由活动,所有人都在打球,你发现她一个人坐在看台最高处。',
+        ],
+        writingStyle: '青春口语、明快节奏、情绪外露',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-campfire',
+        name: '露营篝火',
+        emoji: '⛺',
+        description: '围坐在火堆旁,有些话只适合这时候说。',
+        tags: ['现代', '户外', '留白'],
+        premiseOptions: [
+            '周末露营,围坐在篝火旁,她往火里丢了一根树枝说"我想跟你说个事"。',
+            '凌晨三点你醒了,发现她不在帐篷里,走出去看见她一个人坐在湖边。',
+            '搭帐篷的时候你们吵了一架,现在谁都不说话,火快灭了。',
+        ],
+        writingStyle: '现代散文感、留白多、对话少但每句有分量',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-mystery',
+        name: '神秘剧团',
+        emoji: '🎭',
+        description: '她是剧团的女主角,灯光只剩一盏。',
+        tags: ['现代', '悬疑', '氛围'],
+        premiseOptions: [
+            '她是剧团女主角,今晚谢幕后你作为新来的舞台监督第一次跟她单独说话。',
+            '排练结束后所有人都走了,她还站在舞台中央,灯光只剩一盏。',
+            '你在后台发现她藏起来的那本笔记本掉在了地上,翻开第一页写着你的名字。',
+        ],
+        writingStyle: '悬疑氛围、视角受限、细节暗示多于直说',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+];
+
+/* ─── 场景模板 DB 操作 ─────────────────────────────── */
+
+/** 读全部场景模板(内置 + 暮色自定义),内置排前面 */
+export async function getAllSceneTemplates(): Promise<StorySceneTemplate[]> {
+    const stored = await DB.getSceneTemplates();
+    const builtinIds = new Set(BUILTIN_SCENE_TEMPLATES.map(t => t.id));
+    const customs = stored.filter(t => !builtinIds.has(t.id));
+    // 自定义按 updatedAt 倒序(最新在前)
+    customs.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return [...BUILTIN_SCENE_TEMPLATES, ...customs];
+}
+
+/** 同步检查 — 内置模板的 premiseOptions / writingStyle 是否有更新 */
+export function getBuiltinSceneTemplateById(id: string): StorySceneTemplate | null {
+    return BUILTIN_SCENE_TEMPLATES.find(t => t.id === id) || null;
+}
+
+/** 从场景模板建 Entry(中间页确认后调用) */
+export function createEntryFromSceneTemplate(args: {
+    template: StorySceneTemplate;
+    characterId: string;
+    premise: string;            // 用户在中间页选/写的前提
+    writingStyle: string;       // 用户在中间页确认的文风(可改过)
+    title?: string;             // 可选自定义标题
+    now?: number;
+}): StoryTheaterEntry {
+    const now = args.now ?? Date.now();
+    return {
+        id: generateClientId(),
+        title: args.title || args.template.name,
+        premise: args.premise,
+        writingStyle: args.writingStyle,
+        characterId: args.characterId,
+        writesToCharacterMemory: true,
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+
+/** 暮色自定义模板(用 buildEntryFromTemplate 之后) */
+export function createCustomSceneTemplate(args: {
+    name: string;
+    emoji: string;
+    description: string;
+    tags: string[];
+    premiseOptions: string[];   // 至少 1 个
+    writingStyle: string;
+    now?: number;
+}): StorySceneTemplate {
+    const now = args.now ?? Date.now();
+    return {
+        id: generateClientId(),
+        name: args.name.trim() || '我的场景',
+        emoji: args.emoji.trim() || '🎬',
+        description: args.description.trim(),
+        tags: args.tags.filter(Boolean),
+        premiseOptions: args.premiseOptions.filter(p => p.trim().length > 0),
+        writingStyle: args.writingStyle.trim() || '现代口语、自然',
+        allowCustomPremise: true,
+        builtIn: false,
+        createdAt: now,
+        updatedAt: now,
+    };
 }

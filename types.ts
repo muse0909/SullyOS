@@ -2724,7 +2724,8 @@ export interface ActiveMsg2InboxMessage {
 export interface StoryTheaterEntry {
     id: string;
     title: string;
-    premise: string;            // 前提/世界观
+    premise: string;            // 前提/世界观(用户最终选/写的)
+    writingStyle?: string;      // 文风描述(暮色 8-25 第五步:中间页可改,buildRPSystemPrompt 注入)
     characterId: string;        // 当前对话角色(单人,不是 characterIds)
     writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
     summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
@@ -2761,6 +2762,27 @@ export interface StoryStatusSnapshot {
         realEmotion: string; // 例:'紧张' / '想靠近但不敢' / '其实很担心你'
         thought: string;    // 例:'该不该告诉他那件事'
     };
+}
+
+/**
+ * 剧情场景模板(暮色 8-25 第五步)
+ *   - 不直接带 premise(固定字符串),改成 premiseOptions 数组(3-5 个备选)
+ *   - writingStyle:该场景的默认文风描述
+ *   - allowCustomPremise:永远 true(显式声明,中间页有自定义输入框)
+ *   - 点模板卡 → 进中间页(选前提/改文风) → 确认才建 Entry 进 session
+ */
+export interface StorySceneTemplate {
+    id: string;
+    name: string;
+    emoji: string;
+    description: string;          // 一句话简介,模板卡显示
+    tags: string[];               // ['现代','日常','浪漫']
+    premiseOptions: string[];     // 3-5 个备选前情提要
+    writingStyle: string;         // 默认文风描述(一句话)
+    allowCustomPremise: boolean;  // 永远 true,显式声明
+    builtIn: boolean;             // true = 内置, false = 暮色自定义
+    createdAt: number;
+    updatedAt: number;
 }
 
 export interface StoryTheaterPreset {

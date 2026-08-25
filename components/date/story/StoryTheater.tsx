@@ -15,14 +15,20 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, GearSix, Plus, Trash, Sparkle, BookOpen } from '@phosphor-icons/react';
+import { ArrowLeft, GearSix, Plus, Trash, Sparkle, BookOpen, ListChecks } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
-import { createStoryTheaterDraft, normalizeStoryTheater } from '../../../utils/storyTheater';
+import {
+    createStoryTheaterDraft,
+    normalizeStoryTheater,
+    getAllSceneTemplates,
+    createCustomSceneTemplate,
+} from '../../../utils/storyTheater';
 import Modal from '../../os/Modal';
-import type { StoryTheaterEntry } from '../../../types';
+import type { StorySceneTemplate, StoryTheaterEntry } from '../../../types';
 import { SELECT_THEME, CARD_TINTS } from './storyTheme';
 import StoryTheaterSession from './StoryTheaterSession';
+import SceneConfigPage from './SceneConfigPage';
 
 interface Props {
     onSwitchCompanion: () => void;  // 点"陪伴" tab 切回去
@@ -32,14 +38,21 @@ interface Props {
 const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
     const { characters, activeCharacterId } = useOS();
     const [entries, setEntries] = useState<StoryTheaterEntry[]>([]);
+    const [sceneTemplates, setSceneTemplates] = useState<StorySceneTemplate[]>([]);
     const [showNewModal, setShowNewModal] = useState(false);
     const [activeEntry, setActiveEntry] = useState<StoryTheaterEntry | null>(null);
     const [deletingEntry, setDeletingEntry] = useState<StoryTheaterEntry | null>(null);
+    const [configTemplate, setConfigTemplate] = useState<StorySceneTemplate | null>(null);  // 暮色 8-25 第五步:点卡 → 进中间页
+    const [showCustomTplModal, setShowCustomTplModal] = useState(false);                     // 自定义模板 modal
 
-    // 加载 Entry 列表
+    // 加载 Entry 列表 + 场景模板
     const reload = useCallback(async () => {
-        const stored = await DB.getStoryTheaters();
+        const [stored, tpls] = await Promise.all([
+            DB.getStoryTheaters(),
+            getAllSceneTemplates(),
+        ]);
         setEntries(stored.map(normalizeStoryTheater).sort((a, b) => b.updatedAt - a.updatedAt));
+        setSceneTemplates(tpls);
     }, []);
 
     useEffect(() => { void reload(); }, [reload]);
@@ -95,23 +108,50 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
 
             {/* 主体滚动区 */}
             <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-5 pt-4 pb-6">
-                {/* 区块 1:预设区(占位) */}
-                <SectionHeader title="预设" subtitle="PRESET" />
-                <div className="rounded-2xl px-4 py-5 mb-5 flex items-center gap-3"
-                     style={{ background: 'rgba(255,255,255,0.55)', border: '1px dashed rgba(170,140,210,0.35)' }}>
-                    <Sparkle size={20} weight="light" style={{ color: '#a78bfa', flexShrink: 0 }} />
-                    <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-bold" style={{ color: '#715d99' }}>暂未配置预设</div>
-                        <div className="text-[10px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>第三步做 session 时再设计 — 可选温度/系统消息/采样参数</div>
-                    </div>
+                {/* 区块 1:场景模板(暮色 8-25 第五步) — 横向滚动,点卡 → SceneConfigPage */}
+                <div className="flex items-center justify-between mb-3">
+                    <SectionHeader title="场景模板" subtitle="SCENES" inline />
+                    <button onClick={() => setShowCustomTplModal(true)} className="text-[10px] font-bold flex items-center gap-1 px-2.5 py-1 rounded-lg active:scale-95 transition-all"
+                            style={{ background: 'rgba(167,139,250,0.12)', color: '#715d99' }} title="保存当前前提为自定义模板">
+                        <ListChecks size={11} weight="bold" />我的模板
+                    </button>
+                </div>
+                <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-5 px-5">
+                    {sceneTemplates.map((tpl, idx) => (
+                        <button
+                            key={tpl.id}
+                            onClick={() => {
+                                if (!activeCharacterId) {
+                                    alert('请先在聊天页选一个角色,再开剧场');
+                                    return;
+                                }
+                                setConfigTemplate(tpl);
+                            }}
+                            className="group flex-shrink-0 w-36 rounded-2xl px-3 pt-3 pb-3 active:scale-95 transition-all overflow-hidden text-left"
+                            style={{
+                                background: idx < 6 ? 'linear-gradient(180deg,rgba(232,228,248,0.92),rgba(242,238,250,0.85))' : 'linear-gradient(180deg,rgba(250,212,228,0.85),rgba(242,228,246,0.8))',
+                                border: '1px solid rgba(170,140,210,0.3)',
+                                boxShadow: '0 4px 14px rgba(150,120,200,0.15)',
+                            }}
+                        >
+                            <div className="absolute inset-[5px] rounded-xl pointer-events-none" style={{ border: `1px solid ${SELECT_THEME.inner}` }} />
+                            <div className="relative text-[32px] mb-1.5">{tpl.emoji}</div>
+                            <div className="relative text-[13px] font-bold mb-0.5" style={{ color: '#4a3a6a' }}>{tpl.name}</div>
+                            <div className="relative text-[10px] leading-relaxed line-clamp-2" style={{ color: 'rgba(74,58,106,0.7)' }}>
+                                {tpl.description}
+                            </div>
+                            {tpl.builtIn && (
+                                <div className="relative text-[8px] mt-1.5 font-bold tracking-wider" style={{ color: 'rgba(150,120,190,0.6)' }}>BUILT-IN</div>
+                            )}
+                        </button>
+                    ))}
                 </div>
 
                 {/* 区块 2:我的剧场 */}
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 mt-5">
                     <SectionHeader title="我的剧场" subtitle="MY THEATER" inline />
                     <button onClick={() => {
                         if (!activeCharacterId) {
-                            // 兜底:当前没选角色,提示先去聊天页选
                             alert('请先在聊天页选一个角色,再开剧场');
                             return;
                         }
@@ -223,6 +263,33 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                     }}
                 />
             )}
+
+            {/* 暮色 8-25 第五步:点场景模板卡 → 进中间页 → 确认后建 Entry + 跳 session */}
+            {configTemplate && (
+                <SceneConfigPage
+                    template={configTemplate}
+                    onCancel={() => setConfigTemplate(null)}
+                    onConfirm={(entryId) => {
+                        // 中间页建好 Entry,刷新列表 + 把 activeEntry 设为它 → 跳 session
+                        setConfigTemplate(null);
+                        void reload().then(async () => {
+                            const stored = await DB.getStoryTheaters();
+                            const found = stored.find(e => e.id === entryId);
+                            if (found) setActiveEntry(normalizeStoryTheater(found));
+                        });
+                    }}
+                />
+            )}
+
+            {/* 自定义模板 modal(暮色 8-25 第五步:"我的模板"按钮) */}
+            <CustomTemplateModal
+                open={showCustomTplModal}
+                onClose={() => setShowCustomTplModal(false)}
+                onSaved={async () => {
+                    setShowCustomTplModal(false);
+                    await reload();
+                }}
+            />
         </div>
     );
 };
@@ -316,3 +383,141 @@ const NewTheaterModal: React.FC<{
 };
 
 export default StoryTheater;
+
+/* ── 自定义模板 modal(暮色 8-25 第五步) ──────────────── */
+
+const CustomTemplateModal: React.FC<{
+    open: boolean;
+    onClose: () => void;
+    onSaved: () => void;
+}> = ({ open, onClose, onSaved }) => {
+    const { addToast } = useOS();
+    const [name, setName] = useState('');
+    const [emoji, setEmoji] = useState('🎬');
+    const [description, setDescription] = useState('');
+    const [tagsRaw, setTagsRaw] = useState('');
+    const [premiseOptions, setPremiseOptions] = useState<string[]>(['']);
+    const [writingStyle, setWritingStyle] = useState('现代口语、自然');
+    const [submitting, setSubmitting] = useState(false);
+
+    useEffect(() => {
+        if (open) {
+            setName(''); setEmoji('🎬'); setDescription(''); setTagsRaw('');
+            setPremiseOptions(['']); setWritingStyle('现代口语、自然');
+        }
+    }, [open]);
+
+    if (!open) return null;
+
+    const addOption = () => setPremiseOptions(prev => [...prev, '']);
+    const removeOption = (i: number) => setPremiseOptions(prev => prev.filter((_, idx) => idx !== i));
+    const updateOption = (i: number, val: string) => setPremiseOptions(prev => prev.map((p, idx) => idx === i ? val : p));
+
+    const handleSave = async () => {
+        if (submitting) return;
+        if (!name.trim()) { addToast?.('模板名不能为空', 'error'); return; }
+        const validOptions = premiseOptions.filter(p => p.trim());
+        if (validOptions.length === 0) { addToast?.('至少填 1 个备选前提', 'error'); return; }
+        if (!writingStyle.trim()) { addToast?.('文风不能为空', 'error'); return; }
+        setSubmitting(true);
+        try {
+            const tpl = createCustomSceneTemplate({
+                name,
+                emoji,
+                description,
+                tags: tagsRaw.split(/[,，\s]+/).filter(Boolean),
+                premiseOptions: validOptions,
+                writingStyle,
+            });
+            await DB.saveSceneTemplate(tpl);
+            addToast?.('已保存为模板', 'success');
+            onSaved();
+        } catch (e: any) {
+            addToast?.(`保存失败: ${e?.message || e}`, 'error');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 animate-fade-in" style={{ background: 'rgba(15,23,42,0.55)' }} onClick={onClose}>
+            <div className="w-full max-w-md max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}
+                 style={{ background: 'linear-gradient(160deg,#ffffff 0%,#f7f2fb 100%)', borderRadius: 24, border: '1px solid rgba(170,140,210,0.3)', boxShadow: '0 20px 50px -20px rgba(150,120,200,0.4)' }}>
+                <div className="h-[2px] w-full" style={{ background: 'linear-gradient(90deg,transparent,#a78bfa,#7c3aed,transparent)' }} />
+                <div className="px-6 pt-5 pb-2 text-center">
+                    <div className="text-[10px] tracking-[0.3em] uppercase font-bold" style={{ color: '#7c3aed' }}>CUSTOM TEMPLATE</div>
+                    <h3 className="text-[18px] font-bold mt-1" style={{ color: '#4a3a6a' }}>保存为我的模板</h3>
+                </div>
+                <div className="px-6 py-3 space-y-3 overflow-y-auto no-scrollbar">
+                    {/* 名称 + emoji */}
+                    <div className="flex gap-2">
+                        <div className="flex-1">
+                            <Label>名称</Label>
+                            <input value={name} onChange={e => setName(e.target.value)} placeholder="如:雨天咖啡馆" className="w-full mt-1 px-3 py-2 rounded-xl text-[13px] focus:outline-none"
+                                   style={inputStyle} />
+                        </div>
+                        <div className="w-16">
+                            <Label>Emoji</Label>
+                            <input value={emoji} onChange={e => setEmoji(e.target.value.slice(0, 2))} placeholder="🎬" className="w-full mt-1 px-2 py-2 rounded-xl text-[18px] text-center focus:outline-none"
+                                   style={inputStyle} maxLength={2} />
+                        </div>
+                    </div>
+                    <div>
+                        <Label>简介</Label>
+                        <input value={description} onChange={e => setDescription(e.target.value)} placeholder="一句话描述这个场景的氛围" className="w-full mt-1 px-3 py-2 rounded-xl text-[13px] focus:outline-none"
+                               style={inputStyle} />
+                    </div>
+                    <div>
+                        <Label>标签(用空格或逗号分隔)</Label>
+                        <input value={tagsRaw} onChange={e => setTagsRaw(e.target.value)} placeholder="现代 日常 浪漫" className="w-full mt-1 px-3 py-2 rounded-xl text-[13px] focus:outline-none"
+                               style={inputStyle} />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between">
+                            <Label>备选前提(至少 1 个)</Label>
+                            <button onClick={addOption} className="text-[10px] font-bold px-2 py-0.5 rounded-md active:scale-95"
+                                    style={{ background: 'rgba(167,139,250,0.15)', color: '#715d99' }}>+ 加一个</button>
+                        </div>
+                        <div className="mt-1 space-y-1.5">
+                            {premiseOptions.map((p, i) => (
+                                <div key={i} className="flex gap-1.5 items-start">
+                                    <textarea value={p} onChange={e => updateOption(i, e.target.value)} placeholder={`前提 ${i + 1}`} rows={2}
+                                              className="flex-1 px-2.5 py-1.5 rounded-lg text-[12px] resize-none focus:outline-none"
+                                              style={inputStyle} />
+                                    {premiseOptions.length > 1 && (
+                                        <button onClick={() => removeOption(i)} className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-red-400 active:scale-90"
+                                                style={{ background: 'rgba(239,68,68,0.08)' }}>×</button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <Label>文风</Label>
+                        <textarea value={writingStyle} onChange={e => setWritingStyle(e.target.value)} rows={2} placeholder="例:现代口语、轻松自然、对话为主"
+                                  className="w-full mt-1 px-3 py-2 rounded-xl text-[12.5px] resize-none focus:outline-none"
+                                  style={inputStyle} />
+                    </div>
+                </div>
+                <div className="px-6 pb-5 pt-2 flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-2.5 rounded-2xl text-[13px] font-bold"
+                            style={{ background: 'rgba(170,140,210,0.1)', color: '#715d99' }}>取消</button>
+                    <button onClick={handleSave} disabled={submitting} className="flex-1 py-2.5 rounded-2xl text-[13px] font-bold disabled:opacity-50"
+                            style={{ background: 'linear-gradient(135deg,#a78bfa,#7c3aed)', color: 'white', boxShadow: '0 4px 14px rgba(124,58,237,0.3)' }}>
+                        {submitting ? '保存中' : '保存模板'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+    <div className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>{children}</div>
+);
+
+const inputStyle: React.CSSProperties = {
+    background: 'white',
+    border: '1px solid rgba(170,140,210,0.3)',
+    color: '#1f2937',
+};

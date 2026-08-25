@@ -47,6 +47,10 @@ export function buildRPSystemPrompt(args: {
 当前剧场：${entry.title}
 ${entry.premise ? `剧情前提：${entry.premise}` : '（无前提,自由发挥）'}
 
+${entry.writingStyle ? `### 本场景的文风
+${entry.writingStyle}
+请严格按此风格输出(用词、句式、节奏、详略都按这个走),用户如果在中途改了文风,以最新为准。` : ''}
+
 ### 行为兜底
 **你在这个场景中是自由的,可以主动推动剧情发展、制造事件、描写环境变化,不需要等待对方输入。**
 允许长篇输出(几千字都可以),不要因为对方写得短就也写短。

@@ -56,7 +56,8 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
                   : 'w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90'}
                 style={{ color: contentColor }}
             >
-                 <IconComponent className="w-full h-full" />
+                 {/* 暮色 8-25 反馈:小图标看着粗 — paper 模式用 light weight(1.25) 代替默认 regular(1.5) */}
+                 <IconComponent className="w-full h-full" weight={isPaperDesktop ? 'light' : 'regular'} />
             </div>
         )}
       </div>

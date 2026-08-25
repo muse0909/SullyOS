@@ -11,7 +11,26 @@ import { safeResponseJson, extractContent, extractThinking } from '../utils/safe
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
-import { BookOpen } from '@phosphor-icons/react';
+import { BookOpen, CaretLeft, Sparkle, Lock } from '@phosphor-icons/react';
+
+// 暮色 8-25:从原版搬淡紫主题美化(选角页)
+const SELECT_THEME = {
+    pageBg: 'linear-gradient(180deg,#efe9f7 0%,#f4eff9 45%,#f7f2fb 100%)',
+    stars: 'radial-gradient(1.5px 1.5px at 14% 16%,rgba(190,160,225,.45),transparent),radial-gradient(1px 1px at 80% 12%,rgba(220,190,235,.5),transparent),radial-gradient(1.5px 1.5px at 42% 28%,rgba(180,200,240,.4),transparent),radial-gradient(1px 1px at 86% 42%,rgba(200,175,230,.4),transparent),radial-gradient(1px 1px at 22% 66%,rgba(210,185,235,.35),transparent),radial-gradient(1px 1px at 66% 80%,rgba(200,210,240,.35),transparent)',
+    title: '#6a5790', titleShadow: 'rgba(170,150,220,.4)', line: 'rgba(150,120,190,.5)',
+    cardBorder: 'rgba(170,140,210,.3)', cardShadow: '0 8px 22px rgba(150,120,200,.18)',
+    inner: 'rgba(170,140,210,.22)', gem: 'rgba(190,160,220,.85)',
+};
+
+// 6 色柔色底(原版 line 726-731,按序循环)
+const CARD_TINTS = [
+    'linear-gradient(180deg,rgba(250,212,228,.85),rgba(242,228,246,.8))',
+    'linear-gradient(180deg,rgba(232,228,248,.85),rgba(242,238,250,.8))',
+    'linear-gradient(180deg,rgba(226,216,246,.85),rgba(238,230,249,.8))',
+    'linear-gradient(180deg,rgba(212,230,247,.85),rgba(234,240,250,.8))',
+    'linear-gradient(180deg,rgba(226,212,245,.85),rgba(238,228,249,.8))',
+    'linear-gradient(180deg,rgba(234,231,242,.88),rgba(242,240,247,.82))',
+];
 
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig } = useOS();
@@ -27,6 +46,9 @@ const DateApp: React.FC = () => {
     const [mode, setMode] = useState<'select' | 'peek' | 'session' | 'settings' | 'history'>('select');
     // Track previous mode for Settings back navigation
     const [previousMode, setPreviousMode] = useState<'select' | 'peek'>('select');
+
+    // 暮色 8-25:顶部"陪伴/剧情"tab 切换(剧情 tab 视觉 disabled,点击进占位页)
+    const [meetSurface, setMeetSurface] = useState<'companion' | 'story'>('companion');
     
     const [peekStatus, setPeekStatus] = useState<string>('');
     const [peekLoading, setPeekLoading] = useState(false);
@@ -726,30 +748,134 @@ const DateApp: React.FC = () => {
     // --- Render ---
 
     if (mode === 'select' || !char) {
-        return (
-            <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white sticky top-0 z-10">
-                    <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                    <span className="font-bold text-slate-700">选择见面对象</span>
-                    <div className="w-8"></div>
-                </div>
-                <div className="p-4 grid grid-cols-2 gap-4 overflow-y-auto">
-                    {characters.map(c => (
-                        <div key={c.id} onClick={() => handleCharClick(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 active:scale-95 transition-transform flex flex-col items-center gap-3 relative group">
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); openHistory(c); }}
-                                className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors z-20 active:scale-90"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
+        // 暮色 8-25:剧情 tab 占位页(点击"剧情"tab 后显示,视觉上 tab 是 disabled)
+        if (meetSurface === 'story') {
+            return (
+                <div className="h-full w-full relative overflow-hidden flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
+                    <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
+                    {/* 顶栏 */}
+                    <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
+                        <div className="relative flex items-center justify-center px-5 pt-2">
+                            <button onClick={closeApp} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                                    style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>
+                                <CaretLeft size={19} weight="bold" />
                             </button>
-                            <img src={c.avatar} className="w-16 h-16 rounded-full object-cover" />
-                            <span className="font-bold text-slate-700">{c.name}</span>
-                            {c.savedDateState && <div className="absolute top-2 left-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" title="有存档"></div>}
+                            <div className="text-center">
+                                <h1 className="text-[26px] tracking-[0.14em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: SELECT_THEME.title, textShadow: `0 2px 18px ${SELECT_THEME.titleShadow}` }}>剧情模式</h1>
+                                <div className="flex items-center justify-center gap-2 mt-1.5">
+                                    <span className="h-px w-10" style={{ background: `linear-gradient(90deg,transparent,${SELECT_THEME.line})` }} />
+                                    <span className="text-[9px] tracking-[0.4em] font-bold" style={{ color: 'rgba(150,120,190,0.75)' }}>✦ STORY THEATER ✦</span>
+                                    <span className="h-px w-10" style={{ background: `linear-gradient(270deg,transparent,${SELECT_THEME.line})` }} />
+                                </div>
+                            </div>
                         </div>
-                    ))}
+                        {/* 陪伴/剧情 tab — 剧情 tab 在此页显示为"已选"视觉(锁+置灰,表示当前在剧情页,但功能未开放) */}
+                        <div className='mx-auto mt-4 mb-3 grid w-[min(18rem,calc(100%-2.5rem))] grid-cols-2 rounded-xl bg-white/45 p-1 shadow-sm'>
+                            <button onClick={() => setMeetSurface('companion')} className='rounded-lg py-2 text-xs font-bold text-[#8f7bb5] active:scale-95 transition-all'>陪伴</button>
+                            <button className='rounded-lg bg-white/70 py-2 text-xs font-bold text-[#715d99] shadow-sm flex items-center justify-center gap-1.5 cursor-not-allowed' disabled>
+                                <Lock size={11} weight="fill" />剧情
+                            </button>
+                        </div>
+                    </div>
+                    {/* 占位主体 */}
+                    <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 text-center">
+                        <div className="w-24 h-24 rounded-full flex items-center justify-center mb-6"
+                             style={{ background: 'rgba(255,255,255,0.6)', border: '1.5px solid rgba(170,140,210,0.35)', boxShadow: '0 8px 22px rgba(150,120,200,0.18)' }}>
+                            <Sparkle size={42} weight="light" style={{ color: '#a78bfa' }} />
+                        </div>
+                        <h2 className="text-[20px] font-bold tracking-[0.1em] mb-2" style={{ color: SELECT_THEME.title, fontFamily: `'Noto Serif SC',serif` }}>敬请期待</h2>
+                        <p className="text-xs tracking-wider" style={{ color: 'rgba(150,120,190,0.7)' }}>剧情模式开发中 · Coming Soon</p>
+                        <div className="mt-8 flex items-center gap-2 text-[10px]" style={{ color: 'rgba(150,120,190,0.55)' }}>
+                            <span className="h-px w-8" style={{ background: 'linear-gradient(90deg,transparent,rgba(150,120,190,0.5))' }} />
+                            <span>多人多角色剧本</span>
+                            <span className="h-px w-8" style={{ background: 'linear-gradient(270deg,transparent,rgba(150,120,190,0.5))' }} />
+                        </div>
+                    </div>
                 </div>
+            );
+        }
+
+        // 陪伴 tab - 淡紫美化角色选择页
+        return (
+            <div className="h-full w-full relative overflow-hidden flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
+                {/* 柔星点氛围 */}
+                <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
+
+                {/* 顶栏 + 标题 */}
+                <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
+                    <div className="relative flex items-center justify-center px-5 pt-2">
+                        <button onClick={closeApp} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                                style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>
+                            <CaretLeft size={19} weight="bold" />
+                        </button>
+                        <div className="text-center">
+                            <h1 className="text-[26px] tracking-[0.14em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: SELECT_THEME.title, textShadow: `0 2px 18px ${SELECT_THEME.titleShadow}` }}>选择见面对象</h1>
+                            <div className="flex items-center justify-center gap-2 mt-1.5">
+                                <span className="h-px w-10" style={{ background: `linear-gradient(90deg,transparent,${SELECT_THEME.line})` }} />
+                                <span className="text-[9px] tracking-[0.4em] font-bold" style={{ color: 'rgba(150,120,190,0.75)' }}>✦ CHOOSE CHARACTER ✦</span>
+                                <span className="h-px w-10" style={{ background: `linear-gradient(270deg,transparent,${SELECT_THEME.line})` }} />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 陪伴/剧情 tab — 陪伴 active,剧情 disabled 视觉(锁 icon + 灰) */}
+                    <div className='mx-auto mt-4 mb-3 grid w-[min(18rem,calc(100%-2.5rem))] grid-cols-2 rounded-xl bg-white/45 p-1 shadow-sm'>
+                        <button className='rounded-lg bg-white py-2 text-xs font-bold text-[#715d99] shadow-sm'>陪伴</button>
+                        <button onClick={() => setMeetSurface('story')} className='rounded-lg py-2 text-xs font-bold text-[#8f7bb5] flex items-center justify-center gap-1.5 active:scale-95 transition-all'>
+                            <Lock size={11} weight="fill" />剧情
+                        </button>
+                    </div>
+                </div>
+
+                {/* 角色 grid(保留暮色 fork 现有:handleCharClick / openHistory / 有存档徽标) */}
+                <div className="relative z-10 flex-1 overflow-y-auto px-5 pt-2 pb-6 no-scrollbar">
+                    <div className="grid grid-cols-2 gap-4">
+                        {characters.map((c, idx) => {
+                            const tint = CARD_TINTS[idx % CARD_TINTS.length];
+                            return (
+                                <div key={c.id} onClick={() => handleCharClick(c)}
+                                     className="group relative rounded-2xl px-3 pt-8 pb-5 flex flex-col items-center active:scale-95 transition-all overflow-hidden"
+                                     style={{ background: tint, border: `1px solid ${SELECT_THEME.cardBorder}`, boxShadow: SELECT_THEME.cardShadow }}>
+                                    {/* 内描框 */}
+                                    <div className="absolute inset-[7px] rounded-xl pointer-events-none" style={{ border: `1px solid ${SELECT_THEME.inner}` }} />
+                                    {/* 四角宝石 */}
+                                    <span className="absolute top-[10px] left-[10px] w-1.5 h-1.5 rotate-45" style={{ background: SELECT_THEME.gem }} />
+                                    <span className="absolute top-[10px] right-[10px] w-1.5 h-1.5 rotate-45" style={{ background: SELECT_THEME.gem }} />
+                                    <span className="absolute bottom-[10px] left-[10px] w-1.5 h-1.5 rotate-45" style={{ background: SELECT_THEME.gem }} />
+                                    <span className="absolute bottom-[10px] right-[10px] w-1.5 h-1.5 rotate-45" style={{ background: SELECT_THEME.gem }} />
+
+                                    {/* 有存档徽标(原版"在线"徽标视觉,保留暮色 fork 文字) */}
+                                    {c.savedDateState && (
+                                        <div className="absolute top-2.5 left-2.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full z-10"
+                                             style={{ background: 'rgba(255,255,255,0.8)', border: '1px solid rgba(120,200,160,0.4)', boxShadow: '0 1px 4px rgba(120,90,170,0.12)' }}>
+                                            <span className="relative flex h-1.5 w-1.5">
+                                                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                                            </span>
+                                            <span className="text-[8px] font-bold text-emerald-600 tracking-wider">有存档</span>
+                                        </div>
+                                    )}
+
+                                    {/* 见面记录按钮(右上) */}
+                                    <div className="absolute top-2 right-2 flex flex-col gap-1 z-20">
+                                        <button onClick={(e) => { e.stopPropagation(); openHistory(c); }} title="见面记录"
+                                                className="w-7 h-7 rounded-lg text-purple-500 flex items-center justify-center active:scale-90 transition-all"
+                                                style={{ background: 'rgba(255,255,255,0.88)', boxShadow: '0 1px 5px rgba(120,90,170,0.2)' }}>
+                                            <BookOpen size={15} weight="fill" />
+                                        </button>
+                                    </div>
+
+                                    {/* 头像(加紫色光晕,照原版 avGlow) */}
+                                    <img src={c.avatar} className="w-16 h-16 rounded-full object-cover mb-2" style={{ boxShadow: '0 4px 14px rgba(190,160,235,0.4)' }} />
+
+                                    {/* 名字 */}
+                                    <span className="font-bold" style={{ color: '#4a3a6a' }}>{c.name}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
                 <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => setPendingSessionChar(null)} footer={<div className="flex gap-3 w-full"><button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button><button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button></div>}>
                     <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span></div>
                 </Modal>

@@ -3317,13 +3317,21 @@ if (!isVisible || !isChattingWithThisChar) {
           const allStores = [
               'characters', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
-              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
+              'room_notes', 'xiao_zhi_tiaos', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
               'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
               'daily_schedule', 'memory_batches',
-              'pixel_home_assets', 'pixel_home_layouts'
+              'pixel_home_assets', 'pixel_home_layouts',
+              // 暮色 8-25：补之前漏的 store
+              // - 小纸条 / 手账（定义 + 每日打卡 + 跨角色聚合）
+              'trackers', 'tracker_entries', 'handbook',
+              // - 彼方 9 个 VR store（图书馆/批注/听歌/留言/剧本/舞台/预设/设置/邮局）
+              'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+              // - 捏人自定义部件（图片类，media_only 模式带）
+              'cc_custom_parts',
+              // 注：mcp_call_logs / api_call_log 是临时统计日志，不备份（跟 proactiveLastError 一样）
           ];
 
           if (mode === 'full') {
@@ -3333,20 +3341,22 @@ if (!isVisible || !isChattingWithThisChar) {
               // 明确不带：themes（聊天气泡背景图）、emojis/emoji_categories（表情包）、
               //   assets（资源池）、gallery（相册）、journal_stickers（日记贴纸）、
               //   social_posts（Spark 社交）、xhs_stock（小红书股票图）、
-              //   pixel_home_assets/layouts（像素房间图）
+              //   pixel_home_assets/layouts（像素房间图）、cc_custom_parts（捏人自定义部件，base64 图片）
               storesToProcess = [
                   'characters', 'messages', 'user_profile',
-                  'diaries', 'tasks', 'anniversaries', 'room_todos', 'room_notes',
+                  'diaries', 'tasks', 'anniversaries', 'room_todos', 'room_notes', 'xiao_zhi_tiaos',
                   'groups', 'courses', 'games', 'worldbooks', 'novels', 'songs',
                   'bank_transactions', 'bank_data', 'xhs_activities',
                   'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
                   'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
                   'daily_schedule', 'memory_batches',
+                  'trackers', 'tracker_entries', 'handbook',
+                  'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
               ];
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
-                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule'];
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -3475,6 +3485,16 @@ if (!isVisible || !isChattingWithThisChar) {
                       return undefined;
                   }
               })() : undefined,
+
+              // 暮色 8-25：补 3 个 localStorage 字段
+              //   - vrSchedules: VRScheduler 调度表（vr_schedules）
+              //     丢了 → 备份恢复后彼方"已接入"列表清空，得重新接入
+              //   - vrPoBase: 邮局后端地址（vr_po_base）
+              //   - vrPoDevice: 邮局身份码（vr_po_device）
+              //     丢了 → 换设备/清数据后找不回"我寄出的信"和回复
+              vrSchedules: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('vr_schedules'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              vrPoBase: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_po_base') || undefined) : undefined,
+              vrPoDevice: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_po_device') || undefined) : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;

@@ -2716,3 +2716,53 @@ export interface ActiveMsg2InboxMessage {
   receivedAt: number;
   processAttempts?: number;
 }
+
+// ─── 剧情模式(Story Theater)类型 ─────────────────────
+// 暮色 8-25:RP 模式是双人的,暮色 = 暮色,不需要"戴别的身份"
+// 所以 Entry 里没有 mask 字段,只有一个角色
+
+export interface StoryTheaterEntry {
+    id: string;
+    title: string;
+    premise: string;            // 前提/世界观
+    characterId: string;        // 当前对话角色(单人,不是 characterIds)
+    writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface StoryTheaterPreset {
+    id: string;
+    name: string;
+    sourceFileName?: string;
+    format: 'sullyos-story-preset';
+    document: StoryTheaterPresetDocument;
+    builtIn?: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface StoryTheaterPresetDocument {
+    schema: 'sullyos.story-preset';
+    version: 1;
+    name: string;
+    description?: string;
+    generation: {
+        temperature: number;
+        topP: number;
+        frequencyPenalty: number;
+        presencePenalty: number;
+        maxTokens: number;
+    };
+    prompts: StoryTheaterPresetPrompt[];
+    assistantPrefill?: string;
+}
+
+export interface StoryTheaterPresetPrompt {
+    id: string;
+    name: string;
+    enabled: boolean;
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+    marker?: 'characters' | 'world_before' | 'user' | 'world_after' | 'scenario' | 'examples' | 'history';
+}

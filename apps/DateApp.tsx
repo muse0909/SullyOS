@@ -12,25 +12,8 @@ import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { BookOpen, CaretLeft, Sparkle, Lock } from '@phosphor-icons/react';
-
-// 暮色 8-25:从原版搬淡紫主题美化(选角页)
-const SELECT_THEME = {
-    pageBg: 'linear-gradient(180deg,#efe9f7 0%,#f4eff9 45%,#f7f2fb 100%)',
-    stars: 'radial-gradient(1.5px 1.5px at 14% 16%,rgba(190,160,225,.45),transparent),radial-gradient(1px 1px at 80% 12%,rgba(220,190,235,.5),transparent),radial-gradient(1.5px 1.5px at 42% 28%,rgba(180,200,240,.4),transparent),radial-gradient(1px 1px at 86% 42%,rgba(200,175,230,.4),transparent),radial-gradient(1px 1px at 22% 66%,rgba(210,185,235,.35),transparent),radial-gradient(1px 1px at 66% 80%,rgba(200,210,240,.35),transparent)',
-    title: '#6a5790', titleShadow: 'rgba(170,150,220,.4)', line: 'rgba(150,120,190,.5)',
-    cardBorder: 'rgba(170,140,210,.3)', cardShadow: '0 8px 22px rgba(150,120,200,.18)',
-    inner: 'rgba(170,140,210,.22)', gem: 'rgba(190,160,220,.85)',
-};
-
-// 6 色柔色底(原版 line 726-731,按序循环)
-const CARD_TINTS = [
-    'linear-gradient(180deg,rgba(250,212,228,.85),rgba(242,228,246,.8))',
-    'linear-gradient(180deg,rgba(232,228,248,.85),rgba(242,238,250,.8))',
-    'linear-gradient(180deg,rgba(226,216,246,.85),rgba(238,230,249,.8))',
-    'linear-gradient(180deg,rgba(212,230,247,.85),rgba(234,240,250,.8))',
-    'linear-gradient(180deg,rgba(226,212,245,.85),rgba(238,228,249,.8))',
-    'linear-gradient(180deg,rgba(234,231,242,.88),rgba(242,240,247,.82))',
-];
+import StoryTheater from '../components/date/story/StoryTheater';
+import { SELECT_THEME, CARD_TINTS } from '../components/date/story/storyTheme';
 
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig } = useOS();
@@ -748,50 +731,13 @@ const DateApp: React.FC = () => {
     // --- Render ---
 
     if (mode === 'select' || !char) {
-        // 暮色 8-25:剧情 tab 占位页(点击"剧情"tab 后显示,视觉上 tab 是 disabled)
+        // 暮色 8-25 第二步:剧情 tab 接入 StoryTheater 主入口
         if (meetSurface === 'story') {
             return (
-                <div className="h-full w-full relative overflow-hidden flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
-                    <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
-                    {/* 顶栏 */}
-                    <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
-                        <div className="relative flex items-center justify-center px-5 pt-2">
-                            <button onClick={closeApp} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
-                                    style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>
-                                <CaretLeft size={19} weight="bold" />
-                            </button>
-                            <div className="text-center">
-                                <h1 className="text-[26px] tracking-[0.14em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: SELECT_THEME.title, textShadow: `0 2px 18px ${SELECT_THEME.titleShadow}` }}>剧情模式</h1>
-                                <div className="flex items-center justify-center gap-2 mt-1.5">
-                                    <span className="h-px w-10" style={{ background: `linear-gradient(90deg,transparent,${SELECT_THEME.line})` }} />
-                                    <span className="text-[9px] tracking-[0.4em] font-bold" style={{ color: 'rgba(150,120,190,0.75)' }}>✦ STORY THEATER ✦</span>
-                                    <span className="h-px w-10" style={{ background: `linear-gradient(270deg,transparent,${SELECT_THEME.line})` }} />
-                                </div>
-                            </div>
-                        </div>
-                        {/* 陪伴/剧情 tab — 剧情 tab 在此页显示为"已选"视觉(锁+置灰,表示当前在剧情页,但功能未开放) */}
-                        <div className='mx-auto mt-4 mb-3 grid w-[min(18rem,calc(100%-2.5rem))] grid-cols-2 rounded-xl bg-white/45 p-1 shadow-sm'>
-                            <button onClick={() => setMeetSurface('companion')} className='rounded-lg py-2 text-xs font-bold text-[#8f7bb5] active:scale-95 transition-all'>陪伴</button>
-                            <button className='rounded-lg bg-white/70 py-2 text-xs font-bold text-[#715d99] shadow-sm flex items-center justify-center gap-1.5 cursor-not-allowed' disabled>
-                                <Lock size={11} weight="fill" />剧情
-                            </button>
-                        </div>
-                    </div>
-                    {/* 占位主体 */}
-                    <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 text-center">
-                        <div className="w-24 h-24 rounded-full flex items-center justify-center mb-6"
-                             style={{ background: 'rgba(255,255,255,0.6)', border: '1.5px solid rgba(170,140,210,0.35)', boxShadow: '0 8px 22px rgba(150,120,200,0.18)' }}>
-                            <Sparkle size={42} weight="light" style={{ color: '#a78bfa' }} />
-                        </div>
-                        <h2 className="text-[20px] font-bold tracking-[0.1em] mb-2" style={{ color: SELECT_THEME.title, fontFamily: `'Noto Serif SC',serif` }}>敬请期待</h2>
-                        <p className="text-xs tracking-wider" style={{ color: 'rgba(150,120,190,0.7)' }}>剧情模式开发中 · Coming Soon</p>
-                        <div className="mt-8 flex items-center gap-2 text-[10px]" style={{ color: 'rgba(150,120,190,0.55)' }}>
-                            <span className="h-px w-8" style={{ background: 'linear-gradient(90deg,transparent,rgba(150,120,190,0.5))' }} />
-                            <span>多人多角色剧本</span>
-                            <span className="h-px w-8" style={{ background: 'linear-gradient(270deg,transparent,rgba(150,120,190,0.5))' }} />
-                        </div>
-                    </div>
-                </div>
+                <StoryTheater
+                    onSwitchCompanion={() => setMeetSurface('companion')}
+                    onClose={closeApp}
+                />
             );
         }
 

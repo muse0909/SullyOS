@@ -8,7 +8,8 @@ import {
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
     LifeSimState, HandbookEntry, Tracker, TrackerEntry,
     VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
-    XiaoZhiTiao  // 2026-07-22：小纸条独立于 RoomNote
+    XiaoZhiTiao,  // 2026-07-22：小纸条独立于 RoomNote
+    StoryTheaterEntry, StoryTheaterPreset  // 暮色 8-25 剧情模式类型
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { pruneMemoryLinksByTopN } from './memoryPalace/links';
@@ -20,7 +21,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 65; // Bumped: v65 add mailbox_letters store（暮色 8-25 信箱：双向信件）
+const DB_VERSION = 66; // Bumped: v66 add story_theaters + story_theater_presets stores（暮色 8-25 剧情模式：主入口+列表页）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -57,6 +58,8 @@ const STORE_DAILY_SCHEDULE = 'daily_schedule';
 const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry，id = 'YYYY-MM-DD'
 const STORE_TRACKERS = 'trackers';                // 手账打卡 tracker 定义
 const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
+const STORE_STORY_THEATERS = 'story_theaters';                 // 暮色 8-25 剧情模式：剧场存档（单人 RP）
+const STORE_STORY_THEATER_PRESETS = 'story_theater_presets';   // 剧情模式：预设库（用户导入的 SullyOS 专属 JSON 预设）
 
 export interface ScheduledMessage {
     id: string;
@@ -197,6 +200,12 @@ export const openDB = (): Promise<IDBDatabase> => {
           teStore.createIndex('trackerId', 'trackerId', { unique: false });
           teStore.createIndex('date', 'date', { unique: false });
       }
+
+      // ─── 剧情模式 stores (暮色 8-25) ───
+      // 单人 RP:暮色就是暮色,不需要 mask 字段,Entry 直接存 characterId 单值
+      // story_theater_masks 不开 — 暮色明确不要这个
+      createStore(STORE_STORY_THEATERS, { keyPath: 'id' });
+      createStore(STORE_STORY_THEATER_PRESETS, { keyPath: 'id' });
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -2157,6 +2166,64 @@ export const DB = {
       });
   },
   // ============ 信箱方法 end ============
+
+  // ============ 剧情模式 Story Theater (暮色 8-25) ============
+  // 单人 RP:暮色就是暮色,Entry 只存 characterId 单值
+  // 3 个 store:story_theaters(剧场存档)+ story_theater_presets(预设库)
+  // 不开 story_theater_masks(暮色不要"戴别的身份")
+
+  getStoryTheaters: async (): Promise<StoryTheaterEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_STORY_THEATERS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_STORY_THEATERS, 'readonly');
+          const req = tx.objectStore(STORE_STORY_THEATERS).getAll();
+          req.onsuccess = () => resolve((req.result || []) as StoryTheaterEntry[]);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveStoryTheater: async (entry: StoryTheaterEntry): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_STORY_THEATERS, 'readwrite');
+          tx.objectStore(STORE_STORY_THEATERS).put(entry);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  deleteStoryTheater: async (id: string): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_STORY_THEATERS, 'readwrite');
+          tx.objectStore(STORE_STORY_THEATERS).delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  getStoryTheaterPresets: async (): Promise<StoryTheaterPreset[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_STORY_THEATER_PRESETS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_STORY_THEATER_PRESETS, 'readonly');
+          const req = tx.objectStore(STORE_STORY_THEATER_PRESETS).getAll();
+          req.onsuccess = () => resolve((req.result || []) as StoryTheaterPreset[]);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveStoryTheaterPreset: async (preset: StoryTheaterPreset): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_STORY_THEATER_PRESETS, 'readwrite');
+          tx.objectStore(STORE_STORY_THEATER_PRESETS).put(preset);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+  // ============ 剧情模式方法 end ============
 
   exportFullData: async (): Promise<Partial<FullBackupData>> => {
       const db = await openDB();

@@ -32,6 +32,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [customPremise, setCustomPremise] = useState<string>('');
     const [writingStyle, setWritingStyle] = useState<string>(template.writingStyle);
     const [editingStyle, setEditingStyle] = useState(false);
+    const [temperature, setTemperature] = useState<number>(0.85);     // 暮色 8-25 第五步+:中间页可调
+    const [maxTokens, setMaxTokens] = useState<number>(4096);
     const [submitting, setSubmitting] = useState(false);
 
     // 选备选时自动填自定义输入框(用户可改/可清空)
@@ -70,6 +72,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 characterId: activeCharacterId,
                 premise: customPremise.trim(),
                 writingStyle: writingStyle.trim(),
+                generation: { temperature, maxTokens },  // 暮色 8-25 第五步+
             });
             await DB.saveStoryTheater(entry);
             onConfirm(entry.id);
@@ -80,7 +83,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     };
 
     return (
-        <div className="h-full w-full relative overflow-hidden flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
+        <div className="absolute inset-0 z-50 flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
             <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
 
             {/* 顶栏 */}
@@ -202,6 +205,51 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                         <PencilSimple size={12} weight="bold" style={{ color: 'rgba(150,120,190,0.6)', flexShrink: 0 }} />
                     </button>
                 )}
+
+                {/* 4. 预设(暮色 8-25 第五步+:LLM 采样参数) */}
+                <SectionTitle title="预设" subtitle="GENERATION" />
+                <div className="rounded-2xl px-3.5 py-3 mb-4 space-y-3" style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(170,140,210,0.3)' }}>
+                    {/* 温度 */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>温度</span>
+                            <span className="text-[11px] font-mono" style={{ color: '#4a3a6a' }}>{temperature.toFixed(2)}</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="0.3"
+                            max="1.2"
+                            step="0.05"
+                            value={temperature}
+                            onChange={e => setTemperature(parseFloat(e.target.value))}
+                            className="w-full"
+                            style={{ accentColor: '#a78bfa' }}
+                        />
+                        <div className="flex justify-between text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            <span>稳定 0.3</span>
+                            <span>平衡 0.85</span>
+                            <span>创意 1.2</span>
+                        </div>
+                    </div>
+                    {/* 最大长度 */}
+                    <div>
+                        <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>最大长度</span>
+                        <div className="grid grid-cols-4 gap-1.5 mt-1.5">
+                            {[1024, 2048, 4096, 8192].map(v => (
+                                <button
+                                    key={v}
+                                    onClick={() => setMaxTokens(v)}
+                                    className="py-1.5 rounded-lg text-[10px] font-bold active:scale-95 transition-all"
+                                    style={{
+                                        background: maxTokens === v ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.5)',
+                                        border: maxTokens === v ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
+                                        color: maxTokens === v ? '#715d99' : 'rgba(150,120,190,0.7)',
+                                    }}
+                                >{v}</button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* 底部"开剧场"按钮 */}

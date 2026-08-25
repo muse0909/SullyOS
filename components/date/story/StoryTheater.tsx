@@ -116,8 +116,8 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                         <ListChecks size={11} weight="bold" />我的模板
                     </button>
                 </div>
-                <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 -mx-5 px-5">
-                    {sceneTemplates.map((tpl, idx) => (
+                <div className="flex flex-wrap gap-1.5 pb-2 -mx-5 px-5">
+                    {sceneTemplates.map((tpl) => (
                         <button
                             key={tpl.id}
                             onClick={() => {
@@ -127,22 +127,15 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                                 }
                                 setConfigTemplate(tpl);
                             }}
-                            className="group flex-shrink-0 w-36 rounded-2xl px-3 pt-3 pb-3 active:scale-95 transition-all overflow-hidden text-left"
+                            className="group flex items-center gap-1 px-2 py-1 rounded-full active:scale-95 transition-all"
                             style={{
-                                background: idx < 6 ? 'linear-gradient(180deg,rgba(232,228,248,0.92),rgba(242,238,250,0.85))' : 'linear-gradient(180deg,rgba(250,212,228,0.85),rgba(242,228,246,0.8))',
-                                border: '1px solid rgba(170,140,210,0.3)',
-                                boxShadow: '0 4px 14px rgba(150,120,200,0.15)',
+                                background: 'rgba(255,255,255,0.7)',
+                                border: '1px solid rgba(170,140,210,0.35)',
+                                boxShadow: '0 1px 4px rgba(150,120,200,0.08)',
                             }}
                         >
-                            <div className="absolute inset-[5px] rounded-xl pointer-events-none" style={{ border: `1px solid ${SELECT_THEME.inner}` }} />
-                            <div className="relative text-[32px] mb-1.5">{tpl.emoji}</div>
-                            <div className="relative text-[13px] font-bold mb-0.5" style={{ color: '#4a3a6a' }}>{tpl.name}</div>
-                            <div className="relative text-[10px] leading-relaxed line-clamp-2" style={{ color: 'rgba(74,58,106,0.7)' }}>
-                                {tpl.description}
-                            </div>
-                            {tpl.builtIn && (
-                                <div className="relative text-[8px] mt-1.5 font-bold tracking-wider" style={{ color: 'rgba(150,120,190,0.6)' }}>BUILT-IN</div>
-                            )}
+                            <span className="text-[14px] leading-none">{tpl.emoji}</span>
+                            <span className="text-[11px] font-bold whitespace-nowrap" style={{ color: '#4a3a6a' }}>{tpl.name}</span>
                         </button>
                     ))}
                 </div>

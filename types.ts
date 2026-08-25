@@ -2729,6 +2729,8 @@ export interface StoryTheaterEntry {
     characterId: string;        // 当前对话角色(单人,不是 characterIds)
     writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
     summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
+    /** 暮色 8-25 第五步+:中间页可调 LLM 采样参数,buildRPSystemPrompt 注入。默认不存 = 走主 LLM 默认值。 */
+    generation?: { temperature: number; maxTokens: number };
     createdAt: number;
     updatedAt: number;
 }

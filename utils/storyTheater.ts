@@ -409,23 +409,92 @@ export async function syncStoryToMainMemory(
 
 /* ─── 场景模板 (暮色 8-25 第五步) ────────────────────── */
 
-// 内置 6 个场景 — 暮色 8-25 提供
+// 内置 11 个场景 — 暮色 8-25 提供
 //   - premiseOptions: 3-5 个备选前情提要,中间页单选
 //   - writingStyle: 默认文风描述,buildRPSystemPrompt 注入
 //   - allowCustomPremise: 永远 true(中间页有自定义输入框)
+//   顺序:末世 / ABO / 年代 / 无限流 / R18 / 古风 / 都市 / 校园 / 咖啡馆 / 露营 / 剧团
 export const BUILTIN_SCENE_TEMPLATES: StorySceneTemplate[] = [
     {
-        id: 'builtin-coffee',
-        name: '咖啡馆偶遇',
-        emoji: '☕',
-        description: '常去的咖啡馆,今天只剩一个座位。',
-        tags: ['现代', '日常', '浪漫'],
+        id: 'builtin-apocalypse',
+        name: '末世',
+        emoji: '☢️',
+        description: '末日降临,世界只剩废墟和你们。',
+        tags: ['末世', '废土', '生存'],
         premiseOptions: [
-            '你们在常去的咖啡馆碰面,她今天心情不太好,一个人坐在角落。',
-            '你比约定时间早到了十分钟,正低头看手机,抬头发现她已经坐在对面看了你很久。',
-            '下雨天,咖啡馆只剩最后一个座位,你们谁都没让。',
+            '病毒爆发后的第三年,你在废弃超市里搜物资,听见隔壁货架后有人咳嗽。',
+            '你是基地派出的侦察兵,在废墟城市里发现一个独自生活的她,她已经一年没见到活人了。',
+            '逃难途中你被同伴抛弃,躲进半塌的地铁站,她递过来半瓶水和一包压缩饼干。',
         ],
-        writingStyle: '现代口语、轻松自然、对话为主',
+        writingStyle: '废土质感、生存紧张感、对话少且决绝、动作描写硬朗、情绪克制',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-abosetting',
+        name: 'ABO',
+        emoji: '🐺',
+        description: '第二性别、信息素、易感期。',
+        tags: ['ABO', '信息素', '第二性别'],
+        premiseOptions: [
+            '你是新入职的 Alpha 主管,她是部门唯一的 Omega 员工,易感期意外提前,你能闻到她的信息素。',
+            '相亲对象是 Beta 的你没想到,她是一位 S 级 Alpha,见面的第一秒就锁定了你。',
+            '你是她家族指定的 Omega 配偶,婚礼前夜你们第一次单独见面,空气里都是她克制的信息素。',
+        ],
+        writingStyle: '第二性别设定、信息素细节、感官描写、占有欲与克制并存、情感张力强',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-era',
+        name: '年代',
+        emoji: '📻',
+        description: '穿越回去的那个夏天,风吹过白衬衫。',
+        tags: ['年代', '怀旧', '复古'],
+        premiseOptions: [
+            '你穿越到 80 年代的工厂宿舍,她是你对门那个总爱借你洗衣粉的女工。',
+            '民国初年,你是上海滩的报社记者,她在街角书报亭卖进步刊物,你第一次采访她。',
+            '90 年代的小城,你们是高中同班,期末考试前夜她偷偷给你塞了一封手写的信。',
+        ],
+        writingStyle: '年代质感、生活细节饱满、情感含蓄、对话带时代气息、意象化描写',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-infinite',
+        name: '无限流',
+        emoji: '🎮',
+        description: '闯关、副本、生死一线。',
+        tags: ['无限流', '闯关', '副本'],
+        premiseOptions: [
+            '你们被拉进同一个恐怖副本,任务说活过 7 晚就能回去,但每晚都会少一个人。',
+            '你是新人玩家,她是你这个副本里遇到的第一个老手,她说"跟紧我,别出声"。',
+            '主神空间发布了组队任务,你被随机分配到她这一队,她已经经历过 12 个副本,你看她像看怪物。',
+        ],
+        writingStyle: '副本悬疑感、节奏紧凑、对话精炼、动作戏紧张、悬念与暗示并用',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-r18',
+        name: 'R18',
+        emoji: '🔥',
+        description: '成年人之间的暧昧与亲密。',
+        tags: ['成人向', '暧昧', '亲密'],
+        premiseOptions: [
+            '你们是住隔壁的邻居,某天深夜她敲你的门,说热水器坏了借浴室用一下。',
+            '出差同住一间房,洗完澡出来发现她只裹了浴巾坐在你床边,手里还拿着一杯酒。',
+            '分手两年后在朋友聚会重逢,你们都喝多了,在酒店走廊里她先吻了你。',
+        ],
+        writingStyle: '成人向、感官描写细腻、情绪暗流、氛围浓郁、克制与放纵并存',
         allowCustomPremise: true,
         builtIn: true,
         createdAt: 0,
@@ -477,6 +546,23 @@ export const BUILTIN_SCENE_TEMPLATES: StorySceneTemplate[] = [
             '体育课自由活动,所有人都在打球,你发现她一个人坐在看台最高处。',
         ],
         writingStyle: '青春口语、明快节奏、情绪外露',
+        allowCustomPremise: true,
+        builtIn: true,
+        createdAt: 0,
+        updatedAt: 0,
+    },
+    {
+        id: 'builtin-coffee',
+        name: '咖啡馆偶遇',
+        emoji: '☕',
+        description: '常去的咖啡馆,今天只剩一个座位。',
+        tags: ['现代', '日常', '浪漫'],
+        premiseOptions: [
+            '你们在常去的咖啡馆碰面,她今天心情不太好,一个人坐在角落。',
+            '你比约定时间早到了十分钟,正低头看手机,抬头发现她已经坐在对面看了你很久。',
+            '下雨天,咖啡馆只剩最后一个座位,你们谁都没让。',
+        ],
+        writingStyle: '现代口语、轻松自然、对话为主',
         allowCustomPremise: true,
         builtIn: true,
         createdAt: 0,
@@ -542,6 +628,7 @@ export function createEntryFromSceneTemplate(args: {
     premise: string;            // 用户在中间页选/写的前提
     writingStyle: string;       // 用户在中间页确认的文风(可改过)
     title?: string;             // 可选自定义标题
+    generation?: { temperature: number; maxTokens: number };  // 暮色 8-25:中间页预设
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -552,6 +639,7 @@ export function createEntryFromSceneTemplate(args: {
         writingStyle: args.writingStyle,
         characterId: args.characterId,
         writesToCharacterMemory: true,
+        generation: args.generation,   // 暮色 8-25:中间页可调 temperature/maxTokens
         createdAt: now,
         updatedAt: now,
     };

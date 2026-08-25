@@ -2,7 +2,7 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState, useEffect } from 'react';
-import { CaretRight, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images } from '@phosphor-icons/react';
+import { CaretRight, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images, Envelope } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID } from '../types';
 import { DB } from '../utils/db';
@@ -11,8 +11,10 @@ import MomentsPage from './MomentsPage';
 import FavoritesPage from './FavoritesPage';
 import MomentsSettingsPage from './MomentsSettingsPage';
 import XiaoZhiTiaoPage from './XiaoZhiTiaoPage';
+// 暮色 8-25：信箱（双向信件）
+import MailboxPage from './MailboxPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao';
+type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao' | 'mailbox';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast, characters } = useOS();
@@ -55,6 +57,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // 子页：小纸条（2026-07-22：跟 PrivateNotesPage 完全独立，互不影响）
   if (subPage === 'xiao-zhi-tiao') {
     return <XiaoZhiTiaoPage onBack={() => setSubPage('list')} />;
+  }
+
+  // 子页：信箱（2026-08-25：暮色写的双向信件 + 角色来信）
+  if (subPage === 'mailbox') {
+    return <MailboxPage onBack={() => setSubPage('list')} />;
   }
 
   // 子页：朋友圈设置（暮色 2026-07-03 新增）
@@ -118,6 +125,9 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <span className="flex-1 text-sm font-medium text-slate-800">小纸条</span>
             <CaretRight size={16} className="text-slate-300" />
           </button>
+          <div className="border-t border-slate-100" />
+          {/* 暮色 8-25：信箱（双向信件）— 跟小纸条、日记并列 */}
+          <MailboxEntry onOpen={() => setSubPage('mailbox')} />
           <div className="border-t border-slate-100" />
           {/* 暮色 2026-08-22：日记入口（接通 AppID.Journal，跟相册/情侣空间同模式） */}
           <JournalEntry onClose={onClose} hasNew={hasNewDiary} />
@@ -204,6 +214,24 @@ const JournalEntry: React.FC<{ onClose: () => void; hasNew: boolean }> = ({ onCl
       <CaretRight size={16} className="text-slate-300" />
     </button>
   );
+};
+
+// 暮色 8-25：信箱入口（跟小纸条、日记并列）
+// 跟 XiaoZhiTiao 同模式：在 DiscoverPage 内嵌 subPage，不需要 openApp
+// MailboxEntry 在 DiscoverPage 函数体外，通过 onOpen prop 传 setSubPage
+const MailboxEntry: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full flex items-center gap-3 px-4 py-4 active:bg-indigo-50 transition-colors text-left"
+        >
+            <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center">
+                <Envelope size={16} weight="regular" className="text-indigo-500" />
+            </div>
+            <span className="flex-1 text-sm font-medium text-slate-800">信箱</span>
+            <CaretRight size={16} className="text-slate-300" />
+        </button>
+    );
 };
 
 export default DiscoverPage;

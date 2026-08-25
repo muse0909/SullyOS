@@ -3733,6 +3733,18 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'memory_batches': backupData.memoryBatches = processedData; break;
                   case 'pixel_home_assets': backupData.pixelHomeAssets = processedData; break;
                   case 'pixel_home_layouts': backupData.pixelHomeLayouts = processedData; break;
+                  // 暮色 8-25：补 13 个 case 分发（之前 store 加进 allStores 但漏了分发）
+                  case 'xiao_zhi_tiaos': backupData.xiaoZhiTiaos = processedData; break;
+                  case 'vr_novels': backupData.vrNovels = processedData; break;
+                  case 'vr_annotations': backupData.vrAnnotations = processedData; break;
+                  case 'vr_music': backupData.vrMusic = processedData; break;
+                  case 'vr_guestbook': backupData.vrGuestbook = processedData; break;
+                  case 'vr_scripts': backupData.vrScripts = processedData; break;
+                  case 'vr_plays': backupData.vrPlays = processedData; break;
+                  case 'vr_presets': backupData.vrPresets = processedData; break;
+                  case 'vr_settings': backupData.vrSettings = processedData; break;
+                  case 'vr_letters': backupData.vrLetters = processedData; break;
+                  case 'cc_custom_parts': backupData.ccCustomParts = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));

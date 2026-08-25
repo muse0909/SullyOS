@@ -2409,6 +2409,19 @@ export const DB = {
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);
       if (data.pixelHomeLayouts && db.objectStoreNames.contains('pixel_home_layouts')) clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts);
 
+      // 暮色 8-25：补 11 个 import 回写（之前 export 加进 case 但 import 端没回写）
+      if (data.xiaoZhiTiaos && db.objectStoreNames.contains('xiao_zhi_tiaos')) clearAndAdd('xiao_zhi_tiaos', data.xiaoZhiTiaos);
+      if (data.vrNovels && db.objectStoreNames.contains('vr_novels')) clearAndAdd('vr_novels', data.vrNovels);
+      if (data.vrAnnotations && db.objectStoreNames.contains('vr_annotations')) clearAndAdd('vr_annotations', data.vrAnnotations);
+      if (data.vrMusic && db.objectStoreNames.contains('vr_music')) clearAndAdd('vr_music', data.vrMusic);
+      if (data.vrGuestbook && db.objectStoreNames.contains('vr_guestbook')) clearAndAdd('vr_guestbook', data.vrGuestbook);
+      if (data.vrScripts && db.objectStoreNames.contains('vr_scripts')) clearAndAdd('vr_scripts', data.vrScripts);
+      if (data.vrPlays && db.objectStoreNames.contains('vr_plays')) clearAndAdd('vr_plays', data.vrPlays);
+      if (data.vrPresets && db.objectStoreNames.contains('vr_presets')) clearAndAdd('vr_presets', data.vrPresets);
+      if (data.vrSettings && db.objectStoreNames.contains('vr_settings')) clearAndAdd('vr_settings', data.vrSettings);
+      if (data.vrLetters && db.objectStoreNames.contains('vr_letters')) clearAndAdd('vr_letters', data.vrLetters);
+      if (data.ccCustomParts && db.objectStoreNames.contains('cc_custom_parts')) clearAndAdd('cc_custom_parts', data.ccCustomParts);
+
       if (data.userProfile) {
           // 暮色 2026-07-21：text_only 模式不覆盖 user profile — 修头像覆盖 bug
           //   根因：phone A 头像 = R2 URL（美化过的）→ text_only 导出 → phone B 恢复 → clear+put 覆盖本机 → R2 域名 phone B 访问不到 → 头像显示空方块

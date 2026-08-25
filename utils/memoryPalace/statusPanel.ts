@@ -80,6 +80,19 @@ export function getStatusPanel(): UserStatusPanel {
     return readPanel();
 }
 
+/** 直接覆盖整个状态面板（暮色手动编辑保存用）。
+ *  - 传 5 槽位的 object，缺位 = 清除
+ *  - 与 applyStatusUpdate（LLM 增量更新）区分，这个是"全量替换"
+ *  - 不会触发任何副作用，单纯写 localStorage */
+export function setStatusPanel(panel: UserStatusPanel): void {
+    const clean: UserStatusPanel = {};
+    for (const slot of STATUS_SLOTS) {
+        const v = panel[slot];
+        if (typeof v === 'string' && v.length > 0) clean[slot] = v;
+    }
+    writePanel(clean);
+}
+
 // ─── 提取端：把 LLM 的 statusUpdate 应用到面板 ─────────
 
 /**

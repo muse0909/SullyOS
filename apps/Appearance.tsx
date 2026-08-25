@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { useOS, DEFAULT_WALLPAPER } from '../context/OSContext';
+import { useOS, DEFAULT_WALLPAPER, NOSTALGIA_APPEARANCE, PAPER_WALLPAPER, isPaperWallpaper } from '../context/OSContext';
 import { OSTheme, DesktopDecoration, AppearancePreset, Toast, AppID } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
@@ -672,6 +672,40 @@ const Appearance: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
+                {/* 暮色 8-25：同步原作者 7-20 commit f4d43a6c 的"桌面风格"section
+                    — 跟下面"Preset Themes"(色相预设)不同,这是整机主题(壁纸+配色+图标+桌面渲染全联动)
+                    — 当前先放米黄默认 1 个卡片,以后加动森/手游/电子宠物/触感陪伴就加在这里 */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">桌面风格</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">一键切换整机主题:壁纸、配色与图标外观联动;触感陪伴不会改全局聊天装扮。</p>
+                    <div className="grid grid-cols-1 gap-3">
+                        {/* 米黄默认 — 暮色 8-25 同步自原作者,暮色当前 localStorage 不动(不点就维持粉绿默认) */}
+                        <button
+                            onClick={() => {
+                                updateTheme(NOSTALGIA_APPEARANCE);
+                                addToast?.('已切换到米黄默认主题', 'success');
+                            }}
+                            aria-pressed={isPaperWallpaper(theme.wallpaper)}
+                            className={`w-full flex items-center gap-3 rounded-2xl p-3 text-left border-2 transition-all active:scale-[0.99] ${isPaperWallpaper(theme.wallpaper) ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200 hover:border-slate-300'}`}
+                        >
+                            <div
+                                className="h-14 w-20 shrink-0 rounded-xl shadow-inner"
+                                style={{ background: PAPER_WALLPAPER }}
+                            />
+                            <div className="min-w-0 flex-1">
+                                <div className="text-xs font-bold text-slate-700">
+                                    米黄默认
+                                    {isPaperWallpaper(theme.wallpaper) && <span className="ml-1 text-[9px] font-bold text-primary">· 当前</span>}
+                                </div>
+                                <div className="text-[9px] text-slate-400 mt-0.5 leading-snug">暖米纸纹 · 草绿主色 · 棕字 · 去粉绿撞色</div>
+                            </div>
+                            {!isPaperWallpaper(theme.wallpaper) && (
+                                <span className="shrink-0 text-[9px] font-semibold text-slate-400">一键切换</span>
+                            )}
+                        </button>
+                    </div>
+                </section>
+
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Preset Themes</h2>
                     <div className="flex gap-3 mb-6 overflow-x-auto no-scrollbar pb-1">

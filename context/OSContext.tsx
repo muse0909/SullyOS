@@ -361,6 +361,38 @@ interface OSContextType {
 
 export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
 
+// 暮色 8-25：同步原作者 7-20 commit f4d43a6c 的"新版默认主题"(米黄纸纹)
+//   — 默认桌面使用低对比暖米纸纹：只靠同色系层次与极细纤维感建立质感,不用粉绿撞色渐变
+//   — 暮色说"现在这个不动"= 不动现有 localStorage,这是新增的桌面风格选项
+export const PAPER_WALLPAPER = [
+  'radial-gradient(120% 85% at 12% 0%, rgba(255,255,255,0.64) 0%, rgba(255,255,255,0) 58%)',
+  'repeating-linear-gradient(0deg, rgba(76,69,60,0.010) 0px, rgba(76,69,60,0.010) 1px, transparent 1px, transparent 4px)',
+  'linear-gradient(145deg, #fdfcf9 0%, #f8f6f1 54%, #f1eee8 100%)',
+].join(', ');
+
+/** 暮色 8-25：判断当前壁纸是不是"米黄纸纹"主题 — DesktopClock / CharacterWidget 用这个分支决定渲染 */
+export const isPaperWallpaper = (wallpaper?: string): boolean => {
+  if (!wallpaper) return false;
+  if (wallpaper === PAPER_WALLPAPER) return true;
+  const compact = wallpaper.toLowerCase().replace(/\s+/g, '');
+  return (
+    compact.includes('#fdfcf9') ||
+    compact.includes('rgb(253,252,249)') ||
+    compact.includes('#f8f6f1') ||
+    compact.includes('#f1eee8')
+  );
+};
+
+/** 暮色 8-25：米黄默认主题对象(暖草绿主色 + 棕字 + 米黄纸纹壁纸) */
+export const NOSTALGIA_APPEARANCE: Partial<OSTheme> = {
+  hue: 88,
+  saturation: 14,
+  lightness: 46,
+  wallpaper: PAPER_WALLPAPER,
+  contentColor: '#4b4136',
+  nowPlayingWidgetLight: true,
+};
+
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
   saturation: 25,

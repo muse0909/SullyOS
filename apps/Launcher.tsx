@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useLayoutEffect, useState, useRef } from 'react';
-import { useOS } from '../context/OSContext';
+import { isPaperWallpaper, useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
@@ -13,6 +13,8 @@ import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
     const contentColor = theme.contentColor || '#ffffff';
+    // 暮色 8-25 同步原作者 commit f4d43a6c：米黄纸纹主题用 Iowan Old Style 衬线字体 + 米色玻璃胶囊
+    const paper = isPaperWallpaper(theme.wallpaper);
 
     const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -29,15 +31,15 @@ const DesktopClock = React.memo(() => {
         : 'Good Evening';
 
     return (
-        <div className="flex flex-col mb-4 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
+        <div className="flex flex-col mb-5 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
             {/* 顶部装饰 — 状态胶囊 + 细线 */}
             <div className="flex items-center gap-2 mb-3 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
                     style={{
-                        background: 'rgba(255,255,255,0.28)',
-                        border: '1px solid rgba(255,255,255,0.18)',
+                        background: paper ? 'rgba(224,221,215,0.30)' : 'rgba(255,255,255,0.28)',
+                        border: paper ? '1px solid rgba(91,72,51,0.07)' : '1px solid rgba(255,255,255,0.18)',
                     }}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ boxShadow: '0 0 6px #4ade80' }} />
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: paper ? '#788369' : '#4ade80', boxShadow: paper ? 'none' : '0 0 6px #4ade80' }} />
                     <span className="text-[9px] font-bold tracking-[0.2em] uppercase">System Online</span>
                 </div>
                 <div className="h-[1px] flex-1 bg-gradient-to-r from-current to-transparent opacity-30" />
@@ -52,15 +54,17 @@ const DesktopClock = React.memo(() => {
             {/* 主时钟 */}
             <div className="flex items-end gap-4">
                 <div className="relative">
-                    <div className="text-[6.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
-                        style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
+                    <div
+                        className={`${paper ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'text-[6.25rem] font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
+                        style={{ fontFamily: paper ? `'Iowan Old Style', 'Baskerville', 'Times New Roman', serif` : `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}
+                    >
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
                         <span>{virtualTime.minutes.toString().padStart(2, '0')}</span>
                     </div>
-                    {/* 细光斑 */}
-                    <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
-                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />
+                    {/* 细光斑 — 暮色 8-25：纸纹模式去掉,避免在米黄上糊一团 */}
+                    {!paper && <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
+                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />}
                 </div>
 
                 <div className="flex flex-col justify-end pb-2.5 gap-0.5">
@@ -76,25 +80,32 @@ const DesktopClock = React.memo(() => {
 });
 
 // 2. Character Widget (Consumes Character Data & Messages)
-const CharacterWidget = React.memo(({ 
-    char, 
-    unreadCount, 
-    lastMessage, 
-    onClick, 
-    contentColor 
-}: { 
-    char: CharacterProfile | null, 
-    unreadCount: number, 
-    lastMessage: string, 
+const CharacterWidget = React.memo(({
+    char,
+    unreadCount,
+    lastMessage,
+    onClick,
+    contentColor
+}: {
+    char: CharacterProfile | null,
+    unreadCount: number,
+    lastMessage: string,
     onClick: () => void,
     contentColor: string
 }) => {
+    const { theme } = useOS();
+    // 暮色 8-25 同步原作者 commit f4d43a6c：纸纹模式用米色玻璃 + 棕字 + 草绿点
+    const paper = isPaperWallpaper(theme.wallpaper);
     return (
         <div className="mb-3 group animate-fade-in">
              <div
                 className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
-                style={{
+                style={paper ? {
+                    background: 'rgba(224,221,215,0.40)',
+                    border: '1px solid rgba(91,72,51,0.07)',
+                    boxShadow: '0 5px 16px rgba(91,72,51,0.055)',
+                } : {
                     background: 'rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(24px) saturate(1.4)',
                     WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
@@ -102,8 +113,8 @@ const CharacterWidget = React.memo(({
                     boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
                 }}
              >
-                 {/* 背景虚化角色头像 */}
-                 {char?.avatar && (
+                 {/* 背景虚化角色头像 — 暮色 8-25：纸纹模式不虚化头像,避免在米色底上糊一团 */}
+                 {!paper && char?.avatar && (
                      <div className="absolute inset-0 opacity-25 pointer-events-none"
                          style={{
                              backgroundImage: `url(${char.avatar})`,
@@ -116,10 +127,10 @@ const CharacterWidget = React.memo(({
 
                  <div className="relative flex items-center p-3 gap-3 h-full">
                      {/* 头像 */}
-                     <div className="w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
+                     <div className={`w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative ${paper ? 'bg-[#ded2c1]' : 'bg-slate-800'}`}
                          style={{
-                             border: '1.5px solid rgba(255,255,255,0.25)',
-                             boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+                             border: paper ? '1px solid rgba(91,72,51,0.14)' : '1.5px solid rgba(255,255,255,0.25)',
+                             boxShadow: paper ? '0 5px 14px rgba(91,72,51,0.13)' : '0 4px 14px rgba(0,0,0,0.25)',
                          }}>
                          {char ? (
                              <img src={char.avatar} className="w-full h-full object-cover" alt="char" loading="lazy" />
@@ -129,14 +140,14 @@ const CharacterWidget = React.memo(({
                                 {unreadCount > 9 ? '9+' : unreadCount}
                             </div>
                          ) : (
-                            <div className="absolute bottom-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-white/30" style={{ boxShadow: '0 0 6px #4ade80' }}></div>
+                            <div className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border-2 border-white/60" style={{ background: paper ? '#788369' : '#4ade80', boxShadow: paper ? 'none' : '0 0 6px #4ade80' }}></div>
                          )}
                      </div>
 
                      {/* 文本 */}
                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1" style={{ color: contentColor }}>
                          <div className="flex items-center gap-1.5">
-                             <h3 className="text-[15px] font-bold tracking-wide drop-shadow-md truncate">
+                             <h3 className={`text-[15px] font-bold tracking-wide truncate ${paper ? '' : 'drop-shadow-md'}`}>
                                  {char?.name || 'NO SIGNAL'}
                              </h3>
                              {unreadCount > 0 ? (
@@ -144,7 +155,7 @@ const CharacterWidget = React.memo(({
                                      style={{ background: 'rgba(239,68,68,0.9)', color: 'white' }}>NEW</div>
                              ) : (
                                  <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
-                                     style={{ background: 'rgba(255,255,255,0.18)' }}>Online</div>
+                                     style={paper ? { background: 'rgba(120,131,105,0.16)', color: '#68725b' } : { background: 'rgba(255,255,255,0.18)' }}>Online</div>
                              )}
                          </div>
                          <div className="text-xs line-clamp-2 font-medium leading-relaxed opacity-85">

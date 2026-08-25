@@ -22,6 +22,7 @@ import { createStoryTheaterDraft, normalizeStoryTheater } from '../../../utils/s
 import Modal from '../../os/Modal';
 import type { StoryTheaterEntry } from '../../../types';
 import { SELECT_THEME, CARD_TINTS } from './storyTheme';
+import StoryTheaterSession from './StoryTheaterSession';
 
 interface Props {
     onSwitchCompanion: () => void;  // 点"陪伴" tab 切回去
@@ -211,37 +212,16 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                 </div>
             </Modal>
 
-            {/* 进入 entry 占位(第三步实现 session) */}
+            {/* 进入 entry → 渲染 StoryTheaterSession(第三步) */}
             {activeEntry && (
-                <div className="absolute inset-0 z-50 flex flex-col" style={{ background: SELECT_THEME.pageBg }}>
-                    <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
-                    <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
-                        <div className="relative flex items-center justify-center px-5 pt-2">
-                            <button onClick={() => setActiveEntry(null)} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
-                                    style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)' }}>
-                                <ArrowLeft size={18} weight="bold" />
-                            </button>
-                            <div className="text-center">
-                                <h1 className="text-[22px] tracking-[0.14em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: SELECT_THEME.title }}>{activeEntry.title}</h1>
-                                <div className="text-[10px] mt-1" style={{ color: 'rgba(150,120,190,0.7)' }}>与 {characters.find(c => c.id === activeEntry.characterId)?.name || '未知角色'}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-8 text-center">
-                        <div className="w-24 h-24 rounded-full flex items-center justify-center mb-6"
-                             style={{ background: 'rgba(255,255,255,0.6)', border: '1.5px solid rgba(170,140,210,0.35)' }}>
-                            <BookOpen size={42} weight="light" style={{ color: '#a78bfa' }} />
-                        </div>
-                        <h2 className="text-[18px] font-bold tracking-[0.1em] mb-2" style={{ color: SELECT_THEME.title, fontFamily: `'Noto Serif SC',serif` }}>会话功能开发中</h2>
-                        <p className="text-xs" style={{ color: 'rgba(150,120,190,0.7)' }}>第三步实现 — RP 对话 + AI 回复 + 上下文管理</p>
-                        {activeEntry.premise && (
-                            <div className="mt-6 p-4 rounded-2xl max-w-md text-left" style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(170,140,210,0.3)' }}>
-                                <div className="text-[10px] font-bold mb-1" style={{ color: '#715d99' }}>前提</div>
-                                <div className="text-[12px] leading-relaxed" style={{ color: '#4a3a6a' }}>{activeEntry.premise}</div>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                <StoryTheaterSession
+                    entry={activeEntry}
+                    onExit={() => { setActiveEntry(null); void reload(); }}
+                    onUpdateEntry={(updated) => {
+                        // 摘要更新时同步到列表(让列表看到 updatedAt 变化)
+                        setEntries(prev => prev.map(e => e.id === updated.id ? updated : e));
+                    }}
+                />
             )}
         </div>
     );

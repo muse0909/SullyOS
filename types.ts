@@ -2727,8 +2727,22 @@ export interface StoryTheaterEntry {
     premise: string;            // 前提/世界观
     characterId: string;        // 当前对话角色(单人,不是 characterIds)
     writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
+    summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
     createdAt: number;
     updatedAt: number;
+}
+
+/**
+ * 剧情模式累积摘要(暮色 8-25 第三步)
+ *   - narrative:第一人称叙事摘要(lightLLM 生成,新批会跟旧 narrative 用 lightLLM 合并成连贯叙事)
+ *   - rawBatchCount:已摘要批数(每批 10 条 = 5 轮)
+ *   - lastUpdatedAt:上次摘要时间
+ * 不要结构化 JSON 数组(keyPlotPoints 等),叙事体对 LLM 拼上下文更自然。
+ */
+export interface StorySessionSummary {
+    narrative: string;
+    rawBatchCount: number;
+    lastUpdatedAt: number;
 }
 
 export interface StoryTheaterPreset {

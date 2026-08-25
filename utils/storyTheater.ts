@@ -1,32 +1,42 @@
 /**
- * 剧情模式 Story Theater — 工具函数
+ * 剧情模式 Story Theater — 工具函数 + LightLLM 调用
  *
- * 暮色 8-25 第二步:StoryTheater 主入口 + 列表页基础结构。
- *   只搬 3 个最基础的 helper,后面做 session / preset 时再补其他工具。
+ * 暮色 8-25 第三步:
+ *   - 消息存主 messages 表,charId = storyTheaterThreadId(entryId)(复用现有 store)
+ *   - 摘要触发:满 10 条(5 轮)才调 lightLLM,不够不触发(避免无意义开销)
+ *   - 退出同步:写 memory_node(累积叙事)+ 发 comment 到聊天框(DB.saveMessage + addToast)
  *
- * 设计:
- *   - 单人 RP:暮色 = 暮色,Entry 没有 mask 字段
- *   - Entry 只有一个 characterId(当前对话角色),不是 characterIds
- *   - 消息存主 messages 表(用独立 charId 线程 = storyTheaterThreadId(entryId))
- *     → 跟暮色原版"复用 messages 表"约定一致,无需新开 store
+ * LightLLM 调用:优先 memoryPalaceConfig.lightLLM,fallback apiConfig。
+ *   暮色 RP 模式暂只支持 openai 协议(跟彼方图书馆一致)—— 完整 3 协议后续再加。
  */
 
-import type { StoryTheaterEntry } from '../types';
-import { generateClientId } from './db';
+import type {
+    APIConfig,
+    CharacterProfile,
+    Message,
+    StorySessionSummary,
+    StoryTheaterEntry,
+    UserProfile,
+} from '../types';
+import type { MemoryPalaceGlobalConfig } from '../context/OSContext';
+import { DB, generateClientId } from './db';
+import { safeFetchJson } from './safeApi';
+import { MemoryNodeDB } from './memoryPalace/db';
+import {
+    buildBatchSummaryPrompt,
+    buildCommentPrompt,
+    buildMergeSummaryPrompt,
+} from './storyTheater/prompts';
 
-/**
- * 线程 ID:每条剧情用独立 charId 线程存消息
- *  格式: `story-theater:${entryId}` — 跟主聊天消息复用 messages 表
- *  跟【陪伴】会话不冲突,因为陪伴的 charId 是真实角色 ID
- */
+export const BATCH_SIZE = 10;       // 每批摘要的消息数(5 轮 = 10 条)
+export const KEEP_RECENT = 10;      // 保留最近 5 轮原文
+
+/* ─── 线程 ID ──────────────────────────────────────── */
+
 export const storyTheaterThreadId = (entryId: string): string => `story-theater:${entryId}`;
 
-/**
- * 新建 Entry 默认值
- *   - id 用 generateClientId() 生成
- *   - characterId 由调用方传入(从 useOS().activeCharacterId 拿)
- *   - writesToCharacterMemory 默认 false(第三步做 session 时再加开关 UI)
- */
+/* ─── Entry 草稿 + 规整(第二步已有) ─────────────────── */
+
 export const createStoryTheaterDraft = (
     characterId: string,
     title: string = '新剧场',
@@ -37,35 +47,275 @@ export const createStoryTheaterDraft = (
     title,
     premise,
     characterId,
-    writesToCharacterMemory: false,
+    writesToCharacterMemory: true,   // 暮色 8-25 第三步:默认开启,退出时同步
     createdAt: now,
     updatedAt: now,
 });
 
-/**
- * 规整 Entry — 读 DB 老数据时容错:
- *   - id 缺 → 重新生成(几乎不会发生,DB 写入时已经塞了)
- *   - 时间戳缺 → 用 now
- *   - characterId 缺 → 抛错(必填)
- *   - writesToCharacterMemory 缺 → 默认 false
- */
 export const normalizeStoryTheater = (
     entry: Partial<StoryTheaterEntry> | null | undefined,
     now: number = Date.now(),
 ): StoryTheaterEntry => {
-    if (!entry) {
-        throw new Error('[storyTheater] normalizeStoryTheater: entry is empty');
-    }
-    if (!entry.characterId) {
-        throw new Error('[storyTheater] normalizeStoryTheater: characterId is required (single-character RP)');
-    }
+    if (!entry) throw new Error('[storyTheater] normalizeStoryTheater: entry is empty');
+    if (!entry.characterId) throw new Error('[storyTheater] normalizeStoryTheater: characterId is required');
     return {
         id: entry.id || generateClientId(),
         title: entry.title || '未命名剧场',
         premise: entry.premise || '',
         characterId: entry.characterId,
-        writesToCharacterMemory: entry.writesToCharacterMemory ?? false,
+        writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
+        summary: entry.summary,
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
     };
 };
+
+/* ─── session 消息读写(主 messages 表,按 charId 线程) ── */
+
+export async function getSessionMessages(entryId: string): Promise<Message[]> {
+    const charId = storyTheaterThreadId(entryId);
+    return DB.getMessagesByCharId(charId, true);  // 包含已处理(剧情模式不走记忆宫殿 hwm)
+}
+
+export async function getSessionMessageCount(entryId: string): Promise<number> {
+    const msgs = await getSessionMessages(entryId);
+    return msgs.length;
+}
+
+export async function appendSessionMessage(
+    entryId: string,
+    role: 'user' | 'assistant' | 'system',
+    content: string,
+    metadata?: Record<string, any>,
+): Promise<number> {
+    return DB.saveMessage({
+        charId: storyTheaterThreadId(entryId),
+        role,
+        type: 'text',
+        content,
+        metadata: { ...metadata, source: 'story-theater', entryId },
+    });
+}
+
+/* ─── lightLLM 调用(简易 openai 协议,后续再加 claude/gemini) ── */
+
+export interface LLMCallDeps {
+    memoryPalaceConfig?: MemoryPalaceGlobalConfig | null;
+    apiConfig: APIConfig;
+}
+
+async function callLightLLM(prompt: string, deps: LLMCallDeps): Promise<string> {
+    const lightCfg = deps.memoryPalaceConfig?.lightLLM;
+    const useLight = !!(lightCfg?.baseUrl && lightCfg?.apiKey && lightCfg?.model);
+    const cfg = useLight ? lightCfg! : deps.apiConfig;
+    if (!cfg?.baseUrl || !cfg?.apiKey || !cfg?.model) {
+        throw new Error('[storyTheater] no LLM config (lightLLM and apiConfig both empty)');
+    }
+    const res = await safeFetchJson(
+        `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${cfg.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: cfg.model,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.7,
+                stream: false,
+            }),
+        },
+        1, 0,
+        { appName: '剧情模式', purpose: 'RP 摘要/合并/观后感' },
+    );
+    return res?.choices?.[0]?.message?.content || '';
+}
+
+/* ─── 摘要触发(满 10 条才调,避免无意义检查开销) ─────── */
+
+export interface SummarizeDeps extends LLMCallDeps {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    onProgress?: (msg: string) => void;  // 给 UI 显示"正在整理..."用
+}
+
+/**
+ * 满 10 条(5 轮)才调 lightLLM 做摘要
+ *   - 取最早 10 条打包成 batch
+ *   - 调 lightLLM 生成 narrative(第一人称叙事)
+ *   - 跟旧 narrative 用 lightLLM 合并(如果有)
+ *   - 更新 entry.summary(累加 rawBatchCount)
+ *   - 失败兜底:不动 entry,UI 提示
+ *
+ * 注意:已摘要的 10 条**不移出** messages 表(UI 只显示最近 5 轮,原文保留供退出同步用)
+ */
+export async function maybeSummarizeBatch(
+    entry: StoryTheaterEntry,
+    deps: SummarizeDeps,
+): Promise<StoryTheaterEntry | null> {
+    const total = await getSessionMessageCount(entry.id);
+    if (total <= KEEP_RECENT) return null;   // 不到 10 条不触发
+
+    const msgs = await getSessionMessages(entry.id);
+    const batch = msgs.slice(0, BATCH_SIZE);
+    if (batch.length < BATCH_SIZE) return null;  // 边界保护
+
+    deps.onProgress?.('正在整理前 5 轮剧情...');
+
+    const userName = deps.userProfile?.name || '暮色';
+    const newNarrative = await callLightLLM(
+        buildBatchSummaryPrompt({
+            charName: deps.char.name,
+            userName,
+            premise: entry.premise,
+            messages: batch.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        }),
+        deps,
+    );
+
+    let mergedNarrative = newNarrative;
+    if (entry.summary?.narrative) {
+        deps.onProgress?.('正在合并旧摘要...');
+        mergedNarrative = await callLightLLM(
+            buildMergeSummaryPrompt({
+                charName: deps.char.name,
+                userName,
+                oldNarrative: entry.summary.narrative,
+                newBatch: batch.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+            }),
+            deps,
+        );
+    }
+
+    const newSummary: StorySessionSummary = {
+        narrative: mergedNarrative.trim(),
+        rawBatchCount: (entry.summary?.rawBatchCount || 0) + 1,
+        lastUpdatedAt: Date.now(),
+    };
+
+    const updated: StoryTheaterEntry = {
+        ...entry,
+        summary: newSummary,
+        updatedAt: Date.now(),
+    };
+    await DB.saveStoryTheater(updated);
+    return updated;
+}
+
+/* ─── 退出同步:写 memory_node + 发 comment 到聊天框 ── */
+
+export interface SyncDeps extends LLMCallDeps {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    addToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
+}
+
+/**
+ * 退出 session 时的同步流程(方式 A:写进记忆宫殿,跟彼方图书馆一致)
+ *   1. 调 lightLLM 生成 comment(一句观后感)
+ *   2. 调 lightLLM 生成 narrative(累计叙事)—— 如果 entry.summary 已经存在就用旧的
+ *   3. 写 memory_node(房间 = 'self_room',importance = 60,origin = 'system',mood = 'reflective')
+ *   4. 发 comment 到聊天框(DB.saveMessage,charId = 角色真实 charId,role = 'assistant')
+ *   5. addToast 提示
+ *
+ * 失败兜底:任何一步失败都不抛,只 addToast 提示
+ */
+export async function syncStoryToMainMemory(
+    entry: StoryTheaterEntry,
+    deps: SyncDeps,
+): Promise<{ commentWritten: boolean; memoryNodeWritten: boolean }> {
+    const result = { commentWritten: false, memoryNodeWritten: false };
+    const charId = entry.characterId;
+    const userName = deps.userProfile?.name || '暮色';
+
+    // 1. 拿最近 5 轮原文(给 prompt 喂)
+    const recent = (await getSessionMessages(entry.id)).slice(-KEEP_RECENT);
+    if (recent.length === 0) {
+        deps.addToast?.('没有对话内容,跳过同步', 'info');
+        return result;
+    }
+
+    // 2. 用 entry.summary.narrative 或临时生成
+    let narrativeForComment = entry.summary?.narrative || '';
+    if (!narrativeForComment) {
+        // 没有累积摘要时,临时调一次 lightLLM 整理全部最近
+        try {
+            deps.addToast?.('正在生成观后感...', 'info');
+            narrativeForComment = await callLightLLM(
+                buildBatchSummaryPrompt({
+                    charName: deps.char.name,
+                    userName,
+                    premise: entry.premise,
+                    messages: recent.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+                }),
+                deps,
+            );
+        } catch (e) {
+            console.warn('[storyTheater] sync: batch summary failed:', e);
+            narrativeForComment = `(剧情「${entry.title}」: ${recent.length} 条对话,摘要失败)`;
+        }
+    }
+
+    // 3. 生成 comment
+    let commentLine = '';
+    try {
+        commentLine = (await callLightLLM(
+            buildCommentPrompt({
+                charName: deps.char.name,
+                premise: entry.premise,
+                narrative: narrativeForComment,
+                recentMessages: recent.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+            }),
+            deps,
+        )).trim();
+    } catch (e) {
+        console.warn('[storyTheater] sync: comment generation failed:', e);
+        commentLine = `刚和「${userName}」在「${entry.title}」里玩了一场,挺有意思的。`;
+    }
+
+    // 4. 写 memory_node
+    if (narrativeForComment && entry.writesToCharacterMemory) {
+        try {
+            const memId = `rpth_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+            await MemoryNodeDB.save({
+                id: memId,
+                charId,
+                content: narrativeForComment,
+                room: 'self_room',                // 暮色:RP 写进自我房间(自我反思类)
+                tags: ['story-theater', `theater:${entry.id}`, `theaterTitle:${entry.title}`],
+                importance: 60,
+                mood: 'reflective',
+                embedded: false,
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+                accessCount: 0,
+                sourceId: null,
+                origin: 'system',
+            } as any);
+            result.memoryNodeWritten = true;
+        } catch (e) {
+            console.warn('[storyTheater] sync: memory_node write failed:', e);
+        }
+    }
+
+    // 5. 发 comment 到聊天框(用角色真实 charId,role = 'assistant')
+    if (commentLine) {
+        try {
+            await DB.saveMessage({
+                charId,                          // 角色真实 ID,不是 storyTheater 线程
+                role: 'assistant',
+                type: 'text',
+                content: commentLine,
+                metadata: { source: 'story-theater', entryId: entry.id, theaterTitle: entry.title },
+            });
+            result.commentWritten = true;
+            deps.addToast?.(`已写进记忆宫殿 + 观后感发到聊天框`, 'success');
+        } catch (e) {
+            console.warn('[storyTheater] sync: chat message write failed:', e);
+            deps.addToast?.('观后感发到聊天框失败', 'error');
+        }
+    }
+
+    return result;
+}

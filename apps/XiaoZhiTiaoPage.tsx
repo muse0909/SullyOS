@@ -18,6 +18,7 @@ import NotebookBackground, {
     BuiltinBg,
 } from '../components/notes/NotebookBackground';
 import { XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY, XIAO_ZHI_TIAO_ENABLED_STORAGE_KEY } from '../utils/chatPrompts';
+import { DB } from '../utils/db';
 import {
     getStoredXiaoZhiTiaoStyles,
     setStoredXiaoZhiTiaoStyles,

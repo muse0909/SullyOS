@@ -254,11 +254,14 @@ const LetterCard: React.FC<{
     formatDeliverAt: (ts: number) => string;
 }> = ({ letter, onOpen, onDelete, charName, formatDeliverAt }) => {
     const env = ENVELOPE_STYLE[letter.envelope] || ENVELOPE_STYLE.classic;
-    const isUnread = letter.toUser === 'user' && letter.status === 'delivered';
+    // 暮色 8-25 反馈：看完红点还在 — 因为 markUserSeen 只写 userNotifiedAt,isUnread 没看这个字段
+    //   修法：未读 = 角色写给暮色 + 已投递 + 暮色没看过(userNotifiedAt 为空)
+    const isUnread = letter.toUser === 'user' && letter.status === 'delivered' && !letter.userNotifiedAt;
     const isPending = letter.status === 'pending';
     const firstLine = letter.content.split('\n')[0]?.slice(0, 40) || '';
     const date = new Date(letter.sentAt);
-    const dateLabel = `${date.getMonth() + 1}/${date.getDate()}`;
+    // 暮色 8-25 反馈：列表加时分（之前只有月/日，看不出先后）
+    const dateLabel = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
     return (
         <div className="relative group">
@@ -350,7 +353,8 @@ const DetailView: React.FC<{
 }> = ({ letter, onBack, onReply, onDelete, charName, userName }) => {
     const env = ENVELOPE_STYLE[letter.envelope] || ENVELOPE_STYLE.classic;
     const date = new Date(letter.sentAt);
-    const dateLabel = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+    // 暮色 8-25 反馈：详情也加时分
+    const dateLabel = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
     // 暮色 8-25：love 款顶部加极细粉色渐变边线
     const topAccent = letter.envelope === 'love'
@@ -494,7 +498,7 @@ const ComposeView: React.FC<{
 
     return (
         <div className="flex-1 flex flex-col bg-white">
-            {/* Header */}
+            {/* Header — 暮色 8-25 反馈：寄出按钮从底栏挪到顶栏右侧，避开底部日期/时间被挡 */}
             <div className="flex items-center justify-between px-2 py-3 bg-white/80 backdrop-blur shrink-0 border-b border-slate-100">
                 <button onClick={onBack} className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform" aria-label="返回">
                     <CaretLeft size={20} weight="bold" />
@@ -502,7 +506,16 @@ const ComposeView: React.FC<{
                 <h1 className="text-base font-semibold text-slate-800 tracking-wide">
                     {replyTo ? `回信给 ${charName}` : `写信给 ${charName}`}
                 </h1>
-                <div className="w-9 h-9" aria-hidden />
+                {/* 寄出按钮放顶栏 — 避开底部 home indicator + 虚拟键盘 */}
+                <button
+                    onClick={handleSend}
+                    disabled={sending || !content.trim()}
+                    className="px-3 h-9 flex items-center gap-1.5 rounded-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="寄出"
+                >
+                    <PaperPlaneTilt size={14} weight="fill" />
+                    {sending ? '寄出中' : (sendMode === 'schedule' ? '安排' : '寄出')}
+                </button>
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -576,8 +589,8 @@ const ComposeView: React.FC<{
                 </div>
             </div>
 
-            {/* 底部：发送 / 定时 */}
-            <div className="shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur">
+            {/* 底部：发送方式切换 + 定时时间（暮色 8-25 反馈：寄出按钮挪到顶栏，这里只留选项） */}
+            <div className="shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
                 {/* 发送方式切换 */}
                 <div className="px-5 pt-3 pb-2 flex items-center gap-4 text-sm">
                     <label className="flex items-center gap-1.5 cursor-pointer">
@@ -619,17 +632,12 @@ const ComposeView: React.FC<{
                     </div>
                 )}
 
-                {/* 发送按钮 */}
-                <div className="px-5 pb-3">
-                    <button
-                        onClick={handleSend}
-                        disabled={sending || !content.trim()}
-                        className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-white rounded-2xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <PaperPlaneTilt size={18} weight="fill" />
-                        {sending ? '发送中...' : (sendMode === 'schedule' ? '安排发送' : '寄出')}
-                    </button>
-                </div>
+                {/* 没选定时时：底栏留个字符计数(避免底部空荡) */}
+                {sendMode === 'now' && (
+                    <div className="px-5 pb-3 text-right text-[11px] text-slate-400">
+                        {charCount} 字 · 暮色 8-25 反馈按钮挪到顶栏
+                    </div>
+                )}
             </div>
         </div>
     );

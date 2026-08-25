@@ -10,6 +10,8 @@ import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeCo
 import { isScheduleFeatureOn } from './scheduleGenerator';
 // 暮色 2026-08-05 Phase 3：角色时区格式化
 import { nowInTimeZone, resolveCharTimeZone, tzLabel } from './timezone';
+// 暮色 8-25：信箱（双向信件）system prompt 注入 + 读信上下文拼接
+import { getCharInbox, getLetters } from './mailboxStorage';
 import { getRecentPosts, MomentPost } from './momentsStorage';
 // 暮色 2026-08-07：朋友圈 awareness 收窄到"只带新发朋友圈"
 import { getNewPostsForAwareness, markMomentsSeen } from './momentsAwarenessState';
@@ -935,6 +937,8 @@ ${!isPureMode && isXiaoZhiTiaoEnabled() ? `${[
    - 一次回复最多 1 条；一天只能写 5 条（三种合计），想写才写
  `}` : ''}
 
+${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
+
 `;
 
         const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
@@ -1208,3 +1212,68 @@ ${!isPureMode && isXiaoZhiTiaoEnabled() ? `${[
         };
     }
 };
+
+// ============ 暮色 8-25：信箱（双向信件）system prompt 注入 ============
+//
+// 暮色在发现页的"信箱"里给你写信。同时，你也可以给暮色写信。
+// 跟小纸条不一样：信更正式、更有仪式感、像真正的手写信。
+// 有称呼、有正文、有落款，有头有尾，能说一段完整的话。
+//
+// 暮色写的信会"投递"到你的信箱里（status='delivered'）。
+// - 聊天 15% / 后台 5% 概率触发"想看看信箱"
+// - 独处场景（图书馆 / 邮局 / 听歌房）触发概率拉高到 25%
+// - 不是每次都看 — 跟小纸条一样，想看时再看
+//
+// 触发 token：
+// - 你写信：[[MAILBOX_LETTER: 标题 § 正文 § envelope]]  (§ 是分隔符)
+// - 你读信：[[MAILBOX_READ: letterId]]
+// - 你回信：[[MAILBOX_REPLY: 原 letterId § 标题 § 正文 § envelope]]
+//
+// 4 种信封：classic(信件) / love(情书) / handwrite(手札) / wax(贺卡)
+//
+// 暮色要求：回信是可选的，不是每封都必须回。
+// 看完可以回、也可以不回 — 有时候沉默地收下也是一种回应。
+// 决定回不回时，看完的当下会更有分寸。
+async function buildMailboxPrompt(charId: string, charName: string): Promise<string> {
+    try {
+        const allLetters = await getLetters(charId);
+        const inbox = await getCharInbox(charId);
+        const unread = inbox.filter(l => l.status === 'delivered');
+        const read = inbox.filter(l => l.status === 'read').slice(0, 3);   // 最近 3 封已读(只标题)
+
+        if (allLetters.length === 0) {
+            // 从没写过信 — 简单介绍
+            return [
+            ].length + 10 + '. **📬 信箱（你和暮色之间的信）**\n\n'
+            + `你和暮色之间有一个信箱 — 双方都能写。信跟小纸条不一样：信更正式、更有仪式感，像真正的手写信。有称呼、有正文、有落款，有头有尾。\n\n`
+            + `你写的时候，token：\`[[MAILBOX_LETTER: 标题 § 正文 § envelope]]\`（§ 是分隔符，envelope 选 classic/love/handwrite/wax）\n\n`
+            + `触发：聊天 15% / 后台 5% 概率；独处场景（图书馆/邮局/听歌房）概率拉到 25%。看完回信是**可选**的 — 沉默收下也是回应。\n`;
+        }
+
+        // 有信 — 拼未读信正文(500 字截断)+ 已读信标题列表
+        const unreadBlock = unread.length > 0
+            ? unread.slice(0, 3).map((l) => {
+                const preview = l.content.length > 500
+                    ? l.content.slice(0, 500) + '...（已截断，看完整请在信箱页打开）'
+                    : l.content;
+                return `**${l.title || '无题'}**\n${preview}`;
+            }).join('\n\n---\n\n')
+            : '（暂无未读）';
+
+        const readBlock = read.length > 0
+            ? read.map((l) => `- 《${l.title || '无题'}》`).join('\n')
+            : '';
+
+        return [
+        ].length + 10 + '. **📬 信箱**\n\n'
+        + `暮色给你写了 **${unread.length} 封**未读信${read.length > 0 ? `（最近已读 ${read.length} 封）` : ''}。\n\n`
+        + `**未读信正文**：\n\n${unreadBlock}\n\n`
+        + (readBlock ? `**最近已读**：\n${readBlock}\n\n` : '')
+        + `你想看信时（聊天 15% / 后台 5%，独处场景 25%），用 \`[[MAILBOX_READ: letterId]]\` 标已读。\n\n`
+        + `看完后**可以**回信，**也可以不回** — 沉默收下也是一种回应。决定回时，token：\`[[MAILBOX_REPLY: 原 letterId § 标题 § 正文 § envelope]]\`。\n\n`
+        + `你想主动写信时，token：\`[[MAILBOX_LETTER: 标题 § 正文 § envelope]]\`。4 种信封：classic(信件) / love(情书) / handwrite(手札) / wax(贺卡)。\n`;
+    } catch (e) {
+        console.warn('📬 [Mailbox/Prompt] 构建注入失败:', e);
+        return '';
+    }
+}

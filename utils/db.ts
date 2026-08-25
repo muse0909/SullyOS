@@ -20,7 +20,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 64; // Bumped: v64 add mcp_call_logs store（暮色 8-24 E 计划：MCP 调用统计）
+const DB_VERSION = 65; // Bumped: v65 add mailbox_letters store（暮色 8-25 信箱：双向信件）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -330,6 +330,20 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
       createStore('vr_settings', { keyPath: 'id' });
       createStore('api_call_log', { keyPath: 'id' });
+
+      // 暮色 8-25：信箱（双向信件）
+      //   - 暮色写给角色 + 角色写给暮色，都存这里
+      //   - 字段：fromUser/toUser('user'|'char')、title、content、envelope(4 种样式)
+      //   - deliverAt: 定时发送时间戳（null = 立即发送）
+      //   - status: 'pending'(待投递) | 'delivered'(已投递,未读) | 'read'(已读)
+      //   - replyToId: 回信关联到原信（可空）
+      if (!db.objectStoreNames.contains('mailbox_letters')) {
+          const mbStore = db.createObjectStore('mailbox_letters', { keyPath: 'id' });
+          mbStore.createIndex('charId', 'charId', { unique: false });
+          mbStore.createIndex('fromUser', 'fromUser', { unique: false });
+          mbStore.createIndex('status', 'status', { unique: false });
+          mbStore.createIndex('deliverAt', 'deliverAt', { unique: false });
+      }
     };
   });
 };
@@ -2070,6 +2084,80 @@ export const DB = {
   },
   // ============ 彼方缺失方法 end ============
 
+  // ============ 暮色 8-25：信箱（双向信件）============
+  // 字段约定：
+  //   id / charId / fromUser('user'|'char') / toUser('user'|'char')
+  //   title / content(无字数限制) / envelope('classic'|'love'|'handwrite'|'wax')
+  //   sentAt / deliverAt(定时发送时间戳,null=立即) / readAt / status
+  //   replyToId(回信关联,可空)
+  getMailboxLetters: async (charId?: string): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('mailbox_letters')) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction('mailbox_letters', 'readonly');
+          const store = tx.objectStore('mailbox_letters');
+          const req = charId
+              ? store.index('charId').getAll(charId)
+              : store.getAll();
+          req.onsuccess = () => {
+              const all = (req.result || []) as any[];
+              all.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getMailboxLetter: async (id: string): Promise<any | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('mailbox_letters')) return null;
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction('mailbox_letters', 'readonly');
+          const req = tx.objectStore('mailbox_letters').get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveMailboxLetter: async (letter: any): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('mailbox_letters')) return;
+      const transaction = db.transaction('mailbox_letters', 'readwrite');
+      transaction.objectStore('mailbox_letters').put(letter);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  deleteMailboxLetter: async (id: string): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('mailbox_letters')) return;
+      const transaction = db.transaction('mailbox_letters', 'readwrite');
+      transaction.objectStore('mailbox_letters').delete(id);
+      await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // 批量获取"该角色"所有"待投递"(status='pending' 且 deliverAt<=now)的信
+  getPendingMailboxLetters: async (now: number): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains('mailbox_letters')) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction('mailbox_letters', 'readonly');
+          const store = tx.objectStore('mailbox_letters');
+          const req = store.index('status').getAll('pending');
+          req.onsuccess = () => {
+              const all = (req.result || []) as any[];
+              resolve(all.filter(l => l.deliverAt && l.deliverAt <= now));
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+  // ============ 信箱方法 end ============
+
   exportFullData: async (): Promise<Partial<FullBackupData>> => {
       const db = await openDB();
       
@@ -2208,7 +2296,15 @@ export const DB = {
           'xiao_zhi_tiaos',
           'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
           'cc_custom_parts',
-      ].filter(name => db.objectStoreNames.contains(name));
+      // 暮色 8-25：11 个新 store（小纸条 + 9 个 VR + 捏人）必须加进 availableStores，
+      //   否则 tx = db.transaction(availableStores, 'readwrite') 不开这些 store 的写权限，
+      //   clearAndAdd('vr_novels', ...) 调 tx.objectStore('vr_novels') 会抛 NotFoundError
+      'xiao_zhi_tiaos',
+      'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+      'cc_custom_parts',
+      // 暮色 8-25：信箱 store（双向信件）
+      'mailbox_letters',
+  ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
 
@@ -2427,6 +2523,9 @@ export const DB = {
       if (data.vrSettings && db.objectStoreNames.contains('vr_settings')) clearAndAdd('vr_settings', data.vrSettings);
       if (data.vrLetters && db.objectStoreNames.contains('vr_letters')) clearAndAdd('vr_letters', data.vrLetters);
       if (data.ccCustomParts && db.objectStoreNames.contains('cc_custom_parts')) clearAndAdd('cc_custom_parts', data.ccCustomParts);
+
+      // 暮色 8-25：信箱（双向信件）
+      if (data.mailboxLetters && db.objectStoreNames.contains('mailbox_letters')) clearAndAdd('mailbox_letters', data.mailboxLetters);
 
       if (data.userProfile) {
           // 暮色 2026-07-21：text_only 模式不覆盖 user profile — 修头像覆盖 bug

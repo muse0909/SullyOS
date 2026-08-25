@@ -8,6 +8,8 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
 import { parseMomentsActions } from '../utils/momentsActionParser';
+// 暮色 8-25：信箱定时调度器
+import { startMailboxScheduler, stopMailboxScheduler } from '../utils/mailboxScheduler';
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
 import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
@@ -2322,9 +2324,14 @@ if (!isVisible || !isChattingWithThisChar) {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
           VRScheduler.onTrigger(() => {});
+          stopMailboxScheduler();
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);
+
+  // 暮色 8-25：信箱定时调度器 — 启动 + 60s 间隔扫一次
+  //   投递 status='pending' + deliverAt<=now 的信 → 改 'delivered'
+  startMailboxScheduler();
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -3331,6 +3338,8 @@ if (!isVisible || !isChattingWithThisChar) {
               'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
               // - 捏人自定义部件（图片类，media_only 模式带）
               'cc_custom_parts',
+              // 暮色 8-25：信箱（双向信件）
+              'mailbox_letters',
               // 注：mcp_call_logs / api_call_log 是临时统计日志，不备份（跟 proactiveLastError 一样）
           ];
 
@@ -3352,11 +3361,12 @@ if (!isVisible || !isChattingWithThisChar) {
                   'daily_schedule', 'memory_batches',
                   'trackers', 'tracker_entries', 'handbook',
                   'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+                  'mailbox_letters',
               ];
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
-                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts'];
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts', 'mailbox_letters'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -3745,6 +3755,8 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'vr_settings': backupData.vrSettings = processedData; break;
                   case 'vr_letters': backupData.vrLetters = processedData; break;
                   case 'cc_custom_parts': backupData.ccCustomParts = processedData; break;
+                  // 暮色 8-25：信箱（双向信件）
+                  case 'mailbox_letters': backupData.mailboxLetters = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));

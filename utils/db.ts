@@ -2201,7 +2201,13 @@ export const DB = {
           STORE_TRACKERS,
           STORE_TRACKER_ENTRIES,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
-          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
+          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts',
+          // 暮色 8-25：11 个新 store（小纸条 + 9 个 VR + 捏人）必须加进 availableStores，
+          //   否则 tx = db.transaction(availableStores, 'readwrite') 不开这些 store 的写权限，
+          //   clearAndAdd('vr_novels', ...) 调 tx.objectStore('vr_novels') 会抛 NotFoundError
+          'xiao_zhi_tiaos',
+          'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+          'cc_custom_parts',
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');

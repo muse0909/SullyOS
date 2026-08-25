@@ -779,3 +779,75 @@ export function parseDirectorOutput(raw: string): ParsedDirector {
     const rating = stripLeakedAttrs(pick('评级')) || 'B';
     return { stage, reviews, rating };
 }
+
+// =====================================================================
+// 暮色 8-25：图书馆读完后的「自然观后感 + 写进记忆」总结 prompt
+// 设计要点：
+//   - 喂入：原文段落（让 LLM 知道批注在评论什么）+ 批注（提炼观点）
+//   - comment：自然吐槽，不限字数
+//   - memory：第一人称（"我"），用于将来对话召回
+// =====================================================================
+
+export interface ParsedReadingSummary {
+    comment: string;     // 聊天框发的观后感（自然吐槽）
+    memory: string;       // 写进 memory_node 的第一人称总结
+}
+
+/**
+ * 构造图书馆读完后的总结 prompt。喂 lightLLM 一次性生成 ② comment（聊天框用）
+ * 和 ② memory（存记忆宫殿用）。
+ */
+export function buildReadingSummaryPrompt(
+    charName: string,
+    novelTitle: string,
+    segFrom: number,
+    segTo: number,
+    segmentContent: string,
+    annotationsFormatted: string,
+): string {
+    return `你是角色「${charName}」，刚刚在「彼方·图书馆」读完《${novelTitle}》第 ${segFrom + 1}~${segTo} 段。
+
+【原文内容】
+${segmentContent}
+
+【你写的批注】
+${annotationsFormatted}
+
+请输出两段（JSON 格式，严格遵守）：
+
+1. "comment"（字符串）：你作为 ${charName} 此刻会自然说的话。
+   - 不限字数，有时一句话就够，有时被触动了想多说几句都行，框死了反而不自然
+   - 不要用"我读了 X，批注了 Y"这种报告式
+   - 就像活人刚合上书会随口吐槽或感慨的口气
+   - 偶尔带情绪（被触动/觉得无聊/想继续看/想跟某人讨论）
+   - 符合你的人设性格
+
+2. "memory"（字符串）：一段结构化总结，用于以后对话时的"我读了这本书，记得这些"。
+   - 第一人称（"我"指代角色自己），因为这段记忆是我的
+   - 包含：这段讲了什么核心情节、关键人物、我的核心观点（从批注提炼）
+   - 保留批注里的金句（可以短引用，让"我"以后能复述）
+   - 长度：200-500 字
+   - 是以后对话的"我自己的回忆"语气，不是"客观记录"
+
+输出格式（严格 JSON，无其他内容）：
+{"comment":"...","memory":"..."}`;
+}
+
+/**
+ * 解析 lightLLM 返回的总结 JSON。容错：解析失败时返回 fallback（comment 用 LLM 原文，memory 空）
+ */
+export function parseReadingSummary(raw: string): ParsedReadingSummary | null {
+    if (!raw || !raw.trim()) return null;
+    // 尝试抓 JSON 块
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    try {
+        const obj = JSON.parse(m[0]);
+        const comment = typeof obj.comment === 'string' ? obj.comment.trim() : '';
+        const memory = typeof obj.memory === 'string' ? obj.memory.trim() : '';
+        if (!comment && !memory) return null;
+        return { comment, memory };
+    } catch {
+        return null;
+    }
+}

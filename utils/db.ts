@@ -2201,7 +2201,13 @@ export const DB = {
           STORE_TRACKERS,
           STORE_TRACKER_ENTRIES,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
-          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
+          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts',
+          // 暮色 8-25：11 个新 store（小纸条 + 9 个 VR + 捏人）必须加进 availableStores，
+          //   否则 tx = db.transaction(availableStores, 'readwrite') 不开这些 store 的写权限，
+          //   clearAndAdd('vr_novels', ...) 调 tx.objectStore('vr_novels') 会抛 NotFoundError
+          'xiao_zhi_tiaos',
+          'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
+          'cc_custom_parts',
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -2408,6 +2414,19 @@ export const DB = {
       // Pixel Home（小屋像素界面）
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);
       if (data.pixelHomeLayouts && db.objectStoreNames.contains('pixel_home_layouts')) clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts);
+
+      // 暮色 8-25：补 11 个 import 回写（之前 export 加进 case 但 import 端没回写）
+      if (data.xiaoZhiTiaos && db.objectStoreNames.contains('xiao_zhi_tiaos')) clearAndAdd('xiao_zhi_tiaos', data.xiaoZhiTiaos);
+      if (data.vrNovels && db.objectStoreNames.contains('vr_novels')) clearAndAdd('vr_novels', data.vrNovels);
+      if (data.vrAnnotations && db.objectStoreNames.contains('vr_annotations')) clearAndAdd('vr_annotations', data.vrAnnotations);
+      if (data.vrMusic && db.objectStoreNames.contains('vr_music')) clearAndAdd('vr_music', data.vrMusic);
+      if (data.vrGuestbook && db.objectStoreNames.contains('vr_guestbook')) clearAndAdd('vr_guestbook', data.vrGuestbook);
+      if (data.vrScripts && db.objectStoreNames.contains('vr_scripts')) clearAndAdd('vr_scripts', data.vrScripts);
+      if (data.vrPlays && db.objectStoreNames.contains('vr_plays')) clearAndAdd('vr_plays', data.vrPlays);
+      if (data.vrPresets && db.objectStoreNames.contains('vr_presets')) clearAndAdd('vr_presets', data.vrPresets);
+      if (data.vrSettings && db.objectStoreNames.contains('vr_settings')) clearAndAdd('vr_settings', data.vrSettings);
+      if (data.vrLetters && db.objectStoreNames.contains('vr_letters')) clearAndAdd('vr_letters', data.vrLetters);
+      if (data.ccCustomParts && db.objectStoreNames.contains('cc_custom_parts')) clearAndAdd('cc_custom_parts', data.ccCustomParts);
 
       if (data.userProfile) {
           // 暮色 2026-07-21：text_only 模式不覆盖 user profile — 修头像覆盖 bug

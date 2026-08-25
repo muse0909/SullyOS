@@ -1966,6 +1966,23 @@ export interface FullBackupData {
     trackers?: Tracker[];
     trackerEntries?: TrackerEntry[];
 
+    // 暮色 8-25：小纸条（独立于 room_notes，7-22 加的）
+    xiaoZhiTiaos?: any[];
+
+    // 暮色 8-25：彼方（VRWorld）9 个 store
+    vrNovels?: any[];
+    vrAnnotations?: any[];
+    vrMusic?: any[];
+    vrGuestbook?: any[];
+    vrScripts?: any[];
+    vrPlays?: any[];
+    vrPresets?: any[];
+    vrSettings?: any[];
+    vrLetters?: any[];
+
+    // 暮色 8-25：捏人自定义部件（8-24 加的，base64 图片）
+    ccCustomParts?: any[];
+
     // Memory Palace 批次处理元数据
     memoryBatches?: any[];
 

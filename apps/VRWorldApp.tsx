@@ -1057,6 +1057,10 @@ const FeedCard: React.FC<{ item: FeedItem; onJump: (novelId: string | undefined,
     const room = getRoom(item.meta.room);
     const { pressing, handlers } = useLongPress(() => onRequestDelete(item), 550);
     const cardHandlers = manageMode ? { onClick: () => onToggleSelect?.(item.msgId) } : handlers;
+    // 暮色 8-25：批注超过 3 条默认折叠，展开看全部；点原文跳转（保持原行为）
+    const [annExpanded, setAnnExpanded] = useState(false);
+    const annRefs = item.meta.annotationRefs;
+    const annExs = item.meta.annotationExcerpts;
     return (
         <div {...cardHandlers}
             className={`relative rounded-2xl p-3 flex gap-3 backdrop-blur-sm transition-transform ${pressing ? 'scale-[0.97]' : ''} ${manageMode ? 'cursor-pointer' : ''} ${item.hidden && !selected ? 'opacity-55' : ''}`}
@@ -1076,20 +1080,30 @@ const FeedCard: React.FC<{ item: FeedItem; onJump: (novelId: string | undefined,
                 </div>
                 <p className="text-[11.5px] text-indigo-50/90 mt-0.5 leading-snug">{stripSelfName(item.meta.activity, item.charName)}</p>
                 {item.meta.behavior && <p className="text-[10.5px] text-pink-200/80 mt-1 leading-snug">{stripSelfName(item.meta.behavior, item.charName)}</p>}
-                {item.meta.annotationRefs && item.meta.annotationRefs.length > 0 ? (
+                {annRefs && annRefs.length > 0 ? (
                     <div className="mt-1 space-y-0.5">
-                        {item.meta.annotationRefs.slice(0, 3).map((ref, i) => (
+                        {(annExpanded ? annRefs : annRefs.slice(0, 3)).map((ref, i) => (
                             <button key={i} onClick={() => { if (manageMode) { onToggleSelect?.(item.msgId); return; } onJump(item.meta.novelId, ref.segIdx); }}
                                 className="block w-full text-left text-[10.5px] text-indigo-200/80 pl-2 border-l-2 border-amber-300/50 leading-snug active:opacity-60 hover:text-amber-100">
                                 {stripLeakedAttrs(ref.text)} <span className="text-amber-300/60">↗原文</span>
                             </button>
                         ))}
+                        {annRefs.length > 3 && (
+                            <button onClick={() => setAnnExpanded(v => !v)} className="text-[10px] text-indigo-300/70 hover:text-amber-200 pl-2 mt-0.5">
+                                {annExpanded ? '收起' : `展开 ${annRefs.length - 3} 条`}
+                            </button>
+                        )}
                     </div>
-                ) : item.meta.annotationExcerpts && item.meta.annotationExcerpts.length > 0 ? (
+                ) : annExs && annExs.length > 0 ? (
                     <div className="mt-1 space-y-0.5">
-                        {item.meta.annotationExcerpts.slice(0, 2).map((ex, i) => (
+                        {(annExpanded ? annExs : annExs.slice(0, 2)).map((ex, i) => (
                             <div key={i} className="text-[10.5px] text-indigo-200/70 pl-2 border-l-2 border-amber-300/40 leading-snug">{stripLeakedAttrs(ex)}</div>
                         ))}
+                        {annExs.length > 2 && (
+                            <button onClick={() => setAnnExpanded(v => !v)} className="text-[10px] text-indigo-300/70 hover:text-amber-200 pl-2 mt-0.5">
+                                {annExpanded ? '收起' : `展开 ${annExs.length - 2} 条`}
+                            </button>
+                        )}
                     </div>
                 ) : null}
                 {item.meta.room === 'postoffice' && item.meta.letterExcerpt && (

@@ -37,7 +37,11 @@ import {
     buildPostOfficeRoomTurn, parsePostOfficeOutput,
     buildPostOfficeReadTurn, parsePostOfficeReadOutput,
     buildTheaterRoomTurn, parseScriptOutput,
+    buildReadingSummaryPrompt, parseReadingSummary,
 } from './prompts';
+// 暮色 8-25：图书馆读完后的「观后感 + 写进记忆」总结 — 调 lightLLM + 写 memory_node/vector
+import { MemoryNodeDB, MemoryVectorDB } from '../memoryPalace/db';
+import { getEmbedding } from '../memoryPalace/embedding';
 
 /** 记忆管线所需配置的最小形状（避免从 OSContext 反向 import 造成循环依赖）。 */
 interface MemoryConfigLike {
@@ -314,6 +318,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             const savedExcerpts: string[] = [];
             const savedRefs: { segIdx: number; text: string }[] = [];
             let written = 0;
+            const savedAnnotationContents: string[] = [];   // 暮色 8-25：喂给 lightLLM 的批注原文
             for (const pa of parsed.annotations) {
                 if (pa.segIdx < win!.from || pa.segIdx >= win!.to) continue;
                 const targetId = pa.refLabel ? label2id.get(pa.refLabel) : undefined;
@@ -323,16 +328,107 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
                 const ex = pa.content.length > 60 ? pa.content.slice(0, 60) + '…' : pa.content;
                 savedExcerpts.push(ex);
                 savedRefs.push({ segIdx: pa.segIdx, text: ex });
+                savedAnnotationContents.push(pa.content);
                 written += 1;
             }
             const nextBookmark = win!.reachedEnd ? novel!.segments.length : win!.to;
             await updateCharacter(char.id, {
                 vrState: { ...prevState, novelBookmarks: { ...(prevState.novelBookmarks || {}), [novel!.id]: nextBookmark }, currentRoom: 'library', lastActiveAt: Date.now() },
             });
-            activity = parsed.activity || `读了《${novel!.title}》第 ${win!.from + 1}~${win!.to} 段${written ? `，留下了 ${written} 条批注` : '，安静读完没多说什么'}。`;
-            cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, activity)];
-            if (savedExcerpts.length) { cardLines.push('批注：'); for (const ex of savedExcerpts) cardLines.push(`· ${ex}`); }
-            meta = { vrCard: true, room: 'library', activity, novelId: novel!.id, novelTitle: novel!.title, segRange: [win!.from, win!.to], annotationExcerpts: savedExcerpts, annotationRefs: savedRefs };
+
+            // 暮色 8-25：调 lightLLM 生成「自然观后感 + 写进记忆」
+            //   - 喂入原文段落 + 批注全文（不只是摘要，让 LLM 知道批注在评论什么）
+            //   - 失败兜底：lightLLM 失败 → fallback apiConfig（主要模型）→ 都失败就用 LLM 原文 activity
+            let commentLine: string;
+            try {
+                const segFrom = win!.from;
+                const segTo = win!.to;
+                const segmentContent = novel!.segments
+                    .slice(segFrom, segTo)
+                    .map((s, i) => `【第 ${segFrom + i + 1} 段】${s.text || s.content || ''}`)
+                    .join('\n\n');
+                const annotationsFormatted = savedAnnotationContents.length
+                    ? savedAnnotationContents.map((a, i) => `${i + 1}. ${a}`).join('\n')
+                    : '（这一段没写批注）';
+                const summaryPrompt = buildReadingSummaryPrompt(
+                    char.name, novel!.title, segFrom, segTo, segmentContent, annotationsFormatted,
+                );
+                const llmConfig = memoryPalaceConfig?.lightLLM?.baseUrl
+                    ? { baseUrl: memoryPalaceConfig.lightLLM.baseUrl, apiKey: memoryPalaceConfig.lightLLM.apiKey || '', model: memoryPalaceConfig.lightLLM.model || '' }
+                    : apiConfig;
+                const llmRes = await safeFetchJson(`${(llmConfig.baseUrl || '').replace(/\/+$/, '')}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${llmConfig.apiKey || 'sk-none'}` },
+                    body: JSON.stringify({
+                        model: llmConfig.model,
+                        messages: [{ role: 'user', content: summaryPrompt }],
+                        temperature: 0.7, stream: false,
+                    }),
+                }, 1, 0, { appName: '彼方/图书馆总结', charId: char.id, charName: char.name, purpose: '阅读后总结' });
+                const summaryRaw: string = llmRes?.choices?.[0]?.message?.content || '';
+                const summary = parseReadingSummary(summaryRaw);
+                commentLine = summary?.comment
+                    || parsed.activity
+                    || `读了《${novel!.title}》第 ${segFrom + 1}~${segTo} 段${written ? `，留下了 ${written} 条批注` : '，安静读完没多说什么'}。`;
+
+                // 写进 memory_node（study 房间：学习/技能成长）
+                if (summary?.memory) {
+                    try {
+                        const memId = `vrlib_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+                        await MemoryNodeDB.save({
+                            id: memId,
+                            charId: char.id,
+                            content: summary.memory,
+                            room: 'study',
+                            tags: ['reading', `novel:${novel!.id}`, `novelTitle:${novel!.title}`],
+                            importance: 5,
+                            mood: 'thoughtful',
+                            embedded: false,
+                            createdAt: Date.now(),
+                            lastAccessedAt: Date.now(),
+                            accessCount: 0,
+                            sourceId: null,
+                            origin: 'system',
+                        });
+                        // 写 memory_vector（用全局 embedding 配置）
+                        const embCfg = memoryPalaceConfig?.embedding;
+                        if (embCfg?.baseUrl && embCfg?.apiKey) {
+                            try {
+                                const vec = await getEmbedding(summary.memory, {
+                                    baseUrl: embCfg.baseUrl,
+                                    apiKey: embCfg.apiKey,
+                                    model: embCfg.model || '',
+                                    dimensions: embCfg.dimensions,
+                                });
+                                await MemoryVectorDB.save({
+                                    memoryId: memId,
+                                    charId: char.id,
+                                    vector: vec,
+                                    dimensions: vec.length,
+                                    model: embCfg.model,
+                                });
+                            } catch (e) {
+                                console.warn('[VR/reading-summary] memory vector 写入失败（不影响 chat 观后感）:', e);
+                            }
+                        } else {
+                            console.warn('[VR/reading-summary] 无 embedding 配置，记忆节点已写但未向量化');
+                        }
+                    } catch (e) {
+                        console.warn('[VR/reading-summary] 写 memory_node 失败（不影响 chat 观后感）:', e);
+                    }
+                }
+            } catch (e) {
+                console.warn('[VR/reading-summary] lightLLM 总结失败，回落到 activity:', e);
+                commentLine = parsed.activity
+                    || `读了《${novel!.title}》第 ${win!.from + 1}~${win!.to} 段${written ? `，留下了 ${written} 条批注` : '，安静读完没多说什么'}。`;
+            }
+
+            // 暮色 8-25：聊天框只显示观后感（comment），不列批注
+            //   完整批注在 vr_annotations（图书馆）和 memory_node（角色记忆）都能查
+            activity = commentLine;
+            cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, commentLine)];
+            // annotationRefs/Excerpts 仍写进 meta（动态卡片用：用户进"世界"页能看）
+            meta = { vrCard: true, room: 'library', activity: commentLine, novelId: novel!.id, novelTitle: novel!.title, segRange: [win!.from, win!.to], annotationExcerpts: savedExcerpts, annotationRefs: savedRefs };
         } else if (room.id === 'music') {
             // === 听歌房：点歌进队列 + 乐评 + 推进循环队列 ===
             const parsed = parseMusicOutput(aiContent);

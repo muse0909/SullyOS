@@ -2731,6 +2731,36 @@ export interface StoryTheaterEntry {
     summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
     /** 暮色 8-25 第五步+:中间页可调 LLM 采样参数,buildRPSystemPrompt 注入。默认不存 = 走主 LLM 默认值。 */
     generation?: { temperature: number; maxTokens: number };
+    /** 暮色 8-25 第六步第一批:消息数(方案 A — 写时 +1,删 Entry 归零,老数据回填) */
+    messageCount?: number;
+    /** 暮色 8-25 第六步第一批:用哪套 RP API 配置(null = 主 apiConfig) */
+    apiConfigId?: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/**
+ * 暮色 8-25 第六步第一批:RP 模式独立 API 配置
+ *   - 默认走主 apiConfig(用户不指定)
+ *   - 暮色可建多套(中转站/自建/不同模型)切换
+ *   - 本步只实现 openai 协议的流式;claude/gemini 协议 fallback 非流式 + 提示
+ *   - 3 协议独立 URL/Key/Model 字段照搬主 API 模式
+ */
+export interface RPApiConfig {
+    id: string;
+    name: string;                       // 'GPT-4o 中转' / 'Claude 备用' / 用户自命名
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    protocol: 'openai' | 'claude' | 'gemini';
+    // 3 协议独立字段
+    claudeBaseUrl?: string;
+    claudeApiKey?: string;
+    claudeModel?: string;
+    geminiBaseUrl?: string;
+    geminiApiKey?: string;
+    geminiModel?: string;
+    isDefault?: boolean;               // 标记"主聊天同款"(套壳主 apiConfig,不可删)
     createdAt: number;
     updatedAt: number;
 }

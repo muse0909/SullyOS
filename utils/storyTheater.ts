@@ -14,6 +14,7 @@ import type {
     APIConfig,
     CharacterProfile,
     Message,
+    RPApiConfig,
     StorySceneTemplate,
     StorySessionSummary,
     StoryStatusSnapshot,
@@ -28,7 +29,9 @@ import {
     buildBatchSummaryPrompt,
     buildCommentPrompt,
     buildMergeSummaryPrompt,
+    buildRPSystemPrompt,
 } from './storyTheater/prompts';
+import { ContextBuilder } from './context';
 
 export const BATCH_SIZE = 10;       // 每批摘要的消息数(5 轮 = 10 条)
 export const KEEP_RECENT = 10;      // 保留最近 5 轮原文
@@ -189,6 +192,21 @@ export function parseStatusFromReply(rawContent: string): {
 export interface LLMCallDeps {
     memoryPalaceConfig?: MemoryPalaceGlobalConfig | null;
     apiConfig: APIConfig;
+}
+
+/** 失败重试 N 次(默认 2 次,间隔 1.5s) — 暮色 8-25 第六步第一批 */
+export async function callWithRetry<T>(fn: () => Promise<T>, maxAttempts = 2, delayMs = 1500): Promise<T> {
+    let lastError: any;
+    for (let i = 0; i < maxAttempts; i++) {
+        try { return await fn(); }
+        catch (e) {
+            lastError = e;
+            if (i < maxAttempts - 1) {
+                await new Promise<void>(r => setTimeout(r, delayMs));
+            }
+        }
+    }
+    throw lastError;
 }
 
 async function callLightLLM(prompt: string, deps: LLMCallDeps): Promise<string> {
@@ -629,6 +647,7 @@ export function createEntryFromSceneTemplate(args: {
     writingStyle: string;       // 用户在中间页确认的文风(可改过)
     title?: string;             // 可选自定义标题
     generation?: { temperature: number; maxTokens: number };  // 暮色 8-25:中间页预设
+    apiConfigId?: string;       // 暮色 8-25 第六步第一批:用哪套 RP API(null = 主 apiConfig)
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -640,6 +659,8 @@ export function createEntryFromSceneTemplate(args: {
         characterId: args.characterId,
         writesToCharacterMemory: true,
         generation: args.generation,   // 暮色 8-25:中间页可调 temperature/maxTokens
+        apiConfigId: args.apiConfigId,  // 暮色 8-25 第六步第一批
+        messageCount: 0,                // 新建默认 0 句
         createdAt: now,
         updatedAt: now,
     };
@@ -669,4 +690,279 @@ export function createCustomSceneTemplate(args: {
         createdAt: now,
         updatedAt: now,
     };
+}
+
+/* ─── 暮色 8-25 第六步第一批:流式输出 + 独立 API + 测通 ─────── */
+
+/** 解析 Entry.apiConfigId → 实际 RP API 配置,没指定或找不到 → 用主 apiConfig */
+export async function getResolvedRPApiConfig(args: {
+    entry?: StoryTheaterEntry | null;
+    apiConfig: APIConfig;
+}): Promise<{
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    protocol: 'openai' | 'claude' | 'gemini';
+    isFallback: boolean;   // true = 没找到指定 config,用了主 apiConfig
+    protocolFallback: boolean;  // true = 协议不是 openai,流式降级
+}> {
+    // 暮色 8-25:Entry.apiConfigId 为空 → 用主 apiConfig(套壳为 openai 协议)
+    if (!args.entry?.apiConfigId) {
+        return {
+            baseUrl: args.apiConfig.baseUrl,
+            apiKey: args.apiConfig.apiKey,
+            model: args.apiConfig.model,
+            protocol: 'openai',
+            isFallback: true,
+            protocolFallback: false,
+        };
+    }
+    const cfg = await DB.getRPApiConfig(args.entry.apiConfigId);
+    if (!cfg) {
+        // 指定的 config 找不到(可能删了),回退到主
+        return {
+            baseUrl: args.apiConfig.baseUrl,
+            apiKey: args.apiConfig.apiKey,
+            model: args.apiConfig.model,
+            protocol: 'openai',
+            isFallback: true,
+            protocolFallback: false,
+        };
+    }
+    return {
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        protocol: cfg.protocol,
+        isFallback: false,
+        protocolFallback: cfg.protocol !== 'openai',   // 本步只实现 openai 流式
+    };
+}
+
+/** 测通 API — 用普通 /chat/completions 发一条 "hi"(非流式,验证连通性+key) */
+export async function testRPApiConfig(cfg: RPApiConfig): Promise<{ ok: boolean; msg: string; latencyMs?: number }> {
+    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
+        return { ok: false, msg: '配置不完整(baseUrl/apiKey/model 不能为空)' };
+    }
+    const start = Date.now();
+    try {
+        // 本步只测 openai 协议
+        if (cfg.protocol !== 'openai') {
+            return { ok: false, msg: `测通功能暂只支持 openai 协议(当前 ${cfg.protocol})` };
+        }
+        const res = await safeFetchJson(
+            `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+                body: JSON.stringify({
+                    model: cfg.model,
+                    messages: [{ role: 'user', content: 'hi' }],
+                    max_tokens: 5,
+                    stream: false,
+                }),
+            },
+            1, 0,
+            { appName: '剧情模式测通', purpose: '验证 API 连通性' },
+        );
+        const latencyMs = Date.now() - start;
+        const content = res?.choices?.[0]?.message?.content;
+        if (typeof content === 'string') {
+            return { ok: true, msg: `测通成功(${latencyMs}ms)`, latencyMs };
+        }
+        return { ok: false, msg: `响应格式异常: ${JSON.stringify(res).slice(0, 200)}` };
+    } catch (e: any) {
+        return { ok: false, msg: `测通失败: ${e?.message || e}` };
+    }
+}
+
+/** 拼 system prompt(供流式/非流式共用) */
+function buildMainLLMSystemPrompt(args: {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    entry: StoryTheaterEntry;
+}): string {
+    let baseSystem = '';
+    try {
+        baseSystem = ContextBuilder.buildCoreContext(args.char, args.userProfile || undefined);
+    } catch {
+        baseSystem = `你是${args.char.name}。${args.char.description || ''}`;
+    }
+    return buildRPSystemPrompt({
+        base: baseSystem,
+        char: args.char,
+        userProfile: args.userProfile,
+        entry: args.entry,
+        summary: args.entry.summary,
+    });
+}
+
+/** 非流式主 LLM(协议 fallback 用) */
+export async function callMainLLMNonStream(args: {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    entry: StoryTheaterEntry;
+    history: { role: 'user' | 'assistant'; content: string }[];
+    apiConfig: APIConfig;
+}): Promise<string> {
+    const cfg = await getResolvedRPApiConfig({ entry: args.entry, apiConfig: args.apiConfig });
+    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
+        throw new Error('主 LLM 未配置');
+    }
+    const messages = [
+        { role: 'system', content: buildMainLLMSystemPrompt(args) },
+        ...args.history,
+    ];
+    const res = await safeFetchJson(
+        `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+            body: JSON.stringify({
+                model: cfg.model,
+                messages,
+                temperature: args.entry.generation?.temperature ?? 0.85,
+                max_tokens: args.entry.generation?.maxTokens ?? 4096,
+                stream: false,
+            }),
+        },
+        1, 0,
+        { appName: '剧情模式', purpose: 'RP 对话', charId: args.char.id, charName: args.char.name },
+    );
+    return res?.choices?.[0]?.message?.content || '';
+}
+
+/** 流式主 LLM(openai 协议) — 暮色 8-25 第六步第一批
+ *  返回 AsyncGenerator,逐 chunk yield 增量文本
+ *  协议非 openai 时自动 fallback 非流式(整段 yield 一次) */
+export async function* callMainLLMStream(args: {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    entry: StoryTheaterEntry;
+    history: { role: 'user' | 'assistant'; content: string }[];
+    apiConfig: APIConfig;
+}): AsyncGenerator<string, void, void> {
+    const cfg = await getResolvedRPApiConfig({ entry: args.entry, apiConfig: args.apiConfig });
+
+    if (cfg.protocol !== 'openai') {
+        // fallback: 非流式,整段 yield
+        const text = await callWithRetry(
+            () => callMainLLMNonStream(args),
+            2, 1500,
+        );
+        if (text) yield text;
+        return;
+    }
+
+    const messages = [
+        { role: 'system', content: buildMainLLMSystemPrompt(args) },
+        ...args.history,
+    ];
+
+    const fetchOnce = async (): Promise<Response> => {
+        return fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${cfg.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: cfg.model,
+                messages,
+                temperature: args.entry.generation?.temperature ?? 0.85,
+                max_tokens: args.entry.generation?.maxTokens ?? 4096,
+                stream: true,
+            }),
+        });
+    };
+
+    // 重试 1 次(包装整个流式调用)
+    const res = await callWithRetry(fetchOnce, 2, 1500);
+    if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(`LLM HTTP ${res.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const raw of lines) {
+            const line = raw.trim();
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') return;
+            try {
+                const json = JSON.parse(data);
+                const delta = json.choices?.[0]?.delta?.content;
+                if (typeof delta === 'string' && delta) yield delta;
+            } catch {
+                // 忽略解析失败的行(SSE 偶尔有注释行)
+            }
+        }
+    }
+}
+
+/* ─── 暮色 8-25 第六步第一批:删除 Entry + 同步清 messages + 消息数 helper ── */
+
+/** 删剧场 + 同步清 messages 表里对应 charId 的所有消息 */
+export async function deleteStoryTheaterAndMessages(entryId: string): Promise<{ deletedMessages: number }> {
+    const threadId = storyTheaterThreadId(entryId);
+    const msgs = await DB.getMessagesByCharId(threadId, true);  // 包含已处理(剧情不走 hwm)
+    let n = 0;
+    for (const m of msgs) {
+        try {
+            await DB.deleteMessage(m.id);
+            n++;
+        } catch (e) {
+            console.warn(`[storyTheater] delete message ${m.id} failed:`, e);
+        }
+    }
+    await DB.deleteStoryTheater(entryId);
+    return { deletedMessages: n };
+}
+
+/** 写消息后 +1 计数(自动持久化回 Entry) */
+export async function bumpMessageCount(entryId: string, currentEntry: StoryTheaterEntry): Promise<StoryTheaterEntry> {
+    const updated: StoryTheaterEntry = {
+        ...currentEntry,
+        messageCount: (currentEntry.messageCount || 0) + 1,
+        updatedAt: Date.now(),
+    };
+    await DB.saveStoryTheater(updated);
+    return updated;
+}
+
+/** 列表加载时:老数据回填(若 messageCount === 0 但 entry 已存在,数一次并回写) */
+export async function backfillMessageCountIfNeeded(entry: StoryTheaterEntry): Promise<StoryTheaterEntry> {
+    if (entry.messageCount && entry.messageCount > 0) return entry;
+    if (!entry.createdAt || entry.createdAt < Date.now() - 5 * 60 * 1000) {
+        // 老数据(创建超过 5 分钟)且 messageCount 缺失/为 0 → 数一次回填
+        const threadId = storyTheaterThreadId(entry.id);
+        const msgs = await DB.getMessagesByCharId(threadId, true);
+        if (msgs.length === 0) return entry;  // 没消息,保持 0
+        const updated: StoryTheaterEntry = { ...entry, messageCount: msgs.length };
+        await DB.saveStoryTheater(updated);
+        return updated;
+    }
+    return entry;
+}
+
+/* ─── 暮色 8-25 第六步第一批:相对时间格式化(剧场卡显示"X 天前") ── */
+
+export function formatRelativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 0) return '刚刚';   // 系统时间漂移
+    if (diff < 60_000) return '刚刚';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+    if (diff < 30 * 86_400_000) return `${Math.floor(diff / (7 * 86_400_000))} 周前`;
+    if (diff < 365 * 86_400_000) return `${Math.floor(diff / (30 * 86_400_000))} 个月前`;
+    return `${Math.floor(diff / (365 * 86_400_000))} 年前`;
 }

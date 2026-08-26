@@ -10,7 +10,8 @@ import {
     VRWorldNovel, VRNovelAnnotation, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
     XiaoZhiTiao,  // 2026-07-22：小纸条独立于 RoomNote
     StoryTheaterEntry, StoryTheaterPreset,
-    StorySceneTemplate  // 暮色 8-25 剧情模式类型
+    StorySceneTemplate,
+    RPApiConfig  // 暮色 8-25 第六步第一批:RP 独立 API 配置
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { pruneMemoryLinksByTopN } from './memoryPalace/links';
@@ -22,7 +23,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 67; // Bumped: v67 add scene_templates store（暮色 8-25 剧情模式：场景模板）
+const DB_VERSION = 68; // Bumped: v68 add rp_api_configs store（暮色 8-25 剧情模式：独立 API 配置 + 流式）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -62,6 +63,7 @@ const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
 const STORE_STORY_THEATERS = 'story_theaters';                 // 暮色 8-25 剧情模式：剧场存档（单人 RP）
 const STORE_STORY_THEATER_PRESETS = 'story_theater_presets';   // 剧情模式：预设库（用户导入的 SullyOS 专属 JSON 预设）
 const STORE_SCENE_TEMPLATES = 'scene_templates';               // 暮色 8-25 剧情模式：场景模板（内置 + 暮色自定义）
+const STORE_RP_API_CONFIGS = 'rp_api_configs';                 // 暮色 8-25 第六步第一批：RP 独立 API 配置
 
 export interface ScheduledMessage {
     id: string;
@@ -209,6 +211,7 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_STORY_THEATERS, { keyPath: 'id' });
       createStore(STORE_STORY_THEATER_PRESETS, { keyPath: 'id' });
       createStore(STORE_SCENE_TEMPLATES, { keyPath: 'id' });
+      createStore(STORE_RP_API_CONFIGS, { keyPath: 'id' });
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -2254,6 +2257,49 @@ export const DB = {
       return new Promise((resolve, reject) => {
           const tx = db.transaction(STORE_SCENE_TEMPLATES, 'readwrite');
           tx.objectStore(STORE_SCENE_TEMPLATES).delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  // ─── RP API 配置 (暮色 8-25 第六步第一批) ───
+  getRPApiConfigs: async (): Promise<RPApiConfig[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_RP_API_CONFIGS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_RP_API_CONFIGS, 'readonly');
+          const req = tx.objectStore(STORE_RP_API_CONFIGS).getAll();
+          req.onsuccess = () => resolve((req.result || []) as RPApiConfig[]);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getRPApiConfig: async (id: string): Promise<RPApiConfig | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_RP_API_CONFIGS)) return null;
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_RP_API_CONFIGS, 'readonly');
+          const req = tx.objectStore(STORE_RP_API_CONFIGS).get(id);
+          req.onsuccess = () => resolve((req.result || null) as RPApiConfig | null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveRPApiConfig: async (cfg: RPApiConfig): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_RP_API_CONFIGS, 'readwrite');
+          tx.objectStore(STORE_RP_API_CONFIGS).put(cfg);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  deleteRPApiConfig: async (id: string): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_RP_API_CONFIGS, 'readwrite');
+          tx.objectStore(STORE_RP_API_CONFIGS).delete(id);
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
       });

@@ -23,12 +23,16 @@ import {
     normalizeStoryTheater,
     getAllSceneTemplates,
     createCustomSceneTemplate,
+    deleteStoryTheaterAndMessages,
+    formatRelativeTime,
+    backfillMessageCountIfNeeded,
 } from '../../../utils/storyTheater';
 import Modal from '../../os/Modal';
 import type { StorySceneTemplate, StoryTheaterEntry } from '../../../types';
 import { SELECT_THEME, CARD_TINTS } from './storyTheme';
 import StoryTheaterSession from './StoryTheaterSession';
 import SceneConfigPage from './SceneConfigPage';
+import RPApiSettingsPage from './RPApiSettingsPage';
 
 interface Props {
     onSwitchCompanion: () => void;  // 点"陪伴" tab 切回去
@@ -36,7 +40,7 @@ interface Props {
 }
 
 const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
-    const { characters, activeCharacterId } = useOS();
+    const { characters, activeCharacterId, addToast } = useOS();
     const [entries, setEntries] = useState<StoryTheaterEntry[]>([]);
     const [sceneTemplates, setSceneTemplates] = useState<StorySceneTemplate[]>([]);
     const [showNewModal, setShowNewModal] = useState(false);
@@ -44,14 +48,25 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
     const [deletingEntry, setDeletingEntry] = useState<StoryTheaterEntry | null>(null);
     const [configTemplate, setConfigTemplate] = useState<StorySceneTemplate | null>(null);  // 暮色 8-25 第五步:点卡 → 进中间页
     const [showCustomTplModal, setShowCustomTplModal] = useState(false);                     // 自定义模板 modal
+    const [showAPISettings, setShowAPISettings] = useState(false);                             // 暮色 8-25 第六步第一批:API 设置页
 
-    // 加载 Entry 列表 + 场景模板
+    // 加载 Entry 列表 + 场景模板(暮色 8-25 第六步第一批:老数据 messageCount 回填)
     const reload = useCallback(async () => {
         const [stored, tpls] = await Promise.all([
             DB.getStoryTheaters(),
             getAllSceneTemplates(),
         ]);
-        setEntries(stored.map(normalizeStoryTheater).sort((a, b) => b.updatedAt - a.updatedAt));
+        const normalized = stored.map(normalizeStoryTheater).sort((a, b) => b.updatedAt - a.updatedAt);
+        // 老数据回填(后台异步,不等)
+        normalized.forEach(async e => {
+            if (!e.messageCount || e.messageCount === 0) {
+                const backfilled = await backfillMessageCountIfNeeded(e);
+                if (backfilled.messageCount !== e.messageCount) {
+                    setEntries(prev => prev.map(x => x.id === backfilled.id ? backfilled : x));
+                }
+            }
+        });
+        setEntries(normalized);
         setSceneTemplates(tpls);
     }, []);
 
@@ -67,13 +82,20 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
         await reload();
     }, [activeCharacterId, reload]);
 
-    // 删除 Entry
+    // 删除 Entry(暮色 8-25 第六步第一批:同步清 messages)
     const handleDelete = useCallback(async (entry: StoryTheaterEntry) => {
-        await DB.deleteStoryTheater(entry.id);
+        try {
+            const result = await deleteStoryTheaterAndMessages(entry.id);
+            if (result.deletedMessages > 0) {
+                addToast?.(`已删除剧场 + ${result.deletedMessages} 条对话`, 'success');
+            }
+        } catch (e) {
+            addToast?.(`删除失败: ${e}`, 'error');
+        }
         setDeletingEntry(null);
         if (activeEntry?.id === entry.id) setActiveEntry(null);
         await reload();
-    }, [activeEntry, reload]);
+    }, [activeEntry, reload, addToast]);
 
     // 当前选中角色
     const activeChar = activeCharacterId ? characters.find(c => c.id === activeCharacterId) : null;
@@ -98,9 +120,9 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                             <span className="h-px w-10" style={{ background: `linear-gradient(270deg,transparent,${SELECT_THEME.line})` }} />
                         </div>
                     </div>
-                    {/* 右侧齿轮占位(第三步再做设置) */}
-                    <button className="absolute right-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all opacity-50 cursor-not-allowed"
-                            style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)' }} title="设置(开发中)" disabled>
+                    {/* 右侧齿轮 — 暮色 8-25 第六步第一批:接 API 设置页 */}
+                    <button onClick={() => setShowAPISettings(true)} className="absolute right-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                            style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)' }} title="API 设置">
                         <GearSix size={16} weight="bold" />
                     </button>
                 </div>
@@ -201,7 +223,7 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                                         )}
                                         <div className="flex-1 min-w-0">
                                             <div className="text-[14px] font-bold truncate" style={{ color: '#4a3a6a' }}>{entry.title}</div>
-                                            <div className="text-[10px]" style={{ color: 'rgba(150,120,190,0.7)' }}>与 {char?.name || '未知角色'} · {new Date(entry.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                                            <div className="text-[10px]" style={{ color: 'rgba(150,120,190,0.7)' }}>与 {char?.name || '未知角色'} · 共 {entry.messageCount || 0} 句 · 上次 {formatRelativeTime(entry.updatedAt)}</div>
                                         </div>
                                         {/* 删除按钮 */}
                                         <button onClick={(e) => { e.stopPropagation(); setDeletingEntry(entry); }}
@@ -283,6 +305,11 @@ const StoryTheater: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
                     await reload();
                 }}
             />
+
+            {/* 暮色 8-25 第六步第一批:API 设置页(齿轮按钮进入) */}
+            {showAPISettings && (
+                <RPApiSettingsPage onClose={() => setShowAPISettings(false)} />
+            )}
         </div>
     );
 };

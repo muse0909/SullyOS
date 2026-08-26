@@ -14,11 +14,12 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Sparkle, PencilSimple, Check, X } from '@phosphor-icons/react';
+import { ArrowLeft, Sparkle, PencilSimple, Check, X, Cloud } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { createEntryFromSceneTemplate } from '../../../utils/storyTheater';
+import { DB } from '../../../utils/db';
 import { SELECT_THEME } from './storyTheme';
-import type { StorySceneTemplate } from '../../../types';
+import type { RPApiConfig, StorySceneTemplate } from '../../../types';
 
 interface Props {
     template: StorySceneTemplate;
@@ -35,6 +36,14 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [temperature, setTemperature] = useState<number>(0.85);     // 暮色 8-25 第五步+:中间页可调
     const [maxTokens, setMaxTokens] = useState<number>(4096);
     const [submitting, setSubmitting] = useState(false);
+    // 暮色 8-25 第六步第一批:API 选择(null = 主 apiConfig,'',set 时直接传 undefined)
+    const [apiConfigId, setApiConfigId] = useState<string | null>(null);
+    const [rpApiConfigs, setRpApiConfigs] = useState<RPApiConfig[]>([]);
+
+    // 加载 RP API 配置列表
+    useEffect(() => {
+        void DB.getRPApiConfigs().then(setRpApiConfigs);
+    }, []);
 
     // 选备选时自动填自定义输入框(用户可改/可清空)
     useEffect(() => {
@@ -73,6 +82,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 premise: customPremise.trim(),
                 writingStyle: writingStyle.trim(),
                 generation: { temperature, maxTokens },  // 暮色 8-25 第五步+
+                apiConfigId: apiConfigId || undefined,    // 暮色 8-25 第六步第一批:null = 主 apiConfig
             });
             await DB.saveStoryTheater(entry);
             onConfirm(entry.id);
@@ -249,6 +259,47 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                             ))}
                         </div>
                     </div>
+                </div>
+
+                {/* 5. 使用 API(暮色 8-25 第六步第一批) */}
+                <SectionTitle title="使用 API" subtitle="API" />
+                <div className="rounded-2xl px-3 py-2 mb-4 space-y-1.5" style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(170,140,210,0.3)' }}>
+                    <button
+                        onClick={() => setApiConfigId(null)}
+                        className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all flex items-center gap-2"
+                        style={{
+                            background: apiConfigId === null ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'transparent',
+                            border: apiConfigId === null ? '1.5px solid #a78bfa' : '1px solid transparent',
+                        }}
+                    >
+                        <Cloud size={14} weight="fill" style={{ color: apiConfigId === null ? '#7c3aed' : 'rgba(150,120,190,0.6)', flexShrink: 0 }} />
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[12px] font-bold" style={{ color: apiConfigId === null ? '#715d99' : '#4a3a6a' }}>主聊天同款</div>
+                            <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>用主聊天当前 API 配置</div>
+                        </div>
+                    </button>
+                    {rpApiConfigs.map(cfg => (
+                        <button
+                            key={cfg.id}
+                            onClick={() => setApiConfigId(cfg.id)}
+                            className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all flex items-center gap-2"
+                            style={{
+                                background: apiConfigId === cfg.id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'transparent',
+                                border: apiConfigId === cfg.id ? '1.5px solid #a78bfa' : '1px solid transparent',
+                            }}
+                        >
+                            <div className="w-2 h-2 rounded-full" style={{ background: apiConfigId === cfg.id ? '#7c3aed' : 'rgba(150,120,190,0.4)' }} />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[12px] font-bold" style={{ color: apiConfigId === cfg.id ? '#715d99' : '#4a3a6a' }}>{cfg.name}</div>
+                                <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model} · {cfg.protocol}</div>
+                            </div>
+                        </button>
+                    ))}
+                    {rpApiConfigs.length === 0 && (
+                        <div className="text-[10px] text-center py-2" style={{ color: 'rgba(150,120,190,0.55)' }}>
+                            没有独立配置 → 顶部齿轮可添加
+                        </div>
+                    )}
                 </div>
             </div>
 

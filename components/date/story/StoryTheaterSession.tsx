@@ -29,6 +29,9 @@ import {
     maybeSummarizeBatch,
     syncStoryToMainMemory,
     parseStatusFromReply,
+    callMainLLMStream,
+    getResolvedRPApiConfig,
+    bumpMessageCount,
     KEEP_RECENT,
 } from '../../../utils/storyTheater';
 import { buildRPSystemPrompt, formatUserLayersForLLM, parseUserInputToLayers } from '../../../utils/storyTheater/prompts';
@@ -53,6 +56,9 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     const [summarizing, setSummarizing] = useState(false);
     const [showExitModal, setShowExitModal] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    // 暮色 8-25 第六步第一批:打字机效果 — 流式累积的临时内容
+    const [streamingContent, setStreamingContent] = useState<string>('');
+    const [isStreaming, setIsStreaming] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -88,15 +94,18 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         setInput('');
         setSending(true);
 
-        // 1. 追加 user 消息(存原文,保留用户的 * " ( 标记)
+        // 1. 追加 user 消息(存原文,保留用户的 * " ( 标记)+ 消息数 +1
         await appendSessionMessage(entry.id, 'user', text);
+        const afterUserEntry = await bumpMessageCount(entry.id, entry);
+        setEntry(afterUserEntry);
+        onUpdateEntry(afterUserEntry);
         await reload();
 
         // 2. 触发自动摘要(满 10 条才调)
         setSummarizing(true);
         const summarizerDeps = { memoryPalaceConfig, apiConfig, char, userProfile };
         try {
-            const updated = await maybeSummarizeBatch(entry, summarizerDeps);
+            const updated = await maybeSummarizeBatch(afterUserEntry, summarizerDeps);
             if (updated) {
                 setEntry(updated);
                 onUpdateEntry(updated);
@@ -108,14 +117,20 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
             setSummarizing(false);
         }
 
-        // 3. 调主 LLM 生成角色回复
+        // 3. 流式调主 LLM(暮色 8-25 第六步第一批:打字机效果)
+        //   - 协议不是 openai 时 → fallback 非流式(整段出现)+ 提示 toast
+        //   - 流失败自动重试 1 次(callMainLLMStream 内部处理)
         try {
+            // 检查协议 + 提示
+            const cfg = await getResolvedRPApiConfig({ entry, apiConfig });
+            if (cfg.protocolFallback) {
+                addToast?.(`当前 ${cfg.protocol} 协议暂不支持流式,回复会整段出现`, 'info');
+            }
+
             const allMsgs = await getSessionMessages(entry.id);
             const recent = allMsgs.slice(-KEEP_RECENT);
 
-            // 暮色 8-25 第四步:用户消息按层格式化(标记转块),传 LLM 更结构化
-            //   - 全部 narrative → 直传原文(纯文本用户友好)
-            //   - 有标记 → 转 *动作* / "对话" / (心理) 块
+            // 暮色 8-25 第四步:用户消息按层格式化(标记转块)
             const historyForLLM = recent.map(m => {
                 if (m.role === 'user') {
                     const layers = parseUserInputToLayers(m.content);
@@ -124,24 +139,41 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 return { role: m.role as 'user' | 'assistant', content: m.content };
             });
 
-            const rawReply = await callMainLLM({
-                char,
-                userProfile,
-                entry: { ...entry, summary: entry.summary },
-                history: historyForLLM,
-                apiConfig,
-            });
+            setIsStreaming(true);
+            setStreamingContent('');
 
-            if (rawReply) {
-                // 暮色 8-25 第四步:解析 LLM 输出拆 status/body,fallback 不会丢消息
-                const { status, body } = parseStatusFromReply(rawReply);
+            let accumulated = '';
+            try {
+                for await (const chunk of callMainLLMStream({
+                    char,
+                    userProfile,
+                    entry,
+                    history: historyForLLM,
+                    apiConfig,
+                })) {
+                    accumulated += chunk;
+                    setStreamingContent(accumulated);  // 打字机效果
+                }
+            } catch (streamErr) {
+                // 已经在 callMainLLMStream 内部重试过 1 次,这里就只 toast
+                throw streamErr;
+            }
+
+            if (accumulated) {
+                // 流结束,解析状态栏(完整内容)
+                const { status, body } = parseStatusFromReply(accumulated);
                 await appendSessionMessage(entry.id, 'assistant', body, status ? { storyStatus: status } : undefined);
+                const afterAssistantEntry = await bumpMessageCount(entry.id, entry);
+                setEntry(afterAssistantEntry);
+                onUpdateEntry(afterAssistantEntry);
                 await reload();
             }
         } catch (e: any) {
             console.error('[StoryTheater] LLM call failed:', e);
             addToast?.(`角色回复失败: ${e?.message || e}`, 'error');
         } finally {
+            setIsStreaming(false);
+            setStreamingContent('');
             setSending(false);
         }
     }, [input, sending, entry, char, userProfile, apiConfig, memoryPalaceConfig, addToast, reload, onUpdateEntry]);
@@ -238,7 +270,26 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                                 userName={userProfile?.name || '暮色'}
                             />
                         ))}
-                        {sending && (
+                        {/* 暮色 8-25 第六步第一批:打字机效果 — 流式累积的临时内容 */}
+                        {isStreaming && streamingContent && (
+                            <div className="flex justify-start">
+                                <div
+                                    className="max-w-[78%] px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.85)',
+                                        color: '#1f2937',
+                                        border: '1px solid rgba(170,140,210,0.25)',
+                                        boxShadow: '0 2px 8px rgba(150,120,200,0.1)',
+                                        borderTopLeftRadius: 4,
+                                    }}
+                                >
+                                    <div className="text-[9px] mb-1 font-bold tracking-wider" style={{ color: 'rgba(150,120,190,0.7)' }}>{char.name}</div>
+                                    {streamingContent}
+                                    <span className="inline-block w-1.5 h-3 ml-0.5 align-middle animate-pulse" style={{ background: '#a78bfa' }} />
+                                </div>
+                            </div>
+                        )}
+                        {sending && !isStreaming && !streamingContent && (
                             <div className="flex justify-start">
                                 <div className="px-3 py-2 rounded-2xl flex items-center gap-2" style={{ background: 'rgba(255,255,255,0.6)' }}>
                                     <SpinnerGap size={12} className="animate-spin" style={{ color: '#a78bfa' }} />
@@ -372,61 +423,10 @@ const LayerButton: React.FC<{
     </button>
 );
 
-/* ── 主 LLM 调用(非流式) ── */
-async function callMainLLM(args: {
-    char: CharacterProfile;
-    userProfile?: UserProfile | null;
-    entry: StoryTheaterEntry;
-    history: { role: 'user' | 'assistant'; content: string }[];
-    apiConfig: APIConfig;
-}): Promise<string> {
-    const { char, userProfile, entry, history, apiConfig } = args;
-    if (!apiConfig?.baseUrl || !apiConfig?.apiKey || !apiConfig?.model) {
-        throw new Error('主 LLM 未配置(apiConfig 缺 baseUrl/apiKey/model)');
-    }
-
-    // 拼 system prompt:角色原本的 + RP 模式追加
-    let baseSystem = '';
-    try {
-        baseSystem = ContextBuilder.buildCoreContext(char, userProfile || undefined);
-    } catch {
-        // 如果 buildCoreContext 失败,降级用最简 system
-        baseSystem = `你是${char.name}。${char.description || ''}`;
-    }
-    const systemPrompt = buildRPSystemPrompt({
-        base: baseSystem,
-        char,
-        userProfile,
-        entry,
-        summary: entry.summary,
-    });
-
-    const messages = [
-        { role: 'system', content: systemPrompt },
-        ...history,
-    ];
-
-    const res = await safeFetchJson(
-        `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-        {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiConfig.apiKey}`,
-            },
-            body: JSON.stringify({
-                model: apiConfig.model,
-                messages,
-                temperature: 0.85,
-                max_tokens: 4096,
-                stream: false,
-            }),
-        },
-        1, 0,
-        { appName: '剧情模式', purpose: 'RP 对话', charId: char.id, charName: char.name },
-    );
-
-    return res?.choices?.[0]?.message?.content || '';
-}
+/* ── 主 LLM 调用(暮色 8-25 第六步第一批:已迁到 utils/storyTheater.ts 的 callMainLLMStream) ── */
+// 之前的非流式 callMainLLM 已删除,改用 utils/storyTheater.ts 的:
+//   - callMainLLMStream(args) → AsyncGenerator<string> 流式
+//   - callMainLLMNonStream(args) → Promise<string> 非流式(协议 fallback 用)
+// 协议 fallback(非 openai)由 callMainLLMStream 内部处理
 
 export default StoryTheaterSession;

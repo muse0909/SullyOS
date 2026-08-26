@@ -104,21 +104,25 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         onUpdateEntry(afterUserEntry);
         await reload();
 
-        // 2. 触发自动摘要(满 10 条才调)
+        // 2. 触发自动摘要(满 10 条才调)— 暮色 8-25 第六批:改成后台 Promise,不阻塞流式主 LLM
+        //   之前:串行 await → 摘要慢 2-5s,用户等这么久才看到 assistant 第一个字
+        //   现在:fire-and-forget 启动,setSummarizing 显示 spinner,流式同时跑
         setSummarizing(true);
         const summarizerDeps = { memoryPalaceConfig, apiConfig, char, userProfile };
-        try {
-            const updated = await maybeSummarizeBatch(afterUserEntry, summarizerDeps);
-            if (updated) {
-                setEntry(updated);
-                onUpdateEntry(updated);
-                addToast?.('已整理前 5 轮剧情', 'info');
-            }
-        } catch (e) {
-            console.warn('[StoryTheater] auto-summarize failed:', e);
-        } finally {
-            setSummarizing(false);
-        }
+        const summaryPromise = maybeSummarizeBatch(afterUserEntry, summarizerDeps)
+            .then(updated => {
+                if (updated) {
+                    setEntry(updated);
+                    onUpdateEntry(updated);
+                    addToast?.('已整理前 5 轮剧情', 'info');
+                }
+            })
+            .catch(e => {
+                console.warn('[StoryTheater] auto-summarize failed:', e);
+            })
+            .finally(() => {
+                setSummarizing(false);
+            });
 
         // 3. 流式调主 LLM(暮色 8-25 第六步第一批:打字机效果)
         //   - 协议不是 openai 时 → fallback 非流式(整段出现)+ 提示 toast

@@ -15,7 +15,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Plus, PencilSimple, Trash, Lightning, Check, X, CircleNotch, ArrowSquareOut, FloppyDisk, CaretDown, CaretRight } from '@phosphor-icons/react';
+import { ArrowLeft, Plus, PencilSimple, Trash, Lightning, Check, X, CircleNotch, ArrowSquareOut, FloppyDisk, CaretDown, CaretRight, Cloud } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { testRPApiConfig as testRPApiConfigFn, MAIN_API_PRESET_PREFIX, MAIN_API_PRESET_ID, isMainApiPresetId } from '../../../utils/storyTheater';

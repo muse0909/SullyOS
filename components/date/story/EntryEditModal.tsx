@@ -37,6 +37,12 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
     const [maxTokens, setMaxTokens] = useState(entry.generationParams?.maxTokens ?? entry.generation?.maxTokens ?? 4096);
     const [topP, setTopP] = useState(entry.generationParams?.topP ?? 1.0);
     const [frequencyPenalty, setFrequencyPenalty] = useState(entry.generationParams?.frequencyPenalty ?? 0);
+    const [presencePenalty, setPresencePenalty] = useState(entry.generationParams?.presencePenalty ?? 0);  // 暮色 8-25 第七批
+    // 暮色 8-25 第七批:4 个叙事参数(选项卡片)
+    const [narrativePerson, setNarrativePerson] = useState<'second' | 'third' | undefined>(entry.narrativePerson);
+    const [authorityLevel, setAuthorityLevel] = useState<'none' | 'limited' | 'full' | undefined>(entry.authorityLevel);
+    const [lengthPreset, setLengthPreset] = useState<'short' | 'medium' | 'long' | undefined>(entry.lengthPreset);
+    const [tensionLevel, setTensionLevel] = useState<'natural' | 'warm' | 'intense' | undefined>(entry.tensionLevel);
     // 暮色 8-25 第六步第一批:API 选择也允许改
     const [apiConfigId, setApiConfigId] = useState<string | null>(entry.apiConfigId || null);
     const [rpApiConfigs, setRpApiConfigs] = useState<RPApiConfig[]>([]);
@@ -57,8 +63,12 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                 authorNote: authorNote.trim() || undefined,
                 jailbreakPrompt: jailbreakPrompt.trim() || undefined,
                 statusBarDefinitions: statusVars.filter(v => v.name.trim()),
-                generationParams: { temperature, maxTokens, topP, frequencyPenalty },
+                generationParams: { temperature, maxTokens, topP, frequencyPenalty, presencePenalty },
                 apiConfigId: apiConfigId || undefined,
+                narrativePerson,   // 暮色 8-25 第七批
+                authorityLevel,     // 暮色 8-25 第七批
+                lengthPreset,       // 暮色 8-25 第七批(底层映射 maxTokens)
+                tensionLevel,       // 暮色 8-25 第七批
                 updatedAt: Date.now(),
             };
             await DB.saveStoryTheater(updated);
@@ -126,6 +136,51 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                                   style={inputStyle} />
                     </Field>
 
+                    {/* 暮色 8-25 第七批:4 个叙事参数选项卡片(在文风下面,生成参数 section 上面) */}
+                    <Field label="叙事参数" hint="不选 = 默认(第二人称/不代写/中等篇幅/自然)">
+                        <div className="mt-2 space-y-2">
+                            <OptionCardRow
+                                label="人称"
+                                options={[
+                                    { value: 'second' as const, label: '第二人称' },
+                                    { value: 'third' as const,  label: '第三人称' },
+                                ]}
+                                value={narrativePerson}
+                                onChange={setNarrativePerson}
+                            />
+                            <OptionCardRow
+                                label="执笔权"
+                                options={[
+                                    { value: 'none' as const,    label: '不代写',     hint: '不替用户写' },
+                                    { value: 'limited' as const, label: '有限协演',   hint: '不替用户做决定' },
+                                    { value: 'full' as const,    label: '全自动演绎', hint: '可写用户反应' },
+                                ]}
+                                value={authorityLevel}
+                                onChange={setAuthorityLevel}
+                            />
+                            <OptionCardRow
+                                label="篇幅"
+                                options={[
+                                    { value: 'short' as const,  label: '短', hint: '200-500 字' },
+                                    { value: 'medium' as const, label: '中', hint: '500-1500 字' },
+                                    { value: 'long' as const,   label: '长', hint: '1500-3000 字' },
+                                ]}
+                                value={lengthPreset}
+                                onChange={setLengthPreset}
+                            />
+                            <OptionCardRow
+                                label="场景张力"
+                                options={[
+                                    { value: 'natural' as const, label: '自然', hint: '日常节奏' },
+                                    { value: 'warm' as const,    label: '微热', hint: '适度升温' },
+                                    { value: 'intense' as const, label: '炽烈', hint: '高强度推进' },
+                                ]}
+                                value={tensionLevel}
+                                onChange={setTensionLevel}
+                            />
+                        </div>
+                    </Field>
+
                     {/* 作者注释 */}
                     <Field label="作者注释" hint="插在 system 之后,对话之前">
                         <textarea value={authorNote} onChange={e => setAuthorNote(e.target.value)} rows={2}
@@ -171,15 +226,17 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                     </Field>
 
                     {/* 生成参数(暮色 8-25 第二批 4 字段) */}
-                    <Field label="生成参数" hint="temperature / maxTokens / topP / frequencyPenalty">
+                    <Field label="生成参数" hint="temperature / 篇幅(maxTokens) / topP / 频率 / 话题惩罚">
                         <div className="mt-1 space-y-3 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.5)', border: '1px solid rgba(170,140,210,0.25)' }}>
                             <SliderRow label="温度" value={temperature} min={0.3} max={1.2} step={0.05}
                                        onChange={setTemperature} hint="0.3 稳定 / 0.85 平衡 / 1.2 创意" />
-                            <MaxTokensRow value={maxTokens} onChange={setMaxTokens} />
+                            {/* 暮色 8-25 第七批:maxTokens 4 选 1 被篇幅预设替代,在下面"叙事参数"section 里设 */}
                             <SliderRow label="topP 核采样" value={topP} min={0} max={1} step={0.05}
                                        onChange={setTopP} hint="0 精确 / 1.0 自由" />
                             <SliderRow label="频率惩罚" value={frequencyPenalty} min={0} max={2} step={0.1}
                                        onChange={setFrequencyPenalty} hint="0 不惩罚 / 2 强" />
+                            <SliderRow label="话题惩罚" value={presencePenalty} min={-2} max={2} step={0.1}
+                                       onChange={setPresencePenalty} hint="-2 重复 / 0 中性 / 2 引入新" />
                         </div>
                     </Field>
 
@@ -265,6 +322,58 @@ const inputStyle: React.CSSProperties = {
     background: 'white',
     border: '1px solid rgba(170,140,210,0.3)',
     color: '#1f2937',
+};
+
+/* 暮色 8-25 第七批:选项卡片行(单选,选中高亮,再点取消)
+   value 为 undefined → 全部浅灰态(未选)
+   选中态:紫色渐变 + 紫色边框 + 阴影 */
+const OptionCardRow = <T extends string>(args: {
+    label: string;
+    options: Array<{ value: T; label: string; hint?: string }>;
+    value: T | undefined;
+    onChange: (v: T | undefined) => void;
+}) => {
+    const { label, options, value, onChange } = args;
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>{label}</span>
+                {value === undefined && options.length > 0 && (
+                    <button
+                        onClick={() => onChange(options[0].value)}
+                        className="text-[9px] px-1.5 py-0.5 rounded"
+                        style={{ background: 'rgba(167,139,250,0.1)', color: '#715d99' }}
+                    >选默认</button>
+                )}
+            </div>
+            <div className={`grid gap-1.5 ${options.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                {options.map(opt => {
+                    const selected = value === opt.value;
+                    return (
+                        <button
+                            key={opt.value}
+                            onClick={() => onChange(selected ? undefined : opt.value)}
+                            className="rounded-xl px-2 py-2 active:scale-95 transition-all text-left"
+                            style={{
+                                background: selected
+                                    ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                    : 'rgba(255,255,255,0.55)',
+                                border: selected
+                                    ? '1.5px solid #a78bfa'
+                                    : '1px solid rgba(170,140,210,0.25)',
+                                boxShadow: selected ? '0 2px 8px rgba(167,139,250,0.2)' : 'none',
+                            }}
+                        >
+                            <div className="text-[11.5px] font-bold" style={{ color: selected ? '#715d99' : '#4a3a6a' }}>{opt.label}</div>
+                            {opt.hint && (
+                                <div className="text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>{opt.hint}</div>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
 };
 
 export default EntryEditModal;

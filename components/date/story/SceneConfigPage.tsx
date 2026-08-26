@@ -34,12 +34,18 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [writingStyle, setWritingStyle] = useState<string>(template.writingStyle);
     const [editingStyle, setEditingStyle] = useState(false);
     const [temperature, setTemperature] = useState<number>(0.85);     // 暮色 8-25 第五步+:中间页可调
-    const [maxTokens, setMaxTokens] = useState<number>(4096);
+    const [maxTokens, setMaxTokens] = useState<number>(4096);          // 暮色 8-25 第七批:被 lengthPreset 替代,保留做 fallback
     const [topP, setTopP] = useState<number>(1.0);                      // 暮色 8-25 第二批:加
     const [frequencyPenalty, setFrequencyPenalty] = useState<number>(0);// 暮色 8-25 第二批:加
+    const [presencePenalty, setPresencePenalty] = useState<number>(0); // 暮色 8-25 第七批:加
     const [authorNote, setAuthorNote] = useState<string>('');          // 暮色 8-25 第二批:作者注释
     const [jailbreakPrompt, setJailbreakPrompt] = useState<string>(''); // 暮色 8-25 第二批:解锁提示词
     const [statusVars, setStatusVars] = useState<{ name: string; initialValue: string }[]>([]); // 暮色 8-25 第二批:状态变量
+    // 暮色 8-25 第七批:4 个叙事参数(选项卡片,默认 undefined = 走默认指令)
+    const [narrativePerson, setNarrativePerson] = useState<'second' | 'third' | undefined>(undefined);
+    const [authorityLevel, setAuthorityLevel] = useState<'none' | 'limited' | 'full' | undefined>(undefined);
+    const [lengthPreset, setLengthPreset] = useState<'short' | 'medium' | 'long' | undefined>(undefined);
+    const [tensionLevel, setTensionLevel] = useState<'natural' | 'warm' | 'intense' | undefined>(undefined);
     const [submitting, setSubmitting] = useState(false);
     // 暮色 8-25 第六步第一批:API 选择(null = 主 apiConfig,'',set 时直接传 undefined)
     const [apiConfigId, setApiConfigId] = useState<string | null>(null);
@@ -87,11 +93,15 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 premise: customPremise.trim(),
                 writingStyle: writingStyle.trim(),
                 generation: { temperature, maxTokens },  // 暮色 8-25 老字段保留
-                generationParams: { temperature, maxTokens, topP, frequencyPenalty },  // 暮色 8-25 第二批:新 4 字段
+                generationParams: { temperature, maxTokens, topP, frequencyPenalty, presencePenalty },  // 暮色 8-25 第二批 + 第七批加 presencePenalty
                 apiConfigId: apiConfigId || undefined,    // 暮色 8-25 第六步第一批:null = 主 apiConfig
                 authorNote: authorNote.trim() || undefined,           // 暮色 8-25 第二批
                 jailbreakPrompt: jailbreakPrompt.trim() || undefined, // 暮色 8-25 第二批
                 statusBarDefinitions: statusVars.filter(v => v.name.trim()),  // 暮色 8-25 第二批
+                narrativePerson,   // 暮色 8-25 第七批
+                authorityLevel,     // 暮色 8-25 第七批
+                lengthPreset,       // 暮色 8-25 第七批
+                tensionLevel,       // 暮色 8-25 第七批
             });
             await DB.saveStoryTheater(entry);
             onConfirm(entry.id);
@@ -225,6 +235,51 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     </button>
                 )}
 
+                {/* 暮色 8-25 第七批:4 个叙事参数选项卡片(点选,每组单选,选中高亮)
+                    在文风 section 下面,预设 section 上面 */}
+                <SectionTitle title="叙事参数" subtitle="NARRATIVE" />
+                <div className="mb-4 space-y-2">
+                    <OptionCardRow
+                        label="人称"
+                        options={[
+                            { value: 'second' as const, label: '第二人称' },
+                            { value: 'third' as const,  label: '第三人称' },
+                        ]}
+                        value={narrativePerson}
+                        onChange={setNarrativePerson}
+                    />
+                    <OptionCardRow
+                        label="执笔权"
+                        options={[
+                            { value: 'none' as const,    label: '不代写',     hint: '不替用户写' },
+                            { value: 'limited' as const, label: '有限协演',   hint: '不替用户做决定' },
+                            { value: 'full' as const,    label: '全自动演绎', hint: '可写用户反应' },
+                        ]}
+                        value={authorityLevel}
+                        onChange={setAuthorityLevel}
+                    />
+                    <OptionCardRow
+                        label="篇幅"
+                        options={[
+                            { value: 'short' as const,  label: '短', hint: '200-500 字' },
+                            { value: 'medium' as const, label: '中', hint: '500-1500 字' },
+                            { value: 'long' as const,   label: '长', hint: '1500-3000 字' },
+                        ]}
+                        value={lengthPreset}
+                        onChange={setLengthPreset}
+                    />
+                    <OptionCardRow
+                        label="场景张力"
+                        options={[
+                            { value: 'natural' as const, label: '自然', hint: '日常节奏' },
+                            { value: 'warm' as const,    label: '微热', hint: '适度升温' },
+                            { value: 'intense' as const, label: '炽烈', hint: '高强度推进' },
+                        ]}
+                        value={tensionLevel}
+                        onChange={setTensionLevel}
+                    />
+                </div>
+
                 {/* 4. 预设(暮色 8-25 第五步+:LLM 采样参数) */}
                 <SectionTitle title="预设" subtitle="GENERATION" />
                 <div className="rounded-2xl px-3.5 py-3 mb-4 space-y-3" style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(170,140,210,0.3)' }}>
@@ -250,24 +305,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                             <span>创意 1.2</span>
                         </div>
                     </div>
-                    {/* 最大长度 */}
-                    <div>
-                        <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>最大长度</span>
-                        <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-                            {[1024, 2048, 4096, 8192].map(v => (
-                                <button
-                                    key={v}
-                                    onClick={() => setMaxTokens(v)}
-                                    className="py-1.5 rounded-lg text-[10px] font-bold active:scale-95 transition-all"
-                                    style={{
-                                        background: maxTokens === v ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.5)',
-                                        border: maxTokens === v ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                        color: maxTokens === v ? '#715d99' : 'rgba(150,120,190,0.7)',
-                                    }}
-                                >{v}</button>
-                            ))}
-                        </div>
-                    </div>
+                    {/* 最大长度 — 暮色 8-25 第七批:被"篇幅" 3 选项替代,这里只显示提示 */}
+                    {/* 篇幅选项在下面"叙事参数"section 里设,通过 lengthPreset 映射 maxTokens */}
                     {/* 暮色 8-25 第二批:topP 核采样 */}
                     <div>
                         <div className="flex items-center justify-between mb-1.5">
@@ -308,6 +347,28 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                         <div className="flex justify-between text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
                             <span>不惩罚 0</span>
                             <span>2.0 强</span>
+                        </div>
+                    </div>
+                    {/* 暮色 8-25 第七批:presence_penalty(原版 5 字段之一) */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>话题惩罚</span>
+                            <span className="text-[11px] font-mono" style={{ color: '#4a3a6a' }}>{presencePenalty.toFixed(2)}</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="-2"
+                            max="2"
+                            step="0.1"
+                            value={presencePenalty}
+                            onChange={e => setPresencePenalty(parseFloat(e.target.value))}
+                            className="w-full"
+                            style={{ accentColor: '#a78bfa' }}
+                        />
+                        <div className="flex justify-between text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            <span>重复 -2</span>
+                            <span>0</span>
+                            <span>2.0 引入新</span>
                         </div>
                     </div>
                 </div>
@@ -443,6 +504,59 @@ const SectionTitle: React.FC<{ title: string; subtitle: string }> = ({ title, su
         <div className="text-[13px] font-bold tracking-wider mt-1" style={{ color: '#4a3a6a' }}>{title}</div>
     </div>
 );
+
+/* 暮色 8-25 第七批:选项卡片行(单选,选中高亮)
+   options 数组每项:value + label + 可选 hint
+   value 为 undefined 表示"未选",全部卡片浅灰态
+   选中态:紫色渐变背景 + 紫色边框 */
+const OptionCardRow = <T extends string>(args: {
+    label: string;
+    options: Array<{ value: T; label: string; hint?: string }>;
+    value: T | undefined;
+    onChange: (v: T | undefined) => void;
+}) => {
+    const { label, options, value, onChange } = args;
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>{label}</span>
+                {value === undefined && (
+                    <button
+                        onClick={() => onChange(options[0].value)}
+                        className="text-[9px] px-1.5 py-0.5 rounded"
+                        style={{ background: 'rgba(167,139,250,0.1)', color: '#715d99' }}
+                    >选默认</button>
+                )}
+            </div>
+            <div className={`grid gap-1.5 ${options.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                {options.map(opt => {
+                    const selected = value === opt.value;
+                    return (
+                        <button
+                            key={opt.value}
+                            onClick={() => onChange(selected ? undefined : opt.value)}
+                            className="rounded-xl px-2 py-2 active:scale-95 transition-all text-left"
+                            style={{
+                                background: selected
+                                    ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                    : 'rgba(255,255,255,0.55)',
+                                border: selected
+                                    ? '1.5px solid #a78bfa'
+                                    : '1px solid rgba(170,140,210,0.25)',
+                                boxShadow: selected ? '0 2px 8px rgba(167,139,250,0.2)' : 'none',
+                            }}
+                        >
+                            <div className="text-[11.5px] font-bold" style={{ color: selected ? '#715d99' : '#4a3a6a' }}>{opt.label}</div>
+                            {opt.hint && (
+                                <div className="text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>{opt.hint}</div>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
 
 const inputStyle: React.CSSProperties = {
     background: 'white',

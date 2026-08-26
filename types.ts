@@ -2747,7 +2747,14 @@ export interface StoryTheaterEntry {
         maxTokens: number;
         topP: number;
         frequencyPenalty: number;
+        /** 暮色 8-25 第七批:加 presencePenalty(原版 5 字段之一) */
+        presencePenalty: number;
     };
+    /** 暮色 8-25 第七批:4 个叙事参数(选项卡片)— 不选(undefined)= 默认值,buildRPSystemPrompt 注入基础指令 */
+    narrativePerson?: NarrativePerson;
+    authorityLevel?: AuthorityLevel;
+    lengthPreset?: LengthPreset;    // 篇幅预设(底层映射 generationParams.maxTokens)
+    tensionLevel?: TensionLevel;
     createdAt: number;
     updatedAt: number;
 }
@@ -2757,6 +2764,12 @@ export interface StatusBarDefinition {
     name: string;          // 变量名,如'好感度' / '信任' / '体力'
     initialValue: string;  // 初始值,如'50/100' / '高' / '未知'
 }
+
+/** 暮色 8-25 第七批:叙事参数 4 选项(暮色原版搬运,4 个单选类型) */
+export type NarrativePerson = 'second' | 'third';   // 第二人称 / 第三人称
+export type AuthorityLevel = 'none' | 'limited' | 'full';  // 执笔权 3 档
+export type LengthPreset = 'short' | 'medium' | 'long';   // 篇幅 3 档(底层映射 maxTokens)
+export type TensionLevel = 'natural' | 'warm' | 'intense';  // 场景张力 3 档
 
 /**
  * 暮色 8-25 第六步第一批:RP 模式独立 API 配置

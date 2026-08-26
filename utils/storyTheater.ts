@@ -683,7 +683,12 @@ export function createEntryFromSceneTemplate(args: {
     authorNote?: string;
     statusBarDefinitions?: { name: string; initialValue: string }[];
     jailbreakPrompt?: string;
-    generationParams?: { temperature: number; maxTokens: number; topP: number; frequencyPenalty: number };
+    generationParams?: { temperature: number; maxTokens: number; topP: number; frequencyPenalty: number; presencePenalty: number };
+    // 暮色 8-25 第七批:4 个叙事参数选项
+    narrativePerson?: 'second' | 'third';
+    authorityLevel?: 'none' | 'limited' | 'full';
+    lengthPreset?: 'short' | 'medium' | 'long';
+    tensionLevel?: 'natural' | 'warm' | 'intense';
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -695,11 +700,15 @@ export function createEntryFromSceneTemplate(args: {
         characterId: args.characterId,
         writesToCharacterMemory: true,
         generation: args.generation,                                     // 暮色 8-25 老字段保留
-        generationParams: args.generationParams,                          // 暮色 8-25 第二批:新 4 字段
+        generationParams: args.generationParams,                          // 暮色 8-25 第二批 + 第七批加 presencePenalty
         apiConfigId: args.apiConfigId,                                    // 暮色 8-25 第六步第一批
         authorNote: args.authorNote,                                      // 暮色 8-25 第二批
         statusBarDefinitions: args.statusBarDefinitions,                  // 暮色 8-25 第二批
         jailbreakPrompt: args.jailbreakPrompt,                            // 暮色 8-25 第二批
+        narrativePerson: args.narrativePerson,                            // 暮色 8-25 第七批
+        authorityLevel: args.authorityLevel,                              // 暮色 8-25 第七批
+        lengthPreset: args.lengthPreset,                                  // 暮色 8-25 第七批
+        tensionLevel: args.tensionLevel,                                  // 暮色 8-25 第七批
         messageCount: 0,                                                  // 新建默认 0 句
         createdAt: now,
         updatedAt: now,
@@ -899,15 +908,28 @@ export function buildRPGenerationBody(entry: StoryTheaterEntry): {
     max_tokens: number;
     top_p: number;
     frequency_penalty: number;
+    presence_penalty: number;
 } {
     const gp = entry.generationParams;
     const old = entry.generation;
     return {
         temperature: gp?.temperature ?? old?.temperature ?? 0.85,
-        max_tokens: gp?.maxTokens ?? old?.maxTokens ?? 4096,
+        // 暮色 8-25 第七批:lengthPreset 优先(短/中/长 → 1024/4096/8192),fallback 老 maxTokens
+        max_tokens: lengthPresetToMaxTokens(entry.lengthPreset) ?? gp?.maxTokens ?? old?.maxTokens ?? 4096,
         top_p: gp?.topP ?? 1.0,
         frequency_penalty: gp?.frequencyPenalty ?? 0,
+        // 暮色 8-25 第七批:加 presencePenalty(原版 5 字段之一)
+        presence_penalty: gp?.presencePenalty ?? 0,
     };
+}
+
+/** 暮色 8-25 第七批:篇幅预设 → maxTokens 映射
+ *  short=1024, medium=4096, long=8192, undefined=fallback 到 entry.generationParams.maxTokens */
+export function lengthPresetToMaxTokens(preset: 'short' | 'medium' | 'long' | undefined): number | undefined {
+    if (preset === 'short') return 1024;
+    if (preset === 'medium') return 4096;
+    if (preset === 'long') return 8192;
+    return undefined;   // 让 buildRPGenerationBody fallback
 }
 
 /** 流式主 LLM(openai 协议) — 暮色 8-25 第六步第一批

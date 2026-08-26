@@ -17,6 +17,60 @@
 
 import type { CharacterProfile, StorySessionSummary, StoryTheaterEntry, UserProfile } from '../../types';
 
+type NarrativePerson = 'second' | 'third';
+type AuthorityLevel = 'none' | 'limited' | 'full';
+type LengthPreset = 'short' | 'medium' | 'long';
+type TensionLevel = 'natural' | 'warm' | 'intense';
+
+const PERSON_DESC: Record<NarrativePerson, string> = {
+    second: '用"你"称呼用户执笔的身份,像在跟读者说话',
+    third: '用角色的名字或"他/她"指代,像在讲第三人称故事',
+};
+const AUTHORITY_DESC: Record<AuthorityLevel, string> = {
+    none: '你只写自己角色的动作、对话和心理,不替用户写任何反应(动作/对话/心理)。用户的反应由用户自己写。',
+    limited: '你可以适度描写环境和 NPC 配角的反应,但**不替用户做决定**,也不写用户的动作/对话/心理。遇到关键选择留给用户。',
+    full: '你可以推动整个场景,包括写用户的反应(动作/对话/心理)、NPC 互动、环境变化,适合纯看文。',
+};
+const LENGTH_DESC: Record<LengthPreset, { target: string; hint: string }> = {
+    short:  { target: '200-500 字',    hint: '简洁为主,留足空间给对话和反应' },
+    medium: { target: '500-1500 字',   hint: '平衡的篇幅,动作+对话+心理都有空间' },
+    long:   { target: '1500-3000 字',  hint: '细描为主,允许长段落和丰富心理' },
+};
+const TENSION_DESC: Record<TensionLevel, string> = {
+    natural: '日常节奏,不刻意制造冲突,事件自然推进',
+    warm: '适度升温,角色会主动制造小摩擦、小暧昧,情绪有波动',
+    intense: '高强度推进,密集冲突或亲密,剧情不拖节奏,张力拉满',
+};
+
+/** 暮色 8-25 第七批:4 个叙事参数拼 prompt block
+ *  4 字段全 undefined → 输出"全默认基础指令"一行
+ *  任一字段有值 → 详细列出
+ */
+function buildNarrativeParamsBlock(entry: StoryTheaterEntry): string {
+    const lines: string[] = [];
+    if (entry.narrativePerson) {
+        lines.push(`- 人称:${entry.narrativePerson === 'second' ? '第二人称' : '第三人称'}——${PERSON_DESC[entry.narrativePerson]}`);
+    }
+    if (entry.authorityLevel) {
+        const label = entry.authorityLevel === 'none' ? '不代写' : entry.authorityLevel === 'limited' ? '有限协演' : '全自动演绎';
+        lines.push(`- 执笔权:${label}——${AUTHORITY_DESC[entry.authorityLevel]}`);
+    }
+    if (entry.lengthPreset) {
+        const label = entry.lengthPreset === 'short' ? '短' : entry.lengthPreset === 'medium' ? '中' : '长';
+        const info = LENGTH_DESC[entry.lengthPreset];
+        lines.push(`- 篇幅:${label}(目标 ${info.target},允许波动 30%)——${info.hint}`);
+    }
+    if (entry.tensionLevel) {
+        const label = entry.tensionLevel === 'natural' ? '自然' : entry.tensionLevel === 'warm' ? '微热' : '炽烈';
+        lines.push(`- 场景张力:${label}——${TENSION_DESC[entry.tensionLevel]}`);
+    }
+    if (lines.length === 0) {
+        // 全默认 — 暮色 8-25 第七批"全默认时注入最少量的基础指令"
+        return '默认设定:第二人称 / 不代写(不替用户写) / 中等篇幅(500-1500 字) / 自然节奏';
+    }
+    return lines.join('\n');
+}
+
 // ─── 1. RP 模式 system prompt 注入(含状态栏格式 + 用户输入格式) ──
 
 /**
@@ -50,6 +104,9 @@ ${entry.premise ? `剧情前提：${entry.premise}` : '（无前提,自由发挥
 ${entry.writingStyle ? `### 本场景的文风
 ${entry.writingStyle}
 请严格按此风格输出(用词、句式、节奏、详略都按这个走),用户如果在中途改了文风,以最新为准。` : ''}
+
+### 叙事参数(暮色 8-25 第七批)
+${buildNarrativeParamsBlock(entry)}
 
 ${entry.generation ? `### 采样参数(暮色 8-25 中间页可调)
 - 温度(temperature):${entry.generation.temperature.toFixed(2)}

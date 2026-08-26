@@ -96,13 +96,15 @@ const XiaoZhiTiaoPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     setView('list');
                     setSelectedNoteId(null);
                 }}
-                // 暮色 2026-08-23 v3：打开即已读（revealedAt == null 时调一次）
+                // 暮色 2026-08-26：打开即已读（revealedAt == null 时调一次）
+                //   之前调 DB.getXiaoZhiTiaos(undefined) → IDBKeyRange.only(undefined) 抛 DataError
+                //   → setNotes 没跑 → 详情页 note.revealedAt 仍为 null → isRevealed=false 不显示字
+                //   改用 hook 自己的 refresh()（内部用 targetCharId 查，不会报错）
                 onMarkRevealed={async () => {
                     if (selectedNote.revealedAt != null) return;
                     await DB.saveXiaoZhiTiao({ ...selectedNote, revealedAt: Date.now() });
-                    // 重新加载 notes 让列表卡片同步显示内容
-                    const all = await DB.getXiaoZhiTiaos(undefined);
-                    setNotes(all.sort((a, b) => b.timestamp - a.timestamp));
+                    // 重新加载 notes 让列表卡片 + 详情 selectedNote 同步显示内容
+                    await refresh();
                 }}
                 onAddReply={async (content) => {
                     await addReply(selectedNote.id, {

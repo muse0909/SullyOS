@@ -38,7 +38,8 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
 
     // 暮色 8-26:全局默认配置
     const [defaults, setDefaults] = useState<RPGlobalDefaults | null>(null);
-    const [draftDefaults, setDraftDefaults] = useState<RPGlobalDefaults | null>(null);
+    // 暮色 8-26 17:00:draftDefaults 默认空对象(不是 null),让没建过 defaults 的新用户也能看到完整表单可编辑
+    const [draftDefaults, setDraftDefaults] = useState<RPGlobalDefaults>({ id: 'singleton', updatedAt: 0 });
     const [savingDefaults, setSavingDefaults] = useState(false);
 
     // 暮色 8-26:API 设置折叠(默认收起,点开展开)— 跟系统设置里 API 设置的折叠行为一致
@@ -54,7 +55,8 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
     const reloadDefaults = useCallback(async () => {
         const stored = await DB.getRPGlobalDefaults();
         setDefaults(stored);
-        setDraftDefaults(stored);  // 草稿跟随
+        // 暮色 8-26 17:00:有 stored 用 stored,没有用空对象(新用户也能看到完整表单)
+        setDraftDefaults(stored || { id: 'singleton', updatedAt: 0 });
     }, []);
 
     useEffect(() => { void reload(); }, [reload]);
@@ -186,94 +188,79 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                         整个剧场的 API 默认配置,单个剧场可在 ⚙ 弹窗里单独覆盖
                     </div>
                     {apiSectionOpen && (
-                        <div className="mt-3 space-y-2">
-                            {/* 主聊天同款(当前主 apiConfig) */}
-                            <div
-                                className="rounded-2xl px-3.5 py-3"
-                                style={{ background: 'rgba(167,139,250,0.08)', border: '1.5px solid #a78bfa' }}
-                            >
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full" style={{ background: '#7c3aed' }} />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="text-[14px] font-bold" style={{ color: '#715d99' }}>主聊天同款</span>
-                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(167,139,250,0.15)', color: '#715d99' }}>默认</span>
-                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase" style={{ background: 'rgba(99,102,241,0.12)', color: '#4f46e5' }}>openai</span>
-                                        </div>
-                                        <div className="text-[10px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{mainApiConfig.model}</div>
-                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.5)' }}>{mainApiConfig.baseUrl}</div>
-                                    </div>
-                                </div>
-                            </div>
+                        <div className="mt-3 space-y-1.5">
+                            {/* 暮色 8-26 17:00:精简列表 — 只显示名字,可点选作为 RP 默认 API
+                                选中态:紫渐变背景 + 紫边框
+                                非选中态:白底淡紫边 */}
+                            {/* 主聊天同款 — 暮色 8-26 17:00:也作为可选项,可被设为 RP 默认 */}
+                            <ApiRow
+                                selected={draftDefaults.apiConfigId === MAIN_API_PRESET_ID}
+                                onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: MAIN_API_PRESET_ID })}
+                                title="主聊天同款"
+                                subtitle={mainApiConfig.model}
+                                badge="默认"
+                                badgeColor="#7c3aed"
+                            />
 
-                            {/* 暮色 8-26:主 API 预设(从系统设置同步)— 实时从 ApiPresets kind='main' 读 */}
-                            {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => (
-                                <div
-                                    key={preset.id}
-                                    className="rounded-2xl px-3.5 py-3"
-                                    style={{ background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(170,140,210,0.3)' }}
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(99,102,241,0.5)' }} />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-1.5">
-                                                <span className="text-[14px] font-bold" style={{ color: '#4a3a6a' }}>{preset.name}</span>
-                                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.1)', color: '#4f46e5' }}>主预设</span>
-                                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase" style={{ background: 'rgba(99,102,241,0.12)', color: '#4f46e5' }}>openai</span>
-                                            </div>
-                                            <div className="text-[10px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{preset.config.model}</div>
-                                            <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.5)' }}>{preset.config.baseUrl}</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+                            {/* 主 API 预设(从系统设置同步) */}
+                            {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => {
+                                const id = MAIN_API_PRESET_PREFIX + preset.id;
+                                return (
+                                    <ApiRow
+                                        key={preset.id}
+                                        selected={draftDefaults.apiConfigId === id}
+                                        onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: id })}
+                                        title={preset.name}
+                                        subtitle={preset.config.model}
+                                        badge="主预设"
+                                        badgeColor="#4f46e5"
+                                    />
+                                );
+                            })}
 
-                            {/* 用户自建 RP API 配置 */}
+                            {/* 用户自建 RP API 配置(自建的有测通/编辑/删除按钮) */}
                             {configs.length === 0 ? (
-                                <div className="text-center text-[11px] py-3" style={{ color: 'rgba(150,120,190,0.55)' }}>
+                                <div className="text-center text-[10px] py-2" style={{ color: 'rgba(150,120,190,0.55)' }}>
                                     还没有 RP 独立配置
                                 </div>
                             ) : (
                                 configs.map(cfg => (
-                                    <div
-                                        key={cfg.id}
-                                        className="rounded-2xl px-3.5 py-3"
-                                        style={{ background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(170,140,210,0.3)' }}
-                                    >
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(167,139,250,0.6)' }} />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="text-[14px] font-bold" style={{ color: '#4a3a6a' }}>{cfg.name}</span>
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase" style={{ background: cfg.protocol === 'openai' ? 'rgba(99,102,241,0.12)' : 'rgba(150,150,150,0.12)', color: cfg.protocol === 'openai' ? '#4f46e5' : '#666' }}>{cfg.protocol}</span>
-                                                </div>
-                                                <div className="text-[10px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model}</div>
-                                                <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.5)' }}>{cfg.baseUrl}</div>
-                                            </div>
+                                    <div key={cfg.id} className="flex items-center gap-1">
+                                        <div className="flex-1">
+                                            <ApiRow
+                                                selected={draftDefaults.apiConfigId === cfg.id}
+                                                onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: cfg.id })}
+                                                title={cfg.name}
+                                                subtitle={cfg.model}
+                                                badge={cfg.protocol === 'openai' ? '自建' : cfg.protocol}
+                                                badgeColor={cfg.protocol === 'openai' ? '#715d99' : '#666'}
+                                            />
                                         </div>
-                                        <div className="flex gap-1.5">
-                                            <button onClick={() => handleTest(cfg)} disabled={testingId === cfg.id}
-                                                    className="flex-1 py-1.5 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 disabled:opacity-50"
-                                                    style={{ background: 'rgba(34,197,94,0.1)', color: '#16a34a' }}>
-                                                {testingId === cfg.id ? <CircleNotch size={11} className="animate-spin" /> : <Lightning size={11} weight="fill" />}
-                                                测通
-                                            </button>
-                                            <button onClick={() => handleEdit(cfg)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1"
-                                                    style={{ background: 'rgba(99,102,241,0.1)', color: '#4f46e5' }}>
-                                                <PencilSimple size={11} weight="bold" />编辑
-                                            </button>
-                                            <button onClick={() => setDeletingCfg(cfg)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1"
-                                                    style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
-                                                <Trash size={11} weight="fill" />删除
-                                            </button>
-                                        </div>
+                                        <button onClick={() => handleTest(cfg)} disabled={testingId === cfg.id}
+                                                className="w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-50 active:scale-90"
+                                                style={{ background: 'rgba(34,197,94,0.1)', color: '#16a34a' }}
+                                                title="测通">
+                                            {testingId === cfg.id ? <CircleNotch size={12} className="animate-spin" /> : <Lightning size={12} weight="fill" />}
+                                        </button>
+                                        <button onClick={() => handleEdit(cfg)}
+                                                className="w-8 h-8 rounded-lg flex items-center justify-center active:scale-90"
+                                                style={{ background: 'rgba(99,102,241,0.1)', color: '#4f46e5' }}
+                                                title="编辑">
+                                            <PencilSimple size={12} weight="bold" />
+                                        </button>
+                                        <button onClick={() => setDeletingCfg(cfg)}
+                                                className="w-8 h-8 rounded-lg flex items-center justify-center active:scale-90"
+                                                style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+                                                title="删除">
+                                            <Trash size={12} weight="fill" />
+                                        </button>
                                     </div>
                                 ))
                             )}
 
-                            <button onClick={handleNew} className="w-full mt-2 py-2.5 rounded-2xl text-[12px] font-bold flex items-center justify-center gap-2 active:scale-95 transition-all"
+                            <button onClick={handleNew} className="w-full mt-2 py-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                                     style={{ background: 'rgba(167,139,250,0.12)', color: '#715d99' }}>
-                                <Plus size={13} weight="bold" />新建 RP 独立 API 配置
+                                <Plus size={12} weight="bold" />新建 RP 独立 API 配置
                             </button>
                         </div>
                     )}
@@ -288,58 +275,43 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
 
                     {draftDefaults && (
                         <div className="space-y-4">
-                            {/* 0. RP 默认 API(暮色 8-26) — 整个剧场的 API,新建剧场继承,单剧场可覆盖 */}
-                            <Field label="RP 默认 API" hint="整个剧场的默认 API;空 = 主聊天同款(实时读系统设置)">
-                                <div className="mt-1.5 space-y-1.5">
-                                    <button
-                                        onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: undefined })}
-                                        className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all flex items-center gap-2"
-                                        style={{
-                                            background: !draftDefaults.apiConfigId ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                            border: !draftDefaults.apiConfigId ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                        }}
-                                    >
-                                        <Cloud size={13} weight="fill" style={{ color: '#7c3aed' }} />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-[12px] font-bold" style={{ color: !draftDefaults.apiConfigId ? '#715d99' : '#4a3a6a' }}>主聊天同款(实时)</div>
-                                            <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{mainApiConfig.model}</div>
-                                        </div>
-                                    </button>
-                                    {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => {
-                                        const id = MAIN_API_PRESET_PREFIX + preset.id;
-                                        return (
-                                            <button
-                                                key={preset.id}
-                                                onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: id })}
-                                                className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
-                                                style={{
-                                                    background: draftDefaults.apiConfigId === id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                                    border: draftDefaults.apiConfigId === id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                                }}
-                                            >
-                                                <div className="text-[12px] font-bold" style={{ color: draftDefaults.apiConfigId === id ? '#715d99' : '#4a3a6a' }}>{preset.name} (主预设)</div>
-                                                <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{preset.config.model}</div>
-                                            </button>
-                                        );
-                                    })}
-                                    {configs.map(cfg => (
-                                        <button
-                                            key={cfg.id}
-                                            onClick={() => setDraftDefaults({ ...draftDefaults, apiConfigId: cfg.id })}
-                                            className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
-                                            style={{
-                                                background: draftDefaults.apiConfigId === cfg.id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                                border: draftDefaults.apiConfigId === cfg.id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                            }}
-                                        >
-                                            <div className="text-[12px] font-bold" style={{ color: draftDefaults.apiConfigId === cfg.id ? '#715d99' : '#4a3a6a' }}>{cfg.name}</div>
-                                            <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model} · {cfg.protocol}</div>
-                                        </button>
-                                    ))}
+                            {/* 0. RP 默认 API 当前选中(暮色 8-26 17:00) — 上面 API section 里的可点选列表
+                                这里给个简短提示,告诉用户"选哪个"是当前 RP 默认 API */}
+                            <div className="rounded-xl px-3 py-2 flex items-center gap-2" style={{ background: 'rgba(167,139,250,0.08)', border: '1px dashed rgba(167,139,250,0.4)' }}>
+                                <Cloud size={12} weight="fill" style={{ color: '#7c3aed' }} />
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-[9px] font-bold tracking-wider" style={{ color: '#715d99' }}>当前 RP 默认 API</div>
+                                    <div className="text-[11px] mt-0.5 truncate" style={{ color: '#4a3a6a' }}>
+                                        {(() => {
+                                            const id = draftDefaults.apiConfigId;
+                                            if (!id) return '主聊天同款(实时)';
+                                            if (id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
+                                            if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
+                                                const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
+                                                const p = (apiPresets || []).find(x => x.id === pid);
+                                                return p ? p.name : '主预设(已删除)';
+                                            }
+                                            const cfg = configs.find(x => x.id === id);
+                                            return cfg ? cfg.name : '自建 RP(已删除)';
+                                        })()}
+                                    </div>
                                 </div>
+                                <div className="text-[9px]" style={{ color: 'rgba(150,120,190,0.6)' }}>↑ 上面点选</div>
+                            </div>
+
+                            {/* 1. 默认前提(暮色 8-26 17:00) — 新建剧场时填入,用户进中间页后可改/选备选前提覆盖 */}
+                            <Field label="默认前提" hint="新建剧场的默认前提;空 = 用户自己写">
+                                <textarea
+                                    value={draftDefaults.defaultPremise || ''}
+                                    onChange={e => setDraftDefaults({ ...draftDefaults, defaultPremise: e.target.value || undefined })}
+                                    placeholder="空 = 新建剧场时中间页不预填,用户自己写"
+                                    rows={2}
+                                    className="w-full mt-1 px-3 py-2 rounded-xl text-[12px] resize-none focus:outline-none leading-relaxed"
+                                    style={inputStyle}
+                                />
                             </Field>
 
-                            {/* 1. RP 总指令 */}
+                            {/* 2. RP 总指令(暮色 8-26) */}
                             <Field label="RP 总指令" hint="角色在 RP 模式下的总体行为指令">
                                 <textarea
                                     value={draftDefaults.rpInstructions || ''}
@@ -435,7 +407,59 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                                 </div>
                             </Field>
 
-                            {/* 4. 解锁提示词 */}
+                            {/* 4. 作者注释(暮色 8-26 17:00) */}
+                            <Field label="作者注释默认值" hint="插在 system 之后,对话之前">
+                                <textarea
+                                    value={draftDefaults.authorNote || ''}
+                                    onChange={e => setDraftDefaults({ ...draftDefaults, authorNote: e.target.value || undefined })}
+                                    placeholder="空就不注入作者注释"
+                                    rows={2}
+                                    className="w-full mt-1 px-3 py-2 rounded-xl text-[12px] resize-none focus:outline-none leading-relaxed"
+                                    style={inputStyle}
+                                />
+                            </Field>
+
+                            {/* 5. 状态栏定义默认值(暮色 8-26 17:00) */}
+                            <Field label="状态栏定义默认值" hint="每行:变量名 + 初始值,新建剧场时继承">
+                                <div className="mt-1 space-y-1.5">
+                                    {(draftDefaults.statusBarDefinitions || []).map((v, i) => (
+                                        <div key={i} className="flex gap-1.5 items-center">
+                                            <input type="text" value={v.name}
+                                                   onChange={e => setDraftDefaults({
+                                                       ...draftDefaults,
+                                                       statusBarDefinitions: (draftDefaults.statusBarDefinitions || []).map((x, idx) => idx === i ? { ...x, name: e.target.value } : x),
+                                                   })}
+                                                   placeholder="变量名(如 好感度)"
+                                                   className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-[12px] focus:outline-none"
+                                                   style={inputStyle} />
+                                            <input type="text" value={v.initialValue}
+                                                   onChange={e => setDraftDefaults({
+                                                       ...draftDefaults,
+                                                       statusBarDefinitions: (draftDefaults.statusBarDefinitions || []).map((x, idx) => idx === i ? { ...x, initialValue: e.target.value } : x),
+                                                   })}
+                                                   placeholder="初始值(如 50/100)"
+                                                   className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-[12px] focus:outline-none"
+                                                   style={inputStyle} />
+                                            <button onClick={() => setDraftDefaults({
+                                                ...draftDefaults,
+                                                statusBarDefinitions: (draftDefaults.statusBarDefinitions || []).filter((_, idx) => idx !== i),
+                                            })}
+                                                    className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-red-400 active:scale-90"
+                                                    style={{ background: 'rgba(239,68,68,0.08)' }}>×</button>
+                                        </div>
+                                    ))}
+                                    <button onClick={() => setDraftDefaults({
+                                        ...draftDefaults,
+                                        statusBarDefinitions: [...(draftDefaults.statusBarDefinitions || []), { name: '', initialValue: '' }],
+                                    })}
+                                            className="w-full py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                                            style={{ background: 'rgba(167,139,250,0.1)', color: '#715d99' }}>
+                                        <Plus size={11} weight="bold" />加一个变量
+                                    </button>
+                                </div>
+                            </Field>
+
+                            {/* 6. 解锁提示词 */}
                             <Field label="解锁提示词默认值" hint="放在整段 prompt 最末">
                                 <textarea
                                     value={draftDefaults.jailbreakPrompt || ''}
@@ -639,6 +663,52 @@ const inputStyle: React.CSSProperties = {
     background: 'white',
     border: '1px solid rgba(170,140,210,0.3)',
     color: '#1f2937',
+};
+
+/* 暮色 8-26 17:00:API 列表行 — 精简显示(只名字 + 小角标),可点选作为 RP 默认 API */
+const ApiRow: React.FC<{
+    selected: boolean;
+    onClick: () => void;
+    title: string;
+    subtitle?: string;
+    badge?: string;
+    badgeColor?: string;
+}> = ({ selected, onClick, title, subtitle, badge, badgeColor = '#715d99' }) => {
+    return (
+        <button
+            onClick={onClick}
+            className="w-full text-left rounded-xl px-3 py-2 active:scale-[0.98] transition-all"
+            style={{
+                background: selected
+                    ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))'
+                    : 'rgba(255,255,255,0.6)',
+                border: selected
+                    ? '1.5px solid #a78bfa'
+                    : '1px solid rgba(170,140,210,0.25)',
+            }}
+        >
+            <div className="flex items-center gap-2">
+                <div
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ background: selected ? '#7c3aed' : 'rgba(150,120,190,0.4)' }}
+                />
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-[12.5px] font-bold truncate" style={{ color: selected ? '#715d99' : '#4a3a6a' }}>{title}</span>
+                        {badge && (
+                            <span
+                                className="text-[8.5px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                                style={{ background: `${badgeColor}22`, color: badgeColor }}
+                            >{badge}</span>
+                        )}
+                    </div>
+                    {subtitle && (
+                        <div className="text-[9.5px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.65)' }}>{subtitle}</div>
+                    )}
+                </div>
+            </div>
+        </button>
+    );
 };
 
 /* 编辑 API 配置 modal(暮色 8-25 第六步第一批 + 8-26 保持不变) */

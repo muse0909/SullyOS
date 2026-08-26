@@ -31,7 +31,8 @@ interface Props {
 
 const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => {
     const { activeCharacterId, addToast } = useOS();
-    const [selectedIdx, setSelectedIdx] = useState<number>(0);  // 默认选第一个备选
+    // 暮色 8-26 17:00:默认 -1 = 未选(不预填第一个备选),让用户主动点选或用默认前提
+    const [selectedIdx, setSelectedIdx] = useState<number>(-1);
     const [customPremise, setCustomPremise] = useState<string>('');
     // 暮色 8-26 简化:中间页只保留"前提 + 文风"两件事;其他(RP 角色指令/叙事参数/生成参数/解锁提示词/状态栏/API)
     // 全部移到 RP 设置里(全局默认配置)。单剧场可在 session 内 ⚙ 弹窗里覆盖。
@@ -40,12 +41,16 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [apiConfigId, setApiConfigId] = useState<string | undefined>(undefined);
     const [submitting, setSubmitting] = useState(false);
 
-    // 暮色 8-26:文风 + 默认 API 从全局默认继承(其他字段全部走 RP 设置的全局默认,运行时由 buildRPMessageArray merge)
+    // 暮色 8-26 17:00:文风 / 默认 API / 默认前提 从全局默认继承
     useEffect(() => {
         void DB.getRPGlobalDefaults().then(defaults => {
             if (!defaults) return;
             if (defaults.writingStyle) setWritingStyle(defaults.writingStyle);
             if (defaults.apiConfigId) setApiConfigId(defaults.apiConfigId);
+            // 默认前提 — 用户没点选备选前提时填入
+            if (defaults.defaultPremise && !customPremise) {
+                setCustomPremise(defaults.defaultPremise);
+            }
         });
     }, []);
 

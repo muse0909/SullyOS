@@ -18,6 +18,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, Star, ChatCenteredText, Heart, GearSix } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
@@ -232,12 +233,15 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         }
     }, [syncing, entry, memoryPalaceConfig, apiConfig, char, userProfile, addToast, onExit]);
 
-    return (
-        <div className="h-full w-full relative overflow-hidden flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
+    // 暮色 8-26 反馈:之前只改 SceneConfigPage + RPApiSettingsPage 改 Portal,
+    // 漏了 StoryTheaterSession — 它跟列表页是 h-full w-full relative 兄弟节点,
+    // 所以露列表页是必然的。这次也改 Portal + 顶栏 paddingTop 用 viewport 的 env。
+    return createPortal(
+        <div className="fixed inset-0 z-50 flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
             <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
 
-            {/* 顶栏 */}
-            <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
+            {/* 顶栏 — portal 出去后用 viewport 的 env(safe-area-inset-top) 读安全区 */}
+            <div className="relative z-10 shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}>
                 <div className="relative flex items-center justify-center px-5 pt-2">
                     <button onClick={handleExitClick} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
                             style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>
@@ -393,7 +397,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                     }}
                 />
             )}
-        </div>
+        </div>,
+        document.body
     );
 };
 

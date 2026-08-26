@@ -16,6 +16,7 @@ import { CaretDown, Plus, X, Check, Cloud } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { WRITING_STYLE_PRESETS, matchWritingStylePreset } from './writingStylePresets';
+import { MAIN_API_PRESET_ID, MAIN_API_PRESET_PREFIX } from '../../../utils/storyTheater';
 import type { RPApiConfig, StoryTheaterEntry } from '../../../types';
 
 interface Props {
@@ -25,7 +26,7 @@ interface Props {
 }
 
 const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
-    const { addToast } = useOS();
+    const { addToast, apiConfig: mainApiConfig, apiPresets } = useOS();
     // 暮色 8-25 第二批 C:可调字段
     const [premise, setPremise] = useState(entry.premise);
     const [writingStyle, setWritingStyle] = useState(entry.writingStyle || '');
@@ -143,18 +144,13 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                     {/* 文风 — 暮色 8-26 加 7 个文风预设卡片 */}
                     <Field label="文风">
                         <div className="mt-2 grid grid-cols-3 gap-1.5 mb-2">
-                            {WRITING_STYLE_PRESETS.map(p => {
+                            {WRITING_STYLE_PRESETS.filter(p => p.id !== 'default').map(p => {
                                 const activeId = matchWritingStylePreset(writingStyle);
                                 const isActive = activeId === p.id && p.prompt !== '';
                                 return (
                                     <button
                                         key={p.id}
                                         onClick={() => {
-                                            if (p.prompt === '') {
-                                                // 默认质感 — 切空
-                                                if (writingStyle.trim()) setWritingStyle('');
-                                                return;
-                                            }
                                             if (isActive) {
                                                 setWritingStyle('');
                                             } else {
@@ -179,7 +175,7 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                             })}
                         </div>
                         <textarea value={writingStyle} onChange={e => setWritingStyle(e.target.value)} rows={2}
-                                  placeholder="例:现代口语、轻松自然、对话为主(也可不选,直接手写)"
+                                  placeholder="不选预设 = 默认质感(不注入文风指令)。也可手写或点上面 6 个预设。"
                                   className="w-full px-3 py-2 rounded-xl text-[12.5px] resize-none focus:outline-none leading-relaxed"
                                   style={inputStyle} />
                     </Field>
@@ -288,18 +284,40 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                         </div>
                     </Field>
 
-                    {/* API 选择 */}
-                    <Field label="使用 API">
+                    {/* API 选择 — 暮色 8-26:加主 API 预设同步 */}
+                    <Field label="使用 API" hint="空 = 用主聊天同款(走 RP 设置里的默认)">
                         <div className="mt-1 space-y-1.5">
-                            <button onClick={() => setApiConfigId(null)}
-                                    className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all flex items-center gap-2"
+                            {/* 主聊天同款(实时读 OSContext.apiConfig) */}
+                            <button onClick={() => setApiConfigId(MAIN_API_PRESET_ID)}
+                                    className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
                                     style={{
-                                        background: apiConfigId === null ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                        border: apiConfigId === null ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
+                                        background: apiConfigId === MAIN_API_PRESET_ID ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
+                                        border: apiConfigId === MAIN_API_PRESET_ID ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
                                     }}>
-                                <Cloud size={14} weight="fill" style={{ color: '#7c3aed' }} />
-                                <span className="text-[12px] font-bold" style={{ color: '#4a3a6a' }}>主聊天同款</span>
+                                <div className="flex items-center gap-2">
+                                    <Cloud size={13} weight="fill" style={{ color: '#7c3aed' }} />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] font-bold" style={{ color: apiConfigId === MAIN_API_PRESET_ID ? '#715d99' : '#4a3a6a' }}>主聊天同款</div>
+                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{mainApiConfig.model} · {mainApiConfig.baseUrl}</div>
+                                    </div>
+                                </div>
                             </button>
+                            {/* 主 API 预设(同步自系统设置) */}
+                            {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => {
+                                const id = MAIN_API_PRESET_PREFIX + preset.id;
+                                return (
+                                    <button key={preset.id} onClick={() => setApiConfigId(id)}
+                                            className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
+                                            style={{
+                                                background: apiConfigId === id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
+                                                border: apiConfigId === id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
+                                            }}>
+                                        <div className="text-[12px] font-bold" style={{ color: apiConfigId === id ? '#715d99' : '#4a3a6a' }}>{preset.name}</div>
+                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{preset.config.model} · {preset.config.baseUrl}</div>
+                                    </button>
+                                );
+                            })}
+                            {/* 用户自建 RP 独立 API 配置 */}
                             {rpApiConfigs.map(cfg => (
                                 <button key={cfg.id} onClick={() => setApiConfigId(cfg.id)}
                                         className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
@@ -307,8 +325,8 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                                             background: apiConfigId === cfg.id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
                                             border: apiConfigId === cfg.id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
                                         }}>
-                                    <span className="text-[12px] font-bold" style={{ color: '#4a3a6a' }}>{cfg.name}</span>
-                                    <span className="text-[10px] ml-2" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model}</span>
+                                    <div className="text-[12px] font-bold" style={{ color: apiConfigId === cfg.id ? '#715d99' : '#4a3a6a' }}>{cfg.name}</div>
+                                    <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model} · {cfg.baseUrl}</div>
                                 </button>
                             ))}
                         </div>

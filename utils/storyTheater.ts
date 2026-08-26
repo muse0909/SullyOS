@@ -12,6 +12,7 @@
 
 import type {
     APIConfig,
+    ApiPreset,
     CharacterProfile,
     Message,
     RPApiConfig,
@@ -746,20 +747,52 @@ export function createCustomSceneTemplate(args: {
 
 /* ─── 暮色 8-25 第六步第一批:流式输出 + 独立 API + 测通 ─────── */
 
-/** 解析 Entry.apiConfigId → 实际 RP API 配置,没指定或找不到 → 用主 apiConfig */
+/** 暮色 8-26:特殊 id 标识"主 API 预设"(运行时从 ApiPresets 读,不是 DB 里的 RP API)
+ *   `__main__`            = 当前主 apiConfig(OSContext.apiConfig)
+ *   `__main_preset_${id}` = 主 apiPresets(kind='main')里 id=... 的那条
+ *  Entry.apiConfigId 用这些特殊值,不需要再同步到 RP API DB */
+export const MAIN_API_PRESET_ID = '__main__';
+export const MAIN_API_PRESET_PREFIX = '__main_preset_';
+
+export function isMainApiPresetId(id?: string | null): boolean {
+    return !!id && (id === MAIN_API_PRESET_ID || id.startsWith(MAIN_API_PRESET_PREFIX));
+}
+
+/** 解析 Entry.apiConfigId → 实际 RP API 配置,没指定或找不到 → 用主 apiConfig
+ *  暮色 8-26 扩展:支持主 API 预设(ApiPresets kind='main')特殊 id */
 export async function getResolvedRPApiConfig(args: {
     entry?: StoryTheaterEntry | null;
     apiConfig: APIConfig;
+    apiPresets?: ApiPreset[];  // 可选:主 API 预设列表(从 OSContext 拿)
 }): Promise<{
     baseUrl: string;
     apiKey: string;
     model: string;
     protocol: 'openai' | 'claude' | 'gemini';
-    isFallback: boolean;   // true = 没找到指定 config,用了主 apiConfig
-    protocolFallback: boolean;  // true = 协议不是 openai,流式降级
+    isFallback: boolean;
+    protocolFallback: boolean;
 }> {
+    const id = args.entry?.apiConfigId;
+
+    // 暮色 8-26:特殊 id — `__main_preset_${id}` 从 apiPresets 查
+    if (id && id.startsWith(MAIN_API_PRESET_PREFIX)) {
+        const presetId = id.slice(MAIN_API_PRESET_PREFIX.length);
+        const preset = args.apiPresets?.find(p => p.id === presetId && (p.kind === 'main' || !p.kind));
+        if (preset) {
+            return {
+                baseUrl: preset.config.baseUrl,
+                apiKey: preset.config.apiKey,
+                model: preset.config.model,
+                protocol: 'openai',  // 暮色 8-26 简化:主 API 预设默认按 openai 协议
+                isFallback: false,
+                protocolFallback: false,
+            };
+        }
+        // 找不到 → 回退到主
+    }
+
     // 暮色 8-25:Entry.apiConfigId 为空 → 用主 apiConfig(套壳为 openai 协议)
-    if (!args.entry?.apiConfigId) {
+    if (!id) {
         return {
             baseUrl: args.apiConfig.baseUrl,
             apiKey: args.apiConfig.apiKey,
@@ -769,7 +802,7 @@ export async function getResolvedRPApiConfig(args: {
             protocolFallback: false,
         };
     }
-    const cfg = await DB.getRPApiConfig(args.entry.apiConfigId);
+    const cfg = await DB.getRPApiConfig(id);
     if (!cfg) {
         // 指定的 config 找不到(可能删了),回退到主
         return {
@@ -787,7 +820,7 @@ export async function getResolvedRPApiConfig(args: {
         model: cfg.model,
         protocol: cfg.protocol,
         isFallback: false,
-        protocolFallback: cfg.protocol !== 'openai',   // 本步只实现 openai 流式
+        protocolFallback: cfg.protocol !== 'openai',
     };
 }
 
@@ -828,12 +861,39 @@ export async function testRPApiConfig(cfg: RPApiConfig): Promise<{ ok: boolean; 
     }
 }
 
+/** 暮色 8-26:从 RPGlobalDefaults 把缺失字段 merge 进 entry,保证 session 渲染时一定有值 */
+export async function resolveRPEntryDefaults(entry: StoryTheaterEntry): Promise<StoryTheaterEntry> {
+    const defaults = await DB.getRPGlobalDefaults();
+    if (!defaults) return entry;
+    return {
+        ...entry,
+        writingStyle: entry.writingStyle ?? defaults.writingStyle,
+        rpInstructions: entry.rpInstructions ?? defaults.rpInstructions,
+        jailbreakPrompt: entry.jailbreakPrompt ?? defaults.jailbreakPrompt,
+        authorNote: entry.authorNote ?? defaults.authorNote,
+        statusBarDefinitions: (entry.statusBarDefinitions && entry.statusBarDefinitions.length > 0)
+            ? entry.statusBarDefinitions
+            : defaults.statusBarDefinitions,
+        narrativePerson: entry.narrativePerson ?? defaults.narrativePerson,
+        authorityLevel: entry.authorityLevel ?? defaults.authorityLevel,
+        lengthPreset: entry.lengthPreset ?? defaults.lengthPreset,
+        tensionLevel: entry.tensionLevel ?? defaults.tensionLevel,
+        generationParams: entry.generationParams ?? defaults.generationParams,
+        generation: entry.generation
+            ?? (defaults.generationParams
+                ? { temperature: defaults.generationParams.temperature, maxTokens: defaults.generationParams.maxTokens }
+                : undefined),
+    };
+}
+
 /** 拼 system prompt(供流式/非流式共用) */
-function buildMainLLMSystemPrompt(args: {
+async function buildMainLLMSystemPrompt(args: {
     char: CharacterProfile;
     userProfile?: UserProfile | null;
     entry: StoryTheaterEntry;
-}): string {
+}): Promise<string> {
+    // 暮色 8-26:从全局默认 merge 缺失字段
+    const entry = await resolveRPEntryDefaults(args.entry);
     let baseSystem = '';
     try {
         baseSystem = ContextBuilder.buildCoreContext(args.char, args.userProfile || undefined);
@@ -844,8 +904,8 @@ function buildMainLLMSystemPrompt(args: {
         base: baseSystem,
         char: args.char,
         userProfile: args.userProfile,
-        entry: args.entry,
-        summary: args.entry.summary,
+        entry,
+        summary: entry.summary,
     });
 }
 
@@ -861,7 +921,7 @@ export async function callMainLLMNonStream(args: {
     if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
         throw new Error('主 LLM 未配置');
     }
-    const messages = buildRPMessageArray(args);
+    const messages = await buildRPMessageArray(args);
     const res = await safeFetchJson(
         `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
         {
@@ -870,7 +930,7 @@ export async function callMainLLMNonStream(args: {
             body: JSON.stringify({
                 model: cfg.model,
                 messages,
-                ...buildRPGenerationBody(args.entry),
+                ...(await buildRPGenerationBody(args.entry)),
                 stream: false,
             }),
         },
@@ -880,45 +940,49 @@ export async function callMainLLMNonStream(args: {
     return res?.choices?.[0]?.message?.content || '';
 }
 
-/** 拼 RP 模式的消息数组(暮色 8-25 第二批)
+/** 拼 RP 模式的消息数组(暮色 8-25 第二批 + 8-26 改 async 以便从全局默认 merge)
  *  顺序:
  *    1. system(角色人设 + RP 模式注入)
  *    2. authorNote(可选)— 暮色随时编辑的补充指令
  *    3. recent 5 轮原文
  *    4. jailbreakPrompt(可选)— 整段 prompt 最末尾 */
-export function buildRPMessageArray(args: {
+export async function buildRPMessageArray(args: {
     char: CharacterProfile;
     userProfile?: UserProfile | null;
     entry: StoryTheaterEntry;
     history: { role: 'user' | 'assistant'; content: string }[];
-}): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+}): Promise<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>> {
+    const entry = await resolveRPEntryDefaults(args.entry);
+    const argsMerged = { ...args, entry };
     const arr: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-        { role: 'system', content: buildMainLLMSystemPrompt(args) },
+        { role: 'system', content: await buildMainLLMSystemPrompt(argsMerged) },
     ];
-    if (args.entry.authorNote && args.entry.authorNote.trim()) {
-        arr.push({ role: 'system', content: `【作者注释/Author's Note】\n${args.entry.authorNote.trim()}` });
+    if (entry.authorNote && entry.authorNote.trim()) {
+        arr.push({ role: 'system', content: `【作者注释/Author's Note】\n${entry.authorNote.trim()}` });
     }
     arr.push(...args.history.map(m => ({ role: m.role, content: m.content })));
-    if (args.entry.jailbreakPrompt && args.entry.jailbreakPrompt.trim()) {
-        arr.push({ role: 'system', content: args.entry.jailbreakPrompt.trim() });
+    if (entry.jailbreakPrompt && entry.jailbreakPrompt.trim()) {
+        arr.push({ role: 'system', content: entry.jailbreakPrompt.trim() });
     }
     return arr;
 }
 
-/** 拼生成参数(暮色 8-25 第二批 4 字段,老 generation fallback) */
-export function buildRPGenerationBody(entry: StoryTheaterEntry): {
+/** 拼生成参数(暮色 8-25 第二批 4 字段,老 generation fallback + 8-26 从全局默认 merge) */
+export async function buildRPGenerationBody(entry: StoryTheaterEntry): Promise<{
     temperature: number;
     max_tokens: number;
     top_p: number;
     frequency_penalty: number;
     presence_penalty: number;
-} {
-    const gp = entry.generationParams;
-    const old = entry.generation;
+}> {
+    // 暮色 8-26:从全局默认 merge 缺失字段
+    const merged = await resolveRPEntryDefaults(entry);
+    const gp = merged.generationParams;
+    const old = merged.generation;
     return {
         temperature: gp?.temperature ?? old?.temperature ?? 0.85,
         // 暮色 8-25 第七批:lengthPreset 优先(短/中/长 → 1024/4096/8192),fallback 老 maxTokens
-        max_tokens: lengthPresetToMaxTokens(entry.lengthPreset) ?? gp?.maxTokens ?? old?.maxTokens ?? 4096,
+        max_tokens: lengthPresetToMaxTokens(merged.lengthPreset) ?? gp?.maxTokens ?? old?.maxTokens ?? 4096,
         top_p: gp?.topP ?? 1.0,
         frequency_penalty: gp?.frequencyPenalty ?? 0,
         // 暮色 8-25 第七批:加 presencePenalty(原版 5 字段之一)
@@ -957,7 +1021,8 @@ export async function* callMainLLMStream(args: {
         return;
     }
 
-    const messages = buildRPMessageArray(args);
+    const messages = await buildRPMessageArray(args);
+    const genBody = await buildRPGenerationBody(args.entry);
 
     const fetchOnce = async (): Promise<Response> => {
         return fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -969,7 +1034,7 @@ export async function* callMainLLMStream(args: {
             body: JSON.stringify({
                 model: cfg.model,
                 messages,
-                ...buildRPGenerationBody(args.entry),
+                ...genBody,
                 stream: true,
             }),
         });

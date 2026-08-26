@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'reac
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT, McpToolCallRecord } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
+import { phoneUsage, formatUsageForLLM } from '../utils/phoneUsage';
 import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
 import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
@@ -114,6 +115,34 @@ const PLAY_SONG_TOOL = {
         },
       },
       required: ['songName'],
+    },
+  },
+};
+
+// 暮色 2026-08-26 P0 第 2 步：角色查手机工具
+//   跟生图/放歌同款 type: function 工具；暮色 web 端会 fallback 到 mock 数据
+//   commit 3 会加 char.phoneUsageEnabled 开关，commit 4 改 prompt 决定主动关心时机
+//   注意：description 不能太宽泛 — 避免 LLM 每轮都查（commit 4 调）
+// 暮色 2026-08-26 缩 description 计划：原 200 字符 → 100 字符
+const PHONE_USAGE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'get_phone_usage',
+    description: 'Query user phone usage. Use only when: (1) user asks what app they are using or how long they used phone, (2) you want to comment on their screen time (e.g. remind to rest), (3) you are curious what they are doing. type: current_app=foreground app, usage_today=today\'s top apps by time, screen_time=total time + unlock count, recent_apps=recently switched apps. Do NOT spam.',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['current_app', 'usage_today', 'screen_time', 'recent_apps'],
+          description: 'Which data to query.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Only for recent_apps. How many recent apps to return. Default 5.',
+        },
+      },
+      required: ['type'],
     },
   },
 };
@@ -1689,6 +1718,10 @@ ${visionDesc}
             if (char.playSongEnabled !== false) {
                 toolsList.push(PLAY_SONG_TOOL);
             }
+            // 暮色 2026-08-26 P0 第 2 步：角色查手机
+            //   commit 2 阶段默认开（无条件注册），commit 3 加 char.phoneUsageEnabled 开关
+            //   web 端 phoneUsage.ts fallback 到 mock，Android 真机调真实插件
+            toolsList.push(PHONE_USAGE_TOOL);
             // 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表（OpenAI 协议第一版）
             //   暮色 8-23 22:11 规格：MCP 工具放在现有工具后面，不影响原有功能
             //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤
@@ -2712,6 +2745,110 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             }
             updateTokenUsage(data, historyMsgCount, 'play-song-followup');
         }
+    }
+
+    // 3.7 角色查手机工具 get_phone_usage 处理（暮色 2026-08-26 P0 第 2 步）
+    // 跟生图/放歌同款：拿到工具调用后立即执行，处理结果后再调一次大语言模型
+    // 业务流程：调 utils/phoneUsage 拿数据（web 走 mock，Android 走真实插件）→ 拼 tool 消息 → system 提示让 LLM 自然说出数据 → 删 tools 避免 LLM 再次调（死循环）
+    // 不像 play_song 三件套：phone_usage 不产生新内容（不存消息 / 不画卡片），LLM 拿数据后自然接话即可
+    const phoneUsageCall = toolCalls.find((tc: any) => (tc.function?.name || tc.name || '').trim() === 'get_phone_usage');
+
+    if (phoneUsageCall) {
+        let puType: string = '';
+        let puLimit: number = 5;
+        let puResultText: string = '';
+        let puError: string = '';
+
+        try {
+            const args = parseToolArguments(phoneUsageCall);
+            puType = (args.type || '').trim();
+            puLimit = Number(args.limit) || 5;
+        } catch (e) {
+            console.warn('📱 [PhoneUsage] 参数解析失败:', e);
+            puError = '参数解析失败';
+        }
+
+        // 调 phoneUsage 拿数据
+        if (puType && !puError) {
+            try {
+                switch (puType) {
+                    case 'current_app': {
+                        const data = await phoneUsage.getCurrentApp();
+                        puResultText = formatUsageForLLM.currentApp(data);
+                        break;
+                    }
+                    case 'usage_today': {
+                        const data = await phoneUsage.getAppUsageToday();
+                        puResultText = formatUsageForLLM.appUsageToday(data);
+                        break;
+                    }
+                    case 'screen_time': {
+                        const data = await phoneUsage.getTotalScreenTimeToday();
+                        puResultText = formatUsageForLLM.screenTimeToday(data);
+                        break;
+                    }
+                    case 'recent_apps': {
+                        const data = await phoneUsage.getRecentApps(puLimit);
+                        puResultText = formatUsageForLLM.recentApps(data);
+                        break;
+                    }
+                    default:
+                        puError = `未知的 type: ${puType}`;
+                }
+            } catch (e: any) {
+                puError = e?.message || String(e);
+                console.warn('📱 [PhoneUsage] 查询失败:', puError);
+            }
+        } else if (!puError) {
+            puError = 'AI 没有提供有效的 type';
+        }
+
+        // 拼 tool + system 消息，调 followup
+        //   不存消息（不像 play_song 三件套）— phone_usage 是只读工具，LLM 拿数据后自然说即可
+        //   删 tools 避免 LLM 再次调（死循环）
+        const followMessages = [
+            ...fullMessages,
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: phoneUsageCall.id,
+                    type: 'function',
+                    function: { name: 'get_phone_usage', arguments: JSON.stringify({ type: puType, limit: puLimit }) },
+                    // Gemini 2.5+ 必填
+                    thoughtSignature: phoneUsageCall.thoughtSignature,
+                }]
+            },
+            {
+                role: 'tool',
+                tool_call_id: phoneUsageCall.id,
+                content: puError ? `查询失败：${puError}` : puResultText,
+            },
+            {
+                role: 'system',
+                content: puError
+                    ? `查手机使用情况的工具调用失败：${puError}。请你不要声称已经查到了什么数据，自然地告诉用户：暂时没查到，可以稍后重试。`
+                    : `刚才查到了暮色手机使用情况的数据：\n${puResultText}\n\n请你用自然的方式提及这些数据（不要机械复述），结合你跟暮色当前的关系和对话情境，说出来。\n例如："你刚才在刷抖音啊？""今日屏幕时间有点长哦"等。\n不要一次说太多，挑一个点说就好。`,
+            },
+        ];
+        const followBody = { ...baseReqBody, messages: followMessages };
+        // 删掉 tools 避免 LLM 再次调 get_phone_usage 死循环
+        delete followBody.tools;
+        delete followBody.tool_choice;
+
+        allowXiaoZhiTiaoParse = false; // 工具调用 followup 不解析小纸条（跟生图/放歌一致）
+        if (useGeminiProtocol) {
+            // Gemini 协议下 follow-up 也走 Gemini 直连
+            const followGeminiBody = messagesToGeminiRequest(followMessages, `${bp1Tools}\n\n${bp2Rules}\n\n${bp3Context}`);
+            data = await doGeminiRequest(followGeminiBody, 'phone-usage-followup');
+        } else {
+            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(followBody),
+            });
+        }
+        updateTokenUsage(data, historyMsgCount, 'phone-usage-followup');
     }
 }
 

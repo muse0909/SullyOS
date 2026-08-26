@@ -15,6 +15,7 @@ import React, { useEffect, useState } from 'react';
 import { CaretDown, Plus, X, Check, Cloud } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
+import { WRITING_STYLE_PRESETS, matchWritingStylePreset } from './writingStylePresets';
 import type { RPApiConfig, StoryTheaterEntry } from '../../../types';
 
 interface Props {
@@ -30,6 +31,8 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
     const [writingStyle, setWritingStyle] = useState(entry.writingStyle || '');
     const [authorNote, setAuthorNote] = useState(entry.authorNote || '');
     const [jailbreakPrompt, setJailbreakPrompt] = useState(entry.jailbreakPrompt || '');
+    // 暮色 8-26:角色指令(RP System Prompt)
+    const [rpInstructions, setRpInstructions] = useState(entry.rpInstructions || '');
     const [statusVars, setStatusVars] = useState<{ name: string; initialValue: string }[]>(
         entry.statusBarDefinitions || []
     );
@@ -62,6 +65,7 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                 writingStyle: writingStyle.trim() || undefined,
                 authorNote: authorNote.trim() || undefined,
                 jailbreakPrompt: jailbreakPrompt.trim() || undefined,
+                rpInstructions: rpInstructions.trim() || undefined,  // 暮色 8-26
                 statusBarDefinitions: statusVars.filter(v => v.name.trim()),
                 generationParams: { temperature, maxTokens, topP, frequencyPenalty, presencePenalty },
                 apiConfigId: apiConfigId || undefined,
@@ -128,11 +132,55 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                                   style={inputStyle} />
                     </Field>
 
-                    {/* 文风 */}
-                    <Field label="文风">
-                        <textarea value={writingStyle} onChange={e => setWritingStyle(e.target.value)} rows={2}
-                                  placeholder="例:现代口语、轻松自然、对话为主"
+                    {/* 暮色 8-26:RP 角色指令(在文风上方)— 注入到 buildRPSystemPrompt 预留位置 */}
+                    <Field label="角色指令" hint="RP 总体行为指令,空就不注入">
+                        <textarea value={rpInstructions} onChange={e => setRpInstructions(e.target.value)} rows={3}
+                                  placeholder="在这里写角色在RP模式下的总体行为指令(如:可以主动推剧情、描写带五感、不要出戏等)"
                                   className="w-full mt-1 px-3 py-2 rounded-xl text-[12.5px] resize-none focus:outline-none leading-relaxed"
+                                  style={inputStyle} />
+                    </Field>
+
+                    {/* 文风 — 暮色 8-26 加 7 个文风预设卡片 */}
+                    <Field label="文风">
+                        <div className="mt-2 grid grid-cols-3 gap-1.5 mb-2">
+                            {WRITING_STYLE_PRESETS.map(p => {
+                                const activeId = matchWritingStylePreset(writingStyle);
+                                const isActive = activeId === p.id && p.prompt !== '';
+                                return (
+                                    <button
+                                        key={p.id}
+                                        onClick={() => {
+                                            if (p.prompt === '') {
+                                                // 默认质感 — 切空
+                                                if (writingStyle.trim()) setWritingStyle('');
+                                                return;
+                                            }
+                                            if (isActive) {
+                                                setWritingStyle('');
+                                            } else {
+                                                setWritingStyle(p.prompt);
+                                            }
+                                        }}
+                                        className="rounded-lg px-1.5 py-1.5 active:scale-95 transition-all text-left"
+                                        style={{
+                                            background: isActive
+                                                ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                                : 'rgba(255,255,255,0.55)',
+                                            border: isActive
+                                                ? '1.5px solid #a78bfa'
+                                                : '1px solid rgba(170,140,210,0.25)',
+                                        }}
+                                        title={p.description}
+                                    >
+                                        <div className="text-[10.5px] font-bold" style={{ color: isActive ? '#715d99' : '#4a3a6a' }}>{p.label}</div>
+                                        <div className="text-[8.5px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{p.description}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <textarea value={writingStyle} onChange={e => setWritingStyle(e.target.value)} rows={2}
+                                  placeholder="例:现代口语、轻松自然、对话为主(也可不选,直接手写)"
+                                  className="w-full px-3 py-2 rounded-xl text-[12.5px] resize-none focus:outline-none leading-relaxed"
                                   style={inputStyle} />
                     </Field>
 

@@ -689,6 +689,8 @@ export function createEntryFromSceneTemplate(args: {
     authorityLevel?: 'none' | 'limited' | 'full';
     lengthPreset?: 'short' | 'medium' | 'long';
     tensionLevel?: 'natural' | 'warm' | 'intense';
+    // 暮色 8-26:角色指令 / RP System Prompt
+    rpInstructions?: string;
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -709,6 +711,7 @@ export function createEntryFromSceneTemplate(args: {
         authorityLevel: args.authorityLevel,                              // 暮色 8-25 第七批
         lengthPreset: args.lengthPreset,                                  // 暮色 8-25 第七批
         tensionLevel: args.tensionLevel,                                  // 暮色 8-25 第七批
+        rpInstructions: args.rpInstructions,                              // 暮色 8-26
         messageCount: 0,                                                  // 新建默认 0 句
         createdAt: now,
         updatedAt: now,

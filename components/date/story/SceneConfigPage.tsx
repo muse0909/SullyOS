@@ -14,11 +14,13 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, Sparkle, PencilSimple, Check, X, Cloud, Plus } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { createEntryFromSceneTemplate } from '../../../utils/storyTheater';
 import { DB } from '../../../utils/db';
 import { SELECT_THEME } from './storyTheme';
+import { WRITING_STYLE_PRESETS } from './writingStylePresets';
 import type { RPApiConfig, StorySceneTemplate } from '../../../types';
 
 interface Props {
@@ -31,8 +33,11 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const { activeCharacterId, addToast } = useOS();
     const [selectedIdx, setSelectedIdx] = useState<number>(0);  // 默认选第一个备选
     const [customPremise, setCustomPremise] = useState<string>('');
+    // 暮色 8-26:全局默认注入初始值(template 的 writingStyle 仅在用户没设默认时被使用)
     const [writingStyle, setWritingStyle] = useState<string>(template.writingStyle);
     const [editingStyle, setEditingStyle] = useState(false);
+    // 暮色 8-26:从全局默认继承(新建剧场时)— 问题 4 实现
+    const [rpInstructions, setRpInstructions] = useState<string>('');
     const [temperature, setTemperature] = useState<number>(0.85);     // 暮色 8-25 第五步+:中间页可调
     const [maxTokens, setMaxTokens] = useState<number>(4096);          // 暮色 8-25 第七批:被 lengthPreset 替代,保留做 fallback
     const [topP, setTopP] = useState<number>(1.0);                      // 暮色 8-25 第二批:加
@@ -51,9 +56,29 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [apiConfigId, setApiConfigId] = useState<string | null>(null);
     const [rpApiConfigs, setRpApiConfigs] = useState<RPApiConfig[]>([]);
 
-    // 加载 RP API 配置列表
+    // 暮色 8-26:加载 RP API 配置列表 + 全局默认 → 注入初始值
     useEffect(() => {
         void DB.getRPApiConfigs().then(setRpApiConfigs);
+        // 注入全局默认(只注入用户没设的字段,已有的保持)
+        void DB.getRPGlobalDefaults().then(defaults => {
+            if (!defaults) return;
+            if (defaults.writingStyle) setWritingStyle(defaults.writingStyle);
+            if (defaults.rpInstructions) setRpInstructions(defaults.rpInstructions);
+            if (defaults.jailbreakPrompt) setJailbreakPrompt(defaults.jailbreakPrompt);
+            if (defaults.authorNote) setAuthorNote(defaults.authorNote);
+            if (defaults.statusBarDefinitions) setStatusVars(defaults.statusBarDefinitions);
+            if (defaults.narrativePerson) setNarrativePerson(defaults.narrativePerson);
+            if (defaults.authorityLevel) setAuthorityLevel(defaults.authorityLevel);
+            if (defaults.lengthPreset) setLengthPreset(defaults.lengthPreset);
+            if (defaults.tensionLevel) setTensionLevel(defaults.tensionLevel);
+            if (defaults.generationParams) {
+                setTemperature(defaults.generationParams.temperature);
+                setMaxTokens(defaults.generationParams.maxTokens);
+                setTopP(defaults.generationParams.topP);
+                setFrequencyPenalty(defaults.generationParams.frequencyPenalty);
+                setPresencePenalty(defaults.generationParams.presencePenalty);
+            }
+        });
     }, []);
 
     // 选备选时自动填自定义输入框(用户可改/可清空)
@@ -97,6 +122,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 apiConfigId: apiConfigId || undefined,    // 暮色 8-25 第六步第一批:null = 主 apiConfig
                 authorNote: authorNote.trim() || undefined,           // 暮色 8-25 第二批
                 jailbreakPrompt: jailbreakPrompt.trim() || undefined, // 暮色 8-25 第二批
+                rpInstructions: rpInstructions.trim() || undefined,  // 暮色 8-26
                 statusBarDefinitions: statusVars.filter(v => v.name.trim()),  // 暮色 8-25 第二批
                 narrativePerson,   // 暮色 8-25 第七批
                 authorityLevel,     // 暮色 8-25 第七批
@@ -111,12 +137,17 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
         }
     };
 
-    return (
+    // 暮色 8-26 反馈:之前 fixed inset-0 z-50 仍然露列表页 + 顶部裁切。
+    // 根因:PhoneShell 背景层 transform: scale(1.1) + App 容器 contain: layout style paint
+    //       会创建 fixed 定位的 containing block,fixed 困在 PhoneShell 内部,跟列表页同 stacking context。
+    // 修法:用 React Portal 挂到 document.body,逃出所有 stacking/transform/contain 影响,
+    //      portal 出去后 fixed 真正相对 viewport,顶部 paddingTop 从 env(safe-area-inset-top) 开始。
+    return createPortal(
         <div className="fixed inset-0 z-50 flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
             <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
 
-            {/* 顶栏 */}
-            <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
+            {/* 顶栏 — portal 出去后从 viewport 顶部 + 安全区开始,不再用 var(--safe-top) 双重叠加 */}
+            <div className="relative z-10 shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}>
                 <div className="relative flex items-center justify-center px-5 pt-2">
                     <button onClick={onCancel} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
                             style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>
@@ -198,8 +229,71 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
                 />
 
+                {/* 暮色 8-26:RP 角色指令(在文风上方)— 注入到 buildRPSystemPrompt 的预留位置 */}
+                <SectionTitle title="角色指令(RP System Prompt)" subtitle="ROLE DIRECTIVE" />
+                <textarea
+                    value={rpInstructions}
+                    onChange={e => setRpInstructions(e.target.value)}
+                    placeholder="在这里写角色在RP模式下的总体行为指令(如:可以主动推剧情、描写带五感、不要出戏等)"
+                    rows={3}
+                    className="w-full px-3.5 py-2.5 rounded-2xl text-[12.5px] resize-none focus:outline-none leading-relaxed mb-4"
+                    style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
+                    onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
+                />
+
                 {/* 3. 文风 */}
                 <SectionTitle title="文风" subtitle="WRITING STYLE" />
+
+                {/* 暮色 8-26:7 个文风预设卡片(跟叙事参数卡片样式一致)
+                    - 点选 → 填入文风输入框
+                    - 再点一次 → 取消,输入框清空
+                    - 也可以不选,直接手写 */}
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                    {WRITING_STYLE_PRESETS.map(p => {
+                        const isActive = writingStyle.trim() === p.prompt && p.prompt !== '';
+                        return (
+                            <button
+                                key={p.id}
+                                onClick={() => {
+                                    if (p.prompt === '') {
+                                        // 默认质感 — 切换:有内容就清,空就放空
+                                        if (writingStyle) {
+                                            setWritingStyle('');
+                                            setEditingStyle(false);
+                                        } else {
+                                            setWritingStyle('');
+                                            setEditingStyle(false);
+                                        }
+                                        return;
+                                    }
+                                    if (isActive) {
+                                        // 再点取消 → 清空
+                                        setWritingStyle('');
+                                    } else {
+                                        // 填入预设(用户可继续改)
+                                        setWritingStyle(p.prompt);
+                                        setEditingStyle(false);
+                                    }
+                                }}
+                                className="rounded-xl px-2 py-2 active:scale-95 transition-all text-left"
+                                style={{
+                                    background: isActive
+                                        ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                        : 'rgba(255,255,255,0.55)',
+                                    border: isActive
+                                        ? '1.5px solid #a78bfa'
+                                        : '1px solid rgba(170,140,210,0.25)',
+                                    boxShadow: isActive ? '0 2px 8px rgba(167,139,250,0.2)' : 'none',
+                                }}
+                                title={p.description}
+                            >
+                                <div className="text-[11.5px] font-bold" style={{ color: isActive ? '#715d99' : '#4a3a6a' }}>{p.label}</div>
+                                <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{p.description}</div>
+                            </button>
+                        );
+                    })}
+                </div>
                 {editingStyle ? (
                     <div className="space-y-2">
                         <textarea
@@ -476,8 +570,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 </div>
             </div>
 
-            {/* 底部"开剧场"按钮 */}
-            <div className="relative z-10 shrink-0 px-5 pb-5 pt-2" style={{ paddingBottom: 'max(1.25rem, var(--safe-bottom))' }}>
+            {/* 底部"开剧场"按钮 — portal 出去后用 env(safe-area-inset-bottom) 直接读 viewport */}
+            <div className="relative z-10 shrink-0 px-5 pb-5 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}>
                 <button
                     onClick={handleConfirm}
                     disabled={submitting || !customPremise.trim() || !writingStyle.trim()}
@@ -491,7 +585,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     {submitting ? '开剧场中...' : '开剧场 →'}
                 </button>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

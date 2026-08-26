@@ -163,7 +163,9 @@ ${entry.statusBarDefinitions.map(v => `- ${v.name}: 初始 ${v.initialValue}`).j
 用户也可能完全不用标记,直接写纯文本,你也要能理解。
 不管怎么写,你在 [正文] 里都可以自由用 *动作* / "对话" / (心理) 三种方式回应。
 
-__RP_INJECTION_POINT__
+${entry.rpInstructions && entry.rpInstructions.trim() ? `### 角色指令(暮色 8-26 — 用户在中间页/session 弹窗填的 RP System Prompt)
+${entry.rpInstructions.trim()}
+` : ''}
 `;
 
     return base + rpBlock;

@@ -2741,6 +2741,9 @@ export interface StoryTheaterEntry {
     statusBarDefinitions?: StatusBarDefinition[];
     /** 暮色 8-25 第二批:C) 解锁提示词(Jailbreak) — 放在整段 prompt 最末尾 */
     jailbreakPrompt?: string;
+    /** 暮色 8-26:角色指令 / RP System Prompt — 用户在中间页/session 弹窗里填的总行为指令
+     *  buildRPSystemPrompt 注入到预留的 __RP_INJECTION_POINT__ 位置,空就不注入 */
+    rpInstructions?: string;
     /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
     generationParams?: {
         temperature: number;
@@ -2883,4 +2886,32 @@ export interface StoryTheaterPresetPrompt {
     role: 'system' | 'user' | 'assistant';
     content: string;
     marker?: 'characters' | 'world_before' | 'user' | 'world_after' | 'scenario' | 'examples' | 'history';
+}
+
+/**
+ * 暮色 8-26:RP 模式全局默认配置(剧情剧院齿轮 → API 设置 → 默认配置)
+ *   - 改这里只影响"之后新建"的剧场
+ *   - 已经建好的剧场不受影响(隔离)
+ *   - 单独剧场在自己的中间页/session 弹窗改,跟全局互不干扰
+ *   - 所有字段都可选,空 = 走主模型自身默认,不注入
+ */
+export interface RPGlobalDefaults {
+    id: 'singleton';  // 永远只有一条记录,id 固定
+    writingStyle?: string;                          // 文风描述(可填预设文本或手写)
+    narrativePerson?: NarrativePerson;              // 人称默认
+    authorityLevel?: AuthorityLevel;                // 执笔权默认
+    lengthPreset?: LengthPreset;                    // 篇幅默认
+    tensionLevel?: TensionLevel;                    // 场景张力默认
+    rpInstructions?: string;                        // RP 总指令默认
+    jailbreakPrompt?: string;                       // 解锁提示词默认
+    authorNote?: string;                            // 作者注释默认(不写也行,这里留着)
+    generationParams?: {                            // 生成参数 5 字段
+        temperature: number;
+        maxTokens: number;
+        topP: number;
+        frequencyPenalty: number;
+        presencePenalty: number;
+    };
+    statusBarDefinitions?: StatusBarDefinition[];   // 状态栏定义默认
+    updatedAt: number;
 }

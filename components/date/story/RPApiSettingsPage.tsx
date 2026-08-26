@@ -15,7 +15,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Plus, PencilSimple, Trash, Lightning, Check, X, CircleNotch, ArrowSquareOut, FloppyDisk, CaretDown, CaretRight, Cloud } from '@phosphor-icons/react';
+import { ArrowLeft, Plus, PencilSimple, Trash, Lightning, Check, X, CircleNotch, ArrowSquareOut, FloppyDisk, CaretDown, CaretRight } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { testRPApiConfig as testRPApiConfigFn, MAIN_API_PRESET_PREFIX, MAIN_API_PRESET_ID, isMainApiPresetId } from '../../../utils/storyTheater';
@@ -186,6 +186,35 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                     </button>
                     {apiSectionOpen && (
                         <div className="mt-3 space-y-3">
+                            {/* 暮色 8-26 17:45:当前配置 — 深一号紫框,放最上面,文字"当前配置:xxx" */}
+                            <div
+                                className="rounded-xl px-3 py-2"
+                                style={{
+                                    background: 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))',
+                                    border: '1.5px solid #a78bfa',
+                                }}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#7c3aed' }} />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[9px] font-bold tracking-wider" style={{ color: '#715d99' }}>当前配置</div>
+                                        <div className="text-[12.5px] mt-0.5 truncate font-bold" style={{ color: '#715d99' }}>
+                                            {(() => {
+                                                const id = draftDefaults.apiConfigId;
+                                                if (!id || id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
+                                                if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
+                                                    const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
+                                                    const p = (apiPresets || []).find(x => x.id === pid);
+                                                    return p ? p.name : '主预设(已删除)';
+                                                }
+                                                const cfg = configs.find(x => x.id === id);
+                                                return cfg ? cfg.name : '自建 RP(已删除)';
+                                            })()}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* 暮色 8-26 17:30:胶囊预设网格(像系统设置里 API 预设的样式,紫色调) */}
                             <div className="flex flex-wrap gap-2">
                                 {/* 主聊天同款 */}
@@ -259,29 +288,8 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
 
                     {draftDefaults && (
                         <div className="space-y-4">
-                            {/* 0. RP 默认 API 当前选中(暮色 8-26 17:00) — 上面 API section 里的可点选列表
-                                这里给个简短提示,告诉用户"选哪个"是当前 RP 默认 API */}
-                            <div className="rounded-xl px-3 py-2 flex items-center gap-2" style={{ background: 'rgba(167,139,250,0.08)', border: '1px dashed rgba(167,139,250,0.4)' }}>
-                                <Cloud size={12} weight="fill" style={{ color: '#7c3aed' }} />
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-[9px] font-bold tracking-wider" style={{ color: '#715d99' }}>当前 RP 默认 API</div>
-                                    <div className="text-[11px] mt-0.5 truncate" style={{ color: '#4a3a6a' }}>
-                                        {(() => {
-                                            const id = draftDefaults.apiConfigId;
-                                            if (!id) return '主聊天同款(实时)';
-                                            if (id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
-                                            if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
-                                                const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
-                                                const p = (apiPresets || []).find(x => x.id === pid);
-                                                return p ? p.name : '主预设(已删除)';
-                                            }
-                                            const cfg = configs.find(x => x.id === id);
-                                            return cfg ? cfg.name : '自建 RP(已删除)';
-                                        })()}
-                                    </div>
-                                </div>
-                                <div className="text-[9px]" style={{ color: 'rgba(150,120,190,0.6)' }}>↑ 上面点选</div>
-                            </div>
+                            {/* 暮色 8-26 17:45:'当前配置'已挪到 API 设置 section 里(同虚线框),这里不再重复显示
+                                从默认前提开始 */}
 
                             {/* 1. 默认前提(暮色 8-26 17:00) — 新建剧场时填入,用户进中间页后可改/选备选前提覆盖 */}
                             <Field label="默认前提" hint="新建剧场的默认前提;空 = 用户自己写">

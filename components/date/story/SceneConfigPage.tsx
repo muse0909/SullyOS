@@ -31,7 +31,8 @@ interface Props {
 
 const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => {
     const { activeCharacterId, addToast } = useOS();
-    const [selectedIdx, setSelectedIdx] = useState<number>(0);  // 默认选第一个备选
+    // 暮色 8-26 17:00:默认 -1 = 未选(不预填第一个备选),让用户主动点选或用默认前提
+    const [selectedIdx, setSelectedIdx] = useState<number>(-1);
     const [customPremise, setCustomPremise] = useState<string>('');
     // 暮色 8-26 简化:中间页只保留"前提 + 文风"两件事;其他(RP 角色指令/叙事参数/生成参数/解锁提示词/状态栏/API)
     // 全部移到 RP 设置里(全局默认配置)。单剧场可在 session 内 ⚙ 弹窗里覆盖。
@@ -40,12 +41,16 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [apiConfigId, setApiConfigId] = useState<string | undefined>(undefined);
     const [submitting, setSubmitting] = useState(false);
 
-    // 暮色 8-26:文风 + 默认 API 从全局默认继承(其他字段全部走 RP 设置的全局默认,运行时由 buildRPMessageArray merge)
+    // 暮色 8-26 17:00:文风 / 默认 API / 默认前提 从全局默认继承
     useEffect(() => {
         void DB.getRPGlobalDefaults().then(defaults => {
             if (!defaults) return;
             if (defaults.writingStyle) setWritingStyle(defaults.writingStyle);
             if (defaults.apiConfigId) setApiConfigId(defaults.apiConfigId);
+            // 默认前提 — 用户没点选备选前提时填入
+            if (defaults.defaultPremise && !customPremise) {
+                setCustomPremise(defaults.defaultPremise);
+            }
         });
     }, []);
 
@@ -181,19 +186,6 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     placeholder="想怎么开始?背景设定、剧情起点、你想怎么玩…"
                     rows={3}
                     className="w-full px-3.5 py-2.5 rounded-2xl text-[12.5px] resize-none focus:outline-none leading-relaxed"
-                    style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
-                    onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
-                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
-                />
-
-                {/* 暮色 8-26:RP 角色指令(在文风上方)— 注入到 buildRPSystemPrompt 的预留位置 */}
-                <SectionTitle title="角色指令(RP System Prompt)" subtitle="ROLE DIRECTIVE" />
-                <textarea
-                    value={rpInstructions}
-                    onChange={e => setRpInstructions(e.target.value)}
-                    placeholder="在这里写角色在RP模式下的总体行为指令(如:可以主动推剧情、描写带五感、不要出戏等)"
-                    rows={3}
-                    className="w-full px-3.5 py-2.5 rounded-2xl text-[12.5px] resize-none focus:outline-none leading-relaxed mb-4"
                     style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
                     onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
                     onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}

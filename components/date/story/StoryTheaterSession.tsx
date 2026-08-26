@@ -19,7 +19,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, Star, ChatCenteredText, Heart, GearSix } from '@phosphor-icons/react';
+import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, GearSix, Lightning } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { safeFetchJson } from '../../../utils/safeApi';
@@ -39,6 +39,7 @@ import { buildRPSystemPrompt, formatUserLayersForLLM, parseUserInputToLayers } f
 import { SELECT_THEME } from './storyTheme';
 import StoryStatusPanel from './StoryStatusPanel';
 import EntryEditModal from './EntryEditModal';
+import QuickPhrasesModal from './QuickPhrasesModal';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryStatusSnapshot, UserProfile } from '../../../types';
 import type { MemoryPalaceGlobalConfig } from '../../../context/OSContext';
 import type { APIConfig } from '../../../types';
@@ -59,6 +60,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     const [showExitModal, setShowExitModal] = useState(false);
     // 暮色 8-25 第二批:session 内编辑 modal(底部弹窗)
     const [showEditModal, setShowEditModal] = useState(false);
+    // 暮色 8-26 17:00:快捷键 modal(共享 localStorage 短语列表)
+    const [showQuickPhrases, setShowQuickPhrases] = useState(false);
     const [syncing, setSyncing] = useState(false);
     // 暮色 8-25 第六步第一批:打字机效果 — 流式累积的临时内容
     const [streamingContent, setStreamingContent] = useState<string>('');
@@ -186,22 +189,21 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         }
     }, [input, sending, entry, char, userProfile, apiConfig, memoryPalaceConfig, addToast, reload, onUpdateEntry]);
 
-    // 暮色 8-25 第四步:在光标处插入标记模板
-    const insertLayerTemplate = useCallback((type: 'action' | 'dialogue' | 'thought') => {
+    // 暮色 8-26 17:00:快捷键短语插入 — 在光标处插入,默认追加到末尾
+    const insertQuickPhrase = useCallback((text: string) => {
         const ta = textareaRef.current;
-        if (!ta) return;
-        const start = ta.selectionStart || 0;
-        const end = ta.selectionEnd || 0;
-        const template = type === 'action' ? '*…*' : type === 'dialogue' ? '"…"' : '(…)';
-        const placeholder = type === 'action' ? '动作' : type === 'dialogue' ? '对话' : '心理';
-        // 在占位符位置插入,光标移到 … 中间
-        const inner = template.indexOf('…');
-        const newText = input.slice(0, start) + template + input.slice(end);
+        const start = ta?.selectionStart ?? input.length;
+        const end = ta?.selectionEnd ?? input.length;
+        const prefix = input.slice(0, start);
+        const suffix = input.slice(end);
+        const needsSpace = prefix.length > 0 && !prefix.endsWith(' ') && !prefix.endsWith('\n');
+        const insert = (needsSpace ? ' ' : '') + text;
+        const newText = prefix + insert + suffix;
         setInput(newText);
         requestAnimationFrame(() => {
-            ta.focus();
-            const cursor = start + inner + placeholder.length;
-            ta.setSelectionRange(cursor, cursor);
+            ta?.focus();
+            const cursor = start + insert.length;
+            ta?.setSelectionRange(cursor, cursor);
         });
     }, [input]);
 
@@ -318,14 +320,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 )}
             </div>
 
-            {/* 输入区 — 暮色 8-25 第四步:加 3 个小按钮(动/话/心)+ textarea + 发送 */}
+            {/* 输入区 — 暮色 8-26 17:00:删动/话/心 3 按钮,加快捷键按钮(弹 QuickPhrasesModal) */}
             <div className="relative z-10 shrink-0 px-4 pb-4 pt-2" style={{ paddingBottom: 'max(1rem, var(--safe-bottom))' }}>
-                {/* 3 个小按钮(放输入框上方,暮色要求不占太大空间) */}
-                <div className="flex gap-1.5 mb-1.5">
-                    <LayerButton icon={<Star size={12} weight="fill" />} label="动" color="#7c3aed" onClick={() => insertLayerTemplate('action')} />
-                    <LayerButton icon={<ChatCenteredText size={12} weight="fill" />} label="话" color="#0ea5e9" onClick={() => insertLayerTemplate('dialogue')} />
-                    <LayerButton icon={<Heart size={12} weight="fill" />} label="心" color="#ec4899" onClick={() => insertLayerTemplate('thought')} />
-                </div>
                 <div className="flex items-end gap-2">
                     <textarea
                         ref={textareaRef}
@@ -337,7 +333,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                                 void handleSend();
                             }
                         }}
-                        placeholder='写下台词、动作、心理…标记是可选(动* / 话" / 心( 三个按钮可一键插入)'
+                        placeholder='写下台词、动作、心理…标记是可选(*动作* / "对话" / (心理))'
                         rows={2}
                         disabled={sending}
                         className="flex-1 px-3.5 py-2.5 rounded-2xl text-[13px] resize-none focus:outline-none disabled:opacity-50"
@@ -345,6 +341,15 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
                         onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
                     />
+                    {/* 暮色 8-26 17:00:快捷键按钮 — 弹 QuickPhrasesModal 选短语插入 */}
+                    <button
+                        onClick={() => setShowQuickPhrases(true)}
+                        className="w-11 h-11 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                        style={{ background: 'rgba(167,139,250,0.12)', color: '#715d99' }}
+                        title="快捷键"
+                    >
+                        <Lightning size={16} weight="fill" />
+                    </button>
                     <button
                         onClick={() => void handleSend()}
                         disabled={!input.trim() || sending}
@@ -397,6 +402,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                     }}
                 />
             )}
+
+            {/* 暮色 8-26 17:00:快捷键 modal(共享 localStorage 短语)— 选短语时插入到输入框 */}
+            {showQuickPhrases && (
+                <QuickPhrasesModal
+                    onClose={() => setShowQuickPhrases(false)}
+                    onSelect={insertQuickPhrase}
+                />
+            )}
         </div>,
         document.body
     );
@@ -436,22 +449,7 @@ const MessageBubble: React.FC<{
     );
 };
 
-/* ── 输入框上方的快捷按钮(暮色 8-25 第四步:小图标+单字) ── */
-const LayerButton: React.FC<{
-    icon: React.ReactNode;
-    label: string;
-    color: string;
-    onClick: () => void;
-}> = ({ icon, label, color, onClick }) => (
-    <button
-        onClick={onClick}
-        className="flex items-center gap-1 px-2 py-1 rounded-lg active:scale-95 transition-all"
-        style={{ background: `${color}15`, border: `1px solid ${color}30` }}
-    >
-        <span style={{ color }}>{icon}</span>
-        <span className="text-[10px] font-bold" style={{ color }}>{label}</span>
-    </button>
-);
+/* 暮色 8-26 17:00:LayerButton 已删除(动/话/心 3 按钮被快捷键 modal 替代) */
 
 /* ── 主 LLM 调用(暮色 8-25 第六步第一批:已迁到 utils/storyTheater.ts 的 callMainLLMStream) ── */
 // 之前的非流式 callMainLLM 已删除,改用 utils/storyTheater.ts 的:

@@ -11,7 +11,7 @@ import { safeResponseJson, extractContent, extractThinking } from '../utils/safe
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
-import { BookOpen, CaretLeft, Sparkle, Lock } from '@phosphor-icons/react';
+import { BookOpen, CaretLeft, Sparkle } from '@phosphor-icons/react';
 import StoryTheater from '../components/date/story/StoryTheater';
 import { SELECT_THEME, CARD_TINTS } from '../components/date/story/storyTheme';
 
@@ -764,12 +764,10 @@ const DateApp: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* 陪伴/剧情 tab — 陪伴 active,剧情 disabled 视觉(锁 icon + 灰) */}
+                    {/* 陪伴/剧情 tab — 暮色 8-26:剧情已可点,删锁 icon */}
                     <div className='mx-auto mt-4 mb-3 grid w-[min(18rem,calc(100%-2.5rem))] grid-cols-2 rounded-xl bg-white/45 p-1 shadow-sm'>
-                        <button className='rounded-lg bg-white py-2 text-xs font-bold text-[#715d99] shadow-sm'>陪伴</button>
-                        <button onClick={() => setMeetSurface('story')} className='rounded-lg py-2 text-xs font-bold text-[#8f7bb5] flex items-center justify-center gap-1.5 active:scale-95 transition-all'>
-                            <Lock size={11} weight="fill" />剧情
-                        </button>
+                        <button onClick={() => setMeetSurface('companion')} className='rounded-lg bg-white py-2 text-xs font-bold text-[#715d99] shadow-sm active:scale-95 transition-all'>陪伴</button>
+                        <button onClick={() => setMeetSurface('story')} className='rounded-lg py-2 text-xs font-bold text-[#8f7bb5] active:scale-95 transition-all'>剧情</button>
                     </div>
                 </div>
 

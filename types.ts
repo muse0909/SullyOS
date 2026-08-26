@@ -2913,6 +2913,8 @@ export interface RPGlobalDefaults {
         presencePenalty: number;
     };
     statusBarDefinitions?: StatusBarDefinition[];   // 状态栏定义默认
+    /** 暮色 8-26 17:00:整个剧场的默认前提 — 新建剧场时填入,用户进中间页后可改/选备选前提覆盖 */
+    defaultPremise?: string;
     /** 暮色 8-26:整个剧场的默认 API — 暮色不填 = 单剧场 ⚙ 弹窗里手动选;填了 = 新建剧场默认用这个
      *  暮色 8-26 扩展:支持 `__main__`(主聊天同款)、`__main_preset_${id}`(主 API 预设)、或 RP 独立 config id */
     apiConfigId?: string;

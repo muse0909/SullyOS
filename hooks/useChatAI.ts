@@ -1719,9 +1719,13 @@ ${visionDesc}
                 toolsList.push(PLAY_SONG_TOOL);
             }
             // 暮色 2026-08-26 P0 第 2 步：角色查手机
-            //   commit 2 阶段默认开（无条件注册），commit 3 加 char.phoneUsageEnabled 开关
+            //   commit 3 加 char.phoneUsageEnabled 开关（默认开 — undefined 兜底 true，跟 imageGen / playSong 一致）
             //   web 端 phoneUsage.ts fallback 到 mock，Android 真机调真实插件
-            toolsList.push(PHONE_USAGE_TOOL);
+            //   注：系统权限（PACKAGE_USAGE_STATS）由设置页 PhoneUsageGranted 状态指示，
+            //       没权限时 LLM 调起来会拿 mock / 空数据 + 工具返回错误，LLM 自然回应
+            if (char.phoneUsageEnabled !== false) {
+                toolsList.push(PHONE_USAGE_TOOL);
+            }
             // 暮色 2026-08-23 v3：MCP 工具注入到 LLM tools 列表（OpenAI 协议第一版）
             //   暮色 8-23 22:11 规格：MCP 工具放在现有工具后面，不影响原有功能
             //   mcpToOpenAITools 内部按 server.enabled / tool.enabled / isSensitive + allowSensitive 过滤

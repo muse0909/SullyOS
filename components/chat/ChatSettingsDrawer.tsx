@@ -37,6 +37,16 @@ interface ChatSettingsDrawerProps {
     playSongEnabled: boolean;
     onTogglePlaySong: () => void;
 
+    // 暮色 2026-08-26 角色查手机 P0 第 3 步：手机使用情况工具开关
+    //   - phoneUsageEnabled: 用户开关（关则 LLM 看不到工具）
+    //   - phoneUsageGranted: 系统 PACKAGE_USAGE_STATS 权限状态（web 端永远 true / Android 真机才检查）
+    //   - onTogglePhoneUsage: 切换时自动检查权限，没开就弹引导
+    //   - onOpenPhoneUsageSettings: 引导弹窗里的"去授权"按钮 — 直接跳系统设置页
+    phoneUsageEnabled: boolean;
+    phoneUsageGranted: boolean;
+    onTogglePhoneUsage: () => void;
+    onOpenPhoneUsageSettings: () => void;
+
     // 暮色 2026-08-22：自动写日记（每天 22:00 写一篇）
     autoDiaryEnabled: boolean;
     onToggleAutoDiary: () => void;
@@ -129,6 +139,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     emotionEnabled, onToggleEmotion,
     imageGenEnabled, onToggleImageGen, playSongEnabled, onTogglePlaySong,
+    phoneUsageEnabled, phoneUsageGranted, onTogglePhoneUsage, onOpenPhoneUsageSettings,
     autoDiaryEnabled, onToggleAutoDiary,
     contextLimit, onSetContextLimit,
     // 暮色 2026-08-05：角色自定义时区
@@ -488,6 +499,34 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
                             开启后，AI 可在合适场景调 play_song 主动放歌。关闭则请求体里不带放歌工具。
                         </p>
+                    </section>
+
+                    {/* 暮色 2026-08-26 P0 3 步：角色查手机（get_phone_usage 工具开关） */}
+                    <section>
+                        <div className="flex items-center justify-between cursor-pointer" onClick={onTogglePhoneUsage}>
+                            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">查手机使用</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${phoneUsageEnabled ? 'bg-cyan-500' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${phoneUsageEnabled ? 'translate-x-4' : ''}`} />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                            开启后，AI 可调 get_phone_usage 查询你的手机使用情况（当前在用哪个 app、今日时长、最近切换的 app）。关闭则工具不出现在请求体里。
+                        </p>
+                        {/* 权限未开时的引导：cyan-50 浅底提示 + "去授权" 按钮 */}
+                        {/* 暮色要求：开启时检查权限，没权限就弹引导（暮色 2026-08-26 P0 规格） */}
+                        {phoneUsageEnabled && !phoneUsageGranted && (
+                            <div className="mt-2 p-2.5 rounded-lg bg-cyan-50 border border-cyan-100">
+                                <p className="text-[10px] text-cyan-700 leading-relaxed">
+                                    还需要开启系统"使用情况访问"权限，AI 才能查到你真实的手机数据。
+                                </p>
+                                <button
+                                    onClick={onOpenPhoneUsageSettings}
+                                    className="mt-1.5 px-3 py-1 rounded-full bg-cyan-500 hover:bg-cyan-600 text-white text-[10px] font-bold active:scale-95 transition-all"
+                                >
+                                    去授权
+                                </button>
+                            </div>
+                        )}
                     </section>
 
                     {/* === 语音消息 === */}

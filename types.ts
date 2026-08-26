@@ -1253,6 +1253,13 @@ export interface CharacterProfile {
   imageGenEnabled?: boolean;
   playSongEnabled?: boolean;
 
+  // 暮色 2026-08-26 角色查手机 P0：
+  //   - true：开，AI 工具列表里有 get_phone_usage（默认开）
+  //   - false：关，工具不出现在请求体
+  //   - undefined：老用户兜底——等同 true（保持现有行为，跟 imageGenEnabled / playSongEnabled 一致）
+  //   系统权限（PACKAGE_USAGE_STATS）独立存，不放 character 字段里（设备级不是角色级）
+  phoneUsageEnabled?: boolean;
+
   // 暮色 2026-08-22：自动写日记开关（per-character）
   //   - true：开，角色每天 22:00 自动写一篇日记
   //   - false / undefined：关（默认关，用户主动开才生效）

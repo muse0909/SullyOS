@@ -2,6 +2,8 @@ import ThinkingBubble from "../components/chat/ThinkingBubble";
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+// 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
+import { phoneUsage } from '../utils/phoneUsage';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
 
@@ -146,6 +148,9 @@ const Chat: React.FC = () => {
     const [emojiImportText, setEmojiImportText] = useState('');
     const [showChatSettingsDrawer, setShowChatSettingsDrawer] = useState(false);
     const [showChatSearchDrawer, setShowChatSearchDrawer] = useState(false);
+    // 暮色 2026-08-26 P0 3 步：手机使用权限状态
+    //   drawer 打开时 / 页面 focus 时检查；web 端永远 true（mock 不需要权限）
+    const [phoneUsageGranted, setPhoneUsageGranted] = useState<boolean>(true);
     const [preserveCount, setPreserveCount] = useState<number>(10);
 
     const [isVectorizing, setIsVectorizing] = useState(false);
@@ -250,6 +255,22 @@ const Chat: React.FC = () => {
             }
         }
     }, [showChatSettingsDrawer, char?.id, (char as any)?.apiConfig?.baseUrl, (char as any)?.apiConfig?.apiKey, (char as any)?.apiConfig?.model, (char as any)?.apiConfig?.protocol, (char as any)?.apiConfig?.geminiBaseUrl, (char as any)?.apiConfig?.geminiApiKey, (char as any)?.apiConfig?.geminiModel]);
+
+    // 暮色 2026-08-26 P0 3 步：drawer 打开时检查手机使用权限
+    //   暮色 8-26 规格："开启时检查系统权限，没有就走引导流程"
+    //   drawer 打开时检查一次；用户从系统设置页回来再开 drawer 时状态能更新
+    useEffect(() => {
+        if (showChatSettingsDrawer) {
+            (async () => {
+                try {
+                    const { granted } = await phoneUsage.checkPermission();
+                    setPhoneUsageGranted(granted);
+                } catch (e) {
+                    console.warn('[phoneUsage] drawer 打开时检查权限失败:', e);
+                }
+            })();
+        }
+    }, [showChatSettingsDrawer]);
     const switchPerCharApiProtocol = (newProtocol: 'openai' | 'gemini') => {
         if (newProtocol === perCharApiProtocol) return;
         if (perCharApiProtocol === 'gemini') {
@@ -1737,6 +1758,43 @@ const Chat: React.FC = () => {
         addToast(!isOn ? '放歌已开启' : '放歌已关闭', !isOn ? 'success' : 'info');
     };
 
+    // 暮色 2026-08-26 P0 3 步：角色查手机 toggle
+    //   暮色规格："开启时检查系统权限，没有就走引导流程"
+    //   - 开时：检查 phoneUsage.checkPermission()，有权限 → 写入开关 + toast；没权限 → 也写入开关（开）+ 弹引导（UI section 自己渲染）
+    //   - 关时：直接关，不检查权限
+    //   注意：web 端 checkPermission 永远 true（mock 不需要权限），所以 web 测时开 toggle 不会弹引导
+    const handleTogglePhoneUsage = async () => {
+        if (!char) return;
+        const isOn = char.phoneUsageEnabled !== false;
+        const next = !isOn;
+
+        if (next) {
+            // 开：先检查权限
+            try {
+                const { granted } = await phoneUsage.checkPermission();
+                setPhoneUsageGranted(granted);
+                if (!granted) {
+                    addToast('需要开启"使用情况访问"权限才能查到真实数据', 'info');
+                }
+            } catch (e) {
+                console.warn('[phoneUsage] checkPermission 失败:', e);
+                setPhoneUsageGranted(false);
+            }
+        }
+        updateCharacter(char.id, { phoneUsageEnabled: next } as any);
+        addToast(next ? '查手机已开启' : '查手机已关闭', next ? 'success' : 'info');
+    };
+
+    // 直接跳系统设置页（"去授权"按钮）
+    const handleOpenPhoneUsageSettings = async () => {
+        try {
+            await phoneUsage.requestPermission();
+        } catch (e) {
+            console.warn('[phoneUsage] requestPermission 失败:', e);
+            addToast('跳设置页失败，请手动到系统设置开启', 'error');
+        }
+    };
+
     // 暮色 2026-08-22：自动写日记（单角色独立，每天 22:00 写一篇）
     //   默认关（char.autoDiaryEnabled === true 才算开）
     //   切换：开 → ProactiveDiary.start(charId) 起 schedule；关 → ProactiveDiary.stop(charId) 清 schedule
@@ -2954,6 +3012,11 @@ if (keepN > 0) {
                 onToggleImageGen={handleToggleImageGen}
                 playSongEnabled={char.playSongEnabled !== false}
                 onTogglePlaySong={handleTogglePlaySong}
+                // 暮色 2026-08-26 P0 3 步：角色查手机 toggle + 权限引导
+                phoneUsageEnabled={char.phoneUsageEnabled !== false}
+                phoneUsageGranted={phoneUsageGranted}
+                onTogglePhoneUsage={handleTogglePhoneUsage}
+                onOpenPhoneUsageSettings={handleOpenPhoneUsageSettings}
                 autoDiaryEnabled={char.autoDiaryEnabled === true}
                 onToggleAutoDiary={handleToggleAutoDiary}
                 contextLimit={char.contextLimit || 500}

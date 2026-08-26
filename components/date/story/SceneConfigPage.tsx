@@ -186,19 +186,6 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
                 />
 
-                {/* 暮色 8-26:RP 角色指令(在文风上方)— 注入到 buildRPSystemPrompt 的预留位置 */}
-                <SectionTitle title="角色指令(RP System Prompt)" subtitle="ROLE DIRECTIVE" />
-                <textarea
-                    value={rpInstructions}
-                    onChange={e => setRpInstructions(e.target.value)}
-                    placeholder="在这里写角色在RP模式下的总体行为指令(如:可以主动推剧情、描写带五感、不要出戏等)"
-                    rows={3}
-                    className="w-full px-3.5 py-2.5 rounded-2xl text-[12.5px] resize-none focus:outline-none leading-relaxed mb-4"
-                    style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
-                    onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
-                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
-                />
-
                 {/* 3. 文风 */}
                 <SectionTitle title="文风" subtitle="WRITING STYLE" />
                 {/* 暮色 8-26 改:placeholder 写明不选=默认质感(不注入文风指令,主模型自己拿捏) */}

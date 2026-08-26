@@ -2716,3 +2716,205 @@ export interface ActiveMsg2InboxMessage {
   receivedAt: number;
   processAttempts?: number;
 }
+
+// ─── 剧情模式(Story Theater)类型 ─────────────────────
+// 暮色 8-25:RP 模式是双人的,暮色 = 暮色,不需要"戴别的身份"
+// 所以 Entry 里没有 mask 字段,只有一个角色
+
+export interface StoryTheaterEntry {
+    id: string;
+    title: string;
+    premise: string;            // 前提/世界观(用户最终选/写的)
+    writingStyle?: string;      // 文风描述(暮色 8-25 第五步:中间页可改,buildRPSystemPrompt 注入)
+    characterId: string;        // 当前对话角色(单人,不是 characterIds)
+    writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
+    summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
+    /** 暮色 8-25 第五步+:老 generation,暮色 8-25 第二批:新 generationParams 4 字段,逻辑 fallback */
+    generation?: { temperature: number; maxTokens: number };
+    /** 暮色 8-25 第六步第一批:消息数(方案 A — 写时 +1,删 Entry 归零,老数据回填) */
+    messageCount?: number;
+    /** 暮色 8-25 第六步第一批:用哪套 RP API 配置(null = 主 apiConfig) */
+    apiConfigId?: string;
+    /** 暮色 8-25 第二批:A) 作者注释(Author's Note) — 用户随时可编辑,插入 system 后、recent 5 轮前 */
+    authorNote?: string;
+    /** 暮色 8-25 第二批:B) 状态栏定义 — 用户定义要追踪的变量(可增删),prompt 注入追踪指令,LLM 回复末尾 [状态] xxx=yyy 输出 */
+    statusBarDefinitions?: StatusBarDefinition[];
+    /** 暮色 8-25 第二批:C) 解锁提示词(Jailbreak) — 放在整段 prompt 最末尾 */
+    jailbreakPrompt?: string;
+    /** 暮色 8-26:角色指令 / RP System Prompt — 用户在中间页/session 弹窗里填的总行为指令
+     *  buildRPSystemPrompt 注入到预留的 __RP_INJECTION_POINT__ 位置,空就不注入 */
+    rpInstructions?: string;
+    /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
+    generationParams?: {
+        temperature: number;
+        maxTokens: number;
+        topP: number;
+        frequencyPenalty: number;
+        /** 暮色 8-25 第七批:加 presencePenalty(原版 5 字段之一) */
+        presencePenalty: number;
+    };
+    /** 暮色 8-25 第七批:4 个叙事参数(选项卡片)— 不选(undefined)= 默认值,buildRPSystemPrompt 注入基础指令 */
+    narrativePerson?: NarrativePerson;
+    authorityLevel?: AuthorityLevel;
+    lengthPreset?: LengthPreset;    // 篇幅预设(底层映射 generationParams.maxTokens)
+    tensionLevel?: TensionLevel;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 暮色 8-25 第二批:状态栏定义一项(暮色自定义要追踪的变量) */
+export interface StatusBarDefinition {
+    name: string;          // 变量名,如'好感度' / '信任' / '体力'
+    initialValue: string;  // 初始值,如'50/100' / '高' / '未知'
+}
+
+/** 暮色 8-25 第七批:叙事参数 4 选项(暮色原版搬运,4 个单选类型) */
+export type NarrativePerson = 'second' | 'third';   // 第二人称 / 第三人称
+export type AuthorityLevel = 'none' | 'limited' | 'full';  // 执笔权 3 档
+export type LengthPreset = 'short' | 'medium' | 'long';   // 篇幅 3 档(底层映射 maxTokens)
+export type TensionLevel = 'natural' | 'warm' | 'intense';  // 场景张力 3 档
+
+/**
+ * 暮色 8-25 第六步第一批:RP 模式独立 API 配置
+ *   - 默认走主 apiConfig(用户不指定)
+ *   - 暮色可建多套(中转站/自建/不同模型)切换
+ *   - 本步只实现 openai 协议的流式;claude/gemini 协议 fallback 非流式 + 提示
+ *   - 3 协议独立 URL/Key/Model 字段照搬主 API 模式
+ */
+export interface RPApiConfig {
+    id: string;
+    name: string;                       // 'GPT-4o 中转' / 'Claude 备用' / 用户自命名
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    protocol: 'openai' | 'claude' | 'gemini';
+    // 3 协议独立字段
+    claudeBaseUrl?: string;
+    claudeApiKey?: string;
+    claudeModel?: string;
+    geminiBaseUrl?: string;
+    geminiApiKey?: string;
+    geminiModel?: string;
+    isDefault?: boolean;               // 标记"主聊天同款"(套壳主 apiConfig,不可删)
+    createdAt: number;
+    updatedAt: number;
+}
+
+/**
+ * 剧情模式累积摘要(暮色 8-25 第三步)
+ *   - narrative:第一人称叙事摘要(lightLLM 生成,新批会跟旧 narrative 用 lightLLM 合并成连贯叙事)
+ *   - rawBatchCount:已摘要批数(每批 10 条 = 5 轮)
+ *   - lastUpdatedAt:上次摘要时间
+ * 不要结构化 JSON 数组(keyPlotPoints 等),叙事体对 LLM 拼上下文更自然。
+ */
+export interface StorySessionSummary {
+    narrative: string;
+    rawBatchCount: number;
+    lastUpdatedAt: number;
+}
+
+/**
+ * 剧情模式状态快照(暮色 8-25 第四步)
+ *   - 每条 assistant 消息的 metadata 里存一份
+ *   - 表层:角色当下表现(表情/动作) — 给"对方"看的
+ *   - 底层:角色真实内心(真实情绪/想什么) — 隐藏,默认折叠
+ *   - 字段都自由字符串(不做枚举),prompt 引导风格
+ */
+export interface StoryStatusSnapshot {
+    surface: {
+        emotion: string;    // 例:'心动' / '故作镇定' / '有点慌'
+        action: string;     // 例:'微微低头' / '攥紧裙边' / '挤出一个笑'
+    };
+    deep: {
+        realEmotion: string; // 例:'紧张' / '想靠近但不敢' / '其实很担心你'
+        thought: string;    // 例:'该不该告诉他那件事'
+    };
+}
+
+/**
+ * 剧情场景模板(暮色 8-25 第五步)
+ *   - 不直接带 premise(固定字符串),改成 premiseOptions 数组(3-5 个备选)
+ *   - writingStyle:该场景的默认文风描述
+ *   - allowCustomPremise:永远 true(显式声明,中间页有自定义输入框)
+ *   - 点模板卡 → 进中间页(选前提/改文风) → 确认才建 Entry 进 session
+ */
+export interface StorySceneTemplate {
+    id: string;
+    name: string;
+    emoji: string;
+    description: string;          // 一句话简介,模板卡显示
+    tags: string[];               // ['现代','日常','浪漫']
+    premiseOptions: string[];     // 3-5 个备选前情提要
+    writingStyle: string;         // 默认文风描述(一句话)
+    allowCustomPremise: boolean;  // 永远 true,显式声明
+    builtIn: boolean;             // true = 内置, false = 暮色自定义
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface StoryTheaterPreset {
+    id: string;
+    name: string;
+    sourceFileName?: string;
+    format: 'sullyos-story-preset';
+    document: StoryTheaterPresetDocument;
+    builtIn?: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface StoryTheaterPresetDocument {
+    schema: 'sullyos.story-preset';
+    version: 1;
+    name: string;
+    description?: string;
+    generation: {
+        temperature: number;
+        topP: number;
+        frequencyPenalty: number;
+        presencePenalty: number;
+        maxTokens: number;
+    };
+    prompts: StoryTheaterPresetPrompt[];
+    assistantPrefill?: string;
+}
+
+export interface StoryTheaterPresetPrompt {
+    id: string;
+    name: string;
+    enabled: boolean;
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+    marker?: 'characters' | 'world_before' | 'user' | 'world_after' | 'scenario' | 'examples' | 'history';
+}
+
+/**
+ * 暮色 8-26:RP 模式全局默认配置(剧情剧院齿轮 → API 设置 → 默认配置)
+ *   - 改这里只影响"之后新建"的剧场
+ *   - 已经建好的剧场不受影响(隔离)
+ *   - 单独剧场在自己的中间页/session 弹窗改,跟全局互不干扰
+ *   - 所有字段都可选,空 = 走主模型自身默认,不注入
+ */
+export interface RPGlobalDefaults {
+    id: 'singleton';  // 永远只有一条记录,id 固定
+    writingStyle?: string;                          // 文风描述(可填预设文本或手写)
+    narrativePerson?: NarrativePerson;              // 人称默认
+    authorityLevel?: AuthorityLevel;                // 执笔权默认
+    lengthPreset?: LengthPreset;                    // 篇幅默认
+    tensionLevel?: TensionLevel;                    // 场景张力默认
+    rpInstructions?: string;                        // RP 总指令默认
+    jailbreakPrompt?: string;                       // 解锁提示词默认
+    authorNote?: string;                            // 作者注释默认(不写也行,这里留着)
+    generationParams?: {                            // 生成参数 5 字段
+        temperature: number;
+        maxTokens: number;
+        topP: number;
+        frequencyPenalty: number;
+        presencePenalty: number;
+    };
+    statusBarDefinitions?: StatusBarDefinition[];   // 状态栏定义默认
+    /** 暮色 8-26:整个剧场的默认 API — 暮色不填 = 单剧场 ⚙ 弹窗里手动选;填了 = 新建剧场默认用这个
+     *  暮色 8-26 扩展:支持 `__main__`(主聊天同款)、`__main_preset_${id}`(主 API 预设)、或 RP 独立 config id */
+    apiConfigId?: string;
+    updatedAt: number;
+}

@@ -170,7 +170,8 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
 
             {/* 主体滚动 */}
             <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-5 py-4 space-y-4">
-                {/* ─── Section 1:API 配置(暮色 8-26 17:30:折叠 + 胶囊预设网格,只有这一块用虚线框) ─── */}
+                {/* ─── Section 1:API 配置(暮色 8-26 17:30:折叠 + 胶囊预设网格,只有这一块用虚线框)
+                    暮色 8-26 17:55:折叠/展开都显示"当前配置:xxx"文字(无嵌套框,虚线分隔) */}
                 <section className="rounded-2xl p-3" style={{ border: '1px dashed rgba(167,139,250,0.4)', background: 'rgba(255,255,255,0.45)' }}>
                     <button
                         onClick={() => setApiSectionOpen(v => !v)}
@@ -184,37 +185,30 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                             ({(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).length + 1 + configs.length})
                         </span>
                     </button>
+                    {/* 暮色 8-26 17:55:当前配置:xxx — 直接显示文字,虚线分隔,任何时候都显示 */}
+                    <div className="mt-2 pt-2 border-t border-dashed" style={{ borderColor: 'rgba(167,139,250,0.3)' }}>
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#7c3aed' }} />
+                            <div className="flex-1 min-w-0">
+                                <span className="text-[10px] font-bold tracking-wider mr-1.5" style={{ color: '#715d99' }}>当前配置:</span>
+                                <span className="text-[12px] font-bold truncate" style={{ color: '#4a3a6a' }}>
+                                    {(() => {
+                                        const id = draftDefaults.apiConfigId;
+                                        if (!id || id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
+                                        if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
+                                            const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
+                                            const p = (apiPresets || []).find(x => x.id === pid);
+                                            return p ? p.name : '主预设(已删除)';
+                                        }
+                                        const cfg = configs.find(x => x.id === id);
+                                        return cfg ? cfg.name : '自建 RP(已删除)';
+                                    })()}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                     {apiSectionOpen && (
                         <div className="mt-3 space-y-3">
-                            {/* 暮色 8-26 17:45:当前配置 — 深一号紫框,放最上面,文字"当前配置:xxx" */}
-                            <div
-                                className="rounded-xl px-3 py-2"
-                                style={{
-                                    background: 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))',
-                                    border: '1.5px solid #a78bfa',
-                                }}
-                            >
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#7c3aed' }} />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-[9px] font-bold tracking-wider" style={{ color: '#715d99' }}>当前配置</div>
-                                        <div className="text-[12.5px] mt-0.5 truncate font-bold" style={{ color: '#715d99' }}>
-                                            {(() => {
-                                                const id = draftDefaults.apiConfigId;
-                                                if (!id || id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
-                                                if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
-                                                    const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
-                                                    const p = (apiPresets || []).find(x => x.id === pid);
-                                                    return p ? p.name : '主预设(已删除)';
-                                                }
-                                                const cfg = configs.find(x => x.id === id);
-                                                return cfg ? cfg.name : '自建 RP(已删除)';
-                                            })()}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
                             {/* 暮色 8-26 17:30:胶囊预设网格(像系统设置里 API 预设的样式,紫色调) */}
                             <div className="flex flex-wrap gap-2">
                                 {/* 主聊天同款 */}

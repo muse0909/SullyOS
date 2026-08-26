@@ -27,6 +27,14 @@ dist-ssr
 # xiaohongshu-skills (cloned dependency)
 xiaohongshu-skills/
 
+# Android — gradle build 输出 + 本地配置（暮色 2026-08-26 角色查手机 P0 加）
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/**/local.properties
+
 # Cloudflare Workers — build output + 本地密钥
 worker/amsg/worker.bundle.js
 worker/proactive-push/worker.bundle.js

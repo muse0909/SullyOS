@@ -12,7 +12,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { CaretDown, Plus, X, Check, Cloud } from '@phosphor-icons/react';
+import { CaretDown, Plus, X, Check } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { WRITING_STYLE_PRESETS, matchWritingStylePreset } from './writingStylePresets';
@@ -126,6 +126,87 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
 
                 {/* 主体滚动 */}
                 <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-4 space-y-4">
+                    {/* 暮色 8-26 17:59:API 设置挪到最顶上 — 单剧场要先选/确认 API,再设其他配置 */}
+                    {/* API 选择 — 跟 RP 设置同款 — "当前配置:xxx" 文字(虚线分隔)+ 胶囊预设网格 */}
+                    <Field label="使用 API" hint="点胶囊 = 切到此 API;空胶囊 = 用 RP 默认">
+                        <div className="mt-2 pt-2 border-t border-dashed" style={{ borderColor: 'rgba(167,139,250,0.3)' }}>
+                            <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#7c3aed' }} />
+                                <div className="flex-1 min-w-0">
+                                    <span className="text-[10px] font-bold tracking-wider mr-1.5" style={{ color: '#715d99' }}>当前配置:</span>
+                                    <span className="text-[12px] font-bold truncate" style={{ color: '#4a3a6a' }}>
+                                        {(() => {
+                                            const id = apiConfigId;
+                                            if (!id || id === MAIN_API_PRESET_ID) return '主聊天同款(实时)';
+                                            if (id.startsWith(MAIN_API_PRESET_PREFIX)) {
+                                                const pid = id.slice(MAIN_API_PRESET_PREFIX.length);
+                                                const p = (apiPresets || []).find(x => x.id === pid);
+                                                return p ? p.name : '主预设(已删除)';
+                                            }
+                                            const cfg = rpApiConfigs.find(x => x.id === id);
+                                            return cfg ? cfg.name : '自建 RP(已删除)';
+                                        })()}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            {/* 主聊天同款 */}
+                            <button
+                                onClick={() => setApiConfigId(MAIN_API_PRESET_ID)}
+                                className="rounded-full px-3 py-1 text-[11.5px] font-bold active:scale-95 transition-all"
+                                style={{
+                                    background: apiConfigId === MAIN_API_PRESET_ID
+                                        ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                        : 'rgba(255,255,255,0.6)',
+                                    border: apiConfigId === MAIN_API_PRESET_ID
+                                        ? '1.5px solid #a78bfa'
+                                        : '1px solid rgba(170,140,210,0.3)',
+                                    color: apiConfigId === MAIN_API_PRESET_ID ? '#715d99' : '#4a3a6a',
+                                }}
+                            >主聊天同款</button>
+
+                            {/* 主 API 预设(同步自系统设置) */}
+                            {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => {
+                                const id = MAIN_API_PRESET_PREFIX + preset.id;
+                                return (
+                                    <button
+                                        key={preset.id}
+                                        onClick={() => setApiConfigId(id)}
+                                        className="rounded-full px-3 py-1 text-[11.5px] font-bold active:scale-95 transition-all"
+                                        style={{
+                                            background: apiConfigId === id
+                                                ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                                : 'rgba(255,255,255,0.6)',
+                                            border: apiConfigId === id
+                                                ? '1.5px solid #a78bfa'
+                                                : '1px solid rgba(170,140,210,0.3)',
+                                            color: apiConfigId === id ? '#715d99' : '#4a3a6a',
+                                        }}
+                                    >{preset.name}</button>
+                                );
+                            })}
+
+                            {/* 用户自建 RP 独立 API 配置 */}
+                            {rpApiConfigs.map(cfg => (
+                                <button
+                                    key={cfg.id}
+                                    onClick={() => setApiConfigId(cfg.id)}
+                                    className="rounded-full px-3 py-1 text-[11.5px] font-bold active:scale-95 transition-all"
+                                    style={{
+                                        background: apiConfigId === cfg.id
+                                            ? 'linear-gradient(135deg,rgba(167,139,250,0.22),rgba(124,58,237,0.12))'
+                                            : 'rgba(255,255,255,0.6)',
+                                        border: apiConfigId === cfg.id
+                                            ? '1.5px solid #a78bfa'
+                                            : '1px solid rgba(170,140,210,0.3)',
+                                        color: apiConfigId === cfg.id ? '#715d99' : '#4a3a6a',
+                                    }}
+                                >{cfg.name}</button>
+                            ))}
+                        </div>
+                    </Field>
+
                     {/* 前提 */}
                     <Field label="前提">
                         <textarea value={premise} onChange={e => setPremise(e.target.value)} rows={2}
@@ -281,54 +362,6 @@ const EntryEditModal: React.FC<Props> = ({ entry, onClose, onSaved }) => {
                                        onChange={setFrequencyPenalty} hint="0 不惩罚 / 2 强" />
                             <SliderRow label="话题惩罚" value={presencePenalty} min={-2} max={2} step={0.1}
                                        onChange={setPresencePenalty} hint="-2 重复 / 0 中性 / 2 引入新" />
-                        </div>
-                    </Field>
-
-                    {/* API 选择 — 暮色 8-26:加主 API 预设同步 */}
-                    <Field label="使用 API" hint="空 = 用主聊天同款(走 RP 设置里的默认)">
-                        <div className="mt-1 space-y-1.5">
-                            {/* 主聊天同款(实时读 OSContext.apiConfig) */}
-                            <button onClick={() => setApiConfigId(MAIN_API_PRESET_ID)}
-                                    className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
-                                    style={{
-                                        background: apiConfigId === MAIN_API_PRESET_ID ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                        border: apiConfigId === MAIN_API_PRESET_ID ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                    }}>
-                                <div className="flex items-center gap-2">
-                                    <Cloud size={13} weight="fill" style={{ color: '#7c3aed' }} />
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-[12px] font-bold" style={{ color: apiConfigId === MAIN_API_PRESET_ID ? '#715d99' : '#4a3a6a' }}>主聊天同款</div>
-                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{mainApiConfig.model} · {mainApiConfig.baseUrl}</div>
-                                    </div>
-                                </div>
-                            </button>
-                            {/* 主 API 预设(同步自系统设置) */}
-                            {(apiPresets || []).filter(p => p.kind === 'main' || !p.kind).map(preset => {
-                                const id = MAIN_API_PRESET_PREFIX + preset.id;
-                                return (
-                                    <button key={preset.id} onClick={() => setApiConfigId(id)}
-                                            className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
-                                            style={{
-                                                background: apiConfigId === id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                                border: apiConfigId === id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                            }}>
-                                        <div className="text-[12px] font-bold" style={{ color: apiConfigId === id ? '#715d99' : '#4a3a6a' }}>{preset.name}</div>
-                                        <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{preset.config.model} · {preset.config.baseUrl}</div>
-                                    </button>
-                                );
-                            })}
-                            {/* 用户自建 RP 独立 API 配置 */}
-                            {rpApiConfigs.map(cfg => (
-                                <button key={cfg.id} onClick={() => setApiConfigId(cfg.id)}
-                                        className="w-full text-left rounded-xl px-2.5 py-2 active:scale-[0.98] transition-all"
-                                        style={{
-                                            background: apiConfigId === cfg.id ? 'linear-gradient(135deg,rgba(167,139,250,0.18),rgba(124,58,237,0.08))' : 'rgba(255,255,255,0.5)',
-                                            border: apiConfigId === cfg.id ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.25)',
-                                        }}>
-                                    <div className="text-[12px] font-bold" style={{ color: apiConfigId === cfg.id ? '#715d99' : '#4a3a6a' }}>{cfg.name}</div>
-                                    <div className="text-[9px] mt-0.5 truncate" style={{ color: 'rgba(150,120,190,0.7)' }}>{cfg.model} · {cfg.baseUrl}</div>
-                                </button>
-                            ))}
                         </div>
                     </Field>
                 </div>

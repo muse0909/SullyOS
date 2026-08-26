@@ -19,7 +19,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, GearSix, Lightning } from '@phosphor-icons/react';
+import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, GearSix, TextT } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { safeFetchJson } from '../../../utils/safeApi';
@@ -320,9 +320,19 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 )}
             </div>
 
-            {/* 输入区 — 暮色 8-26 17:00:删动/话/心 3 按钮,加快捷键按钮(弹 QuickPhrasesModal) */}
+            {/* 输入区 — 暮色 8-26 17:00:删动/话/心 3 按钮,加快捷键按钮(弹 QuickPhrasesModal)
+                暮色 8-26 17:30:快捷键按钮(TextT 图标)挪到输入框左侧,placeholder 简化 */}
             <div className="relative z-10 shrink-0 px-4 pb-4 pt-2" style={{ paddingBottom: 'max(1rem, var(--safe-bottom))' }}>
                 <div className="flex items-end gap-2">
+                    {/* 暮色 8-26 17:30:快捷键按钮移到输入框左边(TextT 图标) */}
+                    <button
+                        onClick={() => setShowQuickPhrases(true)}
+                        className="w-11 h-11 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                        style={{ background: 'rgba(167,139,250,0.12)', color: '#715d99' }}
+                        title="快捷键"
+                    >
+                        <TextT size={18} weight="bold" />
+                    </button>
                     <textarea
                         ref={textareaRef}
                         value={input}
@@ -333,7 +343,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                                 void handleSend();
                             }
                         }}
-                        placeholder='写下台词、动作、心理…标记是可选(*动作* / "对话" / (心理))'
+                        placeholder='写点什么...'
                         rows={2}
                         disabled={sending}
                         className="flex-1 px-3.5 py-2.5 rounded-2xl text-[13px] resize-none focus:outline-none disabled:opacity-50"
@@ -341,15 +351,6 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
                         onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
                     />
-                    {/* 暮色 8-26 17:00:快捷键按钮 — 弹 QuickPhrasesModal 选短语插入 */}
-                    <button
-                        onClick={() => setShowQuickPhrases(true)}
-                        className="w-11 h-11 rounded-full flex items-center justify-center active:scale-90 transition-all"
-                        style={{ background: 'rgba(167,139,250,0.12)', color: '#715d99' }}
-                        title="快捷键"
-                    >
-                        <Lightning size={16} weight="fill" />
-                    </button>
                     <button
                         onClick={() => void handleSend()}
                         disabled={!input.trim() || sending}

@@ -309,20 +309,16 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                                 />
                             </Field>
 
-                            {/* 2. 文风预设 */}
-                            <Field label="文风预设" hint="7 个预设,默认质感 = 不注入">
+                            {/* 2. 文风预设 — 暮色 8-26 17:59:跟编辑剧场一致,去掉默认质感(空 = 默认质感) */}
+                            <Field label="文风预设" hint="6 个预设,空 = 默认质感(不注入文风指令)">
                                 <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                                    {WRITING_STYLE_PRESETS.map(p => {
+                                    {WRITING_STYLE_PRESETS.filter(p => p.id !== 'default').map(p => {
                                         const activeId = matchWritingStylePreset(draftDefaults.writingStyle || '');
                                         const isActive = activeId === p.id && p.prompt !== '';
                                         return (
                                             <button
                                                 key={p.id}
                                                 onClick={() => {
-                                                    if (p.prompt === '') {
-                                                        if (draftDefaults.writingStyle) setDraftDefaults({ ...draftDefaults, writingStyle: undefined });
-                                                        return;
-                                                    }
                                                     if (isActive) {
                                                         setDraftDefaults({ ...draftDefaults, writingStyle: undefined });
                                                     } else {

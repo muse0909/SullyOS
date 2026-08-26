@@ -24,6 +24,8 @@ interface XiaoZhiTiaoDetailProps {
     onBack: () => void;
     onDelete: () => void;
     onAddReply: (content: string) => Promise<void>;
+    // 暮色 2026-08-23 v3：打开即已读（revealedAt == null 时调一次）
+    onMarkRevealed?: () => void;
 }
 
 // 2026-07-23：手动 format 时间（修 toLocaleString 偶发 33:57 这种错位的 bug）

@@ -2729,14 +2729,33 @@ export interface StoryTheaterEntry {
     characterId: string;        // 当前对话角色(单人,不是 characterIds)
     writesToCharacterMemory: boolean;  // 退出时是否把摘要写回主记忆宫殿
     summary?: StorySessionSummary;     // 累积摘要(满 5 轮触发,合并式叙事体)
-    /** 暮色 8-25 第五步+:中间页可调 LLM 采样参数,buildRPSystemPrompt 注入。默认不存 = 走主 LLM 默认值。 */
+    /** 暮色 8-25 第五步+:老 generation,暮色 8-25 第二批:新 generationParams 4 字段,逻辑 fallback */
     generation?: { temperature: number; maxTokens: number };
     /** 暮色 8-25 第六步第一批:消息数(方案 A — 写时 +1,删 Entry 归零,老数据回填) */
     messageCount?: number;
     /** 暮色 8-25 第六步第一批:用哪套 RP API 配置(null = 主 apiConfig) */
     apiConfigId?: string;
+    /** 暮色 8-25 第二批:A) 作者注释(Author's Note) — 用户随时可编辑,插入 system 后、recent 5 轮前 */
+    authorNote?: string;
+    /** 暮色 8-25 第二批:B) 状态栏定义 — 用户定义要追踪的变量(可增删),prompt 注入追踪指令,LLM 回复末尾 [状态] xxx=yyy 输出 */
+    statusBarDefinitions?: StatusBarDefinition[];
+    /** 暮色 8-25 第二批:C) 解锁提示词(Jailbreak) — 放在整段 prompt 最末尾 */
+    jailbreakPrompt?: string;
+    /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
+    generationParams?: {
+        temperature: number;
+        maxTokens: number;
+        topP: number;
+        frequencyPenalty: number;
+    };
     createdAt: number;
     updatedAt: number;
+}
+
+/** 暮色 8-25 第二批:状态栏定义一项(暮色自定义要追踪的变量) */
+export interface StatusBarDefinition {
+    name: string;          // 变量名,如'好感度' / '信任' / '体力'
+    initialValue: string;  // 初始值,如'50/100' / '高' / '未知'
 }
 
 /**

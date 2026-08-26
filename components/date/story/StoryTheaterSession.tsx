@@ -18,7 +18,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, Star, ChatCenteredText, Heart } from '@phosphor-icons/react';
+import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, Star, ChatCenteredText, Heart, GearSix } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { safeFetchJson } from '../../../utils/safeApi';
@@ -37,6 +37,7 @@ import {
 import { buildRPSystemPrompt, formatUserLayersForLLM, parseUserInputToLayers } from '../../../utils/storyTheater/prompts';
 import { SELECT_THEME } from './storyTheme';
 import StoryStatusPanel from './StoryStatusPanel';
+import EntryEditModal from './EntryEditModal';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryStatusSnapshot, UserProfile } from '../../../types';
 import type { MemoryPalaceGlobalConfig } from '../../../context/OSContext';
 import type { APIConfig } from '../../../types';
@@ -55,6 +56,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     const [sending, setSending] = useState(false);
     const [summarizing, setSummarizing] = useState(false);
     const [showExitModal, setShowExitModal] = useState(false);
+    // 暮色 8-25 第二批:session 内编辑 modal(底部弹窗)
+    const [showEditModal, setShowEditModal] = useState(false);
     const [syncing, setSyncing] = useState(false);
     // 暮色 8-25 第六步第一批:打字机效果 — 流式累积的临时内容
     const [streamingContent, setStreamingContent] = useState<string>('');
@@ -240,8 +243,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         <h1 className="text-[20px] tracking-[0.14em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: SELECT_THEME.title, textShadow: `0 2px 18px ${SELECT_THEME.titleShadow}` }}>{entry.title}</h1>
                         <div className="text-[10px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>与 {char.name} · {messages.length} 句</div>
                     </div>
+                    {/* 暮色 8-25 第二批:右侧齿轮 = 编辑剧场(底部弹窗) */}
+                    <button onClick={() => setShowEditModal(true)} className="absolute right-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
+                            style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}
+                            title="编辑剧场">
+                        <GearSix size={16} weight="bold" />
+                    </button>
                     {summarizing && (
-                        <div className="absolute right-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: 'rgba(167,139,250,0.15)' }}>
+                        <div className="absolute right-16 flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: 'rgba(167,139,250,0.15)' }}>
                             <SpinnerGap size={12} className="animate-spin" style={{ color: '#7c3aed' }} />
                             <span className="text-[10px]" style={{ color: '#715d99' }}>整理</span>
                         </div>
@@ -367,6 +376,18 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* 暮色 8-25 第二批:编辑剧场 modal(底部弹窗) */}
+            {showEditModal && (
+                <EntryEditModal
+                    entry={entry}
+                    onClose={() => setShowEditModal(false)}
+                    onSaved={(updated) => {
+                        setEntry(updated);
+                        onUpdateEntry(updated);
+                    }}
+                />
             )}
         </div>
     );

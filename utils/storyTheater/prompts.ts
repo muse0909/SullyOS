@@ -80,6 +80,13 @@ ${summary?.narrative ? summary.narrative : '(这是 RP 开始,没有之前的剧
 "你来了啊。"她轻声说,但是指尖不自觉地攥紧了裙边。
 门外的风吹进来,她侧了侧身,像是想挡住什么。
 
+${entry.statusBarDefinitions && entry.statusBarDefinitions.length > 0 ? `### 状态变量追踪(暮色自定义)
+你需要持续追踪这些变量,每次回复用 [状态] 格式更新:
+${entry.statusBarDefinitions.map(v => `- ${v.name}: 初始 ${v.initialValue}`).join('\n')}
+
+格式:**在 [正文] 结束后另起一行输出,不要跟正文混在一起**。如果忘了不报错,但尽量都写。
+示例:[状态] ${entry.statusBarDefinitions.map(v => `${v.name}=${v.initialValue}`).join(' ')}
+` : ''}
 #### 字段风格(自由填字符串,不做枚举)
 推荐用具体感觉词,避免机械的抽象词:
   ✅ 心动 / 故作镇定 / 有点慌 / 装没事 / 假装开心 / 温柔 / 倔强 / 心酸 / 释然

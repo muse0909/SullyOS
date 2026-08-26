@@ -123,16 +123,20 @@ export function parseStatusFromReply(rawContent: string): {
     let deepEmotion: string | null = null;
     let deepThought: string | null = null;
     let bodyLines: string[] = [];
+    let variables: Record<string, string> = {};
     let inBody = false;
+    let inStatus = false;
     let foundAnyTag = false;
 
     for (const line of lines) {
-        // [表层] emotion=xxx action=yyy — action 后面允许带空格+自由文字(action 也可以是"挤出一个笑"这种多字)
+        // [表层] emotion=xxx action=yyy — action 后面允许带空格+自由文字
         const surfaceMatch = line.match(/^\[表层\]\s*emotion=(\S+)\s+action=(.+?)\s*$/);
-        // [底层] realEmotion=xxx thought=xxx — thought 是中文,可能含空格
+        // [底层] realEmotion=xxx thought=xxx
         const deepMatch = line.match(/^\[底层\]\s*realEmotion=(\S+)\s+thought=(.+?)\s*$/);
-        // [正文] 后面跟正文(可能多行,直到下一个 tag 或末尾)
+        // [正文] 后面跟正文
         const bodyMatch = line.match(/^\[正文\]\s*(.*)$/);
+        // 暮色 8-25 第二批:[状态] 变量名=值 变量名=值 — 暮色自定义变量追踪
+        const statusMatch = line.match(/^\[状态\]\s*(.+?)\s*$/);
 
         if (surfaceMatch) {
             foundAnyTag = true;
@@ -149,14 +153,37 @@ export function parseStatusFromReply(rawContent: string): {
         if (bodyMatch) {
             foundAnyTag = true;
             inBody = true;
+            inStatus = false;
             const rest = bodyMatch[1];
             if (rest) bodyLines.push(rest);
             continue;
         }
-        if (inBody) {
-            // [正文] 之后的所有行(包括空行)都算正文
+        if (statusMatch && inBody) {
+            // [状态] 行:在 [正文] 之后,解析 变量名=值 键值对
+            foundAnyTag = true;
+            inStatus = true;
+            const pairs = statusMatch[1].trim();
+            // 匹配 name=value 对(支持中文变量名,值可能含空格但不能含 =)
+            const regex = /([^\s=]+)=([^\s=]+(?:\s+[^\s=]+)*?)(?=\s+[^\s=]+=|$)/g;
+            let m;
+            while ((m = regex.exec(pairs)) !== null) {
+                variables[m[1]] = m[2];
+            }
+            // 简化版:按空格分隔然后找 = 位置
+            const simple: Record<string, string> = {};
+            pairs.split(/\s+/).forEach(p => {
+                const idx = p.indexOf('=');
+                if (idx > 0) simple[p.slice(0, idx)] = p.slice(idx + 1);
+            });
+            // 合并(简单版覆盖复杂版)
+            variables = { ...variables, ...simple };
+            continue;
+        }
+        if (inBody && !inStatus) {
+            // [正文] 之后到 [状态] 之前的行都算正文
             bodyLines.push(line);
         }
+        // 暮色 8-25 第二批:[状态] 之后到文本末尾的内容如果有,忽略(不展示)
     }
 
     // 0 tag → 整段 fallback
@@ -167,18 +194,22 @@ export function parseStatusFromReply(rawContent: string): {
     // 部分 tag 但 [正文] 缺 → 把所有非 tag 行拼起来当 body
     if (bodyLines.length === 0) {
         const bodyFallback = lines
-            .filter(l => !/^\[(表层|底层|正文)\]/.test(l))
+            .filter(l => !/^\[(表层|底层|正文|状态)\]/.test(l))
             .join('\n')
             .trim();
         if (bodyFallback) bodyLines = [bodyFallback];
     }
 
-    // 拼 status — 只有 surface 和 deep 都齐了才算完整 status,部分缺就 null(单边没意义)
-    const status: StoryStatusSnapshot | null = (surfaceEmotion && surfaceAction && deepEmotion && deepThought)
-        ? {
-              surface: { emotion: surfaceEmotion, action: surfaceAction },
-              deep: { realEmotion: deepEmotion, thought: deepThought },
-          }
+    // 拼 status — surface + deep + variables(变量可选)
+    const baseStatus: { surface: { emotion: string; action: string }; deep: { realEmotion: string; thought: string } } | null =
+        (surfaceEmotion && surfaceAction && deepEmotion && deepThought)
+            ? {
+                  surface: { emotion: surfaceEmotion, action: surfaceAction },
+                  deep: { realEmotion: deepEmotion, thought: deepThought },
+              }
+            : null;
+    const status: StoryStatusSnapshot | null = baseStatus
+        ? (Object.keys(variables).length > 0 ? { ...baseStatus, variables } : baseStatus)
         : null;
 
     // body 兜底:解析出来空的话用原文(不可能发生,但安全)
@@ -646,8 +677,13 @@ export function createEntryFromSceneTemplate(args: {
     premise: string;            // 用户在中间页选/写的前提
     writingStyle: string;       // 用户在中间页确认的文风(可改过)
     title?: string;             // 可选自定义标题
-    generation?: { temperature: number; maxTokens: number };  // 暮色 8-25:中间页预设
+    generation?: { temperature: number; maxTokens: number };  // 暮色 8-25:中间页预设(老)
     apiConfigId?: string;       // 暮色 8-25 第六步第一批:用哪套 RP API(null = 主 apiConfig)
+    // 暮色 8-25 第二批:4 个新字段
+    authorNote?: string;
+    statusBarDefinitions?: { name: string; initialValue: string }[];
+    jailbreakPrompt?: string;
+    generationParams?: { temperature: number; maxTokens: number; topP: number; frequencyPenalty: number };
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -658,9 +694,13 @@ export function createEntryFromSceneTemplate(args: {
         writingStyle: args.writingStyle,
         characterId: args.characterId,
         writesToCharacterMemory: true,
-        generation: args.generation,   // 暮色 8-25:中间页可调 temperature/maxTokens
-        apiConfigId: args.apiConfigId,  // 暮色 8-25 第六步第一批
-        messageCount: 0,                // 新建默认 0 句
+        generation: args.generation,                                     // 暮色 8-25 老字段保留
+        generationParams: args.generationParams,                          // 暮色 8-25 第二批:新 4 字段
+        apiConfigId: args.apiConfigId,                                    // 暮色 8-25 第六步第一批
+        authorNote: args.authorNote,                                      // 暮色 8-25 第二批
+        statusBarDefinitions: args.statusBarDefinitions,                  // 暮色 8-25 第二批
+        jailbreakPrompt: args.jailbreakPrompt,                            // 暮色 8-25 第二批
+        messageCount: 0,                                                  // 新建默认 0 句
         createdAt: now,
         updatedAt: now,
     };
@@ -809,10 +849,7 @@ export async function callMainLLMNonStream(args: {
     if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
         throw new Error('主 LLM 未配置');
     }
-    const messages = [
-        { role: 'system', content: buildMainLLMSystemPrompt(args) },
-        ...args.history,
-    ];
+    const messages = buildRPMessageArray(args);
     const res = await safeFetchJson(
         `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`,
         {
@@ -821,8 +858,7 @@ export async function callMainLLMNonStream(args: {
             body: JSON.stringify({
                 model: cfg.model,
                 messages,
-                temperature: args.entry.generation?.temperature ?? 0.85,
-                max_tokens: args.entry.generation?.maxTokens ?? 4096,
+                ...buildRPGenerationBody(args.entry),
                 stream: false,
             }),
         },
@@ -830,6 +866,48 @@ export async function callMainLLMNonStream(args: {
         { appName: '剧情模式', purpose: 'RP 对话', charId: args.char.id, charName: args.char.name },
     );
     return res?.choices?.[0]?.message?.content || '';
+}
+
+/** 拼 RP 模式的消息数组(暮色 8-25 第二批)
+ *  顺序:
+ *    1. system(角色人设 + RP 模式注入)
+ *    2. authorNote(可选)— 暮色随时编辑的补充指令
+ *    3. recent 5 轮原文
+ *    4. jailbreakPrompt(可选)— 整段 prompt 最末尾 */
+export function buildRPMessageArray(args: {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    entry: StoryTheaterEntry;
+    history: { role: 'user' | 'assistant'; content: string }[];
+}): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+    const arr: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        { role: 'system', content: buildMainLLMSystemPrompt(args) },
+    ];
+    if (args.entry.authorNote && args.entry.authorNote.trim()) {
+        arr.push({ role: 'system', content: `【作者注释/Author's Note】\n${args.entry.authorNote.trim()}` });
+    }
+    arr.push(...args.history.map(m => ({ role: m.role, content: m.content })));
+    if (args.entry.jailbreakPrompt && args.entry.jailbreakPrompt.trim()) {
+        arr.push({ role: 'system', content: args.entry.jailbreakPrompt.trim() });
+    }
+    return arr;
+}
+
+/** 拼生成参数(暮色 8-25 第二批 4 字段,老 generation fallback) */
+export function buildRPGenerationBody(entry: StoryTheaterEntry): {
+    temperature: number;
+    max_tokens: number;
+    top_p: number;
+    frequency_penalty: number;
+} {
+    const gp = entry.generationParams;
+    const old = entry.generation;
+    return {
+        temperature: gp?.temperature ?? old?.temperature ?? 0.85,
+        max_tokens: gp?.maxTokens ?? old?.maxTokens ?? 4096,
+        top_p: gp?.topP ?? 1.0,
+        frequency_penalty: gp?.frequencyPenalty ?? 0,
+    };
 }
 
 /** 流式主 LLM(openai 协议) — 暮色 8-25 第六步第一批
@@ -854,10 +932,7 @@ export async function* callMainLLMStream(args: {
         return;
     }
 
-    const messages = [
-        { role: 'system', content: buildMainLLMSystemPrompt(args) },
-        ...args.history,
-    ];
+    const messages = buildRPMessageArray(args);
 
     const fetchOnce = async (): Promise<Response> => {
         return fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -869,8 +944,7 @@ export async function* callMainLLMStream(args: {
             body: JSON.stringify({
                 model: cfg.model,
                 messages,
-                temperature: args.entry.generation?.temperature ?? 0.85,
-                max_tokens: args.entry.generation?.maxTokens ?? 4096,
+                ...buildRPGenerationBody(args.entry),
                 stream: true,
             }),
         });

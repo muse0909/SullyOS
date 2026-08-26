@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Sparkle, PencilSimple, Check, X, Cloud } from '@phosphor-icons/react';
+import { ArrowLeft, Sparkle, PencilSimple, Check, X, Cloud, Plus } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { createEntryFromSceneTemplate } from '../../../utils/storyTheater';
 import { DB } from '../../../utils/db';
@@ -35,6 +35,11 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [editingStyle, setEditingStyle] = useState(false);
     const [temperature, setTemperature] = useState<number>(0.85);     // 暮色 8-25 第五步+:中间页可调
     const [maxTokens, setMaxTokens] = useState<number>(4096);
+    const [topP, setTopP] = useState<number>(1.0);                      // 暮色 8-25 第二批:加
+    const [frequencyPenalty, setFrequencyPenalty] = useState<number>(0);// 暮色 8-25 第二批:加
+    const [authorNote, setAuthorNote] = useState<string>('');          // 暮色 8-25 第二批:作者注释
+    const [jailbreakPrompt, setJailbreakPrompt] = useState<string>(''); // 暮色 8-25 第二批:解锁提示词
+    const [statusVars, setStatusVars] = useState<{ name: string; initialValue: string }[]>([]); // 暮色 8-25 第二批:状态变量
     const [submitting, setSubmitting] = useState(false);
     // 暮色 8-25 第六步第一批:API 选择(null = 主 apiConfig,'',set 时直接传 undefined)
     const [apiConfigId, setApiConfigId] = useState<string | null>(null);
@@ -81,8 +86,12 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 characterId: activeCharacterId,
                 premise: customPremise.trim(),
                 writingStyle: writingStyle.trim(),
-                generation: { temperature, maxTokens },  // 暮色 8-25 第五步+
+                generation: { temperature, maxTokens },  // 暮色 8-25 老字段保留
+                generationParams: { temperature, maxTokens, topP, frequencyPenalty },  // 暮色 8-25 第二批:新 4 字段
                 apiConfigId: apiConfigId || undefined,    // 暮色 8-25 第六步第一批:null = 主 apiConfig
+                authorNote: authorNote.trim() || undefined,           // 暮色 8-25 第二批
+                jailbreakPrompt: jailbreakPrompt.trim() || undefined, // 暮色 8-25 第二批
+                statusBarDefinitions: statusVars.filter(v => v.name.trim()),  // 暮色 8-25 第二批
             });
             await DB.saveStoryTheater(entry);
             onConfirm(entry.id);
@@ -259,7 +268,110 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                             ))}
                         </div>
                     </div>
+                    {/* 暮色 8-25 第二批:topP 核采样 */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>topP 核采样</span>
+                            <span className="text-[11px] font-mono" style={{ color: '#4a3a6a' }}>{topP.toFixed(2)}</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={topP}
+                            onChange={e => setTopP(parseFloat(e.target.value))}
+                            className="w-full"
+                            style={{ accentColor: '#a78bfa' }}
+                        />
+                        <div className="flex justify-between text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            <span>精确 0</span>
+                            <span>1.0</span>
+                        </div>
+                    </div>
+                    {/* 暮色 8-25 第二批:frequency_penalty */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>频率惩罚</span>
+                            <span className="text-[11px] font-mono" style={{ color: '#4a3a6a' }}>{frequencyPenalty.toFixed(2)}</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={frequencyPenalty}
+                            onChange={e => setFrequencyPenalty(parseFloat(e.target.value))}
+                            className="w-full"
+                            style={{ accentColor: '#a78bfa' }}
+                        />
+                        <div className="flex justify-between text-[9px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            <span>不惩罚 0</span>
+                            <span>2.0 强</span>
+                        </div>
+                    </div>
                 </div>
+
+                {/* 6. 作者注释(暮色 8-25 第二批) */}
+                <SectionTitle title="作者注释" subtitle="AUTHOR'S NOTE" />
+                <textarea
+                    value={authorNote}
+                    onChange={e => setAuthorNote(e.target.value)}
+                    placeholder="补充指令(任意时候改都生效),会插在 system 之后、对话之前..."
+                    rows={2}
+                    className="w-full mb-4 px-3 py-2 rounded-xl text-[12px] resize-none focus:outline-none leading-relaxed"
+                    style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
+                    onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
+                />
+
+                {/* 7. 状态栏定义(暮色 8-25 第二批) */}
+                <SectionTitle title="状态栏定义" subtitle="STATUS VARS" />
+                <div className="rounded-2xl px-3 py-2.5 mb-4 space-y-1.5" style={{ background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(170,140,210,0.3)' }}>
+                    {statusVars.map((v, i) => (
+                        <div key={i} className="flex gap-1.5 items-center">
+                            <input
+                                type="text"
+                                value={v.name}
+                                onChange={e => setStatusVars(prev => prev.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))}
+                                placeholder="变量名(如 好感度)"
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-[12px] focus:outline-none"
+                                style={inputStyle}
+                            />
+                            <input
+                                type="text"
+                                value={v.initialValue}
+                                onChange={e => setStatusVars(prev => prev.map((x, idx) => idx === i ? { ...x, initialValue: e.target.value } : x))}
+                                placeholder="初始值(如 50/100)"
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-[12px] focus:outline-none"
+                                style={inputStyle}
+                            />
+                            <button
+                                onClick={() => setStatusVars(prev => prev.filter((_, idx) => idx !== i))}
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-red-400 active:scale-90"
+                                style={{ background: 'rgba(239,68,68,0.08)' }}
+                            >×</button>
+                        </div>
+                    ))}
+                    <button
+                        onClick={() => setStatusVars(prev => [...prev, { name: '', initialValue: '' }])}
+                        className="w-full py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                        style={{ background: 'rgba(167,139,250,0.1)', color: '#715d99' }}
+                    ><Plus size={11} weight="bold" />加一个变量</button>
+                </div>
+
+                {/* 8. 解锁提示词(暮色 8-25 第二批) */}
+                <SectionTitle title="解锁提示词" subtitle="JAILBREAK" />
+                <textarea
+                    value={jailbreakPrompt}
+                    onChange={e => setJailbreakPrompt(e.target.value)}
+                    placeholder="放在整段 prompt 最末,默认空。后续填具体内容..."
+                    rows={2}
+                    className="w-full mb-4 px-3 py-2 rounded-xl text-[12px] resize-none focus:outline-none leading-relaxed"
+                    style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937' }}
+                    onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
+                />
 
                 {/* 5. 使用 API(暮色 8-25 第六步第一批) */}
                 <SectionTitle title="使用 API" subtitle="API" />
@@ -331,5 +443,11 @@ const SectionTitle: React.FC<{ title: string; subtitle: string }> = ({ title, su
         <div className="text-[13px] font-bold tracking-wider mt-1" style={{ color: '#4a3a6a' }}>{title}</div>
     </div>
 );
+
+const inputStyle: React.CSSProperties = {
+    background: 'white',
+    border: '1px solid rgba(170,140,210,0.3)',
+    color: '#1f2937',
+};
 
 export default SceneConfigPage;

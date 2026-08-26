@@ -101,7 +101,7 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
     };
 
     return (
-        <div className="absolute inset-0 z-50 flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
+        <div className="fixed inset-0 z-50 flex flex-col font-light" style={{ background: SELECT_THEME.pageBg }}>
             <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
 
             {/* 顶栏 */}

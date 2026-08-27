@@ -27,6 +27,8 @@ import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
 import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
+// 暮色 2026-08-27 同步原作者：聊天细节微调 CSS 生成器（外观 App「聊天细节」生成，用户自定义 CSS 排其后可覆盖）
+import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
 import MessageItem from '../components/chat/MessageItem';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import Modal from '../components/os/Modal';
@@ -2702,14 +2704,18 @@ if (keepN > 0) {
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     const chatChromeStyle = osTheme.chatChromeStyle || 'soft';
     const chatBackgroundStyle = osTheme.chatBackgroundStyle || 'plain';
+    // 暮色 2026-08-27 同步原作者：聊天细节微调（外观 App「聊天细节」，全局打底；角色开了覆盖时逐字段覆盖）
+    // CSS 全默认时 buildChatFineTuneCss 返回空串不注入
+    const mergedFineTune = useMemo(() => mergeChatFineTune(osTheme, (char as any)?.chatFineTune), [osTheme, (char as any)?.chatFineTune]);
+    const chatFineTuneCss = useMemo(() => buildChatFineTuneCss(mergedFineTune), [mergedFineTune]);
     const chatRootClass =
         chatChromeStyle === 'pixel'
-            ? 'flex flex-col h-full bg-[#efe1cf] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
+            ? `sully-chat-root flex flex-col h-full bg-[#efe1cf] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500`
             : chatChromeStyle === 'flat'
-              ? 'flex flex-col h-full bg-white overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
+              ? `sully-chat-root flex flex-col h-full bg-white overflow-hidden relative font-sans transition-[background-image,background-color] duration-500`
               : chatChromeStyle === 'floating'
-                ? 'flex flex-col h-full bg-[#eef2ff] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
-                : 'flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500';
+                ? `sully-chat-root flex flex-col h-full bg-[#eef2ff] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500`
+                : `sully-chat-root flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500`;
     const chatRootStyle: React.CSSProperties = char.chatBackground
         ? {
             backgroundImage: `url(${char.chatBackground})`,
@@ -2744,6 +2750,24 @@ if (keepN > 0) {
             className={chatRootClass}
             style={chatRootStyle}
         >
+             {/* 暮色 2026-08-27 同步原作者：聊天细节微调 CSS（外观 App 可视化设置生成），排在用户自定义 CSS 之前——
+                 同为 !important 时后写的胜，手写美化代码永远可覆盖可视化设置。 */}
+             {chatFineTuneCss && <style>{chatFineTuneCss}</style>}
+             {/* 白框自定义 CSS：全局默认在前；用户写在「外观」里的 chatChromeCustomCss 立刻生效。
+                 角色级 chromeCustomCss SullyOS 暂未支持角色独立白框系统，此处不注入。 */}
+             {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
+             {/* 守护样式（写在用户 CSS 之后）：保证返回键和输入栏永远可见可点。
+                 坏 CSS（常随备份/分享导入）把它们隐藏/变透明/pointer-events:none 时，
+                 用户会遇到「点输入框没反应、键盘唤不起来」或退不出聊天，
+                 且重启、重新导入备份都无解。有了兜底，至少能退出去「外观→聊天界面→还原白框」清掉坏 CSS。 */}
+             {osTheme.chatChromeCustomCss && (
+               <style>{`
+                 .sully-chat-back{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
+                 .sully-chat-inputbar{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
+                 .sully-chat-inputbar textarea,.sully-chat-inputbar button{pointer-events:auto!important;visibility:visible!important;}
+               `}</style>
+             )}
+
              {/* 暮色 2026-08-05：清空安全确认弹窗（路 3 弹窗）
                  替代之前的浏览器原生 confirm() —— 用项目级 Modal 视觉统一
                  zIndex=210：盖过 ChatSettingsDrawer 的 z-[200]

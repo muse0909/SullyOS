@@ -28,9 +28,10 @@ public class MainActivity extends BridgeActivity {
         //   - useWideViewPort + loadWithOverviewMode：按页面 viewport 宽度自动适配屏幕
         WebSettings webSettings = this.bridge.getWebView().getSettings();
         webSettings.setSupportZoom(false);
-        webSettings.setInitialScale(90);
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
+        // 注意：setInitialScale 是 WebView 的方法，不在 WebSettings 上
+        this.bridge.getWebView().setInitialScale(90);
 
         // 暮色 2026-08-27 底部白边修复（P0 第 7 项）：沉浸式全屏
         //   - setDecorFitsSystemWindows(false)：让内容延伸进状态栏 / 导航栏区域（edge-to-edge）

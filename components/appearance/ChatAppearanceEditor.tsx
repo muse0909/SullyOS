@@ -3,9 +3,9 @@ import { AppID, OSTheme, ChatFineTuneFields } from '../../types';
 import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
-import { FadersHorizontal, Code } from '@phosphor-icons/react';
-// 暮色 2026-08-27 第三步：自定义 CSS 改用标准弹窗（替代原右侧抽屉）
-import CustomCssModal from './CustomCssModal';
+import { FadersHorizontal } from '@phosphor-icons/react';
+// 暮色 2026-08-27 第四步：自定义 CSS 改成 inline 面板（紧邻"快速预设"在同一 groupClass section 里，直接渲染在主区域，不弹窗）
+import CustomCssPanel from './CustomCssPanel';
 import { ensureDefaultPreset } from '../../utils/customCssPresets';
 
 type Props = {
@@ -397,8 +397,9 @@ const ChoiceGroup: React.FC<{
 );
 
 export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp }) => {
-    // 暮色 2026-08-27 第二步 + 第三步：自定义 CSS 标准弹窗开关；预装示例仅在用户首次打开时塞
-    const [customCssOpen, setCustomCssOpen] = useState(false);
+    // 暮色 2026-08-27 第四步：「自定义 CSS」现在是主区域里 groupClass section 的下半部分（inline 面板），
+    // 不再是入口按钮 + 弹窗，所以这里不再需要 customCssOpen state。
+    // ensureDefaultPreset 搬到 CustomCssPanel 挂载时执行——用户在外观 App 真正看到面板时才塞示例。
     useEffect(() => { ensureDefaultPreset(); }, []);
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
@@ -452,7 +453,9 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
     };
 
     // 悬浮面板内左右翻页：一页一个主题，改哪项都能立刻在后面的预览里看到。
-    const PAGE_TITLES = ['快速预设', '聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
+    // 暮色 2026-08-27 第四步：「快速预设」从浮层 page 0 拎到主区域 groupClass section（紧邻「自定义 CSS」上半），
+    //   所以浮层只剩 5 页（聊天壳/头部/气泡与头像/细节微调/表情包与输入栏），page 初值保持 0。
+    const PAGE_TITLES = ['聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
     const [page, setPage] = useState(0);
     const swipeStartX = useRef<number | null>(null);
     const goPage = (next: number) => setPage(Math.max(0, Math.min(PAGE_TITLES.length - 1, next)));
@@ -605,6 +608,32 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </div>
             </section>
 
+            {/* 暮色 2026-08-27 第四步：「快速预设」+「自定义 CSS」合并成同一个 groupClass section，
+                紧邻"实时预览"下方（不再在浮层 page 0 内）；和"消息气泡/头像形状..."等 section 一样的样式。
+                上半是预设网格，下半是 CustomCssPanel inline 面板（textarea + 下拉 + 3 按钮 + 删除）。 */}
+            <section className={groupClass}>
+                <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">快速预设</div>
+                <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {presets.map((preset) => (
+                        <button
+                            key={preset.name}
+                            onClick={() => updateTheme({ ...FINE_TUNE_DEFAULTS, ...preset.config })}
+                            className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition-all hover:border-primary/30 hover:bg-white active:scale-[0.98]"
+                        >
+                            <div className="text-xs font-bold text-slate-700">{preset.name}</div>
+                            <div className="mt-1 text-[10px] text-slate-400">{preset.desc}</div>
+                        </button>
+                    ))}
+                </div>
+
+                {/* 分割：上半"快速预设"和下半"自定义 CSS"在同一 section 内，视觉上分开 */}
+                <div className="mt-5 mb-3 border-t border-slate-100" />
+
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">自定义 CSS</div>
+                <CustomCssPanel />
+            </section>
+
             {/* 聊天壳设置：同私聊「聊天装扮」的悬浮形态——面板 fixed 贴底、无遮罩，不占文档流，
                 预览保持完整尺寸也能边看边调。圆气泡点按 = 收起/展开面板，按住可拖到不挡手的位置。 */}
             <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-2.5 text-[10px] leading-relaxed text-slate-400">
@@ -632,16 +661,6 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 style={{ bottom: 'calc(16px + var(--safe-bottom, 0px))', maxHeight: '46vh' }}
             >
                 <div className="mb-4 flex items-center gap-1.5">
-                    {/* 暮色 2026-08-27 第三步：「自定义 CSS」入口从快速预设 section 内移出到页签栏最左端，
-                        与「快速预设」页签按钮平级并列。点击打开 CustomCssModal 标准弹窗。 */}
-                    <button
-                        onClick={() => setCustomCssOpen(true)}
-                        title="打开自定义 CSS 编辑器"
-                        className="flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] font-bold text-primary transition-all hover:border-primary/50 hover:bg-primary/10 active:scale-95"
-                    >
-                        <Code size={12} weight="bold" />
-                        自定义 CSS
-                    </button>
                     <button
                         onClick={() => goPage(page - 1)}
                         disabled={page === 0}
@@ -679,30 +698,13 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     }}
                 >
                 {page === 0 && (<>
-                    {/* 暮色 2026-08-27 第三步：自定义 CSS 入口已移出到页签栏最左端；这里只留提示语 + 预设网格 */}
-                    <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {presets.map((preset) => (
-                            <button
-                                key={preset.name}
-                                onClick={() => updateTheme({ ...FINE_TUNE_DEFAULTS, ...preset.config })}
-                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition-all hover:border-primary/30 hover:bg-white active:scale-[0.98]"
-                            >
-                                <div className="text-xs font-bold text-slate-700">{preset.name}</div>
-                                <div className="mt-1 text-[10px] text-slate-400">{preset.desc}</div>
-                            </button>
-                        ))}
-                    </div>
-                </>)}
-
-                {page === 1 && (<>
                     <ChoiceGroup title="聊天壳" items={choices.chrome} value={chromeStyle} onPick={(value) => updateTheme({ chatChromeStyle: value as OSTheme['chatChromeStyle'] })} />
                     <div className="mt-4">
                         <ChoiceGroup title="消息区背景" items={choices.background} value={backgroundStyle} onPick={(value) => updateTheme({ chatBackgroundStyle: value as OSTheme['chatBackgroundStyle'] })} />
                     </div>
                 </>)}
 
-                {page === 2 && (<>
+                {page === 1 && (<>
                 <ChoiceGroup title="头部风格" items={choices.header} value={headerStyle} onPick={(value) => updateTheme({ chatHeaderStyle: value as OSTheme['chatHeaderStyle'] })} />
                 <div className="mt-4">
                     <ChoiceGroup title="头部对齐" items={choices.align} value={headerAlign} onPick={(value) => updateTheme({ chatHeaderAlign: value as OSTheme['chatHeaderAlign'] })} />
@@ -728,7 +730,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </div>
                 </>)}
 
-                {page === 3 && (<>
+                {page === 2 && (<>
                 <ChoiceGroup title="消息气泡" items={choices.bubble} value={bubbleStyle} onPick={(value) => updateTheme({ chatBubbleStyle: value as OSTheme['chatBubbleStyle'] })} />
                 <div className="mt-4">
                     <ChoiceGroup title="头像形状" items={choices.avatarShape} value={avatarShape} onPick={(value) => updateTheme({ chatAvatarShape: value as OSTheme['chatAvatarShape'] })} />
@@ -761,7 +763,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </>)}
 
                 {/* 聊天细节微调 —— 收编社区白框美化的可视化版（控件组件与聊天内「聊天装扮」弹窗共用） */}
-                {page === 4 && (<>
+                {page === 3 && (<>
                     <p className="mb-3 text-[10px] leading-relaxed text-slate-400">
                         头像显隐/对齐、贴边、字号行距——不用再手写 CSS，改动实时反映在上方预览里。
                         手写过美化代码的老用户不受影响：<b>你的自定义 CSS 优先级更高</b>，永远盖得过这里。
@@ -777,7 +779,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     </p>
                 </>)}
 
-                {page === 5 && (<>
+                {page === 4 && (<>
                     <ChoiceGroup title="表情包大小" items={choices.emojiSize} value={theme.chatEmojiSize || 'small'} onPick={(value) => updateTheme({ chatEmojiSize: value as OSTheme['chatEmojiSize'] })} />
                     <p className="mt-2 text-[10px] text-slate-400">聊天和群聊里发出的表情包图片尺寸。用自定义 CSS 调过尺寸的美化会继续覆盖这里的设置。（表情包尺寸预览里看不到，进聊天发一张试试。）</p>
                     <div className="mt-4">
@@ -889,8 +891,6 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 这一版先把聊天外观做成模块化换壳。后面如果你想继续往深处玩，我们还可以拆成每个角色单独一套聊天壳，甚至让不同 app 模拟不同平台 UI。
             </div>
         </div>
-        {/* 暮色 2026-08-27 第三步：自定义 CSS 标准弹窗（入口在页签栏最左端） */}
-        {customCssOpen && <CustomCssModal onClose={() => setCustomCssOpen(false)} />}
         </>
     );
 };

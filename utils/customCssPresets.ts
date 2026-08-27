@@ -6,6 +6,10 @@
 // - 预装一个"示例-暖色气泡"：首次加载时若 custom_css_presets 为空数组，自动塞进去并设为激活
 // - 「实时预览」写 style 标签但不写 localStorage，「保存为预设」才落库；「应用」写 localStorage + 注入
 // - 改名为「编辑」时直接覆盖同名预设（用户可能想微调），删时如果删的是激活的也清空激活名
+//
+// 暮色 2026-08-27 第四步补丁：加 custom_css_last_applied 存「最近一次应用的 CSS」，
+//   用于 CustomCssPanel 重新挂载时的 draft fallback——保证 textarea 跟 <style> 保持一致。
+//   「应用」= 立即生效 + 写 last_applied + 选了下拉预设时设 activeName。
 
 export interface CustomCssPreset {
   name: string;
@@ -14,6 +18,7 @@ export interface CustomCssPreset {
 
 const PRESETS_KEY = 'custom_css_presets';
 const ACTIVE_KEY = 'custom_css_active';
+const LAST_APPLIED_KEY = 'custom_css_last_applied';
 
 /** 预装示例预设：暖色气泡 + 圆角 16px，让暮色知道格式和选择器怎么写。
  *  选择器用 .sully-chat-root 包裹，命中整个聊天 App 根。气泡根用 .sully-bubble-ai / .sully-bubble-user。
@@ -108,10 +113,28 @@ export const findPreset = (presets: CustomCssPreset[], name: string): CustomCssP
 export const bootstrapUserCustomCss = (): void => {
   const activeName = getActivePresetName();
   if (!activeName) {
-    syncUserCustomCssToDom('');
+    // 暮色 2026-08-27 第四步补丁：没激活预设但有"最近一次应用" → 用 last_applied 注入
+    // 保持「重启 App 后页面还是按上次应用的样子」——之前只清空 style，页面立刻回退默认。
+    const lastApplied = getLastAppliedCss();
+    syncUserCustomCssToDom(lastApplied);
     return;
   }
   const presets = loadPresets();
   const p = findPreset(presets, activeName);
   syncUserCustomCssToDom(p?.css || '');
+};
+
+/** 暮色 2026-08-27 第四步补丁：读 / 写「最近一次应用的 CSS」。
+ *  用途：CustomCssPanel 重新挂载时，如果 activeName 是空（没保存为预设也没选下拉），
+ *  用 last_applied 兜底——textarea 跟 <style> 保持一致。
+ *  「清空」时也清这个键（保证下次重启是真的回到默认状态）。 */
+export const getLastAppliedCss = (): string => {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(LAST_APPLIED_KEY) || '';
+};
+
+export const setLastAppliedCss = (css: string): void => {
+  if (typeof localStorage === 'undefined') return;
+  if (css) localStorage.setItem(LAST_APPLIED_KEY, css);
+  else localStorage.removeItem(LAST_APPLIED_KEY);
 };

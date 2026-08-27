@@ -8,12 +8,22 @@
 //   - 中间：textarea（多行 CSS 输入）
 //   - 底部：应用 / 保存为预设 / 清空 三个按钮
 //
-// 操作语义（跟之前一致）：
-//   - 应用：把 textarea 当前内容立即注入 <style id="user-custom-css">（不写 localStorage）
-//   - 保存为预设：弹小输入框起名，存到 localStorage + 自动选中 + 立即应用
-//   - 清空：清空 textarea（不动 style 标签）
+// 操作语义（暮色 8-27 第四步 + 第四步补丁）：
+//   - 应用：把 textarea 当前内容立即注入 <style id="user-custom-css"> + 写 localStorage
+//     （custom_css_last_applied + 选了下拉预设时设 activeName）—— 保证重新打开 panel
+//     时 textarea 跟 <style> 保持一致（之前"应用"不写 localStorage，导致 textarea 空但
+//     页面已生效，暮色反馈"清空都清空不了"）。
+//   - 保存为预设：弹小输入框起名，存到 localStorage + 自动选中 + 立即应用 + 写 last_applied
+//   - 清空：清空所有（textarea + <style> + activeName + last_applied + selectedName）——
+//     之前只清 textarea，但 <style> 还有内容，点了"清空"页面不变（暮色反馈"清空不了"）。
 //   - 下拉选中某预设：把 CSS 加载到 textarea（不立即应用）
-//   - 删除：confirm 后从 localStorage 删；若删的是激活预设则同时清激活 + 清空 style
+//   - 删除：confirm 后从 localStorage 删；若删的是激活预设则同时清激活 + 清空 style + 清 last_applied
+//
+// 重新挂载 fallback（useEffect）：
+//   1. activeName 有值 → 找预设 → draft = 预设 CSS + selectedName = 预设名
+//   2. 否则 last_applied 有值 → draft = last_applied + selectedName = ''
+//   3. 否则 draft = '' + selectedName = ''
+//   这样 textarea 永远跟 <style> 同步：要么显示激活预设，要么显示最近一次应用。
 //
 // 共存：注入的 <style id="user-custom-css"> 由 syncUserCustomCssToDom 挂到 body 末尾，
 // 排在 chatFineTuneCss / chatChromeCustomCss 之后，同优先级时 user CSS 总能盖过默认。
@@ -26,6 +36,8 @@ import {
   savePresets,
   getActivePresetName,
   setActivePresetName,
+  getLastAppliedCss,
+  setLastAppliedCss,
   syncUserCustomCssToDom,
   findPreset,
 } from '../../utils/customCssPresets';
@@ -44,26 +56,65 @@ const CustomCssPanel: React.FC = () => {
   const [savePromptError, setSavePromptError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 首次挂载：预装示例（首次打开时） + 读 localStorage + 默认选中激活预设
+  // 首次挂载：预装示例（首次打开时） + 读 localStorage + draft fallback
+  // 优先级：last_applied > activeName 预设 > 空
+  //   - last_applied 是"用户当前应用的 CSS 真相"（包括手写或改过的）
+  //   - activeName 是"从预设列表激活某个"（应该跟 last_applied 整段一致才对得上）
+  //   - 保证 textarea 跟 <style> 同步：要么显示最近一次应用，要么显示激活预设，要么都空
   useEffect(() => {
     ensureDefaultPreset();
     const list = loadPresets();
     setPresetsState(list);
+    const lastApplied = getLastAppliedCss();
     const an = getActivePresetName();
     setActiveNameState(an);
-    setSelectedName(an);
-    const p = findPreset(list, an);
-    setDraft(p?.css || '');
+    if (lastApplied) {
+      // last_applied 跟某个预设 CSS 整段一致 → selectedName 显示那个预设名（视觉一致）
+      const matching = list.find((p) => p.css === lastApplied);
+      if (matching) {
+        setSelectedName(matching.name);
+      } else {
+        // last_applied 是手写或改过的，不关联任何预设
+        setSelectedName('');
+      }
+      setDraft(lastApplied);
+      return;
+    }
+    // 没 last_applied → 用 activeName 兜底
+    if (an) {
+      const p = findPreset(list, an);
+      if (p) {
+        setSelectedName(an);
+        setDraft(p.css);
+        return;
+      }
+    }
+    setSelectedName('');
+    setDraft('');
   }, []);
 
-  // 应用：把当前 textarea 内容立即注入到 <style id="user-custom-css">（不写 localStorage）
+  // 应用：把当前 textarea 内容立即注入 <style> + 写 last_applied
+  // 暮色 8-27 第四步补丁：必须写 last_applied（最近一次应用的 CSS），否则重新打开 panel
+  //   时 textarea 是空的（暮色反馈"输入框里没有之前选的预设内容了"）。
+  // 注意：activeName 不在这里设——activeName 跟"从预设列表里激活某个"绑定，应该由
+  //   「保存为预设」触发。last_applied 才是"用户当前应用的 CSS"——包括手写或改过的。
   const handleApply = () => {
+    if (!draft) return;
     syncUserCustomCssToDom(draft);
+    setLastAppliedCss(draft);
   };
 
-  // 清空：只清 textarea，不动 style 标签
+  // 清空：清空所有（textarea + <style> + activeName + last_applied + selectedName）
+  // 暮色 8-27 第四步补丁：之前只清 textarea，但 <style> 还有内容 → 点了"清空"页面不变
+  // （暮色反馈"清空不了"）。现在清空 = 真的回到默认状态。
   const handleClear = () => {
+    if (!draft && !activeName && !selectedName) return;  // 啥都没有，按钮已 disable；这里兜底
     setDraft('');
+    setSelectedName('');
+    setActiveNameState('');
+    setActivePresetName('');
+    setLastAppliedCss('');
+    syncUserCustomCssToDom('');
     setTimeout(() => textareaRef.current?.focus(), 30);
   };
 
@@ -90,24 +141,30 @@ const CustomCssPanel: React.FC = () => {
     }
     savePresets(next);
     setPresetsState(next);
-    // 保存后自动选中新预设 + 设为激活 + 立即应用到 style 标签
+    // 保存后自动选中新预设 + 设为激活 + 立即应用到 style 标签 + 写 last_applied
     setSelectedName(name);
     setActivePresetName(name);
     setActiveNameState(name);
     syncUserCustomCssToDom(draft);
+    setLastAppliedCss(draft);
     setSavePromptOpen(false);
     setSaveName('');
   };
 
   // 下拉菜单选中某预设：把 CSS 加载到 textarea（不立即应用）
+  // 暮色 8-27 第四步补丁：同步 last_applied —— "选了预设没改也没应用"的情况
+  //   下次打开 textarea 也能恢复用户选了什么（之前是 last_applied 留旧值）。
   const handleSelectPreset = (name: string) => {
     setSelectedName(name);
     if (!name) {
       setDraft('');
+      setLastAppliedCss('');
       return;
     }
     const p = findPreset(presets, name);
-    setDraft(p?.css || '');
+    const css = p?.css || '';
+    setDraft(css);
+    setLastAppliedCss(css);
   };
 
   // 删除当前选中的预设（带 confirm）
@@ -118,11 +175,12 @@ const CustomCssPanel: React.FC = () => {
     const next = presets.filter((p) => p.name !== name);
     savePresets(next);
     setPresetsState(next);
-    // 删的是激活预设 → 清激活 + 清空 style 标签
+    // 删的是激活预设 → 清激活 + 清空 style + 清 last_applied
     if (activeName === name) {
       setActivePresetName('');
       setActiveNameState('');
       syncUserCustomCssToDom('');
+      setLastAppliedCss('');
     }
     // 删除后清空选中 + textarea
     setSelectedName('');
@@ -179,7 +237,9 @@ const CustomCssPanel: React.FC = () => {
       <div className="flex items-center gap-2">
         <button
           onClick={handleApply}
-          className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-primary px-3 py-2 text-[12px] font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95"
+          disabled={!draft}
+          title={draft ? '把当前 CSS 注入到聊天页（同时记住）' : '输入框为空，没东西可应用'}
+          className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-primary px-3 py-2 text-[12px] font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Code size={12} weight="bold" />
           应用
@@ -193,7 +253,9 @@ const CustomCssPanel: React.FC = () => {
         </button>
         <button
           onClick={handleClear}
-          className="flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 transition-all hover:bg-slate-50 active:scale-95"
+          disabled={!draft && !activeName && !selectedName}
+          title={!draft && !activeName && !selectedName ? '已经没有可清空的了' : '清空输入框 + 聊天页 CSS + 已激活预设（回到默认）'}
+          className="flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] font-medium text-slate-700 transition-all hover:bg-slate-50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
         >
           清空
         </button>

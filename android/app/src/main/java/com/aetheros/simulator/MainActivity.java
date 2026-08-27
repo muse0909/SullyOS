@@ -5,7 +5,6 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.ViewGroup;
-import android.webkit.WebSettings;
 import androidx.core.view.WindowCompat;
 import com.getcapacitor.BridgeActivity;
 
@@ -22,16 +21,9 @@ public class MainActivity extends BridgeActivity {
         // 必须先 super.onCreate（它会初始化 bridge + WebView + 按 capacitor.config 加载 URL）
         super.onCreate(savedInstanceState);
 
-        // 暮色 2026-08-27 缩放方案回退（第 1 项）：不要捏合缩放了
-        //   - setSupportZoom(false)：关掉缩放手势
-        //   - setInitialScale(90)：初始 90% 缩放（先用 90% 试，太大太小再调）
-        //   - useWideViewPort + loadWithOverviewMode：按页面 viewport 宽度自动适配屏幕
-        WebSettings webSettings = this.bridge.getWebView().getSettings();
-        webSettings.setSupportZoom(false);
-        webSettings.setUseWideViewPort(true);
-        webSettings.setLoadWithOverviewMode(true);
-        // 注意：setInitialScale 是 WebView 的方法，不在 WebSettings 上
-        this.bridge.getWebView().setInitialScale(90);
+        // 暮色 2026-08-27：原生 WebView 缩放方案（setInitialScale/setSupportZoom 等）已撤销，
+        //   改用纯前端 CSS zoom —— 前端 utils/pageZoom.ts + 设置页「页面缩放」滑条，
+        //   远程加载模式下不用重新打包。此处恢复 Capacitor 默认缩放配置，无需任何代码。
 
         // 暮色 2026-08-27 底部白边修复（P0 第 7 项）：沉浸式全屏
         //   - setDecorFitsSystemWindows(false)：让内容延伸进状态栏 / 导航栏区域（edge-to-edge）

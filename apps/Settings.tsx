@@ -8,6 +8,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
+import { setPageZoom, readSavedPageZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, PAGE_ZOOM_DEFAULT, PAGE_ZOOM_STEP } from '../utils/pageZoom';
 import Modal from '../components/os/Modal';
 import { DB } from '../utils/db';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
@@ -194,6 +195,12 @@ const Settings: React.FC = () => {
   const [localImageModel, setLocalImageModel] = useState(apiConfig.imageModel || '');
   // 暮色 2026-07-15：删 localImageGenProvider — 生图只走 OpenAI 兼容
   const [localStream, setLocalStream] = useState<boolean>(apiConfig.stream === true);
+  // 暮色 2026-08-27：页面缩放 70%-130%（纯前端 CSS zoom，拖动即生效即记忆，见 utils/pageZoom.ts）
+  const [localPageZoom, setLocalPageZoom] = useState<number>(() => readSavedPageZoom());
+  const handlePageZoomChange = (pct: number) => {
+    setLocalPageZoom(pct);
+    setPageZoom(pct); // localStorage 保存 + 根元素应用，一步到位
+  };
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
@@ -2350,6 +2357,40 @@ const handleSaveTts = () => {
           <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <ApiLogPanel />
           </section>
+        </SettingsSection>
+
+        {/* 12 - 页面缩放（暮色 2026-08-27）：纯前端 CSS zoom 替代原生 WebView setInitialScale */}
+        <SettingsSection id="pageZoom" icon="🔍" title="页面缩放" subtitle="整体界面大小·70%-130%" isOpen={openSectionId === 'pageZoom'} onToggle={toggleSection}>
+          <div className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-slate-500 font-medium">拖动调整整个页面的显示大小</span>
+              <span className="text-sm font-bold font-mono text-slate-700">{localPageZoom}%</span>
+            </div>
+            <input
+              type="range"
+              min={PAGE_ZOOM_MIN}
+              max={PAGE_ZOOM_MAX}
+              step={PAGE_ZOOM_STEP}
+              value={localPageZoom}
+              onChange={(e) => handlePageZoomChange(parseInt(e.target.value))}
+              className="w-full accent-slate-400 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-0.5">
+              <span>70%</span>
+              <span>100%</span>
+              <span>130%</span>
+            </div>
+            {localPageZoom !== PAGE_ZOOM_DEFAULT && (
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={() => handlePageZoomChange(PAGE_ZOOM_DEFAULT)}
+                  className="px-5 py-2 bg-slate-100 border border-slate-200 rounded-full text-xs font-bold text-slate-500 active:scale-95 transition-all"
+                >
+                  恢复默认 100%
+                </button>
+              </div>
+            )}
+          </div>
         </SettingsSection>
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase mt-2">

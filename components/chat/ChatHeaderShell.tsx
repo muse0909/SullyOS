@@ -343,7 +343,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
 
     return (
-        <div className={`${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>
@@ -352,18 +352,18 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : useCenteredLayout ? (
                 <div className="relative w-full flex items-center justify-center">
-                    <button onClick={onClose} className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 ${onCloseButtonClass}`}>
+                    <button onClick={onClose} className={`sully-chat-back absolute left-3 top-1/2 -translate-y-1/2 p-2 ${onCloseButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
                     <div
                         onClick={onShowCharsPanel}
-                        className="flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-center justify-center"
+                        className="sully-chat-title flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-center justify-center"
                     >
                         {renderCenteredInfo()}
                     </div>
 
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <div className="sully-chat-actions absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         {onOpenDiscover && (
                             <button
                                 onClick={onOpenDiscover}
@@ -389,15 +389,15 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : (
                 <div className="flex items-center gap-3 w-full">
-                    <button onClick={onClose} className={`p-2 -ml-2 ${onCloseButtonClass}`}>
+                    <button onClick={onClose} className={`sully-chat-back p-2 -ml-2 ${onCloseButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
-                    <div onClick={onShowCharsPanel} className="flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
+                    <div onClick={onShowCharsPanel} className="sully-chat-title flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
                         {renderStandardInfo()}
                     </div>
 
-                    <div className="relative ml-auto flex items-center gap-1">
+                    <div className="sully-chat-actions relative ml-auto flex items-center gap-1">
                         {onOpenDiscover && (
                             <button
                                 onClick={onOpenDiscover}

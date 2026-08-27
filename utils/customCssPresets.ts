@@ -79,13 +79,25 @@ export const ensureDefaultPreset = (): CustomCssPreset[] => {
   return seeded;
 };
 
-/** 同步注入到 <style id="user-custom-css"> —— 任何调用方（启动 / 实时预览 / 应用）都走这条。
- *  返回当前激活预设的 CSS；空串 = 清空。 */
+/** 同步注入到 <style id="user-custom-css"> —— 任何调用方（启动 / 应用 / 清空）都走这条。
+ *  空串 = 清空。
+ *
+ *  关键：标签挂到 document.body 末尾（不是 head），原因是
+ *    1) 启动时 React 还没挂载，user CSS 在 body 末尾
+ *    2) React 挂载后 Chat.tsx 渲染的 <style>{chatFineTuneCss}</style> /
+ *       <style>{chatChromeCustomCss}</style> 物理位置在 body 内的 chat root div 里
+ *    3) 按 DOM 顺序「后者覆盖前者」，user CSS 排在 body 末尾就能盖过前面那俩
+ *  重复调用 = appendChild 已存在节点 = 移动到末尾（不会复制），保证每次注入都重新占位。 */
 export const syncUserCustomCssToDom = (css: string): void => {
   if (typeof document === 'undefined') return;
-  const el = document.getElementById('user-custom-css');
-  if (!el) return;
+  let el = document.getElementById('user-custom-css');
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'user-custom-css';
+  }
   el.textContent = css;
+  // 总是 move 到 body 末尾：appendChild 已存在节点 = 移动
+  document.body.appendChild(el);
 };
 
 /** 按预设名查预设，未找到返回 undefined。 */

@@ -4,8 +4,8 @@ import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
 import { FadersHorizontal, Code } from '@phosphor-icons/react';
-// 暮色 2026-08-27 第二步：用户自定义聊天白框 CSS drawer
-import CustomCssDrawer from './CustomCssDrawer';
+// 暮色 2026-08-27 第三步：自定义 CSS 改用标准弹窗（替代原右侧抽屉）
+import CustomCssModal from './CustomCssModal';
 import { ensureDefaultPreset } from '../../utils/customCssPresets';
 
 type Props = {
@@ -397,7 +397,7 @@ const ChoiceGroup: React.FC<{
 );
 
 export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp }) => {
-    // 暮色 2026-08-27 第二步：自定义 CSS drawer 开关；预装示例仅在用户首次打开时塞
+    // 暮色 2026-08-27 第二步 + 第三步：自定义 CSS 标准弹窗开关；预装示例仅在用户首次打开时塞
     const [customCssOpen, setCustomCssOpen] = useState(false);
     useEffect(() => { ensureDefaultPreset(); }, []);
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
@@ -632,6 +632,16 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 style={{ bottom: 'calc(16px + var(--safe-bottom, 0px))', maxHeight: '46vh' }}
             >
                 <div className="mb-4 flex items-center gap-1.5">
+                    {/* 暮色 2026-08-27 第三步：「自定义 CSS」入口从快速预设 section 内移出到页签栏最左端，
+                        与「快速预设」页签按钮平级并列。点击打开 CustomCssModal 标准弹窗。 */}
+                    <button
+                        onClick={() => setCustomCssOpen(true)}
+                        title="打开自定义 CSS 编辑器"
+                        className="flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] font-bold text-primary transition-all hover:border-primary/50 hover:bg-primary/10 active:scale-95"
+                    >
+                        <Code size={12} weight="bold" />
+                        自定义 CSS
+                    </button>
                     <button
                         onClick={() => goPage(page - 1)}
                         disabled={page === 0}
@@ -669,17 +679,8 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     }}
                 >
                 {page === 0 && (<>
-                    <div className="mb-3 flex items-center justify-between gap-2">
-                        <p className="flex-1 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
-                        {/* 暮色 2026-08-27 第二步：自定义 CSS 入口（在快速预设 section 顶部） */}
-                        <button
-                            onClick={() => setCustomCssOpen(true)}
-                            className="flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-[10px] font-medium text-primary transition-all hover:border-primary/50 hover:bg-primary/10 active:scale-95"
-                        >
-                            <Code size={11} weight="bold" />
-                            自定义 CSS
-                        </button>
-                    </div>
+                    {/* 暮色 2026-08-27 第三步：自定义 CSS 入口已移出到页签栏最左端；这里只留提示语 + 预设网格 */}
+                    <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {presets.map((preset) => (
                             <button
@@ -888,8 +889,8 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 这一版先把聊天外观做成模块化换壳。后面如果你想继续往深处玩，我们还可以拆成每个角色单独一套聊天壳，甚至让不同 app 模拟不同平台 UI。
             </div>
         </div>
-        {/* 暮色 2026-08-27 第二步：自定义 CSS 抽屉（在「快速预设」section 顶部按钮触发） */}
-        {customCssOpen && <CustomCssDrawer onClose={() => setCustomCssOpen(false)} />}
+        {/* 暮色 2026-08-27 第三步：自定义 CSS 标准弹窗（入口在页签栏最左端） */}
+        {customCssOpen && <CustomCssModal onClose={() => setCustomCssOpen(false)} />}
         </>
     );
 };

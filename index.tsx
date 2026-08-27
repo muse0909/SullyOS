@@ -36,18 +36,12 @@ installIOSStandaloneWorkaround();
 // 暮色 2026-08-27：应用页面缩放（必须在首次 render 之前，React 挂载前 root 还是空的，不会闪）
 applyPageZoom();
 
-// 暮色 2026-08-27 第二步：用户自定义聊天白框 CSS —— App 根挂 <style id="user-custom-css">，
-//   启动时按 localStorage custom_css_active 注入上次激活的预设。CustomCssDrawer 应用/清空时也走这条。
-//   跟 chatFineTuneCss / chatChromeCustomCss 是 3 个独立 style 标签，浏览器按 DOM 顺序后者覆盖前者，
-//   用户 CSS 排在最后面所以总能盖过默认。注入空串 = 删掉 <style> 的内容。
+// 暮色 2026-08-27 第二步 + 第三步：用户自定义聊天白框 CSS —— 启动时按 localStorage
+//   custom_css_active 注入上次激活的预设到 <style id="user-custom-css">。
+//   第三步把标签挂到 body 末尾（不是 head），原因见 utils/customCssPresets.syncUserCustomCssToDom。
+//   bootstrapUserCustomCss 内部走 syncUserCustomCssToDom，自动 append 到 body 末尾。
 (() => {
   if (typeof document === 'undefined') return;
-  let el = document.getElementById('user-custom-css');
-  if (!el) {
-    el = document.createElement('style');
-    el.id = 'user-custom-css';
-    document.head.appendChild(el);
-  }
   bootstrapUserCustomCss();
 })();
 

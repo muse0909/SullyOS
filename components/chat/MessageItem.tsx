@@ -770,7 +770,7 @@ const MessageItem = React.memo(({
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (
-                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                <div className="sully-chat-timestamp mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>
                             );
@@ -809,7 +809,7 @@ const MessageItem = React.memo(({
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (
-                                <div className="mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
+                                <div className="sully-chat-timestamp mt-1 text-[9px] font-medium text-slate-600 bg-slate-100/80 rounded-full px-2 py-0.5 w-fit whitespace-nowrap leading-none">
                                     {formatTime(m.timestamp)}
                                 </div>
                             );

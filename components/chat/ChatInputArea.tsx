@@ -372,7 +372,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           : 'text-slate-400';
 
     return (
-        <div className={`${shellClass} shrink-0 z-40 relative`} style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className={`sully-chat-inputbar ${shellClass} shrink-0 z-40 relative`} style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
             {selectionMode ? (
     <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
        <button
@@ -429,7 +429,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </div>
                                     <button
                     onClick={onTriggerAI}
-                    className={sendButtonClass}
+                    className={`sully-chat-send ${sendButtonClass}`}
                     title="发送请求给AI"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">

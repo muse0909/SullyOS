@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 暮色 2026-08-27 架构调整：远程加载 Vercel + 图床 / API 域名白名单
+     Android 9+ 默认禁止明文 HTTP（cleartext），但允许 HTTPS。
+     这里：
+       1. base-config 允许 cleartext（兜底，万一未来接 http 资源）
+       2. domain-config 列出所有 SullyOS 用到的图床 / API / Worker / Vercel 域名（防御性白名单）
+     引用：AndroidManifest application 标签 android:networkSecurityConfig="@xml/network_security_config" -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- SullyOS 用到的图床 / API / 部署域名（白名单防御性） -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 前端 Vercel 部署（暮色 8-27 远程加载目标） -->
+        <domain includeSubdomains="true">sully-os-git-preview-muse0909s-projects.vercel.app</domain>
+        <domain includeSubdomains="true">sully-os.vercel.app</domain>
+
+        <!-- 后端 Cloudflare Worker + 自定义域名 -->
+        <domain includeSubdomains="true">sullymeow.ccwu.cc</domain>
+        <domain includeSubdomains="true">noir2.cc.cd</domain>
+        <domain includeSubdomains="true">workers.dev</domain>
+
+        <!-- 图床 / 资源 CDN -->
+        <domain includeSubdomains="true">cdnjs.cloudflare.com</domain>
+        <domain includeSubdomains="true">cdn.jsdelivr.net</domain>
+        <domain includeSubdomains="true">api.dicebear.com</domain>
+        <domain includeSubdomains="true">api.cloudinary.com</domain>
+        <domain includeSubdomains="true">api.imgbb.com</domain>
+
+        <!-- 第三方 API（前端代码用到） -->
+        <domain includeSubdomains="true">api.openai.com</domain>
+        <domain includeSubdomains="true">api.siliconflow.cn</domain>
+        <domain includeSubdomains="true">api.openweathermap.org</domain>
+        <domain includeSubdomains="true">api.search.brave.com</domain>
+    </domain-config>
+</network-security-config>

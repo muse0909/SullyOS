@@ -4,7 +4,12 @@
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
-    "cleartext": true
+    "cleartext": true,
+    "url": "https://sully-muse-vert.vercel.app",
+    "allowNavigation": [
+      "sully-muse-vert.vercel.app",
+      "sully-os-git-preview-muse0909s-projects.vercel.app"
+    ]
   },
   "plugins": {
     "SplashScreen": {

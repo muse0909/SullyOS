@@ -395,7 +395,7 @@ const MessageItem = React.memo(({
                 <>
                     <img
                         src={src}
-                        className={`w-full h-full ${avatarRadiusClass} object-cover shadow-sm ring-1 ring-black/5 relative z-0`}
+                        className={`sully-chat-message-avatar w-full h-full ${avatarRadiusClass} object-cover shadow-sm ring-1 ring-black/5 relative z-0`}
                         alt="avatar"
                         loading="lazy"
                         decoding="async"
@@ -745,7 +745,10 @@ const MessageItem = React.memo(({
     }
 
     const commonLayout = (content: React.ReactNode) => (
-            <div data-message-id={m.id} className={`flex items-start ${isUser ? 'justify-end' : 'justify-start'} ${marginBottom} px-3 group select-none relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''}`}>
+            // 暮色 2026-08-27 同步原作者：sully-chat-message / -ai / -user / -group-first / -group-last
+            // 是 chatFineTuneCss 选择器（外观 App「聊天细节」生成 CSS 注入）命中的锚点——
+            // 没有这些类名，chatAvatarAlign / chatAvatarPlacement / 字号行距微调等 CSS 不会生效。
+            <div data-message-id={m.id} className={`sully-chat-message flex items-start ${isUser ? 'justify-end sully-chat-message-user' : 'justify-start sully-chat-message-ai'} ${marginBottom} px-3 group select-none relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''} ${isFirstInGroup ? 'sully-chat-message-group-first' : ''} ${isLastInGroup ? 'sully-chat-message-group-last' : ''}`}>
                 {selectionMode && (
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -756,7 +759,7 @@ const MessageItem = React.memo(({
 
                 {/* Avatar - Absolute Positioned */}
                 {!isUser && effectiveShowAvatar && (
-                        <div className={`absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
+                        <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
                         {/*
                           暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
@@ -780,7 +783,7 @@ const MessageItem = React.memo(({
                     Added min-w-0 to prevent flexbox overflow issues.
                     Added explicit margins to clear absolute avatars.
                 */}
-                <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
+                <div className={`sully-chat-message-content flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
                     {/* 暮色 2026-08-07：emoji / image 类型不显示 ThoughtFold（用户看不到正文，思维链折叠没意义，且 emoji chunk 也会被 buildChunkMeta 挂上 thought，导致一条消息两个思维链） */}
                     {!isUser && m.type !== 'emoji' && m.type !== 'image' && (m as any).metadata?.thought && (
                         <ThoughtFold thought={(m as any).metadata.thought} />
@@ -796,7 +799,7 @@ const MessageItem = React.memo(({
 
                                 {/* User Avatar - Absolute Positioned */}
                 {isUser && effectiveShowAvatar && (
-                    <div className={`absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
+                    <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
                         {/*
                           暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）

@@ -95,6 +95,47 @@ export interface OSTheme {
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
   chatStatusStyle?: 'subtle' | 'pill' | 'dot' | 'none';
   chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
+  // ── 聊天细节微调（外观 → 聊天细节）。全部可选，缺省 = 现状零变化。
+  //    经 utils/chatFineTuneCss.ts 生成 CSS 注入 .sully-chat-root；用户自定义白框 CSS 排在其后可覆盖。
+  /** 表情包图片大小三挡：小 96px（默认）/ 中 128px / 大 160px（旧版尺寸）。经 --sully-emoji-size CSS 变量生效。 */
+  chatEmojiSize?: 'small' | 'medium' | 'large';
+  /** 头像位置：气泡旁（默认）/ 每轮消息组上方（固定每轮一次） */
+  chatAvatarPlacement?: 'beside' | 'above_group';
+  /** 头像显示：双侧（默认）/ 隐藏角色侧 / 隐藏用户侧 / 全部隐藏 */
+  chatAvatarVisibility?: 'both' | 'hide_ai' | 'hide_user' | 'hide_both';
+  /** 头像与气泡的对齐：底部（默认）/ 顶部 / 垂直居中 */
+  chatAvatarAlign?: 'bottom' | 'top' | 'center';
+  /** 头像垂直微调 px（负上正下），0/undefined = 不调 */
+  chatAvatarOffsetY?: number;
+  /** 气泡正文字号 px，0/undefined = 默认 */
+  chatBubbleFontSize?: number;
+  /** 气泡正文行距（如 1.35），0/undefined = 默认 */
+  chatBubbleLineHeight?: number;
+  /** 气泡与头像侧的间距 px，0/undefined = 默认（48px） */
+  chatBubbleIndent?: number;
+  /** 隐藏头像的一侧是否贴边（收回头像空位） */
+  chatSnapToEdge?: boolean;
+  /** HTML 卡片 / 心象卡片 / 音乐卡片的出现位置：缺省/'center' = 水平居中（默认），'anchor' = 贴气泡列（旧版观感）。 */
+  chatModuleAlign?: 'anchor' | 'center';
+  /** Instant Push 用户气泡左侧的"准备中"圆点动画。默认开启。 */
+  chatPendingIndicator?: boolean;
+  /** 聊天「白框」自定义 CSS：作用于 .sully-chat-root 下的顶栏、输入栏与消息布局钩子。可换色 / 贴图 / 改外形 / 挪位。 */
+  chatChromeCustomCss?: string;
+  /** 全局默认「白框提示音」：某角色未单独设提示音时回落到这里。src 同角色版（内置 key / 音频直链 / data:audio）。 */
+  chatSound?: { src: string; volume?: number };
+  /** 隐藏顶栏的情绪 buff 栏。 */
+  chatHideHeaderBuffs?: boolean;
+}
+
+/** 聊天细节微调字段（外观 App「聊天细节微调」区块），可整组按角色覆盖。 */
+export type ChatFineTuneFields = Pick<OSTheme,
+  'chatAvatarVisibility' | 'chatAvatarPlacement' | 'chatAvatarAlign' | 'chatAvatarOffsetY' |
+  'chatBubbleFontSize' | 'chatBubbleLineHeight' | 'chatBubbleIndent' | 'chatSnapToEdge' |
+  'chatModuleAlign'>;
+
+/** 角色级「聊天细节微调」覆盖：enabled=true 时未定义字段跟随全局。 */
+export interface ChatFineTuneOverride extends ChatFineTuneFields {
+  enabled?: boolean;
 }
 
 export interface AppearancePreset {

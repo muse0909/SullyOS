@@ -530,7 +530,8 @@ const Launcher: React.FC = () => {
             overscrollBehaviorY: 'none',
             touchAction: 'pan-x pan-y',
             willChange: 'scroll-position',
-            contain: 'layout paint',
+            // 暮色 8-27:去掉 contain/contentVisibility — 安卓网页内核上这组合成层裁剪
+            //   会把个别图标层渲染错乱(磨砂底丢失/图形叠影),宁可多一点点渲染开销换稳定
             transform: 'translateZ(0)',
             WebkitOverflowScrolling: 'touch',
         }}
@@ -540,7 +541,7 @@ const Launcher: React.FC = () => {
               <div
                 key={idx}
                 className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full"
-                style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
+                style={{ transform: 'translateZ(0)' }}
               >
                   {idx === 0 ? (
                       // Page 1 (original): Clock + Chat + 4x2 App Grid

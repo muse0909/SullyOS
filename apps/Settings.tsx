@@ -1268,13 +1268,6 @@ const handleSaveTts = () => {
       try { await cloudBackupToWebDAV(mode); } catch { /* toast handled in context */ }
   };
 
-  // 自动备份开关（暮色 2026-08-29）：状态存 cloudBackupConfig.autoBackup，
-  // 定时器逻辑在 OSContext（每小时触发一次轻量同步）
-  const handleToggleAutoBackup = (on: boolean) => {
-      updateCloudBackupConfig({ autoBackup: on });
-      addToast(on ? '自动备份已开启，每小时自动备份一次' : '自动备份已关闭', 'info');
-  };
-
   const handleOpenCloudRestore = async () => {
       setShowCloudRestoreModal(true);
       setCloudBackupFiles([]);
@@ -1659,20 +1652,6 @@ const handleSaveTts = () => {
                 {cloudBackupConfig.lastBackupTime && (
                   <p className="text-[10px] text-slate-400 text-center">上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}{cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}</p>
                 )}
-                {/* 自动备份开关（暮色 2026-08-29）：每小时自动触发一次轻量同步备份 */}
-                <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50/80 border border-slate-100 rounded-xl">
-                  <div>
-                    <p className="text-xs font-bold text-slate-600">自动备份</p>
-                    <p className="text-[10px] text-slate-400">每小时自动备份一次</p>
-                    {cloudBackupConfig.lastAutoBackupTime && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">上次自动备份: {new Date(cloudBackupConfig.lastAutoBackupTime).toLocaleString('zh-CN')}</p>
-                    )}
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
-                    <input type="checkbox" checked={!!cloudBackupConfig.autoBackup} onChange={(e) => handleToggleAutoBackup(e.target.checked)} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
-                  </label>
-                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => handleCloudBackup('text_only')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>

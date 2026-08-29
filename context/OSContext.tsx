@@ -807,7 +807,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const defaultCloudBackupConfig: CloudBackupConfig = {
       enabled: false, webdavUrl: '', username: '', password: '',
       remotePath: '/SullyBackup/',
-      autoBackup: false,
   };
   const [cloudBackupConfig, setCloudBackupConfig] = useState<CloudBackupConfig>(() => {
       try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? { ...defaultCloudBackupConfig, ...JSON.parse(s) } : defaultCloudBackupConfig; } catch { return defaultCloudBackupConfig; }
@@ -2524,75 +2523,6 @@ if (!isVisible || !isChattingWithThisChar) {
           throw e;
       }
   };
-
-  // ==================== 自动备份（暮色 2026-08-29 每小时）====================
-  // 开关存在 cloudBackupConfig.autoBackup（随 os_cloud_backup_config 持久化，页面加载自动恢复）。
-  // 前台时每小时触发一次 cloudBackupToWebDAV('text_only') —— 跟手动点"备份到云端(轻量同步)"
-  // 按钮完全同一个函数，覆盖式上传，不另写一套备份逻辑。
-  // App 切后台 / 页面卸载时清掉 interval，回前台且开关开着就重新启动。
-
-  const autoBackupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // ref 镜像最新值 — interval 回调里读的是 ref，避免闭包拿到旧 config/state
-  const autoBackupCfgRef = useRef(cloudBackupConfig);
-  autoBackupCfgRef.current = cloudBackupConfig;
-  const autoBackupSysOpRef = useRef(sysOperation);
-  autoBackupSysOpRef.current = sysOperation;
-  const autoBackupFnRef = useRef(cloudBackupToWebDAV);
-  autoBackupFnRef.current = cloudBackupToWebDAV;
-
-  const stopAutoBackupTimer = () => {
-      if (autoBackupTimerRef.current) {
-          clearInterval(autoBackupTimerRef.current);
-          autoBackupTimerRef.current = null;
-      }
-  };
-
-  const runAutoBackupOnce = async () => {
-      const cfg = autoBackupCfgRef.current;
-      if (!cfg.autoBackup || !cfg.enabled) return;
-      // 手动备份/其他系统操作进行中 — 跳过本轮，下个整点再试
-      if (autoBackupSysOpRef.current.status === 'processing') return;
-      try {
-          await autoBackupFnRef.current('text_only');
-          // cloudBackupToWebDAV 成功后已写 lastBackupTime；这里补记自动备份自己的时间
-          const newCfg = { ...autoBackupCfgRef.current, lastAutoBackupTime: Date.now() };
-          autoBackupCfgRef.current = newCfg;
-          localStorage.setItem('os_cloud_backup_config', JSON.stringify(newCfg));
-          setCloudBackupConfig(newCfg);
-      } catch { /* 失败 toast 已在 cloudBackupToWebDAV 里弹过，这里不再重复 */ }
-  };
-
-  const startAutoBackupTimer = () => {
-      if (autoBackupTimerRef.current) return; // 已在跑，不重复起
-      autoBackupTimerRef.current = setInterval(() => { void runAutoBackupOnce(); }, 60 * 60 * 1000);
-  };
-
-  useEffect(() => {
-      const shouldRun = !!(cloudBackupConfig.autoBackup && cloudBackupConfig.enabled);
-      if (!shouldRun) { stopAutoBackupTimer(); return; }
-
-      // 只有前台跑 interval；切后台/页面卸载清掉，回前台重启
-      const syncToVisibility = () => {
-          if (typeof document !== 'undefined' && document.visibilityState === 'visible') startAutoBackupTimer();
-          else stopAutoBackupTimer();
-      };
-      syncToVisibility();
-      document.addEventListener('visibilitychange', syncToVisibility);
-      window.addEventListener('pagehide', stopAutoBackupTimer);
-
-      // Capacitor 原生前后台（Android 上切后台 visibilitychange 不一定可靠，双保险）
-      let capSub: { remove: () => void } | null = null;
-      import('@capacitor/app').then(({ App }) => App.addListener('appStateChange', (s) => {
-          if (s.isActive) startAutoBackupTimer(); else stopAutoBackupTimer();
-      })).then((sub) => { capSub = sub as unknown as { remove: () => void }; }).catch(() => { /* web 端无原生插件，忽略 */ });
-
-      return () => {
-          stopAutoBackupTimer();
-          document.removeEventListener('visibilitychange', syncToVisibility);
-          window.removeEventListener('pagehide', stopAutoBackupTimer);
-          try { capSub?.remove(); } catch { /* noop */ }
-      };
-  }, [cloudBackupConfig.autoBackup, cloudBackupConfig.enabled]);
 
   const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
       const { downloadBackup } = await loadBackupProvider();

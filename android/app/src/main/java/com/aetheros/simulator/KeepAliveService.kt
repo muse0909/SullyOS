@@ -24,6 +24,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -37,6 +38,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class KeepAliveService : Service() {
@@ -48,6 +50,13 @@ class KeepAliveService : Service() {
         // 暮色 2026-08-29 P0 第二步：WebSocket 推送通道（客户端）
         // 连接地址先硬编码 — 后续 worker/proactive-push 部署后改这里
         private const val WS_URL = "wss://PLACEHOLDER_URL/ws/push"
+        // 暮色 2026-08-29 P0 第三步配套：服务端 CLIENT_TOKEN 占位
+        //   跟 worker wrangler.toml 里的 CLIENT_TOKEN 保持一致 — 部署后改这里
+        private const val WS_TOKEN = "PLACEHOLDER_TOKEN"
+        // SharedPreferences 存 userId（UUID）的 prefs 文件名
+        private const val PREFS_NAME = "keep_alive_prefs"
+        // userId 在 prefs 里的 key
+        private const val KEY_WS_USER_ID = "ws_user_id"
         // 应用层心跳：每 30s 发 {"type":"ping"}
         private const val PING_INTERVAL_MS = 30_000L
         // 60s 内没收到任何服务端消息 → 主动 close 触发重连
@@ -199,7 +208,11 @@ class KeepAliveService : Service() {
         // 避免重复连接
         if (webSocket != null) return
 
-        val request = Request.Builder().url(WS_URL).build()
+        // 暮色 2026-08-29 P0 第三步配套：userId 从 SharedPreferences 读
+        //   没存过就 UUID.randomUUID() 生成一个写回去，后续复用（同一台手机同一个）
+        val userId = getOrCreateUserId()
+        val fullUrl = "$WS_URL?userId=$userId&token=$WS_TOKEN"
+        val request = Request.Builder().url(fullUrl).build()
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 lastMessageTime = System.currentTimeMillis()
@@ -282,5 +295,20 @@ class KeepAliveService : Service() {
             .build()
         val notificationId = PROACTIVE_NOTIFICATION_ID_OFFSET + Math.abs(characterId.hashCode())
         getSystemService(NotificationManager::class.java).notify(notificationId, notification)
+    }
+
+    /**
+     * 暮色 2026-08-29 P0 第三步配套：从 SharedPreferences 拿持久化 userId
+     *   没存过就 UUID.randomUUID() 生成一个写回去
+     *   一台手机一个，卸载重装会变（跟 Web Push endpoint 行为一致）
+     *   Service 是单线程（默认在主线程），不需要锁
+     */
+    private fun getOrCreateUserId(): String {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(KEY_WS_USER_ID, null)
+        if (existing != null) return existing
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_WS_USER_ID, newId).apply()
+        return newId
     }
 }

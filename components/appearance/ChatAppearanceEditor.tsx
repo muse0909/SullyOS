@@ -453,9 +453,11 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
     };
 
     // 悬浮面板内左右翻页：一页一个主题，改哪项都能立刻在后面的预览里看到。
-    // 暮色 2026-08-27 第四步：「快速预设」从浮层 page 0 拎到主区域 groupClass section（紧邻「自定义 CSS」上半），
-    //   所以浮层只剩 5 页（聊天壳/头部/气泡与头像/细节微调/表情包与输入栏），page 初值保持 0。
-    const PAGE_TITLES = ['聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
+    // 暮色 2026-08-29 第五步：浮层恢复 6 页（把「快速预设」加回 page 0）——
+    //   暮色反馈 8-29 看 Vercel 部署时找不到「快速预设」和「自定义 CSS」，
+    //   习惯了在浮层 page 0 找。主区域 groupClass section 保留不变（仍提供完整编辑区），
+    //   这样两个入口都能用：浮层 page 0 简洁切预设，主区域 section 完整编辑。
+    const PAGE_TITLES = ['快速预设', '聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
     const [page, setPage] = useState(0);
     const swipeStartX = useRef<number | null>(null);
     const goPage = (next: number) => setPage(Math.max(0, Math.min(PAGE_TITLES.length - 1, next)));
@@ -788,6 +790,26 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     <div className="mt-4">
                         <ChoiceGroup title="发送按钮" items={choices.send} value={sendButtonStyle} onPick={(value) => updateTheme({ chatSendButtonStyle: value as OSTheme['chatSendButtonStyle'] })} />
                     </div>
+                </>)}
+
+                {/* 暮色 2026-08-29 第五步：浮层末尾加「快速预设」页——之前 8-27 第四步删了 page 0 的"快速预设"
+                    拎到主区域 section，暮色反馈"在浮层找不到快速预设"。现在浮层末尾恢复一页（page 5），
+                    跟主区域 section 同时存在：浮层能切预设、主区域 section 仍是完整编辑区。 */}
+                {page === 5 && (<>
+                    <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {presets.map((preset) => (
+                            <button
+                                key={preset.name}
+                                onClick={() => updateTheme({ ...FINE_TUNE_DEFAULTS, ...preset.config })}
+                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition-all hover:border-primary/30 hover:bg-white active:scale-[0.98]"
+                            >
+                                <div className="text-xs font-bold text-slate-700">{preset.name}</div>
+                                <div className="mt-1 text-[10px] text-slate-400">{preset.desc}</div>
+                            </button>
+                        ))}
+                    </div>
+                    <p className="mt-3 text-[10px] text-slate-400">想编辑「自定义 CSS」请用下方主区域的「快速预设 + 自定义 CSS」section。</p>
                 </>)}
                 </div>
             </section>

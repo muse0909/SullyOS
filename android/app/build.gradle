@@ -42,6 +42,11 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // 暮色 2026-08-29 后台保活 P0 第二步：WebSocket 客户端
+    //   KeepAliveService 里用 OkHttp WebSocket 跟 Cloudflare Worker 建立长连接
+    //   4.12.0 是当前稳定版，minSdk 22 / Java 17 兼容
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
 }
 
 apply from: 'capacitor.build.gradle'

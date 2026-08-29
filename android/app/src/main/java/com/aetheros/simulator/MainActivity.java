@@ -1,10 +1,14 @@
 package com.aetheros.simulator;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.ViewGroup;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import com.getcapacitor.BridgeActivity;
 
@@ -18,8 +22,28 @@ public class MainActivity extends BridgeActivity {
         //   所以 PhoneUsagePlugin 在远程页面也能正常调
         registerPlugin(PhoneUsagePlugin.class);
 
+        // 暮色 2026-08-29 后台保活 P0 第一步：注册 KeepAlivePlugin
+        //   暴露 start() / stop() 给前端，让 index.tsx 在 appStateChange
+        //   切回前台时确认 KeepAliveService 还活着（兜底重启）。
+        //   下面第 44-50 行的 startForegroundService 是 8-27 已有的直启，**不要动**。
+        registerPlugin(KeepAlivePlugin.class);
+
         // 必须先 super.onCreate（它会初始化 bridge + WebView + 按 capacitor.config 加载 URL）
         super.onCreate(savedInstanceState);
+
+        // 暮色 2026-08-29 后台保活 P0 第二步：申请 POST_NOTIFICATIONS 权限（Android 13+ 强制）
+        //   不申请的话 KeepAliveService 收到的主动消息完全弹不出来（用户在系统设置里也得手动开）
+        //   放在 startForegroundService 之前 — 申请是非阻塞弹窗，先确保权限再起服务
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    new String[] { Manifest.permission.POST_NOTIFICATIONS },
+                    1001
+                );
+            }
+        }
 
         // 暮色 2026-08-27：原生 WebView 缩放方案（setInitialScale/setSupportZoom 等）已撤销，
         //   改用纯前端 CSS zoom —— 前端 utils/pageZoom.ts + 设置页「页面缩放」滑条，

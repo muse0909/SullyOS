@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { App as CapacitorApp } from '@capacitor/app';
 import App from './App';
 import { ActiveMsgRuntime } from './utils/activeMsgRuntime';
 import { KeepAlive } from './utils/keepAlive';
@@ -10,6 +11,10 @@ import { installWakeListener } from './utils/proactivePushConfig';
 // 暮色 2026-08-27：页面缩放（设置页 70%-130% 可调）— 启动时先于 React 渲染恢复，
 //   避免首帧按 100% 渲染再跳变；实现见 utils/pageZoom.ts
 import { applyPageZoom } from './utils/pageZoom';
+// 暮色 2026-08-29 后台保活 P0 第一步：Capacitor 桥 + appStateChange 监听
+//   切回前台时调 KeepAliveNative.start() 兜底重启 KeepAliveService
+//   启动时不调 start() — MainActivity 8-27 已在 onCreate 直启过
+import { KeepAlive as KeepAliveNative } from './utils/keepAlivePlugin';
 // 暮色 2026-08-27 第二步：用户自定义聊天白框 CSS —— 启动加载
 import { bootstrapUserCustomCss } from './utils/customCssPresets';
 // 暮色 2026-07-21：挂 DB 到 window — console 一键 dedup 暴增的 memoryLinks（295555 条）
@@ -32,6 +37,15 @@ KeepAlive.init().then(() => {
 });
 
 installIOSStandaloneWorkaround();
+
+// 暮色 2026-08-29 后台保活 P0 第一步：监听 App 前后台切换
+//   切回前台时调 KeepAliveNative.start()（幂等）兜底重启 KeepAliveService
+//   Web 端不触发此事件，Capacitor 插件在非原生平台也是 no-op
+void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+  if (isActive) {
+    void KeepAliveNative.start();
+  }
+});
 
 // 暮色 2026-08-27：应用页面缩放（必须在首次 render 之前，React 挂载前 root 还是空的，不会闪）
 applyPageZoom();

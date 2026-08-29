@@ -2087,6 +2087,10 @@ export interface CloudBackupConfig {
 
     lastBackupTime?: number;    // timestamp
     lastBackupSize?: number;    // bytes
+
+    // 自动备份（暮色 2026-08-29）：开启后前台每小时自动触发一次轻量同步备份
+    autoBackup?: boolean;
+    lastAutoBackupTime?: number; // 上次自动备份成功的时间戳（与手动备份的 lastBackupTime 分开记）
 }
 
 export interface CloudBackupFile {

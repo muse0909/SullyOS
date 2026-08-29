@@ -453,9 +453,10 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
     };
 
     // 悬浮面板内左右翻页：一页一个主题，改哪项都能立刻在后面的预览里看到。
-    // 暮色 2026-08-27 第四步：「快速预设」从浮层 page 0 拎到主区域 groupClass section（紧邻「自定义 CSS」上半），
-    //   所以浮层只剩 5 页（聊天壳/头部/气泡与头像/细节微调/表情包与输入栏），page 初值保持 0。
-    const PAGE_TITLES = ['聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
+    // 暮色 2026-08-29 第六步：浮层顶栏加「快速预设」(page 0) 和「自定义 CSS」(page 1) 两个页签，
+    //   跟「聊天壳/头部/...」排成一行；原本 5 个页签全部后移到 page 2~6。主区域里同名的 section
+    //   保留（不再重复渲染），这样浮层里能直接切预设/写 CSS，不用滚主区域。
+    const PAGE_TITLES = ['快速预设', '自定义 CSS', '聊天壳', '头部', '气泡与头像', '细节微调', '表情包与输入栏'];
     const [page, setPage] = useState(0);
     const swipeStartX = useRef<number | null>(null);
     const goPage = (next: number) => setPage(Math.max(0, Math.min(PAGE_TITLES.length - 1, next)));
@@ -697,14 +698,37 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                         if (Math.abs(dx) > 48) goPage(page + (dx < 0 ? 1 : -1));
                     }}
                 >
+                {/* 暮色 2026-08-29 第六步：浮层 page 0 = 快速预设，page 1 = 自定义 CSS。
+                    渲染内容复用主区域 section 的同一组数据（presets 数组 + CustomCssPanel 组件），
+                    标题和内容走同一组 PAGE_TITLES 索引驱动，物理上不可能错位。 */}
                 {page === 0 && (<>
+                    <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {presets.map((preset) => (
+                            <button
+                                key={preset.name}
+                                onClick={() => updateTheme({ ...FINE_TUNE_DEFAULTS, ...preset.config })}
+                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition-all hover:border-primary/30 hover:bg-white active:scale-[0.98]"
+                            >
+                                <div className="text-xs font-bold text-slate-700">{preset.name}</div>
+                                <div className="mt-1 text-[10px] text-slate-400">{preset.desc}</div>
+                            </button>
+                        ))}
+                    </div>
+                </>)}
+
+                {page === 1 && (<>
+                    <CustomCssPanel />
+                </>)}
+
+                {page === 2 && (<>
                     <ChoiceGroup title="聊天壳" items={choices.chrome} value={chromeStyle} onPick={(value) => updateTheme({ chatChromeStyle: value as OSTheme['chatChromeStyle'] })} />
                     <div className="mt-4">
                         <ChoiceGroup title="消息区背景" items={choices.background} value={backgroundStyle} onPick={(value) => updateTheme({ chatBackgroundStyle: value as OSTheme['chatBackgroundStyle'] })} />
                     </div>
                 </>)}
 
-                {page === 1 && (<>
+                {page === 3 && (<>
                 <ChoiceGroup title="头部风格" items={choices.header} value={headerStyle} onPick={(value) => updateTheme({ chatHeaderStyle: value as OSTheme['chatHeaderStyle'] })} />
                 <div className="mt-4">
                     <ChoiceGroup title="头部对齐" items={choices.align} value={headerAlign} onPick={(value) => updateTheme({ chatHeaderAlign: value as OSTheme['chatHeaderAlign'] })} />
@@ -730,7 +754,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </div>
                 </>)}
 
-                {page === 2 && (<>
+                {page === 4 && (<>
                 <ChoiceGroup title="消息气泡" items={choices.bubble} value={bubbleStyle} onPick={(value) => updateTheme({ chatBubbleStyle: value as OSTheme['chatBubbleStyle'] })} />
                 <div className="mt-4">
                     <ChoiceGroup title="头像形状" items={choices.avatarShape} value={avatarShape} onPick={(value) => updateTheme({ chatAvatarShape: value as OSTheme['chatAvatarShape'] })} />
@@ -763,7 +787,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </>)}
 
                 {/* 聊天细节微调 —— 收编社区白框美化的可视化版（控件组件与聊天内「聊天装扮」弹窗共用） */}
-                {page === 3 && (<>
+                {page === 5 && (<>
                     <p className="mb-3 text-[10px] leading-relaxed text-slate-400">
                         头像显隐/对齐、贴边、字号行距——不用再手写 CSS，改动实时反映在上方预览里。
                         手写过美化代码的老用户不受影响：<b>你的自定义 CSS 优先级更高</b>，永远盖得过这里。
@@ -779,7 +803,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     </p>
                 </>)}
 
-                {page === 4 && (<>
+                {page === 6 && (<>
                     <ChoiceGroup title="表情包大小" items={choices.emojiSize} value={theme.chatEmojiSize || 'small'} onPick={(value) => updateTheme({ chatEmojiSize: value as OSTheme['chatEmojiSize'] })} />
                     <p className="mt-2 text-[10px] text-slate-400">聊天和群聊里发出的表情包图片尺寸。用自定义 CSS 调过尺寸的美化会继续覆盖这里的设置。（表情包尺寸预览里看不到，进聊天发一张试试。）</p>
                     <div className="mt-4">

@@ -13,6 +13,11 @@
 
 import { prepareVapid, sendPush, type VapidContext, type PushSubscription } from './webpush';
 
+// 暮色 2026-08-29 P0 第三步：WebSocket 直推通道（服务端）
+// WsHub 是 Durable Object，握住所有在线客户端的 WebSocket 连接
+import { WsHub } from './wsHub';
+export { WsHub };  // CF Workers 要求 DO class 必须从入口 export
+
 interface Env {
   DB: D1Database;
   VAPID_PUBLIC_KEY: string;     // set via `wrangler secret put`
@@ -20,6 +25,7 @@ interface Env {
   VAPID_SUBJECT: string;
   CLIENT_TOKEN: string;         // shared secret (optional; empty = no check)
   HEARTBEAT_WINDOW_MS: string;
+  WS_HUB: DurableObjectNamespace;   // 暮色 2026-08-29 P0 第三步：DO binding
 }
 
 interface ScheduleRow {
@@ -161,7 +167,7 @@ async function handleTest(req: Request, env: Env): Promise<Response> {
 }
 
 // ---------- cron ----------
-async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: number }> {
+async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: number; wsDelivered: number }> {
   const now = Date.now();
   const hbWindow = parseInt(env.HEARTBEAT_WINDOW_MS || '300000', 10) || 300_000;
   const cutoff = now - hbWindow;
@@ -176,14 +182,51 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
   `).bind(now, cutoff).all<ScheduleRow>();
 
   if (!due.results || due.results.length === 0) {
-    return { fired: 0, dropped: 0 };
+    return { fired: 0, dropped: 0, wsDelivered: 0 };
   }
 
   const vapid = await getVapid(env);
   let fired = 0;
   let dropped = 0;
+  let wsDelivered = 0;
 
   for (const row of due.results) {
+    // 暮色 2026-08-29 P0 第三步：WebSocket 优先 — 有在线客户端就直接推
+    //   content 字段目前是 charId 占位（跟 wake push 同级），后续 Android 端
+    //   决定怎么展示；广播已送达（delivered>0）就跳过 Web Push 不双发
+    let wsOk = false;
+    try {
+      const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+      const broadcastRes = await stub.fetch('https://ws-hub/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          characterId: row.char_id,
+          content: row.char_id,     // 占位 — 后续接角色名/消息文本
+          timestamp: now,
+        }),
+      });
+      if (broadcastRes.ok) {
+        const broadcastData = await broadcastRes.json<{ delivered?: number }>();
+        if ((broadcastData?.delivered ?? 0) > 0) {
+          wsOk = true;
+          wsDelivered += broadcastData.delivered ?? 0;
+        }
+      }
+    } catch (e) {
+      console.warn('[cron] ws broadcast failed, falling back to web push', e);
+    }
+
+    // WS 送达 → 跳过 Web Push，但仍推进 next_fire_at（同一条路径维护调度）
+    if (wsOk) {
+      let nextWs = row.next_fire_at + row.interval_ms;
+      if (nextWs <= now) nextWs = now + row.interval_ms;
+      await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`)
+        .bind(nextWs, row.endpoint, row.char_id).run();
+      fired++;
+      continue;
+    }
+
     const payload = JSON.stringify({ type: 'proactive-wake', charId: row.char_id, t: now });
     try {
       const result = await sendPush(
@@ -213,7 +256,7 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
     }
   }
 
-  return { fired, dropped };
+  return { fired, dropped, wsDelivered };
 }
 
 // ---------- main ----------
@@ -246,6 +289,26 @@ export default {
     const tokenErr = checkToken(req, env);
     if (tokenErr) return tokenErr;
 
+    // 暮色 2026-08-29 P0 第三步：WebSocket upgrade
+    //   路径 /ws/push，token 从 query 传（Android OkHttp 简单拼 URL）：
+    //     wss://<worker-host>/ws/push?userId=xxx&token=xxx
+    //   转发给 Durable Object — WS 连接握在 DO 手里跨 isolate 可见
+    if (url.pathname === '/ws/push' && req.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      // query token 鉴权 — 跟 HTTP 路由的 X-Client-Token 等价
+      if (env.CLIENT_TOKEN) {
+        const got = url.searchParams.get('token');
+        if (got !== env.CLIENT_TOKEN) return json({ error: 'unauthorized' }, 401);
+      }
+      const userId = url.searchParams.get('userId');
+      if (!userId) return json({ error: 'userId required' }, 400);
+
+      const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+      const hubUrl = new URL(req.url);
+      hubUrl.pathname = '/connect';
+      const upgradeReq = new Request(hubUrl.toString(), req);
+      return stub.fetch(upgradeReq);
+    }
+
     if (url.pathname === '/subscribe' && req.method === 'POST') return handleSubscribe(req, env);
     if (url.pathname === '/unsubscribe' && req.method === 'POST') return handleUnsubscribe(req, env);
     if (url.pathname === '/heartbeat' && req.method === 'POST') return handleHeartbeat(req, env);
@@ -258,8 +321,8 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil((async () => {
       const result = await runScheduledSweep(env);
-      if (result.fired || result.dropped) {
-        console.log(`[cron] fired=${result.fired} dropped=${result.dropped}`);
+      if (result.fired || result.dropped || result.wsDelivered) {
+        console.log(`[cron] fired=${result.fired} dropped=${result.dropped} ws=${result.wsDelivered}`);
       }
     })());
   },

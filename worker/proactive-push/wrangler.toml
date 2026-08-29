@@ -16,6 +16,17 @@ binding = "DB"
 database_name = "proactive-db"
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 
+## 暮色 2026-08-29 P0 第三步：Durable Object — WebSocket 连接池
+## WsHub 握住所有在线 Android 客户端的 WS 连接，cron 广播主动消息走这里
+[[durable_objects.bindings]]
+name = "WS_HUB"
+class_name = "WsHub"
+
+## 首次部署时 CF 会按这个 migration 建 DO 类；改过 class 名要加新 tag
+[[migrations]]
+tag = "v1"
+new_classes = ["WsHub"]
+
 ## 每分钟扫一次即可；30 分钟间隔的主动消息粒度完全够用。
 [triggers]
 crons = ["* * * * *"]

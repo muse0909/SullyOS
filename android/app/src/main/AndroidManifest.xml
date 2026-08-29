@@ -64,4 +64,8 @@
          FOREGROUND_SERVICE_SPECIAL_USE — Android 14+ 要求 FGS 必须带类型，specialUse 是兜底类型 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- 暮色 2026-08-29 后台保活 P0 第二步：Android 13+ 通知运行时权限
+         没声明的话 MainActivity 里的 requestPermissions 调用无效，主动消息通知弹不出来 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

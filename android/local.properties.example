@@ -1,0 +1,23 @@
+# local.properties 模板 — 复制为 local.properties 填真值
+#
+# ⚠️ local.properties 默认在 .gitignore 里，不会提交到 git。
+#    敏感值（WS_TOKEN 等）绝不要写进 gradle.properties（那个会进 git）。
+#
+# 字段说明（跟 android/app/build.gradle 里 readCfg 的 key 一一对应）：
+#   KEEP_ALIVE_WS_URL          — WebSocket 服务端地址（Cloudflare Worker）
+#                                配 proactive-push worker 的 /ws/push 路径
+#                                例：wss://proactive-push.你的子域.workers.dev/ws/push
+#   KEEP_ALIVE_WS_TOKEN        — 跟 Worker 的 CLIENT_TOKEN 一致（共享密钥）
+#   KEEP_ALIVE_VAPID_PUBLIC_KEY — VAPID 公钥（公开值，理论上可不填；填了完整）
+#   KEEP_ALIVE_LOG             — 诊断日志开关（true / false）
+#                                true = logcat 大量输出 [KeepAlive] tag，调试用
+#                                false = 生产推荐
+#
+# sdk.dir 由 Android Studio / cap 自动写，不用动
+sdk.dir=/opt/homebrew/share/android-commandlinetools
+
+# 后台保活 — 用占位符时 build 会 warn，主动消息通道不工作
+#KEEP_ALIVE_WS_URL=wss://proactive-push.qegj567.workers.dev/ws/push
+#KEEP_ALIVE_WS_TOKEN=替换成 worker 的 CLIENT_TOKEN
+#KEEP_ALIVE_VAPID_PUBLIC_KEY=替换成 worker 的 VAPID 公钥
+#KEEP_ALIVE_LOG=false

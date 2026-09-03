@@ -27,6 +27,11 @@ dist-ssr
 # xiaohongshu-skills (cloned dependency)
 xiaohongshu-skills/
 
+# 麦麦 2026-09-03：本地 .env（放敏感值），.env.example 进 git
+.env
+.env.local
+.env.*.local
+
 # Android — gradle build 输出 + 本地配置（暮色 2026-08-26 角色查手机 P0 加）
 android/.gradle/
 android/build/

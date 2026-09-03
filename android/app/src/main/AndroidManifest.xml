@@ -68,4 +68,10 @@
     <!-- 暮色 2026-08-29 后台保活 P0 第二步：Android 13+ 通知运行时权限
          没声明的话 MainActivity 里的 requestPermissions 调用无效，主动消息通知弹不出来 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 麦麦 2026-09-03：电池优化白名单
+         加了之后可以调 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 让用户加白名单
+         用途：Doze 模式下系统可能断长连接 WebSocket；加白名单后 Doze 不影响本 app
+         暮色 9-3 反馈明确要求"电池优化提示"——设置页会引导用户开启 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

@@ -144,23 +144,32 @@ async function handleStatus(req: Request, env: Env): Promise<Response> {
  * so the client only has to send the endpoint URL.
  */
 async function handleTest(req: Request, env: Env): Promise<Response> {
-  const body = await readJson<{ endpoint?: string }>(req);
-  if (!body?.endpoint) return json({ error: 'endpoint required' }, 400);
+  // 麦麦 2026-09-03：改成走 WS broadcast — 不查 schedules / 不发 VAPID
+  // 目的：暮色手动 curl 触发，验证 Android KeepAliveService WS onMessage → 弹通知
+  // 不需要前端先调 /subscribe 写 schedules（cron 路径才需要）
+  const body = await readJson<{ characterId?: string; content?: string }>(req);
+  const characterId = body?.characterId || '麦麦';
+  const content = body?.content || '麦麦测试消息 — ' + new Date().toISOString();
 
-  const row = await env.DB.prepare(
-    `SELECT endpoint, p256dh, auth FROM schedules WHERE endpoint = ?1 LIMIT 1`
-  ).bind(body.endpoint).first<{ endpoint: string; p256dh: string; auth: string }>();
-  if (!row) return json({ error: 'subscription not found — open the app once with push enabled, then retry' }, 404);
-
-  const vapid = await getVapid(env);
-  const payload = JSON.stringify({ type: 'proactive-test', t: Date.now() });
   try {
-    const result = await sendPush(vapid, row, payload);
-    if (result.gone) {
-      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1`).bind(row.endpoint).run();
-      return json({ ok: false, status: result.status, reason: 'subscription expired and was removed' }, 410);
-    }
-    return json({ ok: result.ok, status: result.status, body: result.responseText || '' });
+    const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+    const res = await stub.fetch('https://ws-hub/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        characterId,
+        content,
+        timestamp: Date.now(),
+      }),
+    });
+    const data = await res.json<{ delivered?: number }>();
+    return json({
+      ok: res.ok,
+      status: res.status,
+      delivered: data?.delivered ?? 0,
+      characterId,
+      content,
+    });
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
   }
@@ -285,29 +294,56 @@ export default {
       return json({ ok: true });
     }
 
-    // All other routes require the shared token if configured.
-    const tokenErr = checkToken(req, env);
-    if (tokenErr) return tokenErr;
-
     // 暮色 2026-08-29 P0 第三步：WebSocket upgrade
     //   路径 /ws/push，token 从 query 传（Android OkHttp 简单拼 URL）：
     //     wss://<worker-host>/ws/push?userId=xxx&token=xxx
+    //   **必须提到 checkToken 之前** —— 暮色 2026-09-03 反馈握手 401 真因：
+    //   checkToken 检查的是 X-Client-Token 头，但 WS 用 query 传，checkToken
+    //   在没看到头的情况下直接 401 拦掉了，根本到不了这里。
     //   转发给 Durable Object — WS 连接握在 DO 手里跨 isolate 可见
-    if (url.pathname === '/ws/push' && req.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+    //
+    // 暮色 2026-09-03 第二轮反馈：即使提到 checkToken 之前，curl 经 HTTP/2
+    //   代理访问时 Upgrade 头被 CF 默默丢弃（HTTP/2 协议不支持 Upgrade，
+    //   RFC 7540 8.1），导致 req.headers.get('Upgrade') === null，
+    //   整个 WS 分支根本进不去。所以这里改成：**只靠 path + query token
+    //   鉴权**，不依赖 Upgrade 头；只有真的转发给 DO 时才检查 Upgrade。
+    if (url.pathname === '/ws/push') {
       // query token 鉴权 — 跟 HTTP 路由的 X-Client-Token 等价
-      if (env.CLIENT_TOKEN) {
-        const got = url.searchParams.get('token');
-        if (got !== env.CLIENT_TOKEN) return json({ error: 'unauthorized' }, 401);
+      const got = url.searchParams.get('token');
+      const envTok = env.CLIENT_TOKEN;
+      if (envTok) {
+        // 失败时返回详细诊断信息（只打长度不打印值，避免 secret 泄露）
+        if (got !== envTok) {
+          return json({
+            error: 'unauthorized',
+            reason: 'query token mismatch',
+            query_token_len: got?.length ?? 0,
+            env_token_len: envTok?.length ?? 0,
+            env_token_present: envTok != null && envTok !== '',
+            match: got === envTok,
+            userId: url.searchParams.get('userId'),
+          }, 401);
+        }
       }
       const userId = url.searchParams.get('userId');
       if (!userId) return json({ error: 'userId required' }, 400);
 
-      const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
-      const hubUrl = new URL(req.url);
-      hubUrl.pathname = '/connect';
-      const upgradeReq = new Request(hubUrl.toString(), req);
-      return stub.fetch(upgradeReq);
+      // 真正的 WS upgrade（Android OkHttp 直连会带 Upgrade 头）才转发给 DO
+      // 经 HTTP/2 代理时 Upgrade 头被丢 → 走诊断分支（token 验证 + hint）
+      if (req.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+        const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+        const hubUrl = new URL(req.url);
+        hubUrl.pathname = '/connect';
+        const upgradeReq = new Request(hubUrl.toString(), req);
+        return stub.fetch(upgradeReq);
+      }
+      // token 通过了但没有 Upgrade 头 — 诊断场景（curl 经 HTTP/2 代理）
+      return json({ ok: true, hint: 'token valid, no WS Upgrade header (curl via HTTP/2 proxy). Real clients use HTTP/1.1 + Upgrade.' });
     }
+
+    // All other routes require the shared token if configured.
+    const tokenErr = checkToken(req, env);
+    if (tokenErr) return tokenErr;
 
     if (url.pathname === '/subscribe' && req.method === 'POST') return handleSubscribe(req, env);
     if (url.pathname === '/unsubscribe' && req.method === 'POST') return handleUnsubscribe(req, env);

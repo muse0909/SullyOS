@@ -1,3 +1,12 @@
+// 麦麦 2026-09-03：module worker 模式下 DurableObject 不是 global，
+// 必须从 cloudflare:workers 显式 import 才能 extends（否则运行时 "DurableObject is not defined"）
+// 注意：build 脚本对 proactive-push 加了 external: ['cloudflare:workers']，所以 esbuild
+// 不会去 Mac 上解析这个虚拟模块，import 字符串原样留在 bundle.js 里。
+// CF 运行时 worker 看到 import { DurableObject } from "cloudflare:workers" 会从
+// CF 提供的虚拟 module 拿到 DurableObject。
+import { DurableObject } from "cloudflare:workers";
+type DurableObjectState = any;  // 顺手类型 — 实际运行时 ctx 由 CF 注入
+
 /**
  * WsHub — Cloudflare Durable Object holding live WebSocket connections.
  *
@@ -19,8 +28,14 @@
  * 不持久化：DO 重启内存清空，客户端会断线重连并重新注册，可接受。
  */
 
-export class WsHub implements DurableObject {
+export class WsHub extends DurableObject {
   private readonly connections: Map<string, Set<WebSocket>> = new Map();
+
+  // 麦麦 2026-09-03：CF 静态分析只认 extends DurableObject，不认 implements DurableObject
+  // 加显式 constructor 把 ctx/env 传给 super — DurableObject 父类要求
+  constructor(state: DurableObjectState, env: any) {
+    super(state, env);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

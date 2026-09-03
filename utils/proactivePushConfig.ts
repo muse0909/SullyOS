@@ -6,26 +6,55 @@
  * When disabled or misconfigured, every function becomes a no-op and the
  * existing local-timer path in proactiveChat.ts keeps working unchanged.
  *
- * Worker URL / VAPID public key / client token are baked in here as
- * constants — end users never see them.  After deploying the Worker via
- * the Cloudflare dashboard (see worker/proactive-push/README.md), fill
- * these three values and rebuild.  VAPID public keys are meant to be
- * public; the client token is weak "through obscurity" gating for a
- * personal-scale deployment.
+ * 麦麦 2026-09-03：配置从 import.meta.env 读，跟 Android BuildConfig 字段对齐。
+ *   - VITE_PROACTIVE_WORKER_URL     跟 android BuildConfig.WS_URL 同源（不是同一个，
+ *                                   各自是 web push 跟 web socket 两条独立通道）
+ *   - VITE_PROACTIVE_VAPID_PUBLIC_KEY
+ *   - VITE_PROACTIVE_CLIENT_TOKEN
+ *
+ * 留空 = 未配置，所有函数 no-op。.env.example 给模板，.env 本机填（gitignore）。
+ * 字段名跟 Android KEEP_ALIVE_* 同源但不等价：
+ *   - 前端这条路径是 Web Push（SW 收 push → 主线程 runProactive）
+ *   - Android 那条是 WebSocket（KeepAliveService 收 proactive_message → 弹系统通知）
+ * 两条独立、互不依赖。占位符时两端都 no-op，不弹通知。
  */
-
-// ═══════════════════════════════════════════════════════════════════
-//   FILL THESE IN AFTER DEPLOYING THE CLOUDFLARE WORKER
-//   (all three are safe to ship in the client bundle)
-// ═══════════════════════════════════════════════════════════════════
-const WORKER_URL = 'https://noir2.cc.cd';
-const VAPID_PUBLIC_KEY = 'BAKnuYYBsb6LXnpGApVCpMkumFqDLjZOSDmzjVPx32jIA5fbz-OWaRdk0RH8qftpVuNwzNO-l49CBEwieyezh0g';
-const CLIENT_TOKEN = 'weqwqewqeqwdcsccagdgs32132';
-// ═══════════════════════════════════════════════════════════════════
 
 const ENABLED_STORAGE_KEY = 'proactive_push_enabled_v1';
 const LAST_WAKE_AT_KEY = 'proactive_push_last_wake_at_v1';
 const LAST_WAKE_CHAR_KEY = 'proactive_push_last_wake_char_v1';
+
+// 麦麦 2026-09-03：占位符字面量 — 占位时 isPushConfigAvailable 返回 false
+const PLACEHOLDER_URL_MARKER = 'PLACEHOLDER_URL';
+
+// 麦麦 2026-09-03：从 Vite env 读，trim + 去掉尾部 /
+// 任何 env 缺失都返回空串 → isPushConfigAvailable 自动 false
+function readEnv(key: string): string {
+  try {
+    const v = (import.meta.env as Record<string, any>)[key];
+    return typeof v === 'string' ? v.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+export function getWorkerUrl(): string {
+  return readEnv('VITE_PROACTIVE_WORKER_URL').replace(/\/+$/, '');
+}
+
+export function getVapidPublicKey(): string {
+  return readEnv('VITE_PROACTIVE_VAPID_PUBLIC_KEY');
+}
+
+export function getClientToken(): string {
+  return readEnv('VITE_PROACTIVE_CLIENT_TOKEN');
+}
+
+/** True if the deployment constants are filled in (regardless of user toggle). */
+export function isPushConfigAvailable(): boolean {
+  const url = getWorkerUrl();
+  const vapid = getVapidPublicKey();
+  return url.startsWith('https://') && !url.includes(PLACEHOLDER_URL_MARKER) && vapid.length > 80;
+}
 
 export interface ProactivePushConfig {
   enabled: boolean;
@@ -41,9 +70,9 @@ export function loadPushConfig(): ProactivePushConfig {
   } catch { /* ignore */ }
   return {
     enabled,
-    workerUrl: WORKER_URL.trim().replace(/\/+$/, ''),
-    vapidPublicKey: VAPID_PUBLIC_KEY.trim(),
-    clientToken: CLIENT_TOKEN.trim(),
+    workerUrl: getWorkerUrl(),
+    vapidPublicKey: getVapidPublicKey(),
+    clientToken: getClientToken(),
   };
 }
 
@@ -61,10 +90,8 @@ export function isPushConfigReady(cfg: ProactivePushConfig = loadPushConfig()): 
     && cfg.vapidPublicKey.length > 80;
 }
 
-/** True if the deployment constants have been filled in (regardless of toggle). */
-export function isPushConfigAvailable(): boolean {
-  return WORKER_URL.startsWith('https://') && VAPID_PUBLIC_KEY.length > 80;
-}
+// 麦麦 2026-09-03：旧 isPushConfigAvailable 已提到文件顶部（读 env 版），
+//   这里的重复定义删除
 
 // ---------- Web Push subscription helpers ----------
 

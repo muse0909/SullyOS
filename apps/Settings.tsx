@@ -152,11 +152,19 @@ const PresetChip: React.FC<{
   return (
     <button
       type="button"
-      title="点击加载，长按删除"
+      title="点击加载，长按 / 右键删除"
       onPointerDown={handlePointerDown}
       onPointerUp={clearPress}
       onPointerLeave={clearPress}
       onPointerCancel={clearPress}
+      // 麦麦 2026-09-05：右键菜单双保险（有些浏览器/桌面 pointer events 不稳定，右键保底）
+      //   桌面浏览器：右键 chip → 弹确认 → 删
+      //   触屏：onContextMenu 通常不触发（只有长按 550ms 那条路）
+      //   不阻止 click（让 click 正常触发 load 逻辑）
+      onContextMenu={(e) => {
+          e.preventDefault();
+          onRequestDelete();
+      }}
       onClick={handleClick}
       className={`rounded-lg px-3 py-1.5 text-xs font-medium border shadow-sm transition-all ${active ? activeClassName : idleClassName} ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
     >

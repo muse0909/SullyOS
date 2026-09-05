@@ -552,10 +552,11 @@ export interface XiaoZhiTiao {
 // 麦麦 2026-09-05：角色备忘录（CharacterMemo）
 //   江澈 9-5 给的指令 — 角色（AI）自己通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护
 //   用户端（暮色）只读 — 只能在发现页看
-//   三区域：状态（从记忆宫殿迁过来）/ 最近重点事件（≤5 条滚动）/ 私人笔记
-//   30 条上限 = 三区域合计
-//   暮色 9-5 明确：跟记忆宫殿/小纸条/世界观都不冲突，是"角色时刻要看的东西"
-export type CharacterMemoRegion = 'status' | 'event' | 'private';
+//   暮色 9-5 进一步要求（结构独立分离）：
+//   - 状态面板拆出独立模块（5 固定槽 + 整体覆盖）
+//   - 备忘录剩 event + private 2 种 region
+//   - 30 条上限 = memo 合计
+export type CharacterMemoRegion = 'event' | 'private';
 
 export interface CharacterMemoEntry {
     id: number;                          // 每角色独立自增 1, 2, 3...
@@ -568,9 +569,21 @@ export interface CharacterMemoEntry {
 
 export interface CharacterMemo {
     charId: string;                       // 主键（一角色一份）
-    entries: CharacterMemoEntry[];        // 已按 region 排序：status → event → private
+    entries: CharacterMemoEntry[];        // 已按 region 排序：event → private
     nextId: number;                       // 下一个自增 id（从 1 开始）
     updatedAt: number;                    // 最后一次增删改
+}
+
+// 麦麦 2026-09-05：状态面板（从记忆宫殿迁过来 + 独立模块）
+//   暮色 9-5 要求：与 memo 条目**完全独立**，不混在 memo entries 里
+//   5 个固定槽（location/health/schedule/mood/reminder）— 单条整体覆盖
+//   token: [[MEMO_SET_STATUS: slot | 内容]] / [[MEMO_CLEAR_STATUS: slot]]
+export type CharacterStatusSlot = 'location' | 'health' | 'schedule' | 'mood' | 'reminder';
+
+export interface CharacterStatusPanel {
+    charId: string;
+    slots: Partial<Record<CharacterStatusSlot, string>>;
+    updatedAt: number;
 }
 
 export interface XiaoZhiTiaoReply {

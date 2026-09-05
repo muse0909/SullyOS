@@ -1,38 +1,113 @@
 /**
- * 角色备忘录 (CharacterMemo)
+ * 角色备忘录（CharacterMemo）— 暮色 9-5 指令
  *
  * 江澈 2026-09-05 指令（暮色从江澈那收到后转交给麦麦实现）：
- *   - 三区域：status（状态面板，从 memoryPalace.statusPanel 迁过来）/
- *             event（最近重点事件，5 条以内，滚动更新）/
- *             private（私人笔记）
- *   - 30 条上限 = 三区域合计
- *   - 角色（AI）通过聊天回复里输出 [[MEMO_ADD|EDIT|DEL:...]] token 维护
- *   - 暮色（用户）只读，不能编辑
- *   - 注入：每次拼提示词时全量注入（30 条以内不长），放在 BP3 记忆宫殿之前
+ *   暮色 9-5 进一步要求（暮色 9-5 20:32 改）：
+ *   - **结构独立分离**：状态面板 + 备忘录条目 两个独立模块
+ *   - 状态面板 = 5 个固定槽（location/health/schedule/mood/reminder）整体覆盖
+ *   - 备忘录条目 = 重点事件（5 条滚动） + 私人笔记（不限）
+ *   - 两个模块**数据结构 + 更新逻辑解耦**
  *
- * 麦麦 2026-09-05 落地方案：
- *   - IDB store: character_memos（keyPath: charId）
- *   - 角色写：chatParser 解析 token → 调 add/edit/deleteMemo
- *   - 暮色读：useCharacterMemo hook + DiscoverPage 只读展示
- *   - 状态面板：memoryPalace.statusPanel 迁过来后，旧的 panel store 标记 deprecated
+ * 麦麦 2026-09-05 重构：
+ *   - 状态面板拆成独立 IDB store: character_status_panels（按 charId 唯一）
+ *   - 备忘录 IDB store: character_memos（剩 event + private 2 种 region）
+ *   - 状态面板走 setStatusSlot(charId, slot, value) 整体覆盖
+ *   - 备忘录走 addMemo / editMemo / deleteMemo（不变）
  */
 
 import { DB } from './db';
-import type { CharacterMemo, CharacterMemoEntry, CharacterMemoRegion } from '../types';
+import type {
+    CharacterMemo,
+    CharacterMemoEntry,
+    CharacterMemoRegion,
+    CharacterStatusPanel,
+    CharacterStatusSlot,
+} from '../types';
 
 const REGION_ORDER: Record<CharacterMemoRegion, number> = {
-    status: 0,
-    event: 1,
-    private: 2,
+    event: 0,
+    private: 1,
 };
 
-const MAX_ENTRIES = 30;            // 三区域合计上限
-const MAX_EVENT_ENTRIES = 5;       // 区域二（event）滚动上限
+const MAX_ENTRIES = 30;            // memo 合计上限
+const MAX_EVENT_ENTRIES = 5;       // event 区滚动上限
 const DEFAULT_REGION_LABELS: Record<CharacterMemoRegion, string> = {
-    status: '状态面板',
     event: '最近重点事件',
     private: '私人笔记',
 };
+
+const DEFAULT_STATUS_LABELS: Record<CharacterStatusSlot, string> = {
+    location: '所在地',
+    health: '身体',
+    schedule: '在忙',
+    mood: '情绪',
+    reminder: '约定/待办',
+};
+
+// ==================== 状态面板 ====================
+
+/** 取状态面板（不存在就返回空骨架） */
+export async function getStatusPanel(charId: string): Promise<CharacterStatusPanel> {
+    const existing = await DB.getCharacterStatusPanel(charId);
+    if (existing) return existing;
+    return {
+        charId,
+        slots: {},
+        updatedAt: Date.now(),
+    };
+}
+
+/** 整体覆盖单个槽 */
+export async function setStatusSlot(
+    charId: string,
+    slot: CharacterStatusSlot,
+    value: string
+): Promise<CharacterStatusPanel> {
+    const panel = await getStatusPanel(charId);
+    panel.slots[slot] = value.trim();
+    panel.updatedAt = Date.now();
+    await DB.saveCharacterStatusPanel(panel);
+    return panel;
+}
+
+/** 清空单个槽（传空字符串 = 删除） */
+export async function clearStatusSlot(
+    charId: string,
+    slot: CharacterStatusSlot
+): Promise<CharacterStatusPanel> {
+    const panel = await getStatusPanel(charId);
+    delete panel.slots[slot];
+    panel.updatedAt = Date.now();
+    await DB.saveCharacterStatusPanel(panel);
+    return panel;
+}
+
+/** 状态面板拼成 prompt 文本（5 个固定槽，没值就显示空槽提示） */
+export function formatStatusPanelForPrompt(panel: CharacterStatusPanel | null | undefined): string {
+    if (!panel) return '';
+    const slotOrder: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];
+    const lines: string[] = [];
+    let hasAny = false;
+    for (const slot of slotOrder) {
+        const v = panel.slots[slot];
+        if (v && v.trim()) {
+            hasAny = true;
+        }
+    }
+    if (!hasAny) return '';
+    lines.push('【当前状态面板 (Status Panel)】');
+    lines.push('以下是你最近的状态（暮色 9-5 让你自己维护，单条整体覆盖）。');
+    lines.push('');
+    for (const slot of slotOrder) {
+        const v = panel.slots[slot];
+        if (v && v.trim()) {
+            lines.push(`- ${DEFAULT_STATUS_LABELS[slot]}: ${v}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+// ==================== 备忘录条目（event + private） ====================
 
 /** 取一份（不存在就返回空骨架） */
 export async function getMemo(charId: string): Promise<CharacterMemo> {
@@ -74,16 +149,16 @@ export async function addMemo(
     };
     memo.nextId += 1;
     memo.entries.push(entry);
-    // 区域二（event）超 5 条 — 按 updatedAt 淘汰最老的
+    // 区域 event 超 5 条 — 按 updatedAt 淘汰最老的
     const eventEntries = memo.entries.filter((e) => e.region === 'event')
         .sort((a, b) => a.updatedAt - b.updatedAt);
     if (eventEntries.length > MAX_EVENT_ENTRIES) {
         const toEvictIds = new Set(eventEntries.slice(0, eventEntries.length - MAX_EVENT_ENTRIES).map((e) => e.id));
         memo.entries = memo.entries.filter((e) => !toEvictIds.has(e.id));
     }
-    // 三区域合计超 30 — 按 updatedAt 淘汰最老的（非 status，因为状态是当前态）
+    // 合计超 30 — 按 updatedAt 淘汰最老的
     const evictable = memo.entries
-        .filter((e) => e.region !== 'status')
+        .slice()
         .sort((a, b) => a.updatedAt - b.updatedAt);
     if (memo.entries.length > MAX_ENTRIES) {
         const overage = memo.entries.length - MAX_ENTRIES;
@@ -127,22 +202,23 @@ export async function deleteMemo(
     return true;
 }
 
-/** 拼成纯文本注入 prompt（暮色定的"分区显示"） */
+/** memo 拼成 prompt 文本（按 region 分组，event 在前、private 在后） */
 export function formatMemoForPrompt(memo: CharacterMemo | null | undefined): string {
     if (!memo || memo.entries.length === 0) return '';
     const sorted = sortEntries(memo.entries);
     const byRegion: Record<CharacterMemoRegion, CharacterMemoEntry[]> = {
-        status: [],
         event: [],
         private: [],
     };
     for (const e of sorted) byRegion[e.region].push(e);
 
     const lines: string[] = [];
-    for (const region of ['status', 'event', 'private'] as CharacterMemoRegion[]) {
+    for (const region of ['event', 'private'] as CharacterMemoRegion[]) {
         const items = byRegion[region];
         if (items.length === 0) continue;
         lines.push(`【${DEFAULT_REGION_LABELS[region]}】`);
+        lines.push('以下是你想记住的事（暮色 9-5 让你自己维护，重点事件最多 5 条，私人笔记不限）。');
+        lines.push('');
         for (const item of items) {
             lines.push(`#${item.id} ${item.content}`);
         }
@@ -151,5 +227,7 @@ export function formatMemoForPrompt(memo: CharacterMemo | null | undefined): str
     return lines.join('\n').trimEnd();
 }
 
-/** 区域中文 label（UI 用） */
+// ==================== 导出 ====================
+
 export const REGION_LABELS = DEFAULT_REGION_LABELS;
+export const STATUS_LABELS = DEFAULT_STATUS_LABELS;

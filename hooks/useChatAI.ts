@@ -28,8 +28,8 @@ import type { DigestResult } from '../utils/memoryPalace';
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
 // 麦麦 2026-09-05：角色备忘录 token 解析（江澈 9-5 指令）
-import { addMemo, editMemo, deleteMemo } from '../utils/characterMemo';
-import type { CharacterMemoRegion } from '../types';
+import { addMemo, editMemo, deleteMemo, setStatusSlot, clearStatusSlot } from '../utils/characterMemo';
+import type { CharacterStatusSlot } from '../types';
 // 暮色 8-25：信箱（双向信件）token 解析 + 调度器启动
 import { createLetter as createMailboxLetter, markRead as mailboxMarkRead, MailboxEnvelope } from '../utils/mailboxStorage';
 import { startMailboxScheduler, checkAndDeliverPendingMailbox } from '../utils/mailboxScheduler';
@@ -3567,20 +3567,19 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
             // 麦麦 2026-09-05：5.9d-2 角色备忘录（CharacterMemo）token 解析
             //   江澈 9-5 指令 — 角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] 自己维护
+            //   暮色 9-5 进一步：状态面板独立 → 新加 [[MEMO_SET_STATUS: slot | 内容]] / [[MEMO_CLEAR_STATUS: slot]]
             //   暮色只读（在发现页看），不 addToast（用户看不到）
-            //   3 种 token：
-            //     [[MEMO_ADD: region | 内容]]   region 接受中英文（AI 实际偏好中文）
+            //   5 种 token：
+            //     [[MEMO_ADD: event|private | 内容]]    region 接受中英文
             //     [[MEMO_EDIT: ID | 新内容]]
             //     [[MEMO_DEL: ID]]
+            //     [[MEMO_SET_STATUS: location|health|schedule|mood|reminder | 内容]]   5 个固定槽，整体覆盖
+            //     [[MEMO_CLEAR_STATUS: slot]]    清空某个槽
             //   token strip 后 aiContent 不带这些（用户看到的是干净文本）
             if (aiContent.includes('[[MEMO_')) {
                 try {
-                    // region mapping：中文 → 内部 enum（AI 喜欢用"状态面板"而不是 "status"）
-                    const REGION_ALIAS: Record<string, CharacterMemoRegion> = {
-                        'status': 'status',
-                        'state': 'status',
-                        '状态': 'status',
-                        '状态面板': 'status',
+                    // region mapping：中文 → 内部 enum（AI 喜欢用"重点事件"而不是 "event"）
+                    const REGION_ALIAS: Record<string, 'event' | 'private'> = {
                         'event': 'event',
                         'events': 'event',
                         '事件': 'event',
@@ -3593,7 +3592,25 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         '笔记': 'private',
                         '私人笔记': 'private',
                     };
-                    // 先用更宽松的 region 匹配（任意非空字符串）
+                    // 5 个 status slot 的别名
+                    const STATUS_SLOT_ALIAS: Record<string, CharacterStatusSlot> = {
+                        'location': 'location',
+                        '所在地': 'location',
+                        'where': 'location',
+                        'place': 'location',
+                        'health': 'health',
+                        '身体': 'health',
+                        'body': 'health',
+                        'schedule': 'schedule',
+                        '在忙': 'schedule',
+                        'busy': 'schedule',
+                        'mood': 'mood',
+                        '情绪': 'mood',
+                        'reminder': 'reminder',
+                        '约定': 'reminder',
+                        '待办': 'reminder',
+                    };
+                    // MEMO_ADD: region | content  — 状态不在 region 里（走 SET_STATUS）
                     const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
                     if (addMatch) {
                         const regionRaw = addMatch[1].trim();
@@ -3606,6 +3623,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.log(`📝 [Memo] ADD region=${region} id=${char.id} content=${content.slice(0, 30)}`);
                         }
                     }
+                    // MEMO_EDIT: id | newContent
                     const editMatch = aiContent.match(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s*([\s\S]+?)\s*\]\]/);
                     if (editMatch) {
                         const id = parseInt(editMatch[1], 10);
@@ -3615,6 +3633,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.log(`📝 [Memo] EDIT id=${id} ok=${ok}`);
                         }
                     }
+                    // MEMO_DEL: id
                     const delMatch = aiContent.match(/\[\[MEMO_DEL:\s*(\d+)\s*\]\]/);
                     if (delMatch) {
                         const id = parseInt(delMatch[1], 10);
@@ -3623,14 +3642,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.log(`📝 [Memo] DEL id=${id} ok=${ok}`);
                         }
                     }
+                    // MEMO_SET_STATUS: slot | content  — 整体覆盖单个槽
+                    const statusSetMatch = aiContent.match(/\[\[MEMO_SET_STATUS:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (statusSetMatch) {
+                        const slotRaw = statusSetMatch[1].trim();
+                        const content = statusSetMatch[2].trim();
+                        const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
+                        if (!slot) {
+                            console.warn(`📝 [Status] SET unknown slot="${slotRaw}" (char=${char.id})`);
+                        } else if (content) {
+                            await setStatusSlot(char.id, slot, content);
+                            console.log(`📝 [Status] SET slot=${slot} char=${char.id} content=${content.slice(0, 30)}`);
+                        }
+                    }
+                    // MEMO_CLEAR_STATUS: slot
+                    const statusClearMatch = aiContent.match(/\[\[MEMO_CLEAR_STATUS:\s*([^\]]+?)\s*\]\]/);
+                    if (statusClearMatch) {
+                        const slotRaw = statusClearMatch[1].trim();
+                        const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
+                        if (!slot) {
+                            console.warn(`📝 [Status] CLEAR unknown slot="${slotRaw}"`);
+                        } else {
+                            await clearStatusSlot(char.id, slot);
+                            console.log(`📝 [Status] CLEAR slot=${slot} char=${char.id}`);
+                        }
+                    }
                 } catch (e) {
                     console.warn('📝 [Memo] token parse failed', e);
                 }
-                // strip 三个 token 形态（不管是否成功匹配）
+                // strip 五个 token 形态（不管是否成功匹配）
                 aiContent = aiContent
                     .replace(/\[\[MEMO_ADD:[^\]]*?\]\]/g, '')
                     .replace(/\[\[MEMO_EDIT:[^\]]*?\]\]/g, '')
                     .replace(/\[\[MEMO_DEL:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_SET_STATUS:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_CLEAR_STATUS:[^\]]*?\]\]/g, '')
                     .trim();
             }
 

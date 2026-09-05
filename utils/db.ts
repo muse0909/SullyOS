@@ -24,7 +24,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 70; // Bumped: v70 add character_memos store（麦麦 2026-09-05：角色备忘录，江澈 9-5 指令）
+const DB_VERSION = 71; // Bumped: v71 add character_status_panels store（麦麦 2026-09-05：状态面板，与 memo 独立）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -46,6 +46,8 @@ const STORE_XIAO_ZHI_TIAOS = 'xiao_zhi_tiaos';
 //   角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护的私人备忘录
 //   暮色只读 — 只能在发现页看
 const STORE_CHARACTER_MEMOS = 'character_memos';
+// 麦麦 2026-09-05：状态面板（暮色 9-5 要求与 memo 完全独立）
+const STORE_CHARACTER_STATUS_PANELS = 'character_status_panels';
 const STORE_GROUPS = 'groups'; 
 const STORE_JOURNAL_STICKERS = 'journal_stickers';
 const STORE_SOCIAL_POSTS = 'social_posts';
@@ -175,8 +177,13 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_CHARACTER_MEMOS)) {
           db.createObjectStore(STORE_CHARACTER_MEMOS, { keyPath: 'charId' });
       }
+
+      // 麦麦 2026-09-05：状态面板 store（按 charId 唯一存一份 CharacterStatusPanel，与 memo 独立）
+      if (!db.objectStoreNames.contains(STORE_CHARACTER_STATUS_PANELS)) {
+          db.createObjectStore(STORE_CHARACTER_STATUS_PANELS, { keyPath: 'charId' });
+      }
       // 上一段我加了 createStore 但实际 onupgradeneeded 不会自动跑——
-      // 浏览器检测到 DB_VERSION 升级（69 → 70）才会走这段并创建新 store
+      // 浏览器检测到 DB_VERSION 升级（70 → 71）才会走这段并创建新 store
       // 触发条件：浏览器打开网页时，发现 IDB 里 store 不全 → onupgradeneeded
 
       // 2026-08-24：MCP 工具调用日志（暮色 8-24 E 计划）
@@ -1335,6 +1342,24 @@ export const DB = {
           request.onsuccess = () => resolve(request.result || []);
           request.onerror = () => reject(request.error);
       });
+  },
+
+  // ─── 麦麦 2026-09-05：状态面板（CharacterStatusPanel）───
+  // 与 character_memos 独立。一角色一份 CharacterStatusPanel。
+  getCharacterStatusPanel: async (charId: string): Promise<CharacterStatusPanel | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_CHARACTER_STATUS_PANELS, 'readonly');
+          const request = transaction.objectStore(STORE_CHARACTER_STATUS_PANELS).get(charId);
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveCharacterStatusPanel: async (panel: CharacterStatusPanel): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_CHARACTER_STATUS_PANELS, 'readwrite');
+      transaction.objectStore(STORE_CHARACTER_STATUS_PANELS).put(panel);
   },
 
   // ─── Daily Schedule (角色日程表) ───

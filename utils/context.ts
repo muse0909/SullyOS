@@ -106,6 +106,9 @@ export const ContextBuilder = {
             skipWorldbookIds?: Set<string>;
             headerOverride?: string;
         },
+        // 麦麦 2026-09-05：暮色 9-5 要求角色备忘录插在"角色核心设定/私密档案/世界书之后、记忆宫殿之前"
+        //   之前 chatPrompts.ts 把它 prepend 到最顶头 — 改位置
+        characterMemoBlock?: string,
     ): string => {
         let context = `${groupOptions?.headerOverride ?? '[System: Roleplay Configuration]'}\n\n`;
 
@@ -246,6 +249,13 @@ export const ContextBuilder = {
             if (mpContext && mpContext.trim()) {
                 context += `${mpContext}\n\n`;
             }
+        }
+
+        // 5c. 麦麦 2026-09-05：角色备忘录（Character Memo）— 江澈 9-5 指令
+        //   暮色 9-5 要求位置：角色核心设定/世界书/私密档案之后、记忆宫殿之前
+        //   状态面板 + 常规 memo 两个独立 block 一起传进来
+        if (characterMemoBlock && characterMemoBlock.trim()) {
+            context += characterMemoBlock.trim() + '\n\n';
         }
 
         // 6. 情绪底色 Buff (Emotion Buff Injection)

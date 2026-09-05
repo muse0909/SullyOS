@@ -50,8 +50,12 @@ import { mcpStorage } from '../utils/mcpStorage';
 //   - 不动请求发送/响应解析，只包住诊断日志
 const isApiLogEnabled = (): boolean => {
     try {
-        return typeof localStorage !== 'undefined'
-            && localStorage.getItem('sullyos:enableApiLog') === 'true';
+        if (typeof localStorage === 'undefined') return false;
+        const stored = localStorage.getItem('sullyos:enableApiLog');
+        // 麦麦 2026-09-05 临时：默认 true（暮色要查 actual model）
+        // 查完暮色可以 localStorage.removeItem('sullyos:enableApiLog') 改回显式 false
+        if (stored === null) return true;
+        return stored === 'true';
     } catch {
         return false;
     }
@@ -2859,12 +2863,29 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
+            // 麦麦 2026-09-05：把 response model 也存到 localStorage（actual model 查询用）
+            //   麦色要的"实际调用的模型名"在这里 — 中转站覆盖了请求 model 时
+            //   response.model 才是真相
+            const responseModel = data.model || '(no model in response)';
+            if (isApiLogEnabled()) {
+                try {
+                    localStorage.setItem('sullyos:lastApiRespModel', responseModel);
+                    localStorage.setItem('sullyos:lastApiRespLog', JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        model: responseModel,
+                        finish_reason: data.choices?.[0]?.finish_reason,
+                        usage: data.usage,
+                        content_length: data.choices?.[0]?.message?.content?.length,
+                        id: data.id,
+                    }, null, 2));
+                } catch { /* quota 忽略 */ }
+            }
             console.log('🔍 [API Response Debug]', JSON.stringify({
                 finish_reason: data.choices?.[0]?.finish_reason,
                 usage: data.usage,
                 content_length: data.choices?.[0]?.message?.content?.length,
                 raw_content: data.choices?.[0]?.message?.content,
-                model: data.model,
+                model: responseModel,
                 id: data.id,
             }, null, 2));
 

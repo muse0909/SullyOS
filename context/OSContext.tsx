@@ -221,6 +221,9 @@ interface OSContextType {
   addWorldbook: (wb: Worldbook) => void;
   updateWorldbook: (id: string, updates: Partial<Worldbook>) => Promise<void>;
   deleteWorldbook: (id: string) => void;
+  // 麦麦 2026-09-05：世界书挂载/取消 API（暮色要求在世界书 app 里也能挂载角色）
+  mountWorldbook: (charId: string, wbId: string) => void;
+  unmountWorldbook: (charId: string, wbId: string) => void;
 
   // Novels (NEW)
   novels: NovelBook[];
@@ -3015,6 +3018,56 @@ if (!isVisible || !isChattingWithThisChar) {
       });
       setCharacters(updatedChars);
       addToast('世界书已删除 (同步移除角色挂载)', 'success');
+  };
+
+  // 麦麦 2026-09-05：世界书挂载/取消（暮色要求在世界书 app 里也能挂载给角色）
+  // 跟角色页 Character.tsx "扩展设定"挂载/取消是同一字段，**双向联动**：
+  //   - 在世界书 app 点挂载 → 角色页"扩展设定"自动显示
+  //   - 在角色页挂载/取消 → 世界书 app 列表里"已挂载：xxx"自动更新
+  const mountWorldbook = (charId: string, wbId: string) => {
+      const char = characters.find(c => c.id === charId);
+      const wb = worldbooks.find(w => w.id === wbId);
+      if (!char) {
+          addToast('角色不存在', 'error');
+          return;
+      }
+      if (!wb) {
+          addToast('世界书不存在', 'error');
+          return;
+      }
+      // 麦麦 2026-09-05：去重
+      if (char.mountedWorldbooks?.some(m => m.id === wbId)) {
+          addToast(`${char.name}已挂载过此世界书`, 'info');
+          return;
+      }
+      const mountedEntry = {
+          id: wb.id,
+          title: wb.title,
+          content: wb.content,
+          category: wb.category,
+      };
+      const newMounted = [...(char.mountedWorldbooks || []), mountedEntry];
+      const newChar = { ...char, mountedWorldbooks: newMounted };
+      DB.saveCharacter(newChar);
+      setCharacters(prev => prev.map(c => c.id === charId ? newChar : c));
+      addToast(`已挂载「${wb.title}」到${char.name}`, 'success');
+  };
+
+  const unmountWorldbook = (charId: string, wbId: string) => {
+      const char = characters.find(c => c.id === charId);
+      if (!char) {
+          addToast('角色不存在', 'error');
+          return;
+      }
+      if (!char.mountedWorldbooks?.some(m => m.id === wbId)) {
+          addToast(`${char.name}未挂载此世界书`, 'info');
+          return;
+      }
+      const newMounted = char.mountedWorldbooks.filter(m => m.id !== wbId);
+      const newChar = { ...char, mountedWorldbooks: newMounted };
+      DB.saveCharacter(newChar);
+      setCharacters(prev => prev.map(c => c.id === charId ? newChar : c));
+      addToast(`已取消挂载`, 'success');
   };
 
   // Novel Methods (New)

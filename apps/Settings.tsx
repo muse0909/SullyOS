@@ -150,26 +150,49 @@ const PresetChip: React.FC<{
   useEffect(() => () => clearPress(), [clearPress]);
 
   return (
-    <button
-      type="button"
-      title="点击加载，长按 / 右键删除"
-      onPointerDown={handlePointerDown}
-      onPointerUp={clearPress}
-      onPointerLeave={clearPress}
-      onPointerCancel={clearPress}
-      // 麦麦 2026-09-05：右键菜单双保险（有些浏览器/桌面 pointer events 不稳定，右键保底）
-      //   桌面浏览器：右键 chip → 弹确认 → 删
-      //   触屏：onContextMenu 通常不触发（只有长按 550ms 那条路）
-      //   不阻止 click（让 click 正常触发 load 逻辑）
-      onContextMenu={(e) => {
-          e.preventDefault();
-          onRequestDelete();
-      }}
-      onClick={handleClick}
-      className={`rounded-lg px-3 py-1.5 text-xs font-medium border shadow-sm transition-all ${active ? activeClassName : idleClassName} ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
+    // 麦麦 2026-09-05：改成 div + 两个 button，避免嵌套 button + 触屏 pointer events 不稳定
+    //   - 主体（点 name）= 加载预设
+    //   - X 按钮（右边）= 删（永远可见，触屏 / 桌面都能用）
+    //   - 长按 550ms = 桌面用户备选
+    //   - 右键 = 桌面用户备选
+    <div
+      className={`relative inline-flex items-center gap-0.5 rounded-lg pl-3 pr-1 py-1 text-xs font-medium border shadow-sm transition-all ${
+        active ? activeClassName : idleClassName
+      } ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
     >
-      {preset.name}
-    </button>
+      <button
+        type="button"
+        title="点击加载，长按 / 右键删除"
+        onPointerDown={handlePointerDown}
+        onPointerUp={clearPress}
+        onPointerLeave={clearPress}
+        onPointerCancel={clearPress}
+        onContextMenu={(e) => {
+            e.preventDefault();
+            onRequestDelete();
+        }}
+        onClick={handleClick}
+        className="cursor-pointer"
+      >
+        {preset.name}
+      </button>
+      <button
+        type="button"
+        title="删除预设"
+        onClick={(e) => {
+            e.stopPropagation();
+            onRequestDelete();
+        }}
+        className={`ml-1 w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] leading-none transition-colors ${
+          active
+            ? 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-100'
+            : 'text-slate-400 hover:text-red-500 hover:bg-red-50'
+        }`}
+        aria-label="删除预设"
+      >
+        ×
+      </button>
+    </div>
   );
 };
 

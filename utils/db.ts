@@ -24,7 +24,7 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 69; // Bumped: v69 add rp_global_defaults store（暮色 8-26：剧情模式全局默认配置）
+const DB_VERSION = 70; // Bumped: v70 add character_memos store（麦麦 2026-09-05：角色备忘录，江澈 9-5 指令）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -175,6 +175,9 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_CHARACTER_MEMOS)) {
           db.createObjectStore(STORE_CHARACTER_MEMOS, { keyPath: 'charId' });
       }
+      // 上一段我加了 createStore 但实际 onupgradeneeded 不会自动跑——
+      // 浏览器检测到 DB_VERSION 升级（69 → 70）才会走这段并创建新 store
+      // 触发条件：浏览器打开网页时，发现 IDB 里 store 不全 → onupgradeneeded
 
       // 2026-08-24：MCP 工具调用日志（暮色 8-24 E 计划）
       //   记录每次 callMcpTool 的 serverId / toolName / success / duration / cached

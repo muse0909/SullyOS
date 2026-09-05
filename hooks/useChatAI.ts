@@ -3569,19 +3569,41 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   江澈 9-5 指令 — 角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] 自己维护
             //   暮色只读（在发现页看），不 addToast（用户看不到）
             //   3 种 token：
-            //     [[MEMO_ADD: status|event|private | 内容]]
+            //     [[MEMO_ADD: region | 内容]]   region 接受中英文（AI 实际偏好中文）
             //     [[MEMO_EDIT: ID | 新内容]]
             //     [[MEMO_DEL: ID]]
             //   token strip 后 aiContent 不带这些（用户看到的是干净文本）
             if (aiContent.includes('[[MEMO_')) {
                 try {
-                    const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*(status|event|private)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    // region mapping：中文 → 内部 enum（AI 喜欢用"状态面板"而不是 "status"）
+                    const REGION_ALIAS: Record<string, CharacterMemoRegion> = {
+                        'status': 'status',
+                        'state': 'status',
+                        '状态': 'status',
+                        '状态面板': 'status',
+                        'event': 'event',
+                        'events': 'event',
+                        '事件': 'event',
+                        '重点事件': 'event',
+                        '最近重点事件': 'event',
+                        'recent_event': 'event',
+                        'private': 'private',
+                        'personal': 'private',
+                        '私人': 'private',
+                        '笔记': 'private',
+                        '私人笔记': 'private',
+                    };
+                    // 先用更宽松的 region 匹配（任意非空字符串）
+                    const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
                     if (addMatch) {
-                        const region = addMatch[1] as CharacterMemoRegion;
+                        const regionRaw = addMatch[1].trim();
                         const content = addMatch[2].trim();
-                        if (content) {
+                        const region = REGION_ALIAS[regionRaw.toLowerCase()] || REGION_ALIAS[regionRaw] || null;
+                        if (!region) {
+                            console.warn(`📝 [Memo] ADD unknown region="${regionRaw}" (char=${char.id})`);
+                        } else if (content) {
                             await addMemo(char.id, region, content);
-                            console.log(`📝 [Memo] ADD region=${region} id=${char.id}`);
+                            console.log(`📝 [Memo] ADD region=${region} id=${char.id} content=${content.slice(0, 30)}`);
                         }
                     }
                     const editMatch = aiContent.match(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s*([\s\S]+?)\s*\]\]/);

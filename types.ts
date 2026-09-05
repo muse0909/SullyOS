@@ -549,6 +549,30 @@ export interface XiaoZhiTiao {
     style?: string;                       // 便签 CSS className（如 'note-pink'）
 }
 
+// 麦麦 2026-09-05：角色备忘录（CharacterMemo）
+//   江澈 9-5 给的指令 — 角色（AI）自己通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护
+//   用户端（暮色）只读 — 只能在发现页看
+//   三区域：状态（从记忆宫殿迁过来）/ 最近重点事件（≤5 条滚动）/ 私人笔记
+//   30 条上限 = 三区域合计
+//   暮色 9-5 明确：跟记忆宫殿/小纸条/世界观都不冲突，是"角色时刻要看的东西"
+export type CharacterMemoRegion = 'status' | 'event' | 'private';
+
+export interface CharacterMemoEntry {
+    id: number;                          // 每角色独立自增 1, 2, 3...
+    charId: string;                       // 冗余存一份（联合主键用 charId+id）
+    region: CharacterMemoRegion;
+    content: string;                      // 纯文本一句话
+    createdAt: number;                    // epoch ms
+    updatedAt: number;                    // 改 / 删时更新（按 updatedAt 淘汰老的超 30 条）
+}
+
+export interface CharacterMemo {
+    charId: string;                       // 主键（一角色一份）
+    entries: CharacterMemoEntry[];        // 已按 region 排序：status → event → private
+    nextId: number;                       // 下一个自增 id（从 1 开始）
+    updatedAt: number;                    // 最后一次增删改
+}
+
 export interface XiaoZhiTiaoReply {
     id: string;
     parentNoteId: string;

@@ -27,6 +27,9 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
+// 麦麦 2026-09-05：角色备忘录 token 解析（江澈 9-5 指令）
+import { addMemo, editMemo, deleteMemo } from '../utils/characterMemo';
+import type { CharacterMemoRegion } from '../types';
 // 暮色 8-25：信箱（双向信件）token 解析 + 调度器启动
 import { createLetter as createMailboxLetter, markRead as mailboxMarkRead, MailboxEnvelope } from '../utils/mailboxStorage';
 import { startMailboxScheduler, checkAndDeliverPendingMailbox } from '../utils/mailboxScheduler';
@@ -3561,6 +3564,54 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   [[XIAO_ZHI_TIAO_HIDDEN: 内容]] 藏起来 + 不通知
             //   [[XIAO_ZHI_TIAO_TIMED: YYYY-MM-DD HH:MM | 内容]] 定时投递 + 不通知
             //   三种共用每天 5 条上限
+
+            // 麦麦 2026-09-05：5.9d-2 角色备忘录（CharacterMemo）token 解析
+            //   江澈 9-5 指令 — 角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] 自己维护
+            //   暮色只读（在发现页看），不 addToast（用户看不到）
+            //   3 种 token：
+            //     [[MEMO_ADD: status|event|private | 内容]]
+            //     [[MEMO_EDIT: ID | 新内容]]
+            //     [[MEMO_DEL: ID]]
+            //   token strip 后 aiContent 不带这些（用户看到的是干净文本）
+            if (aiContent.includes('[[MEMO_')) {
+                try {
+                    const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*(status|event|private)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (addMatch) {
+                        const region = addMatch[1] as CharacterMemoRegion;
+                        const content = addMatch[2].trim();
+                        if (content) {
+                            await addMemo(char.id, region, content);
+                            console.log(`📝 [Memo] ADD region=${region} id=${char.id}`);
+                        }
+                    }
+                    const editMatch = aiContent.match(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (editMatch) {
+                        const id = parseInt(editMatch[1], 10);
+                        const content = editMatch[2].trim();
+                        if (Number.isFinite(id) && content) {
+                            const ok = await editMemo(char.id, id, content);
+                            console.log(`📝 [Memo] EDIT id=${id} ok=${ok}`);
+                        }
+                    }
+                    const delMatch = aiContent.match(/\[\[MEMO_DEL:\s*(\d+)\s*\]\]/);
+                    if (delMatch) {
+                        const id = parseInt(delMatch[1], 10);
+                        if (Number.isFinite(id)) {
+                            const ok = await deleteMemo(char.id, id);
+                            console.log(`📝 [Memo] DEL id=${id} ok=${ok}`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('📝 [Memo] token parse failed', e);
+                }
+                // strip 三个 token 形态（不管是否成功匹配）
+                aiContent = aiContent
+                    .replace(/\[\[MEMO_ADD:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_EDIT:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_DEL:[^\]]*?\]\]/g, '')
+                    .trim();
+            }
+
             if (!allowXiaoZhiTiaoParse || !isXiaoZhiTiaoEnabled()) {
                 aiContent = aiContent
                     .replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '')

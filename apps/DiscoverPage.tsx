@@ -13,8 +13,10 @@ import MomentsSettingsPage from './MomentsSettingsPage';
 import XiaoZhiTiaoPage from './XiaoZhiTiaoPage';
 // 暮色 8-25：信箱（双向信件）
 import MailboxPage from './MailboxPage';
+// 麦麦 2026-09-05：角色备忘录（江澈 9-5 指令）— 暮色只读
+import CharacterMemoPage from './CharacterMemoPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao' | 'mailbox';
+type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao' | 'mailbox' | 'character-memo';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast, characters } = useOS();
@@ -62,6 +64,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // 子页：信箱（2026-08-25：暮色写的双向信件 + 角色来信）
   if (subPage === 'mailbox') {
     return <MailboxPage onBack={() => setSubPage('list')} />;
+  }
+
+  // 子页：角色备忘录（2026-09-05：江澈 9-5 指令，暮色只读）
+  if (subPage === 'character-memo') {
+    return <CharacterMemoPage onBack={() => setSubPage('list')} />;
   }
 
   // 子页：朋友圈设置（暮色 2026-07-03 新增）
@@ -128,6 +135,9 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <div className="border-t border-slate-100" />
           {/* 暮色 8-25：信箱（双向信件）— 跟小纸条、日记并列 */}
           <MailboxEntry onOpen={() => setSubPage('mailbox')} />
+          <div className="border-t border-slate-100" />
+          {/* 麦麦 2026-09-05：角色备忘录入口 — 江澈 9-5 指令，暮色只读 */}
+          <CharacterMemoEntry onOpen={() => setSubPage('character-memo')} />
           <div className="border-t border-slate-100" />
           {/* 暮色 2026-08-22：日记入口（接通 AppID.Journal，跟相册/情侣空间同模式） */}
           <JournalEntry onClose={onClose} hasNew={hasNewDiary} />
@@ -219,6 +229,22 @@ const JournalEntry: React.FC<{ onClose: () => void; hasNew: boolean }> = ({ onCl
 // 暮色 8-25：信箱入口（跟小纸条、日记并列）
 // 跟 XiaoZhiTiao 同模式：在 DiscoverPage 内嵌 subPage，不需要 openApp
 // MailboxEntry 在 DiscoverPage 函数体外，通过 onOpen prop 传 setSubPage
+// 麦麦 2026-09-05：角色备忘录入口（江澈 9-5 指令，暮色只读）
+const CharacterMemoEntry: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full flex items-center gap-3 px-4 py-4 active:bg-amber-50 transition-colors text-left"
+        >
+            <div className="w-7 h-7 rounded-full bg-amber-50 flex items-center justify-center">
+                <Notebook size={16} weight="regular" className="text-amber-600" />
+            </div>
+            <span className="flex-1 text-sm font-medium text-slate-800">角色备忘录</span>
+            <CaretRight size={16} className="text-slate-300" />
+        </button>
+    );
+};
+
 const MailboxEntry: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
     return (
         <button

@@ -2,6 +2,8 @@
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
+// 麦麦 2026-09-05：角色备忘录（江澈 9-5 指令）
+import { getMemo, formatMemoForPrompt } from './characterMemo';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
@@ -219,6 +221,24 @@ export const ChatPrompts = {
         // 暮色 2026-07-18：纯聊天模式（isPureMode=true）下，buildCoreContext 不注入 slotHeader/朋友圈/日记列表/笔记列表
         //   心声底色由 char.memoryPalaceInjection 处理（后面会跳过）
         let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, !isPureMode);
+
+        // 麦麦 2026-09-05：角色备忘录（CharacterMemo）— 江澈 9-5 指令
+        //   暮色 9-5 明确：放在记忆宫殿之前
+        //   角色（AI）自己通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护的私人备忘录
+        //   30 条以内，3 个区域（status / event / private）纯文本分区显示
+        try {
+            const memo = await getMemo(char.id);
+            const memoBlock = formatMemoForPrompt(memo);
+            if (memoBlock) {
+                bp3Context = `### 你的备忘录（Character Memo）\n` +
+                    `以下是你自己记的备忘。状态面板反映你当前的状态；最近重点事件记你最近在意的事；私人笔记记你自己的反思和观察。\n` +
+                    `这些会影响你现在的语气和态度，不需要复述，但你应该记得。\n\n` +
+                    memoBlock + `\n\n` + bp3Context;
+            }
+        } catch (e) {
+            console.warn('characterMemo: read failed', e);
+        }
+
         let bp2Rules = '';
         let bp1Tools = '';
         timings.buildCoreContext = Math.round(performance.now() - coreT0);

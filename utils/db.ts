@@ -42,6 +42,10 @@ const STORE_ROOM_TODOS = 'room_todos';
 const STORE_ROOM_NOTES = 'room_notes';
 // 2026-07-22：小纸条独立 store（与 room_notes 互不可见）
 const STORE_XIAO_ZHI_TIAOS = 'xiao_zhi_tiaos';
+// 麦麦 2026-09-05：角色备忘录（江澈 9-5 给的指令）
+//   角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护的私人备忘录
+//   暮色只读 — 只能在发现页看
+const STORE_CHARACTER_MEMOS = 'character_memos';
 const STORE_GROUPS = 'groups'; 
 const STORE_JOURNAL_STICKERS = 'journal_stickers';
 const STORE_SOCIAL_POSTS = 'social_posts';
@@ -165,6 +169,11 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_XIAO_ZHI_TIAOS)) {
           const xztStore = db.createObjectStore(STORE_XIAO_ZHI_TIAOS, { keyPath: 'id' });
           xztStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // 麦麦 2026-09-05：角色备忘录 store（按 charId 唯一存一份 CharacterMemo）
+      if (!db.objectStoreNames.contains(STORE_CHARACTER_MEMOS)) {
+          db.createObjectStore(STORE_CHARACTER_MEMOS, { keyPath: 'charId' });
       }
 
       // 2026-08-24：MCP 工具调用日志（暮色 8-24 E 计划）
@@ -1294,6 +1303,35 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_XIAO_ZHI_TIAOS, 'readwrite');
       transaction.objectStore(STORE_XIAO_ZHI_TIAOS).delete(id);
+  },
+
+  // ─── 麦麦 2026-09-05：角色备忘录（CharacterMemo）───
+  // 江澈 9-5 给的指令：AI 角色自己通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护
+  // 暮色只读。一角色一份，按 charId 主键。
+  getCharacterMemo: async (charId: string): Promise<CharacterMemo | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_CHARACTER_MEMOS, 'readonly');
+          const request = transaction.objectStore(STORE_CHARACTER_MEMOS).get(charId);
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveCharacterMemo: async (memo: CharacterMemo): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_CHARACTER_MEMOS, 'readwrite');
+      transaction.objectStore(STORE_CHARACTER_MEMOS).put(memo);
+  },
+
+  getAllCharacterMemos: async (): Promise<CharacterMemo[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_CHARACTER_MEMOS, 'readonly');
+          const request = transaction.objectStore(STORE_CHARACTER_MEMOS).getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
   },
 
   // ─── Daily Schedule (角色日程表) ───

@@ -251,6 +251,18 @@ const ApiQuickFloat: React.FC = () => {
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
+  // 麦麦 2026-09-06 12:36 调试日志：ApiQuickFloat mount 读取识图 API 配置
+  console.log('[ApiQuickFloat][vision][read-init]', {
+      source: 'OSContext.apiConfig',
+      storageKey: 'os_api_config',
+      visionProtocol: apiConfig.visionProtocol || 'openai',
+      visionBaseUrl: apiConfig.visionBaseUrl,
+      visionApiKeyExists: !!apiConfig.visionApiKey,
+      visionModel: apiConfig.visionModel,
+      visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
+      visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
+      visionGeminiModel: apiConfig.visionGeminiModel,
+  });
 
   // 暮色 2026-07-15：副 API（记忆宫殿后台处理用 lightLLM）— local state
   const [localLightUrl, setLocalLightUrl] = useState(memoryPalaceConfig?.lightLLM?.baseUrl || '');
@@ -346,6 +358,15 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionUrl(apiConfig.visionBaseUrl || '');
     setLocalVisionKey(apiConfig.visionApiKey || '');
     setLocalVisionModel(apiConfig.visionModel || '');
+    // 麦麦 2026-09-06 12:36 调试日志：ApiQuickFloat useEffect 同步识图 API
+    console.log('[ApiQuickFloat][vision][sync-effect]', {
+        source: 'OSContext.apiConfig',
+        storageKey: 'os_api_config',
+        visionProtocol: apiConfig.visionProtocol || 'openai',
+        visionBaseUrl: apiConfig.visionBaseUrl,
+        visionApiKeyExists: !!apiConfig.visionApiKey,
+        visionModel: apiConfig.visionModel,
+    });
     // 任务 2：识图协议同步 + 删 visionClaude* 同步
     setLocalVisionProtocol((apiConfig.visionProtocol as 'openai' | 'gemini') || 'openai');
     setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
@@ -581,6 +602,18 @@ const ApiQuickFloat: React.FC = () => {
       ...visionUpdates,
       ...imageUpdates,
       imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai' | 'comfyui' | 'nai' 防以后再加回
+    });
+    // 麦麦 2026-09-06 12:36 调试日志：ApiQuickFloat 保存 API（同时存 main + vision + image）
+    console.log('[ApiQuickFloat][vision][save]', {
+        source: 'ApiQuickFloat.handleSaveAndClose',
+        storageKey: 'os_api_config',
+        visionProtocol: visionUpdates.visionProtocol,
+        visionBaseUrl: visionUpdates.visionBaseUrl,
+        visionApiKeyExists: !!visionUpdates.visionApiKey,
+        visionModel: visionUpdates.visionModel,
+        visionGeminiBaseUrl: visionUpdates.visionGeminiBaseUrl,
+        visionGeminiApiKeyExists: !!visionUpdates.visionGeminiApiKey,
+        visionGeminiModel: visionUpdates.visionGeminiModel,
     });
     addToast('API 配置已保存', 'success');
     setShowPanel(false);

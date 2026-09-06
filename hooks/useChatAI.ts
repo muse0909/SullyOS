@@ -1445,6 +1445,23 @@ const visionActiveKey = useVisionGeminiProtocol
 const visionActiveModel = useVisionGeminiProtocol
     ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
     : (effectiveApi.visionModel || 'gemini-1.5-flash');
+// 麦麦 2026-09-06 12:36 调试日志：实际识图调用读 effectiveApi.vision*
+//   effectiveApi 来源 = overrideApiConfig || (charHasAnyApi ? { ...apiConfig, ...charApi } : apiConfig)
+//   数据源 = OSContext.apiConfig → 统一从 os_api_config 读
+if (hasImageInLatest && !alreadyDescribed) {
+    console.log('[useChatAI][vision][read-call]', {
+        source: 'useChatAI.effectiveApi',
+        storageKey: 'os_api_config',
+        overrideApiConfigExists: !!overrideApiConfig,
+        charHasAnyApi,
+        charProtocol,
+        visionProtocol,
+        useVisionGeminiProtocol,
+        visionActiveUrl,
+        visionActiveKeyExists: !!visionActiveKey,
+        visionActiveModel,
+    });
+}
 
 if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [

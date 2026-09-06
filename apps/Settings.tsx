@@ -190,6 +190,18 @@ const Settings: React.FC = () => {
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
+  // 麦麦 2026-09-06 12:36 调试日志：Settings mount 读取识图 API 配置
+  console.log('[Settings][vision][read-init]', {
+      source: 'OSContext.apiConfig',
+      storageKey: 'os_api_config',
+      visionProtocol: apiConfig.visionProtocol || 'openai',
+      visionBaseUrl: apiConfig.visionBaseUrl,
+      visionApiKeyExists: !!apiConfig.visionApiKey,
+      visionModel: apiConfig.visionModel,
+      visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
+      visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
+      visionGeminiModel: apiConfig.visionGeminiModel,
+  });
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
@@ -510,6 +522,15 @@ const Settings: React.FC = () => {
       setLocalUrl(apiConfig.baseUrl);
       setLocalKey(apiConfig.apiKey);
       setLocalModel(apiConfig.model);
+      // 麦麦 2026-09-06 12:36 调试日志：Settings useEffect 同步识图 API
+      console.log('[Settings][vision][sync-effect]', {
+          source: 'OSContext.apiConfig',
+          storageKey: 'os_api_config',
+          visionProtocol: apiConfig.visionProtocol || 'openai',
+          visionBaseUrl: apiConfig.visionBaseUrl,
+          visionApiKeyExists: !!apiConfig.visionApiKey,
+          visionModel: apiConfig.visionModel,
+      });
       setLocalVisionUrl(apiConfig.visionBaseUrl || '');
       setLocalVisionKey(apiConfig.visionApiKey || '');
       setLocalVisionModel(apiConfig.visionModel || '');
@@ -862,6 +883,18 @@ const Settings: React.FC = () => {
     updateApiConfig({
       ...apiConfig,
       ...visionFieldUpdates,
+    });
+    // 麦麦 2026-09-06 12:36 调试日志：Settings 保存识图 API
+    console.log('[Settings][vision][save]', {
+        source: 'Settings.handleSaveVisionApi',
+        storageKey: 'os_api_config',
+        visionProtocol: visionFieldUpdates.visionProtocol,
+        visionBaseUrl: visionFieldUpdates.visionBaseUrl,
+        visionApiKeyExists: !!visionFieldUpdates.visionApiKey,
+        visionModel: visionFieldUpdates.visionModel,
+        visionGeminiBaseUrl: visionFieldUpdates.visionGeminiBaseUrl,
+        visionGeminiApiKeyExists: !!visionFieldUpdates.visionGeminiApiKey,
+        visionGeminiModel: visionFieldUpdates.visionGeminiModel,
     });
     setVisionStatusMsg('识图配置已保存');
     setTimeout(() => setVisionStatusMsg(''), 2000);

@@ -1574,10 +1574,18 @@ if (!isVisible || !isChattingWithThisChar) {
           const currentGroups = groupsRef.current;
           const currentRealtimeConfig = realtimeConfigRef.current;
 
-          const char = currentCharacters.find(c => c.id === charId);
+          const char = currentCharacters.find(c => c.id === charId)
+              // 麦麦 2026-09-06：APK 后台触发时 characterId 可能是 charName（worker 推的是显示名）
+              //   真实 charId 形如 char-1784463346142，find 不到时回退按名字查
+              ?? currentCharacters.find(c => c.name === charId);
           if (!char) {
+              // 加一条 log：之前没 log 时如果回退也找不到，silent 早退极难排查
+              console.log(`🔕 [Proactive/Global] Skipped for charId=${charId}: not found in currentCharacters (count=${currentCharacters.length})`);
               drainQueuedProactive();
               return;
+          }
+          if (char.id !== charId) {
+              console.log(`🔕 [Proactive/Global] charId=${charId} was name, resolved to id=${char.id} name=${char.name}`);
           }
 
           // Respect per-character proactive config

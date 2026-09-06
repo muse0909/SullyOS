@@ -3609,7 +3609,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         '笔记': 'private',
                         '私人笔记': 'private',
                     };
-                    // 5 个 status slot 的别名
+                    // 6 个 status slot 的别名（麦麦 2026-09-06 16:43 加 recent）
                     const STATUS_SLOT_ALIAS: Record<string, CharacterStatusSlot> = {
                         'location': 'location',
                         '所在地': 'location',
@@ -3626,6 +3626,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         'reminder': 'reminder',
                         '约定': 'reminder',
                         '待办': 'reminder',
+                        'recent': 'recent',
+                        '最近': 'recent',
+                        '最近关系事件': 'recent',
+                        '关系事件': 'recent',
+                        '事件': 'recent',
                     };
                     // 麦麦 2026-09-06 16:25 修：AI 一次回复里可能写多个同类型 token（比如同时记多条 memo + 多个状态槽）
                     //   旧实现用 match() 只返回第一个，导致后面所有同 token 被忽略

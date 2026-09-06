@@ -243,7 +243,7 @@ export const ChatPrompts = {
                 '[[MEMO_ADD: event|private | 内容]]     新增条目。region 接受中文：事件/重点事件/私人/笔记；英文 event/private',
                 '[[MEMO_EDIT: ID | 新内容]]             修改条目（ID 是 #号）',
                 '[[MEMO_DEL: ID]]                       删除条目',
-                '[[MEMO_SET_STATUS: location|health|schedule|mood|reminder | 内容]]   5 个状态槽整体覆盖。slot 也接受中文：所在地/身体/在忙/情绪/约定',
+                '[[MEMO_SET_STATUS: location|health|schedule|mood|reminder|recent | 内容]]   6 个状态槽整体覆盖。slot 也接受中文：所在地/身体/在忙/情绪/约定/最近。recent 槽写最近发生的重要的事（吵架/复合/约会等），跟日常 event memo 区分',
                 '[[MEMO_CLEAR_STATUS: slot]]            清空某个状态槽',
                 '',
                 '示例：',

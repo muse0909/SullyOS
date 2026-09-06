@@ -42,6 +42,8 @@ const DEFAULT_STATUS_LABELS: Record<CharacterStatusSlot, string> = {
     schedule: '在忙',
     mood: '情绪',
     reminder: '约定/待办',
+    // 麦麦 2026-09-06 16:43：暮色要求"在状态面板再增加一格，写最近发生的重要的事，比如吵架什么的"
+    recent: '最近关系事件',
 };
 
 // ==================== 状态面板 ====================
@@ -103,7 +105,7 @@ export async function clearStatusSlot(
 /** 状态面板拼成 prompt 文本（5 个固定槽，没值就显示空槽提示） */
 export function formatStatusPanelForPrompt(panel: CharacterStatusPanel | null | undefined): string {
     if (!panel) return '';
-    const slotOrder: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];
+    const slotOrder: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder', 'recent'];
     const lines: string[] = [];
     let hasAny = false;
     for (const slot of slotOrder) {

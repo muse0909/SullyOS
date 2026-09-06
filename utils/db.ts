@@ -26,7 +26,11 @@ import { pruneMemoryLinksByTopN } from './memoryPalace/links';
 import { MemoryLinkDB } from './memoryPalace/db';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 71; // Bumped: v71 add character_status_panels store（麦麦 2026-09-05：状态面板，与 memo 独立）
+// 麦麦 2026-09-06：v72 清理旧 memo entries（5d71187 把 region type 改成 'event'|'private'，
+//   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
+//   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
+//   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
+const DB_VERSION = 72;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -327,6 +331,47 @@ export const openDB = (): Promise<IDBDatabase> => {
               for (const key of toRemove) { localStorage.removeItem(key); hwmCleared++; }
           } catch { /* ignore */ }
           console.log(`🗑️ [DB v48] 一次性清空完成：${cleared} 个 store，${hwmCleared} 个高水位（oldVersion=${oldVersion}）`);
+      }
+
+      // 麦麦 2026-09-06：v72 升级时清理旧 memo entries
+      //   5d71187 之前 region = 'status' | 'event' | 'private'，之后改成 'event' | 'private'
+      //   IDB 里 region='status' 的旧 entries 留下来会让新代码 byRegion['status'].push 崩
+      //   （暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')"）
+      //   升级到 v72 时遍历 character_memos，删掉所有 region='status' 的 entry
+      if (oldVersion > 0 && oldVersion < 72) {
+          try {
+              const upgradeTx = (event.target as IDBOpenDBRequest).transaction;
+              if (upgradeTx) {
+                  const memosStore = upgradeTx.objectStore(STORE_CHARACTER_MEMOS);
+                  const cursorReq = memosStore.openCursor();
+                  let cleanedMemos = 0;
+                  let cleanedEntries = 0;
+                  cursorReq.onsuccess = (e: Event) => {
+                      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+                      if (cursor) {
+                          const memo = cursor.value as { entries?: { region?: string }[] } | undefined;
+                          if (memo && Array.isArray(memo.entries)) {
+                              const before = memo.entries.length;
+                              const filtered = memo.entries.filter((entry) => entry && entry.region !== 'status');
+                              if (filtered.length !== before) {
+                                  memo.entries = filtered;
+                                  cursor.update(memo);
+                                  cleanedMemos++;
+                                  cleanedEntries += before - filtered.length;
+                              }
+                          }
+                          cursor.continue();
+                      } else if (cleanedEntries > 0) {
+                          console.log(`🧹 [DB v72] 清理 ${cleanedEntries} 条旧 region='status' memo entries（${cleanedMemos} 个角色的 memo）`);
+                      }
+                  };
+                  cursorReq.onerror = (e) => {
+                      console.warn('🧹 [DB v72] cleanup cursor error (non-fatal):', e);
+                  };
+              }
+          } catch (e) {
+              console.warn('🧹 [DB v72] cleanup failed (non-fatal):', e);
+          }
       }
 
       // ─── Pixel Home（像素家园）stores ───────────────

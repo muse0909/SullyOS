@@ -300,18 +300,25 @@ async function handleCancelDynamicSchedule(req: Request, env: Env): Promise<Resp
 
   let result;
   if (body.endpoint) {
+    // 精确：按 endpoint + charId 删
     result = await env.DB.prepare(`
       DELETE FROM schedules
       WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
     `).bind(body.endpoint, body.charId).run();
   } else if (body.userId) {
-    // 备用：按 userId + charId 删（多设备同 user 时可能误删其他设备的 dynamic — 不推荐）
+    // 备用：按 userId + charId 删
     result = await env.DB.prepare(`
       DELETE FROM schedules
       WHERE user_id = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
     `).bind(body.userId, body.charId).run();
   } else {
-    return json({ error: 'endpoint or userId required' }, 400);
+    // 麦麦 2026-09-06 21:35 修：只传 charId 时，按 charId + schedule_type='dynamic' 全删
+    //   web 端不依赖 Web Push subscription（占位 endpoint 每次 register 都不同），
+    //   所以同 charId 所有 dynamic 记录都属于当前 web 端，全删即可
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE char_id = ?1 AND schedule_type = 'dynamic'
+    `).bind(body.charId).run();
   }
 
   const deleted = (result as any)?.meta?.changes ?? (result as any)?.changes ?? 0;
@@ -413,13 +420,15 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
 
   // 1) Dynamic — 优先扫，单次性，触发后 DELETE
   //    LIMIT 1 — 一次 cron 最多推 1 条 dynamic（避免多个 dynamic 同时触发推送轰炸）
+  //    暮色 9-6 21:35：跳过 last_heartbeat 检查（web 端 register 时不依赖 WS，
+  //    last_heartbeat 永远不更新 → 5min 后就被过滤 → 永远不触发）
   const dynamicDue = await env.DB.prepare(`
     SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
     FROM schedules
-    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
+    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1
     ORDER BY next_fire_at ASC
     LIMIT 1
-  `).bind(now, cutoff).all<ScheduleRow>();
+  `).bind(now).all<ScheduleRow>();
 
   let dynamicFired = 0;
   if (dynamicDue.results && dynamicDue.results.length > 0) {

@@ -3627,9 +3627,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         '约定': 'reminder',
                         '待办': 'reminder',
                     };
+                    // 麦麦 2026-09-06 16:25 修：AI 一次回复里可能写多个同类型 token（比如同时记多条 memo + 多个状态槽）
+                    //   旧实现用 match() 只返回第一个，导致后面所有同 token 被忽略
+                    //   改成 matchAll 解析所有。XIAO_ZHI_TIAO 三个保持 match()（prompt 限制了"一次最多 1 条"）
                     // MEMO_ADD: region | content  — 状态不在 region 里（走 SET_STATUS）
-                    const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
-                    if (addMatch) {
+                    const addMatches = aiContent.matchAll(/\[\[MEMO_ADD:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/g);
+                    for (const addMatch of addMatches) {
                         const regionRaw = addMatch[1].trim();
                         const content = addMatch[2].trim();
                         const region = REGION_ALIAS[regionRaw.toLowerCase()] || REGION_ALIAS[regionRaw] || null;
@@ -3641,8 +3644,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         }
                     }
                     // MEMO_EDIT: id | newContent
-                    const editMatch = aiContent.match(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s*([\s\S]+?)\s*\]\]/);
-                    if (editMatch) {
+                    const editMatches = aiContent.matchAll(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s?([\s\S]+?)\s*\]\]/g);
+                    for (const editMatch of editMatches) {
                         const id = parseInt(editMatch[1], 10);
                         const content = editMatch[2].trim();
                         if (Number.isFinite(id) && content) {
@@ -3651,8 +3654,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         }
                     }
                     // MEMO_DEL: id
-                    const delMatch = aiContent.match(/\[\[MEMO_DEL:\s*(\d+)\s*\]\]/);
-                    if (delMatch) {
+                    const delMatches = aiContent.matchAll(/\[\[MEMO_DEL:\s*(\d+)\s*\]\]/g);
+                    for (const delMatch of delMatches) {
                         const id = parseInt(delMatch[1], 10);
                         if (Number.isFinite(id)) {
                             const ok = await deleteMemo(char.id, id);
@@ -3660,8 +3663,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         }
                     }
                     // MEMO_SET_STATUS: slot | content  — 整体覆盖单个槽
-                    const statusSetMatch = aiContent.match(/\[\[MEMO_SET_STATUS:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
-                    if (statusSetMatch) {
+                    const statusSetMatches = aiContent.matchAll(/\[\[MEMO_SET_STATUS:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/g);
+                    for (const statusSetMatch of statusSetMatches) {
                         const slotRaw = statusSetMatch[1].trim();
                         const content = statusSetMatch[2].trim();
                         const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
@@ -3673,8 +3676,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         }
                     }
                     // MEMO_CLEAR_STATUS: slot
-                    const statusClearMatch = aiContent.match(/\[\[MEMO_CLEAR_STATUS:\s*([^\]]+?)\s*\]\]/);
-                    if (statusClearMatch) {
+                    const statusClearMatches = aiContent.matchAll(/\[\[MEMO_CLEAR_STATUS:\s*([^\]]+?)\s*\]\]/g);
+                    for (const statusClearMatch of statusClearMatches) {
                         const slotRaw = statusClearMatch[1].trim();
                         const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
                         if (!slot) {

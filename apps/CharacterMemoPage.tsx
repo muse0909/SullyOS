@@ -135,12 +135,14 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
 
     // 麦麦 2026-09-06：状态面板固定槽位顺序
     const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];
-    const statusEntries = statusPanel
-        ? STATUS_SLOT_ORDER
-            .map(slot => ({ slot, value: statusPanel.slots[slot] }))
-            .filter(e => e.value && e.value.trim())
-        : [];
-    const hasStatus = statusEntries.length > 0;
+    // 暮色 9-6 16:14 反馈"状态面板要一直在备忘录页面置顶显示"
+    //   改：5 个固定槽永远显示，没值显示"未填"（不是整块隐藏）
+    //   statusEntries 改成全 5 槽都返回（不再 filter）
+    const statusEntries = STATUS_SLOT_ORDER.map(slot => ({
+        slot,
+        value: statusPanel?.slots?.[slot]?.trim() || '',
+    }));
+    const hasStatus = statusEntries.some(e => e.value);  // 给老逻辑兼容用，但不影响置顶显示
     const hasMemo = sorted.length > 0;
 
     return (
@@ -185,55 +187,55 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
             <div className="flex-1 overflow-y-auto px-5 pt-3 pb-6">
                 {loading ? (
                     <div className="text-center text-slate-400 text-sm py-12">加载中…</div>
-                ) : !hasStatus && !hasMemo ? (
-                    <EmptyState charName={activeChar?.name ?? '该角色'} />
                 ) : (
                     <div className="space-y-4">
-                        {/* 麦麦 2026-09-06：状态面板在最上方（暮色 9-5 20:32 要求"固定显示"） */}
-                        {hasStatus && (
-                            <div className="bg-white rounded-2xl shadow-sm p-4">
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-100">
-                                        <Smiley size={14} weight="regular" />
-                                        当前状态面板
-                                    </span>
-                                </div>
-                                <div className="space-y-2">
-                                    {statusEntries.map(({ slot, value }) => (
-                                        <div key={slot} className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed">
-                                            <div className="text-[10px] text-slate-400 mb-1 font-mono">{STATUS_LABELS[slot]}</div>
-                                            {value}
-                                        </div>
-                                    ))}
-                                </div>
+                        {/* 暮色 9-6 16:14 要求"状态面板要一直在备忘录页面置顶显示"——5 槽永远渲染，没值显示"未填" */}
+                        <div className="bg-white rounded-2xl shadow-sm p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-100">
+                                    <Smiley size={14} weight="regular" />
+                                    当前状态面板
+                                </span>
                             </div>
+                            <div className="space-y-2">
+                                {statusEntries.map(({ slot, value }) => (
+                                    <div key={slot} className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed">
+                                        <div className="text-[10px] text-slate-400 mb-1 font-mono">{STATUS_LABELS[slot]}</div>
+                                        {value ? value : <span className="text-slate-300 italic">未填</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        {hasMemo ? (
+                            (['event', 'private'] as CharacterMemoRegion[]).map((region) => {
+                                const items = byRegion[region];
+                                if (items.length === 0) return null;
+                                return (
+                                    <div key={region} className="bg-white rounded-2xl shadow-sm p-4">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${REGION_BG[region]}`}>
+                                                {REGION_ICONS[region]}
+                                                {REGION_LABELS[region]}
+                                            </span>
+                                            <span className="text-xs text-slate-400">{items.length} 条</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {items.map((e) => (
+                                                <div
+                                                    key={e.id}
+                                                    className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed"
+                                                >
+                                                    <div className="text-[10px] text-slate-400 mb-1 font-mono">#{e.id}</div>
+                                                    {e.content}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <EmptyMemoState charName={activeChar?.name ?? '该角色'} />
                         )}
-                        {(['event', 'private'] as CharacterMemoRegion[]).map((region) => {
-                            const items = byRegion[region];
-                            if (items.length === 0) return null;
-                            return (
-                                <div key={region} className="bg-white rounded-2xl shadow-sm p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${REGION_BG[region]}`}>
-                                            {REGION_ICONS[region]}
-                                            {REGION_LABELS[region]}
-                                        </span>
-                                        <span className="text-xs text-slate-400">{items.length} 条</span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {items.map((e) => (
-                                            <div
-                                                key={e.id}
-                                                className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed"
-                                            >
-                                                <div className="text-[10px] text-slate-400 mb-1 font-mono">#{e.id}</div>
-                                                {e.content}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            );
-                        })}
                     </div>
                 )}
             </div>
@@ -241,15 +243,17 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
     );
 };
 
-const EmptyState: React.FC<{ charName: string }> = ({ charName }) => (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3">
-            <Notebook size={28} weight="regular" className="text-slate-400" />
+const EmptyMemoState: React.FC<{ charName: string }> = ({ charName }) => (
+    <div className="bg-white rounded-2xl shadow-sm p-5">
+        <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-50 text-slate-500 border-slate-100">
+                <Notebook size={14} weight="regular" />
+                备忘录
+            </span>
+            <span className="text-xs text-slate-400">0 条</span>
         </div>
-        <p className="text-sm text-slate-500 mb-1">还没有备忘录</p>
-        <p className="text-xs text-slate-400 max-w-[240px]">
-            {charName}会在聊天中通过 [[MEMO_ADD: ...]] token 自己记下想记住的事。
-            <br />这是给角色看的私人笔记，暮色只能浏览。
+        <p className="text-xs text-slate-400 leading-relaxed">
+            {charName}还没记任何事。在聊天中{charName}可以通过 <code className="px-1 py-0.5 bg-slate-50 rounded font-mono text-[11px]">[[MEMO_ADD: event|private | 内容]]</code> 自己记下想记住的事。
         </p>
     </div>
 );

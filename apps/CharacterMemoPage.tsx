@@ -134,7 +134,8 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
     }
 
     // 麦麦 2026-09-06：状态面板固定槽位顺序
-    const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];
+    // 麦麦 2026-09-06 16:43：暮色加一格"最近关系事件"——放最后（特殊槽，跟其他 5 槽视觉上略区分）
+    const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder', 'recent'];
     // 暮色 9-6 16:14 反馈"状态面板要一直在备忘录页面置顶显示"
     //   改：5 个固定槽永远显示，没值显示"未填"（不是整块隐藏）
     //   statusEntries 改成全 5 槽都返回（不再 filter）

@@ -578,7 +578,9 @@ export interface CharacterMemo {
 //   暮色 9-5 要求：与 memo 条目**完全独立**，不混在 memo entries 里
 //   5 个固定槽（location/health/schedule/mood/reminder）— 单条整体覆盖
 //   token: [[MEMO_SET_STATUS: slot | 内容]] / [[MEMO_CLEAR_STATUS: slot]]
-export type CharacterStatusSlot = 'location' | 'health' | 'schedule' | 'mood' | 'reminder';
+// 麦麦 2026-09-06 16:43：暮色要求"在状态面板再增加一格，写最近发生的重要的事，比如吵架什么的"
+//   加 'recent' 槽（跟其他 5 槽同模式：整体覆盖 + 时间戳）
+export type CharacterStatusSlot = 'location' | 'health' | 'schedule' | 'mood' | 'reminder' | 'recent';
 
 export interface CharacterStatusPanel {
     charId: string;

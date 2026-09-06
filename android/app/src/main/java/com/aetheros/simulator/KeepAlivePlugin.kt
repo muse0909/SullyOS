@@ -1,8 +1,9 @@
 // KeepAlivePlugin — 前后台保活控制入口（2026-08-29）
 //
-// 暴露 start() / stop() 两个方法，让前端可以在 App 切回前台时确保
-// KeepAliveService 还活着。MainActivity 8-27 已在 onCreate 直启了服务，
-// 这个插件只是"兜底重启"用的。
+// 暴露 start() / stop() / notifyProactiveComplete 三个方法。
+//   - start() / stop()：前后台保活服务控制
+//   - notifyProactiveComplete（麦麦 2026-09-06）：WebView 跑完主动消息生成后，
+//     通过这个方法把真实内容回传给 KeepAliveService，Service 用真实 content 弹系统通知
 //
 // 注意：
 //   - start() 是幂等的 — Android 不会因重复 startForegroundService 而崩
@@ -58,6 +59,36 @@ class KeepAlivePlugin : Plugin() {
             call.resolve(ret)
         } catch (e: Exception) {
             call.reject("停止保活服务失败：${e.message}")
+        }
+    }
+
+    /**
+     * 麦麦 2026-09-06：WebView 跑完主动消息后回传真实内容，Service 弹通知用
+     *
+     * 调用方：index.tsx 监听到 `proactive-message-sent` 事件后调
+     * 入参：charId / content（preview 前 120 字符）/ messageId / charName
+     * 出参：{ delivered: true }
+     *
+     * Service 端用静态方法 KeepAliveService.onProactiveGeneratedFromJs 接收，
+     * 这样 Service 在自己的进程内就能处理，不依赖 Activity 前台。
+     */
+    @PluginMethod
+    fun notifyProactiveComplete(call: PluginCall) {
+        try {
+            val charId = call.getString("charId", "") ?: ""
+            val content = call.getString("content", "") ?: ""
+            val messageId = call.getString("messageId", "") ?: ""
+            val charName = call.getString("charName", "") ?: ""
+            if (charId.isEmpty() || content.isEmpty()) {
+                call.reject("charId/content 不能为空")
+                return
+            }
+            KeepAliveService.onProactiveGeneratedFromJs(charId, content, messageId, charName)
+            val ret = JSObject()
+            ret.put("delivered", true)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("notifyProactiveComplete 失败：${e.message}")
         }
     }
 }

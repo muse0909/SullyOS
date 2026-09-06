@@ -223,6 +223,10 @@ export const ChatPrompts = {
         //   心声底色由 char.memoryPalaceInjection 处理（后面会跳过）
         // 麦麦 2026-09-05：拼装角色备忘录 block（状态面板 + 常规条目两个独立模块）传给 buildCoreContext
         //   暮色 9-5 20:32 要求位置：角色核心设定/世界书/私密档案之后、记忆宫殿之前
+        // 麦麦 2026-09-06 16:18 修：暮色反馈"他根本不知道怎么写"——因为 formatStatusPanelForPrompt/formatMemoForPrompt
+        //   在没数据时返回 ''，characterMemoBlock 就是空的，AI 看不到任何 token 说明。
+        //   修复：不管有没有数据，都追加固定的"写入方法说明"段（5 种 token 格式 + 中文/英文 region alias）
+        //   这样 AI 永远知道 [[MEMO_ADD]] / [[MEMO_SET_STATUS]] 怎么写。
         let characterMemoBlock = '';
         try {
             const [panel, memo] = await Promise.all([
@@ -231,8 +235,22 @@ export const ChatPrompts = {
             ]);
             const statusText = formatStatusPanelForPrompt(panel);
             const memoText = formatMemoForPrompt(memo);
-            // 状态面板在前（固定显示），memo 在后
-            characterMemoBlock = [statusText, memoText].filter(Boolean).join('\n\n');
+            // 状态面板在前（固定显示），memo 在后，写入方法说明在最后（永远注入）
+            const writeGuide = [
+                '【备忘录写入指南 (Memo Write Guide)】',
+                '暮色让你自己维护。聊天中你想记下重要的事时，用下面 5 种 token（输出在普通回复里即可，用户看不到，会自动 strip）：',
+                '',
+                '[[MEMO_ADD: event|private | 内容]]     新增条目。region 接受中文：事件/重点事件/私人/笔记；英文 event/private',
+                '[[MEMO_EDIT: ID | 新内容]]             修改条目（ID 是 #号）',
+                '[[MEMO_DEL: ID]]                       删除条目',
+                '[[MEMO_SET_STATUS: location|health|schedule|mood|reminder | 内容]]   5 个状态槽整体覆盖。slot 也接受中文：所在地/身体/在忙/情绪/约定',
+                '[[MEMO_CLEAR_STATUS: slot]]            清空某个状态槽',
+                '',
+                '示例：',
+                '[[MEMO_ADD: 事件 | 暮色今天说下午三点要开周会]]',
+                '[[MEMO_SET_STATUS: 所在地 | 公司工位]] [[MEMO_SET_STATUS: 在忙 | 周会中]]',
+            ].join('\n');
+            characterMemoBlock = [statusText, memoText, writeGuide].filter(Boolean).join('\n\n');
         } catch (e) {
             console.warn('characterMemo: read failed', e);
         }

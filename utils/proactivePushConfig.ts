@@ -28,6 +28,12 @@ const PLACEHOLDER_URL_MARKER = 'PLACEHOLDER_URL';
 
 // 麦麦 2026-09-03：从 Vite env 读，trim + 去掉尾部 /
 // 任何 env 缺失都返回空串 → isPushConfigAvailable 自动 false
+// 麦麦 2026-09-06 21:35 修：fallback 硬编码 worker URL
+//   Vercel 部署时不读仓库 .env（gitignore）—— 除非在 Vercel UI 配 VITE_PROACTIVE_WORKER_URL，
+//   否则线上前端拿不到 worker URL，/dynamic-schedule fetch 失败
+//   跟 Android KEEP_ALIVE_* 走 local.properties fallback 同款设计
+const FALLBACK_WORKER_URL = 'https://proactive-push.1812038909.workers.dev';
+
 function readEnv(key: string): string {
   try {
     const v = (import.meta.env as Record<string, any>)[key];
@@ -38,7 +44,8 @@ function readEnv(key: string): string {
 }
 
 export function getWorkerUrl(): string {
-  return readEnv('VITE_PROACTIVE_WORKER_URL').replace(/\/+$/, '');
+  // env 优先，没设时用硬编码 fallback
+  return (readEnv('VITE_PROACTIVE_WORKER_URL') || FALLBACK_WORKER_URL).replace(/\/+$/, '');
 }
 
 export function getVapidPublicKey(): string {

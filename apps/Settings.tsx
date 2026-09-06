@@ -524,6 +524,23 @@ const Settings: React.FC = () => {
       setLocalUrl(apiConfig.baseUrl);
       setLocalKey(apiConfig.apiKey);
       setLocalModel(apiConfig.model);
+      // 麦麦 2026-09-06 15:10 修主 API 跨协议不同步：useEffect 同步 apiConfig 时漏了 localProtocol
+      //   症状：在悬浮窗从 OpenAI 切到 Gemini 直连预设保存后，apiConfig.protocol 已变 gemini，
+      //   但 Settings 的 localProtocol 还停留在 'openai'，UI 仍展示 OpenAI tab + 那组字段（值已是 Gemini 的）
+      //   修复：跟 vision 一样从 apiConfig.protocol 同步 localProtocol
+      setLocalProtocol(apiConfig.protocol === 'gemini' ? 'gemini' : 'openai');
+      // 麦麦 2026-09-06 12:36 调试日志：Settings useEffect 同步主 API
+      console.log('[Settings][main][sync-effect]', {
+          source: 'OSContext.apiConfig',
+          storageKey: 'os_api_config',
+          protocol: apiConfig.protocol || 'openai',
+          baseUrl: apiConfig.baseUrl,
+          apiKeyExists: !!apiConfig.apiKey,
+          model: apiConfig.model,
+          geminiBaseUrl: apiConfig.geminiBaseUrl,
+          geminiApiKeyExists: !!apiConfig.geminiApiKey,
+          geminiModel: apiConfig.geminiModel,
+      });
       // 麦麦 2026-09-06 12:36 调试日志：Settings useEffect 同步识图 API
       console.log('[Settings][vision][sync-effect]', {
           source: 'OSContext.apiConfig',

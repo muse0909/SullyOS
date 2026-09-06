@@ -7,12 +7,29 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.ViewGroup;
+import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
+    // 麦麦 2026-09-06：持有当前 Activity 的 WebView 引用，让 KeepAliveService 能调 evaluateJavascript
+    //   之前 Service 跟 Activity 是独立 lifecycle，Service 拿不到 Activity 的 WebView
+    //   现在用静态 getter 暴露，Service 端 MainActivity.getWebViewInstance() 拿
+    //   onDestroy 时清空（避免拿已死的 WebView 引用）
+    private static volatile WebView webViewInstance = null;
+
+    /**
+     * 麦麦 2026-09-06：静态 getter — Service 端调
+     *   返回 null 时说明 MainActivity 没起（App 没启动 / Activity 被回收）
+     *   这种情况 Service 走降级弹占位通知
+     */
+    public static WebView getWebViewInstance() {
+        return webViewInstance;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // 暮色 2026-08-26 角色查手机 P0：注册 PhoneUsagePlugin
@@ -23,13 +40,16 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PhoneUsagePlugin.class);
 
         // 暮色 2026-08-29 后台保活 P0 第一步：注册 KeepAlivePlugin
-        //   暴露 start() / stop() 给前端，让 index.tsx 在 appStateChange
-        //   切回前台时确认 KeepAliveService 还活着（兜底重启）。
-        //   下面第 44-50 行的 startForegroundService 是 8-27 已有的直启，**不要动**。
+        //   暴露 start() / stop() / notifyProactiveComplete 给前端
+        //   notifyProactiveComplete 是 9-6 新增 —— WebView 跑完主动消息后回传真实内容给 Service
+        //   下面第 60-66 行的 startForegroundService 是 8-27 已有的直启，**不要动**。
         registerPlugin(KeepAlivePlugin.class);
 
         // 必须先 super.onCreate（它会初始化 bridge + WebView + 按 capacitor.config 加载 URL）
         super.onCreate(savedInstanceState);
+
+        // 麦麦 2026-09-06：super.onCreate 之后 WebView 已建好，存静态引用给 Service
+        webViewInstance = this.bridge.getWebView();
 
         // 暮色 2026-08-29 后台保活 P0 第二步：申请 POST_NOTIFICATIONS 权限（Android 13+ 强制）
         //   不申请的话 KeepAliveService 收到的主动消息完全弹不出来（用户在系统设置里也得手动开）
@@ -81,5 +101,14 @@ public class MainActivity extends BridgeActivity {
                 "channel is disabled. Foreground service still runs (process keep-alive). " +
                 "Set values in android/local.properties and rebuild to enable push.");
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        // 麦麦 2026-09-06：清掉静态引用（避免 Service 拿到已死的 WebView）
+        if (webViewInstance == this.bridge.getWebView()) {
+            webViewInstance = null;
+        }
+        super.onDestroy();
     }
 }

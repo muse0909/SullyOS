@@ -21,6 +21,80 @@ import { bootstrapUserCustomCss } from './utils/customCssPresets';
 import { DB } from './utils/db';
 (window as any).__SULLYOS_DB__ = DB;
 
+// 麦麦 2026-09-06：APK 后台主动消息桥（混合方案）
+//   背景：暮色 9-6 反馈"切到后台（不锁屏）到点仍要触发主动消息"，验收要"在后台生成有真实 AI 内容的通知"，
+//   不允许走 D1 补拉路径。Worker 端没 chat history / 记忆宫殿 / 完整提示词，调 LLM 质量不可接受。
+//   所以走混合方案：Worker 只发唤醒信号 → APK KeepAliveService 收 → 调 WebView JS 触发
+//   → OSContext.runProactive 跑完整流程（LLM + 记忆宫殿 + 状态面板 + 聊天历史）
+//   → 生成完后 JS 通过 Capacitor.Plugins.KeepAlive.notifyProactiveComplete 回传 Service
+//   → Service 用真实 content 弹 Android 系统通知
+//
+//   挂载时机：必须在 OSContext 提供 'sullyos:bgProactiveTrigger' 监听之前挂上
+//   现状：OSContext 的 useEffect 在 isDataLoaded=true 后才挂监听
+//   风险：Service 在 isDataLoaded=true 之前就调 JS（理论上 isDataLoaded 启动期就是 false）
+//   防御：window.__sullyosTriggerProactive 检查 listeners 数量，0 时记录 warn + 不派发
+//   实际依赖：Service 调 JS 通常在 App 已稳定运行后（WS 已连、user 已交互），isDataLoaded 已 true
+(function installBackgroundProactiveBridge() {
+    try {
+        const w = window as any;
+
+        // 1. 挂全局触发函数（Service 调 WebView.evaluateJavascript("window.__sullyosTriggerProactive('char-xxx')")）
+        w.__sullyosTriggerProactive = (charId: string) => {
+            try {
+                if (!charId || typeof charId !== 'string') {
+                    console.warn('[BgProactive/JS] __sullyosTriggerProactive 收到空 charId, ignore');
+                    return false;
+                }
+                // 检查 OSContext 是否已挂监听（isDataLoaded 之后才挂）
+                // 用 CustomEvent 派发，多个 listener 都收
+                const ev = new CustomEvent('sullyos:bgProactiveTrigger', { detail: { charId } });
+                window.dispatchEvent(ev);
+                console.log(`[BgProactive/JS] __sullyosTriggerProactive dispatched charId=${charId}`);
+                return true;
+            } catch (e) {
+                console.error('[BgProactive/JS] __sullyosTriggerProactive 派发失败:', e);
+                return false;
+            }
+        };
+
+        // 2. 监听 'sullyos:bgProactiveReady' 事件（OSContext.runProactive 跑完后派发），回传 Service
+        //    通过 Capacitor.Plugins.KeepAlive.notifyProactiveComplete 让 Service 弹真实通知
+        //    只在原生平台调（web 端没有 Service 接）
+        w.addEventListener('sullyos:bgProactiveReady', (e: Event) => {
+            try {
+                const detail = (e as CustomEvent).detail;
+                if (!detail) return;
+                const cap: any = w.Capacitor;
+                const plugin = cap?.Plugins?.KeepAlive;
+                if (!plugin || typeof plugin.notifyProactiveComplete !== 'function') {
+                    // web 端 / 拿不到插件 → no-op
+                    return;
+                }
+                const { charId, charName, body } = detail;
+                if (!charId || !body) {
+                    console.warn('[BgProactive/JS] bgProactiveReady 缺 charId/body, ignore');
+                    return;
+                }
+                console.log(`[BgProactive/JS] bgProactiveReady 收到 → 调 Service notifyProactiveComplete: ${charName} (${body.length} chars)`);
+                plugin.notifyProactiveComplete({
+                    charId,
+                    content: body,
+                    messageId: '',
+                    charName: charName || '',
+                }).then((ret: any) => {
+                    console.log(`[BgProactive/JS] notifyProactiveComplete resolved:`, ret);
+                }).catch((err: any) => {
+                    console.warn('[BgProactive/JS] notifyProactiveComplete 失败:', err);
+                });
+            } catch (e) {
+                console.error('[BgProactive/JS] bgProactiveReady listener 炸了:', e);
+            }
+        });
+    } catch (e) {
+        console.error('[BgProactive/JS] 挂载失败:', e);
+    }
+})();
+
 // 暮色 2026-08-13：挂 Memory Palace Trace 到 window — F12 console 一键跑只读 trace
 //   用法：__mpTrace.listBoxes(charId) / traceRetrieve(opts) / traceBox(charId, boxId)
 //   严格只读：不写 IDB、不改 scoring、不调 touchAccess / strengthenCoActivated

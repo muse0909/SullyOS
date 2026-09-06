@@ -1517,6 +1517,11 @@ if (!isVisible || !isChattingWithThisChar) {
   // Per-character innerState cache for proactive turns — mirrors useChatAI's
   // evolvedNarrative state so consecutive proactive triggers carry continuity.
   const proactiveInnerStateRef = useRef<Map<string, string>>(new Map());
+  // 麦麦 2026-09-06：当前 runProactive 是否由 APK 后台 Service 触发
+  //   true → 跳过 OS 内的 LocalNotifications 派发（Service 端弹系统通知，避免双弹）
+  //   派发 'sullyos:bgProactiveReady' 事件给 index.tsx 监听器回传 Service
+  //   在 runProactive 内部读 + 清，跨重入独立
+  const proactiveBackgroundTriggerRef = useRef(false);
 
   // Refs to avoid stale closures in proactive callback
   const charactersRef = useRef(characters);
@@ -2263,9 +2268,24 @@ if (!isVisible || !isChattingWithThisChar) {
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120) || `${char.name} sent a proactive message`;
 
                   // 6. Notify OS for unread badge + toast
-                  window.dispatchEvent(new CustomEvent('proactive-message-sent', {
-                      detail: { charId, charName: char.name, body: preview }
-                  }));
+                  // 麦麦 2026-09-06：混合方案 — 当触发源是 background_service（APK 后台 Service 调起来的），
+                  //   派发独立事件 'sullyos:bgProactiveReady' 给 index.tsx 监听器回传 Service 弹系统通知，
+                  //   跳过原 'proactive-message-sent' 的 LocalNotifications 路径（防双弹）
+                  //   'sullyos:bgProactiveReady' 也带 'proactive-message-sent' 同结构 detail，
+                  //   方便 index.tsx 监听器复用同一段回调
+                  // 切换到原 'proactive-message-sent' 路径前先读并清 flag（防 runProactive 重入残留）
+                  const wasBg = proactiveBackgroundTriggerRef.current;
+                  proactiveBackgroundTriggerRef.current = false;
+                  if (wasBg) {
+                      console.log(`🔔 [Proactive/BgTrigger] WebView generated content for ${char.name} (background), forwarding to Service`);
+                      window.dispatchEvent(new CustomEvent('sullyos:bgProactiveReady', {
+                          detail: { charId, charName: char.name, body: preview, triggerSource: 'background_service' }
+                      }));
+                  } else {
+                      window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                          detail: { charId, charName: char.name, body: preview }
+                      }));
+                  }
               } else {
                   // 暮色 2026-08-06 19:09：AI 返回空字符串（主动选择不发）
                   //   之前是弹 toast 提醒——但暮色要"在聊天页里的系统提示"风格，跟 [连接中断: ...] 一样
@@ -2279,10 +2299,16 @@ if (!isVisible || !isChattingWithThisChar) {
                           content: `[系统: ${char.name} 这次没想好说什么]`,
                           metadata: { source: 'proactive_skipped', hidden: false },
                       });
-                      // 触发 Chat 重新拉 messages 显示新 system 消息
-                      window.dispatchEvent(new CustomEvent('proactive-message-sent', {
-                          detail: { charId, charName: char.name, body: '这次没想好说什么' }
-                      }));
+                      // 麦麦 2026-09-06：bg 触发时 Service 端 30s 超时会自己降级弹占位，
+                      //   前端派发原 'proactive-message-sent' 让 OS 内部仍跑（铃铛胶囊），
+                      //   不派发 'sullyos:bgProactiveReady'（AI 没产出内容，回传给 Service 没意义）
+                      if (!proactiveBackgroundTriggerRef.current) {
+                          window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                              detail: { charId, charName: char.name, body: '这次没想好说什么' }
+                          }));
+                      }
+                      // 重置 flag（防 runProactive 重入残留）
+                      proactiveBackgroundTriggerRef.current = false;
                   } catch (saveErr) {
                       console.warn('🤖 [Proactive] 推"没想好说什么"系统消息失败:', saveErr);
                       addToast(`${char.name} 这次没想好说什么`, 'bell'); // 兜底：保存失败时还是弹 toast
@@ -2391,10 +2417,29 @@ if (!isVisible || !isChattingWithThisChar) {
           });
       });
 
+      // 麦麦 2026-09-06：APK 后台主动消息触发桥
+      //   流程：KeepAliveService 收 WS proactive_message → 调 WebView.evaluateJavascript
+      //     → window.__sullyosTriggerProactive(charId) → dispatchEvent('sullyos:bgProactiveTrigger')
+      //     → 这里收事件调 runProactive 完整流程
+      //   不破坏现有 ProactiveChat.onTrigger / 主动 schedule 路径，新加一条入口而已
+      //   触发时设 proactiveBackgroundTriggerRef=true，runProactive 内部识别后
+      //     - 派发独立事件 'sullyos:bgProactiveReady'（给 index.tsx 监听器回传 Service）
+      //     - 跳过原 'proactive-message-sent' 的 LocalNotifications 路径（防双弹）
+      const onBgProactiveTrigger = (e: Event) => {
+          const detail = (e as CustomEvent).detail;
+          const charId = detail?.charId;
+          if (typeof charId !== 'string' || !charId) return;
+          console.log(`🔔 [Proactive/BgTrigger] WebView received background trigger for charId=${charId}`);
+          proactiveBackgroundTriggerRef.current = true;
+          void runProactive(charId);
+      };
+      window.addEventListener('sullyos:bgProactiveTrigger', onBgProactiveTrigger);
+
       return () => {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
           VRScheduler.onTrigger(() => {});
+          window.removeEventListener('sullyos:bgProactiveTrigger', onBgProactiveTrigger);
           stopMailboxScheduler();
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps

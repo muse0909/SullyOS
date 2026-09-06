@@ -190,18 +190,20 @@ const Settings: React.FC = () => {
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
-  // 麦麦 2026-09-06 12:36 调试日志：Settings mount 读取识图 API 配置
-  console.log('[Settings][vision][read-init]', {
-      source: 'OSContext.apiConfig',
-      storageKey: 'os_api_config',
-      visionProtocol: apiConfig.visionProtocol || 'openai',
-      visionBaseUrl: apiConfig.visionBaseUrl,
-      visionApiKeyExists: !!apiConfig.visionApiKey,
-      visionModel: apiConfig.visionModel,
-      visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
-      visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
-      visionGeminiModel: apiConfig.visionGeminiModel,
-  });
+  // 麦麦 2026-09-06 12:50 修：之前把 console.log 写在 useState 下面（每次 render 都跑）→ 改 useEffect 只跑 mount 一次
+  useEffect(() => {
+      console.log('[Settings][vision][read-init]', {
+          source: 'OSContext.apiConfig',
+          storageKey: 'os_api_config',
+          visionProtocol: apiConfig.visionProtocol || 'openai',
+          visionBaseUrl: apiConfig.visionBaseUrl,
+          visionApiKeyExists: !!apiConfig.visionApiKey,
+          visionModel: apiConfig.visionModel,
+          visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
+          visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
+          visionGeminiModel: apiConfig.visionGeminiModel,
+      });
+  }, []); // 空依赖：只在 mount 跑一次
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');

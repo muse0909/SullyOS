@@ -46,6 +46,22 @@ const DEFAULT_STATUS_LABELS: Record<CharacterStatusSlot, string> = {
 
 // ==================== 状态面板 ====================
 
+/**
+ * 麦麦 2026-09-06：派发 memo-updated 事件，通知 UI（CharacterMemoPage）重新读 IDB
+ *   暮色 9-6 反馈：APK 端写完不显示——因为 addMemo/setStatusSlot 只写 IDB，
+ *   CharacterMemoPage 的 useEffect([activeCharId]) 不会因 IDB 变化而重新读。
+ *   派发 CustomEvent 触发主动重读。
+ *   带 charId 字段，UI 端按需重读（多角色场景只刷一个）。
+ */
+function emitMemoUpdated(charId: string, kind: 'status' | 'memo' | 'both') {
+    if (typeof window === 'undefined') return;
+    try {
+        window.dispatchEvent(new CustomEvent('memo-updated', {
+            detail: { charId, kind }
+        }));
+    } catch { /* SSR / 非浏览器环境安全 */ }
+}
+
 /** 取状态面板（不存在就返回空骨架） */
 export async function getStatusPanel(charId: string): Promise<CharacterStatusPanel> {
     const existing = await DB.getCharacterStatusPanel(charId);
@@ -67,6 +83,7 @@ export async function setStatusSlot(
     panel.slots[slot] = value.trim();
     panel.updatedAt = Date.now();
     await DB.saveCharacterStatusPanel(panel);
+    emitMemoUpdated(charId, 'status');  // 麦麦 2026-09-06：通知 UI 重新读
     return panel;
 }
 
@@ -79,6 +96,7 @@ export async function clearStatusSlot(
     delete panel.slots[slot];
     panel.updatedAt = Date.now();
     await DB.saveCharacterStatusPanel(panel);
+    emitMemoUpdated(charId, 'status');  // 麦麦 2026-09-06：通知 UI 重新读
     return panel;
 }
 
@@ -168,6 +186,7 @@ export async function addMemo(
     memo.updatedAt = now;
     memo.entries = sortEntries(memo.entries);
     await DB.saveCharacterMemo(memo);
+    emitMemoUpdated(charId, 'memo');  // 麦麦 2026-09-06：通知 UI 重新读
     return entry;
 }
 
@@ -185,6 +204,7 @@ export async function editMemo(
     memo.updatedAt = target.updatedAt;
     memo.entries = sortEntries(memo.entries);
     await DB.saveCharacterMemo(memo);
+    emitMemoUpdated(charId, 'memo');  // 麦麦 2026-09-06：通知 UI 重新读
     return target;
 }
 
@@ -199,6 +219,7 @@ export async function deleteMemo(
     if (memo.entries.length === before) return false;
     memo.updatedAt = Date.now();
     await DB.saveCharacterMemo(memo);
+    emitMemoUpdated(charId, 'memo');  // 麦麦 2026-09-06：通知 UI 重新读
     return true;
 }
 

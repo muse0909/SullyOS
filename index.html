@@ -6,6 +6,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- 麦麦 2026-09-06：APK WebView 缓存根治（暮色 9-6 反馈反复部署看不到效果）
+         Vercel 已经返回 max-age=0, must-revalidate（强 revalidate），但 WebView 自己的 OkHttp HTTP cache
+         不受 server header 控制，会缓存 HTML + 所有资源。这里加双保险 meta 阻止 HTML 缓存。 -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>SullyOS</title>
     
     <!-- PWA Settings -->

@@ -147,8 +147,11 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
 
     return (
         <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur shrink-0">
+            {/* 麦麦 2026-09-06 16:25：角色下拉框合并到 header 那一行（暮色 9-6 16:25 反馈"切换角色想改到顶上"）
+                - 删独立的角色切换卡（原本 header 下面那一块）
+                - header 改成：返回 + 标题 + 角色下拉框（带图标，inline，rounded-full 胶囊样式）
+                - 副标题"X 自己记的备忘录"挪到内容区上方 */}
+            <div className="flex items-center gap-2 px-2 py-3 bg-white/60 backdrop-blur shrink-0">
                 <button
                     onClick={onBack}
                     className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
@@ -157,19 +160,14 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
                     <CaretLeft size={20} weight="bold" />
                 </button>
                 <h1 className="text-base font-semibold text-slate-800 tracking-wide">角色备忘录</h1>
-                <div className="w-9 h-9" aria-hidden />
-            </div>
-
-            {/* 角色切换 */}
-            <div className="px-5 pt-3 shrink-0">
-                <div className="bg-white rounded-2xl shadow-sm p-3 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                        <Notebook size={16} weight="regular" className="text-amber-600" />
+                <div className="flex-1 flex items-center gap-2 bg-white rounded-full shadow-sm px-3 py-1.5 min-w-0">
+                    <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                        <Notebook size={12} weight="regular" className="text-amber-600" />
                     </div>
                     <select
                         value={activeCharId}
                         onChange={(e) => setActiveCharId(e.target.value)}
-                        className="flex-1 bg-transparent text-sm font-medium text-slate-800 outline-none cursor-pointer"
+                        className="flex-1 bg-transparent text-sm font-medium text-slate-800 outline-none cursor-pointer min-w-0"
                     >
                         {characters.map((c) => (
                             <option key={c.id} value={c.id}>
@@ -178,7 +176,11 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
                         ))}
                     </select>
                 </div>
-                <p className="text-xs text-slate-500 mt-2 px-1">
+            </div>
+
+            {/* 副标题挪到内容区上方 */}
+            <div className="px-5 pt-3 shrink-0">
+                <p className="text-xs text-slate-500 px-1">
                     {activeChar?.name}自己记的备忘录，暮色只能看不能改。
                 </p>
             </div>

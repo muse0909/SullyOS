@@ -76,6 +76,9 @@ async function handleSubscribe(req: Request, env: Env): Promise<Response> {
     subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
     charId?: string;
     intervalMs?: number;
+    // 麦麦 2026-09-05 commit 7：客户端传 userId（WS 握手的 userId）
+    //   cron 写 D1 用这个对齐客户端 fetch
+    userId?: string;
   }>(req);
   if (!body) return json({ error: 'invalid json' }, 400);
 
@@ -84,6 +87,7 @@ async function handleSubscribe(req: Request, env: Env): Promise<Response> {
   const auth = body.subscription?.keys?.auth;
   const charId = body.charId;
   const intervalMs = body.intervalMs;
+  const userId = body.userId;
 
   if (!endpoint || !p256dh || !auth || !charId || !intervalMs || intervalMs < 60_000) {
     return json({ error: 'missing or invalid fields' }, 400);
@@ -93,15 +97,16 @@ async function handleSubscribe(req: Request, env: Env): Promise<Response> {
   const nextFireAt = now + intervalMs;
 
   await env.DB.prepare(`
-    INSERT INTO schedules (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    INSERT INTO schedules (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
     ON CONFLICT(endpoint, char_id) DO UPDATE SET
       p256dh = excluded.p256dh,
       auth = excluded.auth,
       interval_ms = excluded.interval_ms,
       next_fire_at = excluded.next_fire_at,
-      last_heartbeat = excluded.last_heartbeat
-  `).bind(endpoint, charId, p256dh, auth, intervalMs, nextFireAt, now, now).run();
+      last_heartbeat = excluded.last_heartbeat,
+      user_id = excluded.user_id
+  `).bind(endpoint, charId, p256dh, auth, intervalMs, nextFireAt, now, now, userId || null).run();
 
   return json({ ok: true, nextFireAt });
 }
@@ -183,7 +188,7 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
 
   // Pull due + alive rows.  Cap at 500/run so the cron stays within CPU budget.
   const due = await env.DB.prepare(`
-    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id
     FROM schedules
     WHERE next_fire_at <= ?1 AND last_heartbeat >= ?2
     ORDER BY next_fire_at ASC
@@ -203,7 +208,13 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
     // 暮色 2026-08-29 P0 第三步：WebSocket 优先 — 有在线客户端就直接推
     //   content 字段目前是 charId 占位（跟 wake push 同级），后续 Android 端
     //   决定怎么展示；广播已送达（delivered>0）就跳过 Web Push 不双发
-    let wsOk = false;
+    //
+    // 麦麦 2026-09-05 commit 2：delivered>0 不可靠（Doze 期间 client 冻住但 socket 在）
+    //   broadcast 后用 /stats 的 onlineUserIds 二次确认（30s 内有 ping 才算真活）
+    //   真活 → 跳过 D1；不真活 → 写 D1（commit 3 客户端恢复时拉取）
+    let wsReallyOnline = false;
+    let wsDeliveredCount = 0;
+    const messageId = crypto.randomUUID();
     try {
       const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
       const broadcastRes = await stub.fetch('https://ws-hub/broadcast', {
@@ -213,21 +224,42 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
           characterId: row.char_id,
           content: row.char_id,     // 占位 — 后续接角色名/消息文本
           timestamp: now,
+          messageId,                // 麦麦 2026-09-05 commit 3：去重键
         }),
       });
       if (broadcastRes.ok) {
         const broadcastData = await broadcastRes.json<{ delivered?: number }>();
-        if ((broadcastData?.delivered ?? 0) > 0) {
-          wsOk = true;
-          wsDelivered += broadcastData.delivered ?? 0;
-        }
+        wsDeliveredCount = broadcastData?.delivered ?? 0;
       }
     } catch (e) {
-      console.warn('[cron] ws broadcast failed, falling back to web push', e);
+      console.warn('[cron] ws broadcast failed', e);
     }
 
-    // WS 送达 → 跳过 Web Push，但仍推进 next_fire_at（同一条路径维护调度）
-    if (wsOk) {
+    // 麦麦 2026-09-05 commit 2：查 /stats 拿 onlineUserIds
+    //   delivered>0 + 有 online user → 视为真活（commit 2 阶段简化归属）
+    //   严格归属需要 schedules 加 user_id 字段（commit 4 再做）
+    if (wsDeliveredCount > 0) {
+      try {
+        const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+        const statsRes = await stub.fetch('https://ws-hub/stats', { method: 'GET' });
+        if (statsRes.ok) {
+          const stats = await statsRes.json<{ onlineUserIds?: string[] }>();
+          if ((stats?.onlineUserIds?.length ?? 0) > 0) {
+            wsReallyOnline = true;
+            wsDelivered += wsDeliveredCount;
+          }
+        }
+      } catch (_) {
+        // 退化用 delivered>0 判定
+        if (wsDeliveredCount > 0) {
+          wsReallyOnline = true;
+          wsDelivered += wsDeliveredCount;
+        }
+      }
+    }
+
+    if (wsReallyOnline) {
+      // 真活：跳过 D1，推进 next_fire_at
       let nextWs = row.next_fire_at + row.interval_ms;
       if (nextWs <= now) nextWs = now + row.interval_ms;
       await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`)
@@ -236,33 +268,38 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
       continue;
     }
 
-    const payload = JSON.stringify({ type: 'proactive-wake', charId: row.char_id, t: now });
+    // 麦麦 2026-09-05 commit 2：不在线 → 写 D1 等 client 恢复时拉取
+    //   expires_at = now + 72h（暮色 9-5 决定）
+    //   暂不写 Web Push（Android 端没订阅 VAPID，写了也白费）
+    const offlineExpiresAt = now + 72 * 3600 * 1000;
     try {
-      const result = await sendPush(
-        vapid,
-        { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
-        payload,
-      );
-      if (result.gone) {
-        // Dead subscription — delete all of this endpoint's rows.
-        await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1`).bind(row.endpoint).run();
-        dropped++;
-        continue;
-      }
-      if (!result.ok) {
-        console.warn(`[cron] push failed status=${result.status} char=${row.char_id} body=${result.responseText || ''}`);
-        // Non-permanent failure: still advance next_fire_at so we don't pile up.
-      }
-      // Advance next_fire_at — compute as "next slot after now" so long offline
-      // gaps collapse to one catch-up fire, not dozens.
-      let next = row.next_fire_at + row.interval_ms;
-      if (next <= now) next = now + row.interval_ms;
-      await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`)
-        .bind(next, row.endpoint, row.char_id).run();
-      fired++;
+      await env.DB.prepare(`
+        INSERT INTO proactive_offline_messages
+          (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+      `).bind(
+        crypto.randomUUID(),
+        // 麦麦 2026-09-05 commit 8：用 row.user_id 替代 endpoint
+        //   客户端 fetch 时用 WS userId 查 — 之前 endpoint 占位时两边对不上
+        row.user_id || row.endpoint,  // 旧 schedule 没 user_id 时退化用 endpoint
+        row.char_id,
+        row.char_id,         // 角色名暂用 char_id
+        row.char_id,         // 内容暂用 char_id
+        messageId,
+        now,
+        offlineExpiresAt,
+      ).run();
+      console.log(`[cron] offline msg written: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
     } catch (e) {
-      console.error('[cron] push error', e, row.char_id);
+      console.error('[cron] failed to write offline msg', e, row.char_id);
     }
+
+    // 推进 next_fire_at（跟原逻辑一致）
+    let next = row.next_fire_at + row.interval_ms;
+    if (next <= now) next = now + row.interval_ms;
+    await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`)
+      .bind(next, row.endpoint, row.char_id).run();
+    fired++;
   }
 
   return { fired, dropped, wsDelivered };
@@ -350,6 +387,49 @@ export default {
     if (url.pathname === '/heartbeat' && req.method === 'POST') return handleHeartbeat(req, env);
     if (url.pathname === '/status' && req.method === 'GET') return handleStatus(req, env);
     if (url.pathname === '/test' && req.method === 'POST') return handleTest(req, env);
+
+    // 麦麦 2026-09-05 commit 4：客户端拉取离线消息
+    //   query: userId（必填）, since（可选，默认 0 = 拉全部未过期）
+    //   过滤：created_at > since AND expires_at > now
+    //   排序：按 created_at ASC（先发先回放）
+    //   LIMIT 100（防一次性拉太多）
+    //   鉴权：走 checkToken（X-Client-Token 头）
+    if (url.pathname === '/api/offline-messages' && req.method === 'GET') {
+      const userId = url.searchParams.get('userId');
+      if (!userId) return json({ error: 'userId required' }, 400);
+      const since = parseInt(url.searchParams.get('since') || '0', 10);
+      const now = Date.now();
+      try {
+        const res = await env.DB.prepare(`
+          SELECT message_id, char_id, character_name, content, created_at
+          FROM proactive_offline_messages
+          WHERE user_id = ?1 AND created_at > ?2 AND expires_at > ?3
+          ORDER BY created_at ASC
+          LIMIT 100
+        `).bind(userId, since, now).all<{
+          message_id: string;
+          char_id: string;
+          character_name: string;
+          content: string;
+          created_at: number;
+        }>();
+        return json({
+          ok: true,
+          userId,
+          since,
+          now,
+          messages: (res.results || []).map((r) => ({
+            messageId: r.message_id,
+            charId: r.char_id,
+            characterName: r.character_name,
+            content: r.content,
+            createdAt: r.created_at,
+          })),
+        });
+      } catch (e) {
+        return json({ error: 'query failed', detail: String((e as Error)?.message || e) }, 500);
+      }
+    }
 
     return json({ error: 'not found' }, 404);
   },

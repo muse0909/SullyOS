@@ -30,6 +30,14 @@ type DurableObjectState = any;  // 顺手类型 — 实际运行时 ctx 由 CF �
 
 export class WsHub extends DurableObject {
   private readonly connections: Map<string, Set<WebSocket>> = new Map();
+  // 麦麦 2026-09-05：每 userId 最近一次 ping 的 epoch ms
+  //   用来给 cron 提供"真实在线"判断（30s 内有 ping 才算真活）—
+  //   Doze 期间 client socket 还在但 OkHttp 线程冻住，delivered>0 不可靠
+  private readonly lastPingAt: Map<string, number> = new Map();
+
+  // 麦麦 2026-09-05：30 秒内有 ping 算真活。30s 是 PING_INTERVAL_MS 30_000 + 抖动 buffer
+  //   跟 commit 1 客户端心跳一致（30s + 8s wakelock = 38s 上限）
+  private static readonly ONLINE_THRESHOLD_MS = 30_000;
 
   // 麦麦 2026-09-03：CF 静态分析只认 extends DurableObject，不认 implements DurableObject
   // 加显式 constructor 把 ctx/env 传给 super — DurableObject 父类要求
@@ -50,15 +58,39 @@ export class WsHub extends DurableObject {
       return this.handleBroadcast(request);
     }
 
+    // 麦麦 2026-09-05：真实在线查询 — GET /online/{userId}
+    //   commit 3 客户端拉取离线消息前用：先确认真不在线再走 D1 拉取
+    if (url.pathname.startsWith('/online/') && request.method === 'GET') {
+      const userId = decodeURIComponent(url.pathname.slice('/online/'.length));
+      const last = this.lastPingAt.get(userId);
+      const reallyOnline = last !== undefined && (Date.now() - last) < WsHub.ONLINE_THRESHOLD_MS;
+      return new Response(JSON.stringify({
+        ok: true,
+        userId,
+        reallyOnline,
+        lastPingAt: last ?? null,
+        socketCount: this.connections.get(userId)?.size ?? 0,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
     // ---------- 排障 ----------
     if (url.pathname === '/stats' && request.method === 'GET') {
       let total = 0;
       const perUser: Record<string, number> = {};
+      const now = Date.now();
       for (const [userId, sockets] of this.connections) {
         perUser[userId] = sockets.size;
         total += sockets.size;
       }
-      return new Response(JSON.stringify({ ok: true, total, perUser }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        total,
+        perUser,
+        // 麦麦 2026-09-05：补真实在线统计
+        onlineUserIds: Array.from(this.lastPingAt.entries())
+          .filter(([_, t]) => (now - t) < WsHub.ONLINE_THRESHOLD_MS)
+          .map(([uid]) => uid),
+      }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -67,6 +99,12 @@ export class WsHub extends DurableObject {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // 麦麦 2026-09-05：外部查询 userId 是否真实在线（30s 内有 ping）
+  isReallyOnline(userId: string): boolean {
+    const t = this.lastPingAt.get(userId);
+    return t !== undefined && (Date.now() - t) < WsHub.ONLINE_THRESHOLD_MS;
   }
 
   /**
@@ -108,6 +146,8 @@ export class WsHub extends DurableObject {
       }
       if (type === 'ping') {
         // 心跳响应（KeepAliveService 每 30s 发一个 ping）
+        // 麦麦 2026-09-05：更新 lastPingAt，供 commit 2 isReallyOnline 判真实在线
+        this.lastPingAt.set(userId, Date.now());
         try {
           server.send(JSON.stringify({ type: 'pong', t: Date.now() }));
         } catch {
@@ -119,10 +159,12 @@ export class WsHub extends DurableObject {
 
     server.addEventListener('close', () => {
       this.removeSocket(userId, server);
+      this.cleanupPingAt(userId, server);
     });
 
     server.addEventListener('error', () => {
       this.removeSocket(userId, server);
+      this.cleanupPingAt(userId, socket);
     });
 
     // 返回给 Worker，Worker 再返回给客户端 — 完成握手
@@ -182,5 +224,17 @@ export class WsHub extends DurableObject {
     if (!set) return;
     set.delete(socket);
     if (set.size === 0) this.connections.delete(userId);
+  }
+
+  /**
+   * 麦麦 2026-09-05：socket 关闭时清 lastPingAt。
+   *   只有当 userId 下所有 socket 都关掉时才删 entry —— 单个 socket 关闭但
+   *   同一 userId 还有别的 socket（多端连接）时仍记最新 ping。
+   */
+  private cleanupPingAt(userId: string, _closedSocket: WebSocket) {
+    const set = this.connections.get(userId);
+    if (!set || set.size === 0) {
+      this.lastPingAt.delete(userId);
+    }
   }
 }

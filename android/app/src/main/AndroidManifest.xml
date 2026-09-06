@@ -69,6 +69,11 @@
          没声明的话 MainActivity 里的 requestPermissions 调用无效，主动消息通知弹不出来 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 麦麦 2026-09-04：弹主动消息时 PARTIAL_WAKE_LOCK 临时持有 10s
+         目的：保证 onMessage → showProactiveNotification 链路在 doze 进入瞬间不被 CPU sleep 打断
+         不永久 acquire（避免耗电被 vivo / Doze 标记为异常） -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- 麦麦 2026-09-03：电池优化白名单
          加了之后可以调 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 让用户加白名单
          用途：Doze 模式下系统可能断长连接 WebSocket；加白名单后 Doze 不影响本 app

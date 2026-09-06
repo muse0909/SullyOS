@@ -95,9 +95,25 @@ class KeepAliveService : Service() {
         private const val ALARM_REQUEST_CODE = 0xCAFE
         private const val ALARM_DELAY_MS = 60_000L   // 60s 后拉起
 
+        // 麦麦 2026-09-05：周期 alarm 兜底（service 被杀后 30 分钟拉起重连）
+        //   暮色 9-5 确认：30 分钟是 vivo Alarm 频率安全线（再短系统会合并或忽略）
+        //   action 自定义，PendingIntent 拉 Service 本身（不是 Activity）→ 走 onStartCommand
+        private const val PERIODIC_ALARM_REQUEST_CODE = 0xBEEF
+        private const val PERIODIC_ALARM_INTERVAL_MS = 30L * 60L * 1000L  // 30 分钟
+        private const val ACTION_PERIODIC_RESTART = "com.aetheros.simulator.PERIODIC_RESTART"
+
         // 麦麦 2026-09-03：占位符字面量 — 跟 build.gradle readCfg 默认值对齐
         const val PLACEHOLDER_URL_MARKER = "PLACEHOLDER_URL"
         const val PLACEHOLDER_TOKEN_MARKER = "PLACEHOLDER_TOKEN"
+
+        // 麦麦 2026-09-05 commit 3：去重 + 离线拉取相关
+        //   存已展示的 messageId（SharedPreferences 简单实现，commit 4 升级 IDB 再说）
+        private const val PREFS_SEEN_MSGS = "proactive_seen_msgs"
+        //   保留最近 N 条防 prefs 无限增长
+        private const val SEEN_MSGS_MAX = 200
+        //   离线拉取 worker URL（commit 4 GET /api/offline-messages）
+        //   与 WS_URL 同源：去掉 ws:// → https://，去掉 /ws/push
+        private const val OFFLINE_FETCH_DELAY_MS = 3_000L  // 启动 3 秒后拉
 
         // 麦麦 2026-09-03：检测当前 build 是不是占位符
         //   @JvmStatic 让 Java 端可以直接 KeepAliveService.isPlaceholderBuild() 调，
@@ -155,6 +171,10 @@ class KeepAliveService : Service() {
                         return
                     }
                 }
+                // 麦麦 2026-09-05：心跳前后短持 Wakelock（暮色指定 8s buffer）
+                //   避免 vivo 标记长持锁为异常
+                //   8s 内没收到 pong → release + 标记重连（不死等）
+                acquirePingWakelock()
                 val sent = ws.send("{\"type\":\"ping\"}")
                 logD("[ping] sent=$sent")
                 handler.postDelayed(this, PING_INTERVAL_MS)
@@ -165,6 +185,62 @@ class KeepAliveService : Service() {
         }
     }
 
+    // 麦麦 2026-09-05：心跳 Wakelock 状态字段
+    private var pingWakelock: PowerManager.WakeLock? = null
+    private var pingTimeoutRunnable: Runnable? = null
+
+    // 麦麦 2026-09-05 commit 3：拉取离线消息 runnable + handler
+    private val offlineFetchRunnable = Runnable { fetchOfflineMessages() }
+    private val offlineFetchHandler = android.os.Handler(Looper.getMainLooper())
+
+    /**
+     * 心跳前 acquire PARTIAL_WAKE_LOCK 8 秒。
+     * 8 秒内如果收到 pong（在 onMessage 里调 releasePingWakelock）→ 提前 release
+     * 8 秒内没收到 → 强制 release + scheduleReconnect 重连
+     */
+    private fun acquirePingWakelock() {
+        try {
+            // 如果上一把锁没释放（异常路径），先 release
+            if (pingWakelock?.isHeld == true) {
+                try { pingWakelock?.release() } catch (_: Exception) {}
+            }
+            val pm = getSystemService(PowerManager::class.java) ?: return
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SullyOS:ping")
+            wl.setReferenceCounted(false)
+            wl.acquire(8_000L)
+            pingWakelock = wl
+            logD("PING_WAKELOCK_ACQUIRE 8s")
+
+            // 8s 超时兜底：到点如果锁还持着，说明没收到 pong，强制释放 + 重连
+            val timeoutRunnable = Runnable {
+                if (pingWakelock?.isHeld == true) {
+                    logW("PING_TIMEOUT_RELEASE 8s no pong → reconnect")
+                    try { pingWakelock?.release() } catch (_: Exception) {}
+                    pingWakelock = null
+                    scheduleReconnect()
+                }
+            }
+            pingTimeoutRunnable = timeoutRunnable
+            handler.postDelayed(timeoutRunnable, 8_000L)
+        } catch (t: Throwable) {
+            logE("PING_WAKELOCK_ACQUIRE_FAILED ${t.javaClass.simpleName}: ${t.message}")
+        }
+    }
+
+    /**
+     * 收到 pong 时调（onMessage 里的 pong 分支）。
+     * 取消 8s 超时兜底 + 提前 release 锁。
+     */
+    private fun releasePingWakelock() {
+        pingTimeoutRunnable?.let { handler.removeCallbacks(it) }
+        pingTimeoutRunnable = null
+        if (pingWakelock?.isHeld == true) {
+            try { pingWakelock?.release() } catch (_: Exception) {}
+            logD("PING_WAKELOCK_RELEASE (pong received)")
+        }
+        pingWakelock = null
+    }
+
     private val connectRunnable = Runnable { connectWebSocket() }
 
     override fun onCreate() {
@@ -173,6 +249,9 @@ class KeepAliveService : Service() {
         createNotificationChannel()
         startKeepAliveForeground()
         createProactiveMessageChannel()
+        schedulePeriodicRestartAlarm()  // 麦麦 2026-09-05：周期 alarm 兜底（30 分钟，vivo 安全线）
+        // 麦麦 2026-09-05 commit 3：启动 3 秒后拉离线消息（避开 WS 还在握手的瞬间）
+        offlineFetchHandler.postDelayed(offlineFetchRunnable, OFFLINE_FETCH_DELAY_MS)
     }
 
     /**
@@ -227,8 +306,15 @@ class KeepAliveService : Service() {
         logD("onStartCommand intent=${intent?.action} flags=$flags")
         startKeepAliveForeground()
         cancelTaskRemovedAlarm()
+        // 麦麦 2026-09-05：周期 alarm 触发的识别（service 死后被拉起来重连）
+        if (intent?.action == ACTION_PERIODIC_RESTART) {
+            logW("ALARM_RESTART_TRIGGERED periodic")
+        }
         if (webSocket == null) {
             connectWebSocket()
+        } else {
+            // WS 还活着 — 重新排下一个 30 分钟周期 alarm
+            schedulePeriodicRestartAlarm()
         }
         return START_STICKY
     }
@@ -237,6 +323,8 @@ class KeepAliveService : Service() {
         logD("onDestroy")
         handler.removeCallbacks(pingRunnable)
         handler.removeCallbacks(connectRunnable)
+        cancelPeriodicRestartAlarm()  // 麦麦 2026-09-05：service 死时取消周期 alarm
+        releasePingWakelock()  // 麦麦 2026-09-05：释放可能还持着的心跳锁
         webSocket?.close(1000, "service destroyed")
         webSocket = null
         super.onDestroy()
@@ -312,6 +400,47 @@ class KeepAliveService : Service() {
             logD("cancelled restart alarm")
         } catch (t: Throwable) {
             logE("cancelTaskRemovedAlarm failed", t)
+        }
+    }
+
+    // 麦麦 2026-09-05：周期 alarm 兜底（30 分钟）— service 死后被系统拉起重连 WS
+    private fun schedulePeriodicRestartAlarm() {
+        try {
+            val am = getSystemService(AlarmManager::class.java) ?: return
+            val intent = Intent(this, KeepAliveService::class.java).apply {
+                action = ACTION_PERIODIC_RESTART
+            }
+            val pi = PendingIntent.getService(
+                this,
+                PERIODIC_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val triggerAt = SystemClock.elapsedRealtime() + PERIODIC_ALARM_INTERVAL_MS
+            // setExactAndAllowWhileIdle 越过 Doze 节能
+            am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
+            logD("scheduled periodic restart alarm in ${PERIODIC_ALARM_INTERVAL_MS / 60_000}min")
+        } catch (t: Throwable) {
+            logE("schedulePeriodicRestartAlarm failed", t)
+        }
+    }
+
+    private fun cancelPeriodicRestartAlarm() {
+        try {
+            val am = getSystemService(AlarmManager::class.java) ?: return
+            val intent = Intent(this, KeepAliveService::class.java).apply {
+                action = ACTION_PERIODIC_RESTART
+            }
+            val pi = PendingIntent.getService(
+                this,
+                PERIODIC_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            am.cancel(pi)
+            logD("cancelled periodic restart alarm")
+        } catch (t: Throwable) {
+            logE("cancelPeriodicRestartAlarm failed", t)
         }
     }
 
@@ -400,6 +529,9 @@ class KeepAliveService : Service() {
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
+                    // 麦麦 2026-09-04：诊断日志（gpt 9-3 那轮）— 抓到消息的瞬间打时间戳
+                    //   和 SHOW_ENTER / BEFORE_NOTIFY / AFTER_NOTIFY 对比 = 卡哪一箭一眼看出来
+                    Log.i("PROACTIVE", "WS_ONMSG ts=${System.currentTimeMillis()} text=$text thread=${Thread.currentThread().name}")
                     lastMessageTime = System.currentTimeMillis()
                     lastSuccessfulPongTime = lastMessageTime
                     missedPongs = 0
@@ -441,6 +573,7 @@ class KeepAliveService : Service() {
             val type = json.optString("type")
             if (type == "pong") {
                 logD("recv pong")
+                releasePingWakelock()  // 麦麦 2026-09-05：pong 来了，释放心跳 Wakelock
                 return
             }
             if (type != "proactive_message") {
@@ -449,19 +582,31 @@ class KeepAliveService : Service() {
             }
             val characterId = json.optString("characterId")
             val content = json.optString("content")
+            val messageId = json.optString("messageId")
             if (characterId.isEmpty() || content.isEmpty()) {
                 logW("proactive_message missing characterId/content, ignore")
                 return
             }
-            showProactiveNotification(characterId, content)
+            // 麦麦 2026-09-05 commit 3：messageId 去重（commit 2 worker 端已经生成 UUID）
+            if (messageId.isNotEmpty() && isMessageSeen(messageId)) {
+                logD("dup messageId=$messageId, skip")
+                return
+            }
+            showProactiveNotification(characterId, content, messageId)
+            if (messageId.isNotEmpty()) markMessageSeen(messageId)
         } catch (e: Exception) {
             logE("handleMessage parse failed", e)
         }
     }
 
-    private fun showProactiveNotification(characterId: String, content: String) {
+    private fun showProactiveNotification(characterId: String, content: String, messageId: String) {
+        // 麦麦 2026-09-05：去掉了之前的 10s 临时锁（9-4 加的）— 暮色 9-5 反馈"长持反而被 vivo 标记异常"
+        //   现在心跳短持（8s）已经覆盖 CPU 唤醒需求，不再需要这里重复持锁
+        Log.i("PROACTIVE", "SHOW_ENTER ts=${System.currentTimeMillis()} char=$characterId msgId=$messageId thread=${Thread.currentThread().name}")
+
         if (!hasNotificationPermission()) {
             logW("POST_NOTIFICATIONS not granted, cannot show proactive notification (characterId=$characterId)")
+            Log.i("PROACTIVE", "NO_PERMISSION_SKIP char=$characterId")
             return
         }
         try {
@@ -470,7 +615,9 @@ class KeepAliveService : Service() {
             }
             val pi = PendingIntent.getActivity(
                 this,
-                PROACTIVE_NOTIFICATION_ID_OFFSET + Math.abs(characterId.hashCode()),
+                // 麦麦 2026-09-05 commit 3：notificationId 用 messageId 算（commit 2 之前是 charId.hashCode）
+                //   每条消息独立 notificationId → 不会互相覆盖，多条离线消息同时显示
+                PROACTIVE_NOTIFICATION_ID_OFFSET + notificationIdHash(messageId, characterId),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
@@ -482,12 +629,23 @@ class KeepAliveService : Service() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build()
-            val notificationId = PROACTIVE_NOTIFICATION_ID_OFFSET + Math.abs(characterId.hashCode())
+            val notificationId = PROACTIVE_NOTIFICATION_ID_OFFSET + notificationIdHash(messageId, characterId)
+            Log.i("PROACTIVE", "BEFORE_NOTIFY id=$notificationId char=$characterId msgId=$messageId content=$content")
             notificationManager.notify(notificationId, notification)
-            logD("proactive notification shown: char=$characterId id=$notificationId")
+            Log.i("PROACTIVE", "AFTER_NOTIFY id=$notificationId")
+            logD("proactive notification shown: char=$characterId id=$notificationId msgId=$messageId")
         } catch (t: Throwable) {
+            Log.i("PROACTIVE", "THROWN ${t.javaClass.simpleName}: ${t.message}")
             logE("showProactiveNotification failed", t)
         }
+    }
+
+    // 麦麦 2026-09-05 commit 3：notificationId 算法
+    //   messageId 不空时用 messageId 算（每条消息独立）
+    //   messageId 空时退回 characterId 算（兼容旧路径）
+    private fun notificationIdHash(messageId: String, characterId: String): Int {
+        val key = if (messageId.isNotEmpty()) messageId else characterId
+        return Math.abs(key.hashCode())
     }
 
     private fun getOrCreateUserId(): String {
@@ -497,5 +655,119 @@ class KeepAliveService : Service() {
         val newId = UUID.randomUUID().toString()
         prefs.edit().putString(KEY_WS_USER_ID, newId).apply()
         return newId
+    }
+
+    // ==================== Commit 3：去重 + 离线拉取 ====================
+
+    /**
+     * 检查 messageId 是否已展示过（去重）。
+     * 暮色 9-5 commit 3 强调：客户端恢复瞬间 + D1 补发可能同时到达，必须去重。
+     * 用 SharedPreferences 简单实现（commit 4 升级 IDB 再说）。
+     */
+    private fun isMessageSeen(messageId: String): Boolean {
+        if (messageId.isEmpty()) return false
+        return try {
+            val prefs = getSharedPreferences(PREFS_SEEN_MSGS, Context.MODE_PRIVATE)
+            prefs.getStringSet("ids", null)?.contains(messageId) ?: false
+        } catch (t: Throwable) {
+            logE("isMessageSeen failed", t)
+            false
+        }
+    }
+
+    /**
+     * 标记 messageId 为已展示。
+     * 用 Set 存 + 超 SEEN_MSGS_MAX 清空重建（防 prefs 无限增长）。
+     */
+    private fun markMessageSeen(messageId: String) {
+        if (messageId.isEmpty()) return
+        try {
+            val prefs = getSharedPreferences(PREFS_SEEN_MSGS, Context.MODE_PRIVATE)
+            val current = prefs.getStringSet("ids", null)?.toMutableSet() ?: mutableSetOf()
+            current.add(messageId)
+            if (current.size > SEEN_MSGS_MAX) {
+                logW("seen msgs Set 超 $SEEN_MSGS_MAX 上限，清空重建")
+                current.clear()
+                current.add(messageId)
+            }
+            prefs.edit().putStringSet("ids", current).apply()
+        } catch (t: Throwable) {
+            logE("markMessageSeen failed", t)
+        }
+    }
+
+    /**
+     * 麦麦 2026-09-05 commit 3 + 4：拉取 D1 离线消息。
+     * 启动时（onCreate 3 秒后）调一次，WS 恢复后也会调。
+     * userId 用 getOrCreateUserId()（跟 WS 握手 userId 一致）— commit 2 简化用 endpoint 占位，
+     *   生产前需要再让 schedule 表带 user_id 字段。当前先跑通链路。
+     */
+    private fun fetchOfflineMessages() {
+        if (isPlaceholderBuild()) {
+            logD("fetchOfflineMessages skip: placeholder build")
+            return
+        }
+        val userId = try { getOrCreateUserId() } catch (_: Throwable) { return }
+        // WS_URL 形如 wss://host/ws/push → 推 baseUrl = https://host
+        val wsUrl = BuildConfig.WS_URL
+        val baseUrl = wsUrl.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://")
+            .replaceFirst("/ws/push.*$".toRegex(), "")
+        val url = "$baseUrl/api/offline-messages?userId=${java.net.URLEncoder.encode(userId, "UTF-8")}&since=0"
+        logD("OFFLINE_FETCH url=$url")
+
+        val fetchThread = Thread {
+            try {
+                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 8_000
+                    readTimeout = 8_000
+                    setRequestProperty("X-Client-Token", BuildConfig.WS_TOKEN)
+                }
+                val code = conn.responseCode
+                if (code != 200) {
+                    logE("OFFLINE_FETCH_HTTP_$code")
+                    return@Thread
+                }
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                parseAndDispatchOfflineMessages(body)
+            } catch (t: Throwable) {
+                logE("OFFLINE_FETCH_FAILED ${t.javaClass.simpleName}: ${t.message}")
+            }
+        }
+        fetchThread.name = "offline-fetch"
+        fetchThread.start()
+    }
+
+    /**
+     * 麦麦 2026-09-05 commit 3：解析 D1 拉到的消息 → 弹通知 + 存去重。
+     * 用 handler 切回 main thread 弹通知（NotificationManager 跨线程有限制）。
+     */
+    private fun parseAndDispatchOfflineMessages(body: String) {
+        try {
+            val json = org.json.JSONObject(body)
+            if (!json.optBoolean("ok", false)) {
+                logE("OFFLINE_FETCH ok=false body=$body")
+                return
+            }
+            val arr = json.optJSONArray("messages") ?: return
+            logD("OFFLINE_FETCH got ${arr.length()} messages")
+            for (i in 0 until arr.length()) {
+                val m = arr.getJSONObject(i)
+                val msgId = m.optString("messageId")
+                val charId = m.optString("charId")
+                val content = m.optString("content")
+                if (msgId.isEmpty() || charId.isEmpty() || content.isEmpty()) continue
+                if (isMessageSeen(msgId)) {
+                    logD("OFFLINE_FETCH_DUP msgId=$msgId skip")
+                    continue
+                }
+                offlineFetchHandler.post {
+                    showProactiveNotification(charId, content, msgId)
+                    markMessageSeen(msgId)
+                }
+            }
+        } catch (t: Throwable) {
+            logE("parseAndDispatchOfflineMessages failed", t)
+        }
     }
 }

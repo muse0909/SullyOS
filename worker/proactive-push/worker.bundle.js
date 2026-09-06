@@ -1,4 +1,4 @@
-// ../../../../Desktop/SullyOS-master/worker/proactive-push/src/webpush.ts
+// worker/proactive-push/src/webpush.ts
 var B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 function b64uEncode(buf) {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -23,16 +23,6 @@ function b64uDecode(s) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-function concatBytes(...parts) {
-  const len = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(len);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
-}
 async function prepareVapid(publicKeyB64u, privateKeyB64u, subject) {
   const pub = b64uDecode(publicKeyB64u);
   const priv = b64uDecode(privateKeyB64u);
@@ -54,110 +44,18 @@ async function prepareVapid(publicKeyB64u, privateKeyB64u, subject) {
   );
   return { publicKeyB64u, signingKey, subject };
 }
-async function buildVapidJwt(audience, vapid) {
-  const header = { typ: "JWT", alg: "ES256" };
-  const claim = {
-    aud: audience,
-    exp: Math.floor(Date.now() / 1e3) + 12 * 3600,
-    // max 24h per spec; 12h is safe
-    sub: vapid.subject
-  };
-  const unsigned = b64uEncode(new TextEncoder().encode(JSON.stringify(header))) + "." + b64uEncode(new TextEncoder().encode(JSON.stringify(claim)));
-  const sig = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    vapid.signingKey,
-    new TextEncoder().encode(unsigned)
-  );
-  return unsigned + "." + b64uEncode(new Uint8Array(sig));
-}
-async function hkdf(ikm, salt, info, lengthBytes) {
-  const key = await crypto.subtle.importKey("raw", ikm, { name: "HKDF" }, false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt, info },
-    key,
-    lengthBytes * 8
-  );
-  return new Uint8Array(bits);
-}
-async function encryptAes128Gcm(payload, clientP256dh, clientAuth) {
-  const ephemeral = await crypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-  const ephemeralPubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", ephemeral.publicKey));
-  const clientPubKey = await crypto.subtle.importKey(
-    "raw",
-    clientP256dh,
-    { name: "ECDH", namedCurve: "P-256" },
-    false,
-    []
-  );
-  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
-    { name: "ECDH", public: clientPubKey },
-    ephemeral.privateKey,
-    256
-  ));
-  const prk = await hkdf(
-    ikm,
-    clientAuth,
-    concatBytes(new TextEncoder().encode("WebPush: info\0"), clientP256dh, ephemeralPubRaw),
-    32
-  );
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const cek = await hkdf(prk, salt, new TextEncoder().encode("Content-Encoding: aes128gcm\0"), 16);
-  const nonce = await hkdf(prk, salt, new TextEncoder().encode("Content-Encoding: nonce\0"), 12);
-  const padded = new Uint8Array(payload.length + 1);
-  padded.set(payload, 0);
-  padded[payload.length] = 2;
-  const cekKey = await crypto.subtle.importKey("raw", cek, { name: "AES-GCM" }, false, ["encrypt"]);
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, cekKey, padded));
-  const rs = 4096;
-  const header = new Uint8Array(16 + 4 + 1 + 65);
-  header.set(salt, 0);
-  const dv = new DataView(header.buffer);
-  dv.setUint32(16, rs, false);
-  header[20] = 65;
-  header.set(ephemeralPubRaw, 21);
-  return concatBytes(header, ciphertext);
-}
-async function sendPush(vapid, sub, payload) {
-  const bytes = typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
-  const url = new URL(sub.endpoint);
-  const audience = url.origin;
-  const jwt = await buildVapidJwt(audience, vapid);
-  const encrypted = await encryptAes128Gcm(
-    bytes,
-    b64uDecode(sub.p256dh),
-    b64uDecode(sub.auth)
-  );
-  const res = await fetch(sub.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Encoding": "aes128gcm",
-      "TTL": "60",
-      // 60s — these are "wake up" pings, stale ones are useless
-      "Urgency": "high",
-      "Authorization": `vapid t=${jwt}, k=${vapid.publicKeyB64u}`
-    },
-    body: encrypted
-  });
-  const gone = res.status === 404 || res.status === 410;
-  let responseText;
-  if (!res.ok && !gone) {
-    try {
-      responseText = await res.text();
-    } catch {
-    }
-  }
-  return { status: res.status, ok: res.ok, gone, responseText };
-}
 
-// ../../../../Desktop/SullyOS-master/worker/proactive-push/src/wsHub.ts
+// worker/proactive-push/src/wsHub.ts
 import { DurableObject } from "cloudflare:workers";
-var WsHub = class extends DurableObject {
+var WsHub = class _WsHub extends DurableObject {
   connections = /* @__PURE__ */ new Map();
+  // 麦麦 2026-09-05：每 userId 最近一次 ping 的 epoch ms
+  //   用来给 cron 提供"真实在线"判断（30s 内有 ping 才算真活）—
+  //   Doze 期间 client socket 还在但 OkHttp 线程冻住，delivered>0 不可靠
+  lastPingAt = /* @__PURE__ */ new Map();
+  // 麦麦 2026-09-05：30 秒内有 ping 算真活。30s 是 PING_INTERVAL_MS 30_000 + 抖动 buffer
+  //   跟 commit 1 客户端心跳一致（30s + 8s wakelock = 38s 上限）
+  static ONLINE_THRESHOLD_MS = 3e4;
   // 麦麦 2026-09-03：CF 静态分析只认 extends DurableObject，不认 implements DurableObject
   // 加显式 constructor 把 ctx/env 传给 super — DurableObject 父类要求
   constructor(state, env) {
@@ -171,14 +69,33 @@ var WsHub = class extends DurableObject {
     if (url.pathname === "/broadcast" && request.method === "POST") {
       return this.handleBroadcast(request);
     }
+    if (url.pathname.startsWith("/online/") && request.method === "GET") {
+      const userId = decodeURIComponent(url.pathname.slice("/online/".length));
+      const last = this.lastPingAt.get(userId);
+      const reallyOnline = last !== void 0 && Date.now() - last < _WsHub.ONLINE_THRESHOLD_MS;
+      return new Response(JSON.stringify({
+        ok: true,
+        userId,
+        reallyOnline,
+        lastPingAt: last ?? null,
+        socketCount: this.connections.get(userId)?.size ?? 0
+      }), { headers: { "Content-Type": "application/json" } });
+    }
     if (url.pathname === "/stats" && request.method === "GET") {
       let total = 0;
       const perUser = {};
+      const now = Date.now();
       for (const [userId, sockets] of this.connections) {
         perUser[userId] = sockets.size;
         total += sockets.size;
       }
-      return new Response(JSON.stringify({ ok: true, total, perUser }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        total,
+        perUser,
+        // 麦麦 2026-09-05：补真实在线统计
+        onlineUserIds: Array.from(this.lastPingAt.entries()).filter(([_, t]) => now - t < _WsHub.ONLINE_THRESHOLD_MS).map(([uid]) => uid)
+      }), {
         headers: { "Content-Type": "application/json" }
       });
     }
@@ -186,6 +103,11 @@ var WsHub = class extends DurableObject {
       status: 404,
       headers: { "Content-Type": "application/json" }
     });
+  }
+  // 麦麦 2026-09-05：外部查询 userId 是否真实在线（30s 内有 ping）
+  isReallyOnline(userId) {
+    const t = this.lastPingAt.get(userId);
+    return t !== void 0 && Date.now() - t < _WsHub.ONLINE_THRESHOLD_MS;
   }
   /**
    * 处理 WebSocket upgrade。
@@ -218,6 +140,7 @@ var WsHub = class extends DurableObject {
         return;
       }
       if (type === "ping") {
+        this.lastPingAt.set(userId, Date.now());
         try {
           server.send(JSON.stringify({ type: "pong", t: Date.now() }));
         } catch {
@@ -226,9 +149,11 @@ var WsHub = class extends DurableObject {
     });
     server.addEventListener("close", () => {
       this.removeSocket(userId, server);
+      this.cleanupPingAt(userId, server);
     });
     server.addEventListener("error", () => {
       this.removeSocket(userId, server);
+      this.cleanupPingAt(userId, socket);
     });
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
@@ -262,12 +187,12 @@ var WsHub = class extends DurableObject {
     });
     let delivered = 0;
     for (const [userId, sockets] of this.connections) {
-      for (const socket of sockets) {
+      for (const socket2 of sockets) {
         try {
-          socket.send(payload);
+          socket2.send(payload);
           delivered++;
         } catch {
-          this.removeSocket(userId, socket);
+          this.removeSocket(userId, socket2);
         }
       }
     }
@@ -276,15 +201,26 @@ var WsHub = class extends DurableObject {
     });
   }
   /** 从连接池移除（close / error / send 失败时调用） */
-  removeSocket(userId, socket) {
+  removeSocket(userId, socket2) {
     const set = this.connections.get(userId);
     if (!set) return;
-    set.delete(socket);
+    set.delete(socket2);
     if (set.size === 0) this.connections.delete(userId);
+  }
+  /**
+   * 麦麦 2026-09-05：socket 关闭时清 lastPingAt。
+   *   只有当 userId 下所有 socket 都关掉时才删 entry —— 单个 socket 关闭但
+   *   同一 userId 还有别的 socket（多端连接）时仍记最新 ping。
+   */
+  cleanupPingAt(userId, _closedSocket) {
+    const set = this.connections.get(userId);
+    if (!set || set.size === 0) {
+      this.lastPingAt.delete(userId);
+    }
   }
 };
 
-// ../../../../Desktop/SullyOS-master/worker/proactive-push/src/index.ts
+// worker/proactive-push/src/index.ts
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -323,21 +259,23 @@ async function handleSubscribe(req, env) {
   const auth = body.subscription?.keys?.auth;
   const charId = body.charId;
   const intervalMs = body.intervalMs;
+  const userId = body.userId;
   if (!endpoint || !p256dh || !auth || !charId || !intervalMs || intervalMs < 6e4) {
     return json({ error: "missing or invalid fields" }, 400);
   }
   const now = Date.now();
   const nextFireAt = now + intervalMs;
   await env.DB.prepare(`
-    INSERT INTO schedules (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    INSERT INTO schedules (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
     ON CONFLICT(endpoint, char_id) DO UPDATE SET
       p256dh = excluded.p256dh,
       auth = excluded.auth,
       interval_ms = excluded.interval_ms,
       next_fire_at = excluded.next_fire_at,
-      last_heartbeat = excluded.last_heartbeat
-  `).bind(endpoint, charId, p256dh, auth, intervalMs, nextFireAt, now, now).run();
+      last_heartbeat = excluded.last_heartbeat,
+      user_id = excluded.user_id
+  `).bind(endpoint, charId, p256dh, auth, intervalMs, nextFireAt, now, now, userId || null).run();
   return json({ ok: true, nextFireAt });
 }
 async function handleUnsubscribe(req, env) {
@@ -397,7 +335,7 @@ async function runScheduledSweep(env) {
   const hbWindow = parseInt(env.HEARTBEAT_WINDOW_MS || "300000", 10) || 3e5;
   const cutoff = now - hbWindow;
   const due = await env.DB.prepare(`
-    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id
     FROM schedules
     WHERE next_fire_at <= ?1 AND last_heartbeat >= ?2
     ORDER BY next_fire_at ASC
@@ -411,7 +349,9 @@ async function runScheduledSweep(env) {
   let dropped = 0;
   let wsDelivered = 0;
   for (const row of due.results) {
-    let wsOk = false;
+    let wsReallyOnline = false;
+    let wsDeliveredCount = 0;
+    const messageId = crypto.randomUUID();
     try {
       const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
       const broadcastRes = await stub.fetch("https://ws-hub/broadcast", {
@@ -421,48 +361,72 @@ async function runScheduledSweep(env) {
           characterId: row.char_id,
           content: row.char_id,
           // 占位 — 后续接角色名/消息文本
-          timestamp: now
+          timestamp: now,
+          messageId
+          // 麦麦 2026-09-05 commit 3：去重键
         })
       });
       if (broadcastRes.ok) {
         const broadcastData = await broadcastRes.json();
-        if ((broadcastData?.delivered ?? 0) > 0) {
-          wsOk = true;
-          wsDelivered += broadcastData.delivered ?? 0;
-        }
+        wsDeliveredCount = broadcastData?.delivered ?? 0;
       }
     } catch (e) {
-      console.warn("[cron] ws broadcast failed, falling back to web push", e);
+      console.warn("[cron] ws broadcast failed", e);
     }
-    if (wsOk) {
+    if (wsDeliveredCount > 0) {
+      try {
+        const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
+        const statsRes = await stub.fetch("https://ws-hub/stats", { method: "GET" });
+        if (statsRes.ok) {
+          const stats = await statsRes.json();
+          if ((stats?.onlineUserIds?.length ?? 0) > 0) {
+            wsReallyOnline = true;
+            wsDelivered += wsDeliveredCount;
+          }
+        }
+      } catch (_) {
+        if (wsDeliveredCount > 0) {
+          wsReallyOnline = true;
+          wsDelivered += wsDeliveredCount;
+        }
+      }
+    }
+    if (wsReallyOnline) {
       let nextWs = row.next_fire_at + row.interval_ms;
       if (nextWs <= now) nextWs = now + row.interval_ms;
       await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`).bind(nextWs, row.endpoint, row.char_id).run();
       fired++;
       continue;
     }
-    const payload = JSON.stringify({ type: "proactive-wake", charId: row.char_id, t: now });
+    const offlineExpiresAt = now + 72 * 3600 * 1e3;
     try {
-      const result = await sendPush(
-        vapid,
-        { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
-        payload
-      );
-      if (result.gone) {
-        await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1`).bind(row.endpoint).run();
-        dropped++;
-        continue;
-      }
-      if (!result.ok) {
-        console.warn(`[cron] push failed status=${result.status} char=${row.char_id} body=${result.responseText || ""}`);
-      }
-      let next = row.next_fire_at + row.interval_ms;
-      if (next <= now) next = now + row.interval_ms;
-      await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`).bind(next, row.endpoint, row.char_id).run();
-      fired++;
+      await env.DB.prepare(`
+        INSERT INTO proactive_offline_messages
+          (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+      `).bind(
+        crypto.randomUUID(),
+        // 麦麦 2026-09-05 commit 8：用 row.user_id 替代 endpoint
+        //   客户端 fetch 时用 WS userId 查 — 之前 endpoint 占位时两边对不上
+        row.user_id || row.endpoint,
+        // 旧 schedule 没 user_id 时退化用 endpoint
+        row.char_id,
+        row.char_id,
+        // 角色名暂用 char_id
+        row.char_id,
+        // 内容暂用 char_id
+        messageId,
+        now,
+        offlineExpiresAt
+      ).run();
+      console.log(`[cron] offline msg written: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
     } catch (e) {
-      console.error("[cron] push error", e, row.char_id);
+      console.error("[cron] failed to write offline msg", e, row.char_id);
     }
+    let next = row.next_fire_at + row.interval_ms;
+    if (next <= now) next = now + row.interval_ms;
+    await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`).bind(next, row.endpoint, row.char_id).run();
+    fired++;
   }
   return { fired, dropped, wsDelivered };
 }
@@ -519,6 +483,36 @@ var src_default = {
     if (url.pathname === "/heartbeat" && req.method === "POST") return handleHeartbeat(req, env);
     if (url.pathname === "/status" && req.method === "GET") return handleStatus(req, env);
     if (url.pathname === "/test" && req.method === "POST") return handleTest(req, env);
+    if (url.pathname === "/api/offline-messages" && req.method === "GET") {
+      const userId = url.searchParams.get("userId");
+      if (!userId) return json({ error: "userId required" }, 400);
+      const since = parseInt(url.searchParams.get("since") || "0", 10);
+      const now = Date.now();
+      try {
+        const res = await env.DB.prepare(`
+          SELECT message_id, char_id, character_name, content, created_at
+          FROM proactive_offline_messages
+          WHERE user_id = ?1 AND created_at > ?2 AND expires_at > ?3
+          ORDER BY created_at ASC
+          LIMIT 100
+        `).bind(userId, since, now).all();
+        return json({
+          ok: true,
+          userId,
+          since,
+          now,
+          messages: (res.results || []).map((r) => ({
+            messageId: r.message_id,
+            charId: r.char_id,
+            characterName: r.character_name,
+            content: r.content,
+            createdAt: r.created_at
+          }))
+        });
+      } catch (e) {
+        return json({ error: "query failed", detail: String(e?.message || e) }, 500);
+      }
+    }
     return json({ error: "not found" }, 404);
   },
   async scheduled(_event, env, ctx) {

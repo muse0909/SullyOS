@@ -16,7 +16,9 @@ import {
 } from '../utils/memoryPalace';
 import { dissolveEventBox, reviveAllArchivedInBox, scanGhostSummaries, deleteGhostSummary } from '../utils/memoryPalace/eventBox';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
-import StatusPanelCard from '../components/memoryPalace/StatusPanelCard';
+// 麦麦 2026-09-06：暮色 9-6 反馈"记忆宫殿中的当前状态还存在"—— 5d71187 删了 statusPanel.ts 数据层
+//   + extraction.ts 注入侧，但漏了顶部 StatusPanelCard UI 卡片。这里彻底下线该组件
+//   （旧 per-user 状态面板已废弃，新位置在 character_status_panels IDB — 暮色在角色备忘录页查看）
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
 type LinkedMemoryUI = {
@@ -4056,8 +4058,11 @@ create table if not exists memory_vectors (
                     )}
                 </div>
 
-                {/* 便利贴置顶已下线，由状态面板替代（statusPanel.ts） — 暮色 8-25 状态面板展示/编辑入口 */}
-                <StatusPanelCard />
+                {/* 麦麦 2026-09-06：旧 per-user 状态面板卡片已彻底下线
+                    暮色 9-5 指令"彻底清理旧状态面板" — 5d71187 已删 statusPanel.ts 数据层 + extraction 注入
+                    但当时漏删这个 UI 卡片（用空状态显示"暂无状态记录"），暮色 9-6 反馈
+                    新位置：发现页 → 角色备忘录 → 顶部固定显示当前状态面板（per-char IDB）
+                 */}
 
                 {/* 搜索结果 or 七个房间 */}
                 {globalSearchQuery.trim().length >= 2 ? (

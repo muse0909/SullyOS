@@ -149,7 +149,8 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
         <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
             {/* 麦麦 2026-09-06 16:25：角色下拉框合并到 header 那一行（暮色 9-6 16:25 反馈"切换角色想改到顶上"）
                 - 删独立的角色切换卡（原本 header 下面那一块）
-                - header 改成：返回 + 标题 + 角色下拉框（带图标，inline，rounded-full 胶囊样式）
+                - header 改成：返回 + 角色下拉框（带图标，inline，rounded-full 胶囊样式）
+                - 麦麦 2026-09-06 16:40：删"角色备忘录"标题（暮色 9-6 16:40 反馈"左上角的角色备忘录几个字去掉"）
                 - 副标题"X 自己记的备忘录"挪到内容区上方 */}
             <div className="flex items-center gap-2 px-2 py-3 bg-white/60 backdrop-blur shrink-0">
                 <button
@@ -159,7 +160,6 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
                 >
                     <CaretLeft size={20} weight="bold" />
                 </button>
-                <h1 className="text-base font-semibold text-slate-800 tracking-wide">角色备忘录</h1>
                 <div className="flex-1 flex items-center gap-2 bg-white rounded-full shadow-sm px-3 py-1.5 min-w-0">
                     <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
                         <Notebook size={12} weight="regular" className="text-amber-600" />

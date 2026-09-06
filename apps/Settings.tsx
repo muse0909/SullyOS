@@ -150,49 +150,28 @@ const PresetChip: React.FC<{
   useEffect(() => () => clearPress(), [clearPress]);
 
   return (
-    // 麦麦 2026-09-05：改成 div + 两个 button，避免嵌套 button + 触屏 pointer events 不稳定
+    // 麦麦 2026-09-06：暮色原话"主 API 预设只保留长按删除"——删 X 按钮
     //   - 主体（点 name）= 加载预设
-    //   - X 按钮（右边）= 删（永远可见，触屏 / 桌面都能用）
-    //   - 长按 550ms = 桌面用户备选
+    //   - 长按 550ms = 触发删除确认
     //   - 右键 = 桌面用户备选
-    <div
-      className={`relative inline-flex items-center gap-0.5 rounded-lg pl-3 pr-1 py-1 text-xs font-medium border shadow-sm transition-all ${
+    <button
+      type="button"
+      title="点击加载，长按 / 右键删除"
+      onPointerDown={handlePointerDown}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onContextMenu={(e) => {
+          e.preventDefault();
+          onRequestDelete();
+      }}
+      onClick={handleClick}
+      className={`relative inline-flex items-center rounded-lg px-3 py-1 text-xs font-medium border shadow-sm transition-all cursor-pointer ${
         active ? activeClassName : idleClassName
       } ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
     >
-      <button
-        type="button"
-        title="点击加载，长按 / 右键删除"
-        onPointerDown={handlePointerDown}
-        onPointerUp={clearPress}
-        onPointerLeave={clearPress}
-        onPointerCancel={clearPress}
-        onContextMenu={(e) => {
-            e.preventDefault();
-            onRequestDelete();
-        }}
-        onClick={handleClick}
-        className="cursor-pointer"
-      >
-        {preset.name}
-      </button>
-      <button
-        type="button"
-        title="删除预设"
-        onClick={(e) => {
-            e.stopPropagation();
-            onRequestDelete();
-        }}
-        className={`ml-1 w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] leading-none transition-colors ${
-          active
-            ? 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-100'
-            : 'text-slate-400 hover:text-red-500 hover:bg-red-50'
-        }`}
-        aria-label="删除预设"
-      >
-        ×
-      </button>
-    </div>
+      {preset.name}
+    </button>
   );
 };
 

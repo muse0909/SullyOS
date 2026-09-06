@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Trash, MagnifyingGlass } from '@phosphor-icons/react';
 import { CharacterProfile } from '../../types';
@@ -8,6 +8,77 @@ import Modal from '../os/Modal';
 // 暮色 2026-08-05：角色时区列表（异国恋 / 角色身处异国）
 import { COMMON_TIMEZONES } from '../../utils/timezone';
 import { isMessageSemanticallyRelevant } from '../../utils/messageFormat';
+
+// 麦麦 2026-09-06：角色独立 API 预设 — 长按 550ms 触发删除（跟 Settings.tsx PresetChip 一致）
+const PRESET_LONG_PRESS_MS = 550;
+
+// 麦麦 2026-09-06：角色独立 API 预设胶囊
+//   - 跟 apps/Settings.tsx PresetChip 思路一致：点击加载 / 长按 550ms 触发删除确认 / 右键备选
+//   - 这里不抽到共享组件是因为 ChatSettingsDrawer 的 active 状态来源是 perCharApi 状态，跟主 API 那边不同
+const PerCharPresetChip: React.FC<{
+    preset: { id: string; name: string };
+    active: boolean;
+    proto: string;
+    activeUrl?: string;
+    onLoad: () => void;
+    onRequestDelete: () => void;
+}> = ({ preset, active, proto, activeUrl, onLoad, onRequestDelete }) => {
+    const timerRef = useRef<number | null>(null);
+    const longPressedRef = useRef(false);
+    const [pressing, setPressing] = useState(false);
+
+    const clearPress = useCallback(() => {
+        if (timerRef.current !== null) {
+            window.clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        setPressing(false);
+    }, []);
+
+    const handlePointerDown = useCallback(() => {
+        clearPress();
+        longPressedRef.current = false;
+        setPressing(true);
+        timerRef.current = window.setTimeout(() => {
+            longPressedRef.current = true;
+            setPressing(false);
+            onRequestDelete();
+        }, PRESET_LONG_PRESS_MS);
+    }, [clearPress, onRequestDelete]);
+
+    const handleClick = useCallback(() => {
+        if (longPressedRef.current) {
+            longPressedRef.current = false;
+            return;
+        }
+        onLoad();
+    }, [onLoad]);
+
+    useEffect(() => () => clearPress(), [clearPress]);
+
+    return (
+        <button
+            type="button"
+            title={`${proto} · ${activeUrl || ''} · 点击加载，长按删除`}
+            onPointerDown={handlePointerDown}
+            onPointerUp={clearPress}
+            onPointerLeave={clearPress}
+            onPointerCancel={clearPress}
+            onContextMenu={(e) => {
+                e.preventDefault();
+                onRequestDelete();
+            }}
+            onClick={handleClick}
+            className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all cursor-pointer ${
+                active
+                    ? 'bg-emerald-100 border-emerald-300 text-emerald-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'
+            } ${pressing ? 'scale-[0.98]' : ''}`}
+        >
+            {preset.name}
+        </button>
+    );
+};
 
 interface ChatSettingsDrawerProps {
     isOpen: boolean;
@@ -122,6 +193,8 @@ interface ChatSettingsDrawerProps {
     // 预设胶囊（暮色 2026-07-24）
     mainPresets: { id: string; name: string; config: { baseUrl?: string; apiKey?: string; model?: string } }[];
     onLoadPreset: (cfg: { baseUrl?: string; apiKey?: string; model?: string }) => void;
+    // 麦麦 2026-09-06：长按预设触发删除（暮色原话"主 API 设 X，角色独立 API 加长按"——这里只加长按）
+    onDeletePreset: (id: string) => void;
     // 模型下拉（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
     perCharAvailableModels: string[];
     perCharFilteredModels: string[];
@@ -165,12 +238,15 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
     showPerCharKey, setShowPerCharKey,
     onSavePerCharApi, onClearPerCharApi,
     mainPresets, onLoadPreset,
+    onDeletePreset,
     perCharAvailableModels, perCharFilteredModels,
     perCharModelFilter, setPerCharModelFilter,
     showPerCharModelPicker, setShowPerCharModelPicker,
     isPerCharLoadingModels, onRefreshPerCharModels,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
+    // 麦麦 2026-09-06：长按删除预设弹确认（暮色原话"角色独立 API 加长按删除"）
+    const [presetPendingDelete, setPresetPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
     // 暮色 2026-07-18：未向量化消息条数（提示用 — 上下文条数设置参考）
     //   记忆宫殿已向量化过的消息（id <= hwm）默认不进上下文
@@ -292,7 +368,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                                     );
                                 })}
                             </div>
-                            {/* 预设胶囊（暮色 2026-07-24） */}
+                            {/* 预设胶囊（暮色 2026-07-24；2026-09-06 麦麦加长按删除） */}
                             {mainPresets.length > 0 && (
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
@@ -314,14 +390,15 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                                                 && perCharApiKey === activeKey
                                                 && perCharApiModel === activeModel;
                                             return (
-                                                <button
+                                                <PerCharPresetChip
                                                     key={preset.id}
-                                                    onClick={() => onLoadPreset(preset.config)}
-                                                    className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all active:scale-95 ${active ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'}`}
-                                                    title={`${proto} · ${activeUrl || ''}`}
-                                                >
-                                                    {preset.name}
-                                                </button>
+                                                    preset={preset}
+                                                    active={active}
+                                                    proto={proto}
+                                                    activeUrl={activeUrl}
+                                                    onLoad={() => onLoadPreset(preset.config)}
+                                                    onRequestDelete={() => setPresetPendingDelete({ id: preset.id, name: preset.name })}
+                                                />
                                             );
                                         })}
                                     </div>
@@ -840,6 +917,41 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         </>
                     )}
                 </div>
+            </Modal>
+
+            {/* 麦麦 2026-09-06：长按预设弹的删除确认（角色独立 API 区域） */}
+            <Modal
+                isOpen={!!presetPendingDelete}
+                title="删除预设"
+                onClose={() => setPresetPendingDelete(null)}
+                zIndex={220}
+                footer={
+                    <div className="w-full grid grid-cols-2 gap-3">
+                        <button
+                            onClick={() => setPresetPendingDelete(null)}
+                            className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (!presetPendingDelete) return;
+                                onDeletePreset(presetPendingDelete.id);
+                                setPresetPendingDelete(null);
+                            }}
+                            className="w-full py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+                        >
+                            删除
+                        </button>
+                    </div>
+                }
+            >
+                <p className="text-sm text-slate-700 leading-relaxed">
+                    确认删除预设 <span className="font-bold text-slate-900">「{presetPendingDelete?.name}」</span> 吗？
+                </p>
+                <p className="text-xs text-slate-500 leading-relaxed mt-2">
+                    这个预设会从所有角色的 API 列表里移除，删除后无法恢复。
+                </p>
             </Modal>
         </>
     );

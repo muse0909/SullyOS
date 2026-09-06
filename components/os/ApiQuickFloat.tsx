@@ -605,6 +605,18 @@ const ApiQuickFloat: React.FC = () => {
       ...imageUpdates,
       imageGenProvider: 'openai', // 暮色 2026-07-15：写死 openai，types 保留 'openai' | 'comfyui' | 'nai' 防以后再加回
     });
+    // 麦麦 2026-09-06 15:10 调试日志：ApiQuickFloat 保存主 API（确认 protocol 写入）
+    console.log('[ApiQuickFloat][main][save]', {
+        source: 'ApiQuickFloat.handleSaveAndClose',
+        storageKey: 'os_api_config',
+        protocol: mainUpdates.protocol,
+        baseUrl: mainUpdates.baseUrl,
+        apiKeyExists: !!mainUpdates.apiKey,
+        model: mainUpdates.model,
+        geminiBaseUrl: mainUpdates.geminiBaseUrl,
+        geminiApiKeyExists: !!mainUpdates.geminiApiKey,
+        geminiModel: mainUpdates.geminiModel,
+    });
     // 麦麦 2026-09-06 12:36 调试日志：ApiQuickFloat 保存 API（同时存 main + vision + image）
     console.log('[ApiQuickFloat][vision][save]', {
         source: 'ApiQuickFloat.handleSaveAndClose',

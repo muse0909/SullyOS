@@ -1334,6 +1334,19 @@ const Chat: React.FC = () => {
         await DB.saveMessage(msgPayload);
         ProactiveChat.markUserContact(char.id);
 
+        // 麦麦 2026-09-06：用户说"晚安"短句 → 触发该角色今晚的日记
+        //   暮色原话："这个时间改成说晚安后吧，现在设置的是 10 点有点太早了"
+        //   短句标准：去空格/标点后 ≤ 10 字 + 含"晚安"——避免"我待会要跟 ta 说晚安"误判
+        //   只对 user 手打文本生效（customContent 走系统/图片/表情时不触发）
+        //   重复触发去重在 charDiary.ts:220（今天已写过就 throw）
+        if (!customContent && type === 'text') {
+            const stripped = text.replace(/[\s\p{P}]/gu, '');
+            if (stripped.length > 0 && stripped.length <= 10 && /晚安/.test(stripped)) {
+                // 异步 fire-and-forget — 用户不等日记写完（写入 + 归档 5-15s）
+                ProactiveDiary.fireNow(char.id);
+            }
+        }
+
         // Detect XHS link in user text and create xhs_card via MCP
         if (type === 'text') {
             const xhsUrlMatch = text.match(/xiaohongshu\.com\/(?:discovery\/item|explore)\/([a-f0-9]{24})/);

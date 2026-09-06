@@ -110,7 +110,7 @@ export async function expandAndFormat(
     //   记忆宫殿召回段只关注"召回"本身，不再带状态面板
     const allCharNodes = await MemoryNodeDB.getByCharId(charId);
 
-    if (results.length === 0 && anticipations.length === 0 && statusPanelSection === '') return '';
+    if (results.length === 0 && anticipations.length === 0) return '';
 
     // 1. 按 eventBoxId 去重分组（同一 box 多次命中合并；保留命中里最高分作 box 分）
     //    boxItem: { boxId, topScore, hitNodeIds[] }
@@ -235,10 +235,9 @@ export async function expandAndFormat(
     let output = `### 记忆宫殿 (Memory Palace)\n`;
     output += `以下是你脑海中浮现的相关记忆片段，它们可能影响你此刻的感受和反应：\n\n`;
 
-    // 4a. 状态面板（per-user 全局，拼在最前面，不占 15 条名额；全空时不注入）
-    if (statusPanelSection) {
-        output += statusPanelSection;
-    }
+    // 麦麦 2026-09-06：5d71187 漏改 — 旧"状态面板拼在最前面"逻辑已下线（暮色 9-5 要求清理）
+    //   状态面板迁到 characterMemo（per-char）→ 通过 chatPrompts.buildCoreContext 注入
+    //   记忆宫殿召回段不再带状态面板
 
     // 按房间分组（保持房间显示顺序：卧室 > 客厅 > 书房 > 用户房间 > 自我房间 > 阁楼 > 窗台）
     const byRoom = new Map<string, RenderItem[]>();

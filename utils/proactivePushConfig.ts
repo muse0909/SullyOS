@@ -267,6 +267,80 @@ export async function registerScheduleOnWorker(charId: string, intervalMs: numbe
   }
 }
 
+/**
+ * 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
+ *   AI 在回复末尾输出 [schedule_next_wakeup | YYYY-MM-DD HH:MM:SS | reason: ...] 时调
+ *   POST /dynamic-schedule 把 fireAt 时间注册到 Worker，覆盖当前未触发的 dynamic
+ *   跟 registerScheduleOnWorker 区别：fixed 走 /subscribe 周期触发，dynamic 走 /dynamic-schedule 单次触发
+ *   userId 暂用 endpoint（同设备绑定）
+ */
+export async function registerDynamicScheduleOnWorker(charId: string, fireAt: number, reason: string): Promise<boolean> {
+  const cfg = loadPushConfig();
+  if (!isPushConfigReady(cfg)) return false;
+
+  const { sub } = await getOrCreateSubscription(cfg.vapidPublicKey);
+  if (!sub) return false;
+
+  try {
+    const res = await fetch(`${cfg.workerUrl}/dynamic-schedule`, {
+      method: 'POST',
+      headers: buildHeaders(cfg),
+      body: JSON.stringify({
+        endpoint: sub.endpoint,
+        p256dh: sub.p256dh,
+        auth: sub.auth,
+        charId,
+        userId: sub.endpoint,           // dynamic userId 用 endpoint 简化（同设备）
+        fireAt,
+        reason,
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[ProactivePush] /dynamic-schedule HTTP ${res.status}`);
+      return false;
+    }
+    const data = await res.json().catch(() => ({})) as any;
+    if (!data?.ok) {
+      console.warn('[ProactivePush] /dynamic-schedule not ok:', data);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[ProactivePush] /dynamic-schedule failed', e);
+    return false;
+  }
+}
+
+/**
+ * 麦麦 2026-09-06：取消 dynamic schedule（暮色 9-6 21:00 需求）
+ *   暮色发任何消息时自动调 → 删除 Worker D1 里该 (endpoint, charId) 的 dynamic 记录
+ *   调 /cancel-dynamic-schedule
+ */
+export async function cancelDynamicScheduleOnWorker(charId: string): Promise<boolean> {
+  const cfg = loadPushConfig();
+  if (!isPushConfigReady(cfg)) return false;
+
+  const reg = await navigator.serviceWorker?.ready?.catch(() => null);
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  if (!sub) return false;
+
+  try {
+    const res = await fetch(`${cfg.workerUrl}/cancel-dynamic-schedule`, {
+      method: 'POST',
+      headers: buildHeaders(cfg),
+      body: JSON.stringify({ endpoint: sub.endpoint, charId }),
+    });
+    if (!res.ok) {
+      console.warn(`[ProactivePush] /cancel-dynamic-schedule HTTP ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[ProactivePush] /cancel-dynamic-schedule failed', e);
+    return false;
+  }
+}
+
 export async function unregisterScheduleOnWorker(charId: string): Promise<boolean> {
   const cfg = loadPushConfig();
   if (!isPushConfigReady(cfg)) return false;

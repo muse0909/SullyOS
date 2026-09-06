@@ -42,6 +42,9 @@ import { mcpToOpenAITools, mcpToGeminiTools, parseMcpToolName, cleanSchemaForGem
 import { mcpClient } from '../utils/mcpClient';
 import { mcpToOpenAIToolResult } from '../utils/mcpResultConverter';
 import { mcpStorage } from '../utils/mcpStorage';
+// 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
+//   解析 [schedule_next_wakeup | 时间 | reason] token → 调 Worker /dynamic-schedule
+import { registerDynamicScheduleOnWorker } from '../utils/proactivePushConfig';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -3702,6 +3705,55 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     .replace(/\[\[MEMO_DEL:[^\]]*?\]\]/g, '')
                     .replace(/\[\[MEMO_SET_STATUS:[^\]]*?\]\]/g, '')
                     .replace(/\[\[MEMO_CLEAR_STATUS:[^\]]*?\]\]/g, '')
+                    .trim();
+            }
+
+            // 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
+            //   角色在回复末尾输出 [schedule_next_wakeup | YYYY-MM-DD HH:MM:SS | reason: xxx]
+            //   → 解析后调 /dynamic-schedule 注册到 Worker，覆盖当前未触发的 dynamic
+            //   跟 MEMO 体系解耦（不需要 addToast — 用户看不到，但 chat 页打 log 留痕）
+            //   解析失败时静默 + strip（用户看到干净文本）
+            if (aiContent.includes('[schedule_next_wakeup')) {
+                try {
+                    // 解析 [schedule_next_wakeup | 时间 | reason: 原因]
+                    // 时间格式：YYYY-MM-DD HH:MM:SS（也接受 YYYY-MM-DD HH:MM）
+                    const matches = aiContent.matchAll(
+                        /\[schedule_next_wakeup\s*\|\s*([\d\-:\s]+?)\s*\|\s*reason:\s*([^\]]+?)\s*\]/g
+                    );
+                    for (const m of matches) {
+                        const timeStr = m[1].trim();
+                        const reason = m[2].trim();
+                        // 解析时间：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD HH:MM
+                        const dateMatch = timeStr.match(
+                            /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/
+                        );
+                        if (!dateMatch) {
+                            console.warn(`⏰ [ScheduleNextWakeup] 解析时间失败: "${timeStr}"（char=${char.id}）`);
+                            continue;
+                        }
+                        const [, y, mo, d, h, mi, s] = dateMatch;
+                        const fireAt = new Date(
+                            parseInt(y, 10),
+                            parseInt(mo, 10) - 1,
+                            parseInt(d, 10),
+                            parseInt(h, 10),
+                            parseInt(mi, 10),
+                            s ? parseInt(s, 10) : 0
+                        ).getTime();
+                        if (!Number.isFinite(fireAt) || fireAt <= Date.now() - 5 * 60 * 1000) {
+                            console.warn(`⏰ [ScheduleNextWakeup] 时间已过期或无效: ${timeStr} → ${fireAt}`);
+                            continue;
+                        }
+                        // 调 Worker /dynamic-schedule（fire-and-forget — 不阻塞回复保存）
+                        const ok = await registerDynamicScheduleOnWorker(char.id, fireAt, reason);
+                        console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
+                    }
+                } catch (e) {
+                    console.warn('⏰ [ScheduleNextWakeup] token 解析炸了:', e);
+                }
+                // strip（不管成功失败，token 都不给用户看）
+                aiContent = aiContent
+                    .replace(/\[schedule_next_wakeup\s*\|[^\]]*?\]/g, '')
                     .trim();
             }
 

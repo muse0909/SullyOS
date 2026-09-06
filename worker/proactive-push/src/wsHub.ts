@@ -178,7 +178,10 @@ export class WsHub extends DurableObject {
    * 返回 { delivered: N }，Worker 用它判断"是否有在线用户收到"决定是否跳过 Web Push。
    */
   private async handleBroadcast(request: Request): Promise<Response> {
-    let body: { characterId?: string; content?: string; timestamp?: number };
+    // 麦麦 2026-09-06：放宽类型 — 支持 messageId / scheduleType 等透传字段
+    //   之前只接受 3 个字段，导致 9-05 commit 3 的 messageId 去重和 9-06 的 scheduleType 都丢
+    //   实际 client 端 Service 收到的只有 { type, characterId, content, timestamp }
+    let body: { characterId?: string; content?: string; timestamp?: number; [k: string]: unknown };
     try {
       body = await request.json();
     } catch {
@@ -194,11 +197,14 @@ export class WsHub extends DurableObject {
       });
     }
 
+    // 透传所有额外字段（messageId / scheduleType / future ones）
+    const { characterId, content, timestamp, ...extras } = body;
     const payload = JSON.stringify({
       type: 'proactive_message',
-      characterId: body.characterId,
-      content: body.content,
-      timestamp: body.timestamp ?? Date.now(),
+      characterId,
+      content,
+      timestamp: timestamp ?? Date.now(),
+      ...extras,
     });
 
     let delivered = 0;

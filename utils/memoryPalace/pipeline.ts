@@ -1506,7 +1506,8 @@ export async function processNewMessages(
             console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
 
             try {
-                // 状态面板的存储由 extractMemoriesFromBuffer 内部 applyStatusUpdate 写入
+                // 麦麦 2026-09-06：状态面板更新改走 [[MEMO_SET_STATUS]] token（hooks/useChatAI 解析）
+                //   extractMemoriesFromBuffer 不再返回 statusUpdate，不再调 applyStatusUpdate
                 const extractionResult = await extractMemoriesFromBuffer(
                     chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs,
                 );
@@ -1515,10 +1516,6 @@ export async function processNewMessages(
                 allEventBoxHints.push(...extractionResult.eventBoxHints);
                 allCorrections.push(...extractionResult.corrections);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
-
-                if (extractionResult.statusUpdate != null) {
-                    console.log(`📌 [Pipeline] batch ${ci + 1}: 状态面板更新`);
-                }
             } catch (e: any) {
                 console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: 0, ok: false, error: e.message });

@@ -11,15 +11,10 @@ import type { LightLLMConfig } from './pipeline';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
 import { formatMessageForPrompt } from '../messageFormat';
-import {
-    ensureLegacyPinnedCleared,
-    getStatusPanel,
-    buildStatusPanelSectionForExtraction,
-    applyStatusUpdate,
-    STATUS_SLOTS,
-    type StatusUpdate,
-    type StatusSlot,
-} from './statusPanel';
+// 麦麦 2026-09-06：暮色 9-5 要求"彻底清理旧状态面板" — extraction.ts 不再 import statusPanel
+//   旧 statusUpdate 字段（LLM 提取记忆时一并输出）一并下线，改走新 [[MEMO_SET_STATUS]] token
+//   token 解析见 hooks/useChatAI.ts:3579 → utils/characterMemo.ts:77 setStatusSlot
+//   statusPanel.ts 整个文件本轮删除
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -120,24 +115,8 @@ function safeParseJsonObject(raw: string): any {
     }
 }
 
-/** 把 LLM 输出的 statusUpdate 字段规整为 StatusUpdate 类型。
- *  规则：只接受 5 个固定槽位；值若是 null/undefined/非字符串 → 当 null 处理（"无变化"）。 */
-function parseStatusUpdateFromLLM(raw: unknown): StatusUpdate {
-    if (raw == null) return null;
-    if (typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const out: Partial<Record<StatusSlot, string | null>> = {};
-    let any = false;
-    for (const slot of STATUS_SLOTS) {
-        const v = (raw as any)[slot];
-        if (v == null) continue;
-        if (typeof v === 'string') {
-            out[slot] = v;
-            any = true;
-        }
-        // 非字符串值（数字/对象/数组）忽略
-    }
-    return any ? out : null;
-}
+// 麦麦 2026-09-06：parseStatusUpdateFromLLM 删 — 旧 statusUpdate 字段不再解析
+//   5 个状态槽位的更新改走 [[MEMO_SET_STATUS: slot|内容]] token（hooks/useChatAI.ts）
 
 /** 从消息缓冲区直接解析记忆节点（不依赖 TopicBox） */
 function parseMemoryNodesFromBuffer(
@@ -395,8 +374,6 @@ export interface BufferExtractionResult {
     crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[];
     /** EventBox 名/tag 提示（仅 relatedTo 非空的新记忆才有） */
     eventBoxHints: EventBoxHint[];
-    /** 状态面板更新（整批无变化时为 null） */
-    statusUpdate: import('./statusPanel').StatusUpdate;
     /** 纠正：把对应已有记忆的 content 追加一行"YYYY-MM-DD 纠正：note"，并重新向量化 */
     corrections: { targetId: string; note: string }[];
 }
@@ -418,7 +395,7 @@ export async function extractMemoriesFromBuffer(
     userName?: string,
     relatedMemories?: RelatedMemoryRef[],
 ): Promise<BufferExtractionResult> {
-    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], statusUpdate: null, corrections: [] };
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], corrections: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -427,10 +404,9 @@ export async function extractMemoriesFromBuffer(
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
-    // 一次性解 pin 旧便利贴（首次调用时执行） + 读取当前状态面板
-    await ensureLegacyPinnedCleared();
-    const currentStatusPanel = getStatusPanel();
-    const statusBlock = buildStatusPanelSectionForExtraction(currentStatusPanel);
+    // 麦麦 2026-09-06：删旧状态面板读取（statusPanel.ts 整个删除）
+    //   状态面板数据由 chatPrompts.buildCoreContext 走 characterMemo（per-char IDB）独立注入
+    //   本提取 prompt 不再拼 statusBlock
 
     // 构建已有记忆引用块（带 O-编号，供 LLM 输出 relatedTo）
     const hasRelated = relatedMemories && relatedMemories.length > 0;
@@ -440,7 +416,7 @@ export async function extractMemoriesFromBuffer(
     const relatedToRule = hasRelated ? buildRelatedToRule() : '';
     const relatedToFormat = hasRelated ? buildRelatedToFormatHint() : '';
 
-    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${statusBlock}
+    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}
 
 ${buildRulesBlock(charName, userLabel)}${relatedToRule}
 
@@ -460,26 +436,15 @@ ${buildRulesBlock(charName, userLabel)}${relatedToRule}
       "tags": ["标签1", "标签2"],
       "date": "YYYY-MM-DD"${relatedToFormat}
     }
-  ],
-  "statusUpdate": null
+  ]
 }
 
 memories 数组单条字段说明：
 - date 必填，按该记忆实际发生当天填（参考消息行首的时间戳）。
 
-statusUpdate（顶层，独立于 memories）：
-- 整批对话无任何状态变化 → 填 null
-- 整批有变化 → 填一个对象，仅 5 个固定槽位有需要时填值：
-  - location：当前所在地（无变化 / 状态结束 → 填 null / 填 "[清除]"）
-  - health：身体状况（同上）
-  - schedule：近期主要在忙的事（同上）
-  - mood：近期情绪底色（同上）
-  - reminder：临时约定或待办（同上）
-- 5 个槽位全部 null → statusUpdate 整个填 null
-- 哨兵值 "[清除]"：用户/对话明确表示某状态结束（如"病好了""活干完了"）→ 填这个字符串，代码端会清空该槽位
-- 没变化就 null，变化就写新值
+如果对话过于琐碎无值得记忆的内容，memories 返回空数组 []。
 
-如果对话过于琐碎无值得记忆的内容，memories 返回空数组 []。`;
+（麦麦 2026-09-06：旧 statusUpdate 字段已下线 — 5 个状态槽位更新改走 [[MEMO_SET_STATUS: slot|内容]] token，跟 [[MEMO_ADD]] 一起在普通回复里输出；本提取调用不再承担状态面板更新职责）`;
 
     try {
         // 暮色 2026-07-27：改用统一 callLLM helper（支持 OpenAI/Claude/Gemini 三协议）
@@ -521,12 +486,7 @@ statusUpdate（顶层，独立于 memories）：
             parsed, memories, hasRelated ? relatedMemories! : [],
         );
 
-        // 解析 statusUpdate（顶层独立字段）
-        const statusUpdate: StatusUpdate = parseStatusUpdateFromLLM(parsedRoot.statusUpdate);
-        // 立刻应用到存储（statusPanel 是同步 API）
-        if (statusUpdate != null) {
-            applyStatusUpdate(statusUpdate);
-        }
+        // 麦麦 2026-09-06：删 statusUpdate 解析（旧机制已下线，状态更新改走 token）
 
         // 解析纠正指令：{ "correct": "O0", "note": "实情是..." } → 真实 ID
         // 仅在有 relatedMemories 时才有意义（O 编号必须能解析回真节点 id）
@@ -546,10 +506,10 @@ statusUpdate（顶层，独立于 memories）：
             }
         }
 
-        return { memories, crossTimeLinks, eventBoxHints, statusUpdate, corrections };
+        return { memories, crossTimeLinks, eventBoxHints, corrections };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return { memories: [], crossTimeLinks: [], eventBoxHints: [], statusUpdate: null, corrections: [] };
+        return { memories: [], crossTimeLinks: [], eventBoxHints: [], corrections: [] };
     }
 }

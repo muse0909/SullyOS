@@ -56,6 +56,10 @@ applyPageZoom();
 //   2. 检测 index.html 里 script src 的 hash，与 localStorage 比对，
 //      不一致 → location.reload(true) 强制刷新 + 清 localStorage 旧 hash
 //   3. 写入新 hash（首次访问）
+//   4. 兜底：读 <meta name="sullyos-build-id"> 跟 localStorage 比对
+//      meta 由 vite.config.ts 里的 sullyos-build-id 插件 transformIndexHtml 注入
+//      每次 build 生成新 build id（ISO 时间戳到分钟），部署到 Vercel 后 APK 端 reload
+//      修之前"两边都旧"bug：APK 端 WebView 缓存同时持旧 index.html + 旧 js，hash 检测失效
 //   必须在所有 init 之前跑（先清缓存 → 触发 reload → 重新加载所有 chunk）
 (function bootstrapCacheBustOnLaunch() {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -78,18 +82,30 @@ applyPageZoom();
             .map((s) => s.src)
             .find((src) => /\/assets\/.+\.[a-z0-9]{8,}\.js$/.test(src)) || '';
         const lastHash = localStorage.getItem('__sullyos_loaded_hash__') || '';
-        if (currentHash && lastHash && currentHash !== lastHash) {
-            // hash 不一致 → 强制 reload（绕过 WebView 缓存）
+        // 4) 兜底：build id（vite.config.ts 插件往 index.html 注入 <meta name="sullyos-build-id">）
+        const buildIdMeta = document.querySelector('meta[name="sullyos-build-id"]') as HTMLMetaElement | null;
+        const currentBuildId = buildIdMeta?.getAttribute('content') || '';
+        const lastBuildId = localStorage.getItem('__sullyos_build_id__') || '';
+
+        let needReload = false;
+        if (currentBuildId && lastBuildId && currentBuildId !== lastBuildId) {
+            // build id 不一致 → 硬 reload（修"两边都旧"时 hash 检测不触发的 bug）
+            needReload = true;
+        } else if (currentHash && lastHash && currentHash !== lastHash) {
+            needReload = true;
+        }
+        if (needReload) {
             try {
-                localStorage.setItem('__sullyos_loaded_hash__', currentHash);
+                if (currentBuildId) localStorage.setItem('__sullyos_build_id__', currentBuildId);
+                if (currentHash) localStorage.setItem('__sullyos_loaded_hash__', currentHash);
             } catch {}
             // 用 location.replace 强制重载（replace 不留 history，prevent 手动回退到旧版）
             window.location.replace(window.location.href);
             return;
         }
-        if (currentHash) {
-            try { localStorage.setItem('__sullyos_loaded_hash__', currentHash); } catch {}
-        }
+        // 首次访问或无变化 → 写入
+        if (currentBuildId) { try { localStorage.setItem('__sullyos_build_id__', currentBuildId); } catch {} }
+        if (currentHash) { try { localStorage.setItem('__sullyos_loaded_hash__', currentHash); } catch {} }
     } catch (e) {
         console.warn('[cacheBust] bootstrap failed (non-fatal):', e);
     }

@@ -94,6 +94,29 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
         return () => window.removeEventListener('memo-updated', handler);
     }, [activeCharId]);
 
+    // 麦麦 2026-09-06：双保险 — pageshow / visibilitychange 触发重读
+    //   暮色 9-6 反馈"APK 端写完还是不显示" — CustomEvent 理论上能 work，但 APK WebView
+    //   切后台/回前台的事件流更稳。这里加 pageshow（页面显示/恢复）+ visibilitychange 兜底
+    //   从聊天页切回备忘录页时主动重读，绕过 CustomEvent 监听器挂载时机问题
+    useEffect(() => {
+        if (!activeCharId) return;
+        const reload = () => {
+            if (document.visibilityState === 'hidden') return;  // 切到后台时跳过
+            (async () => {
+                const m = await getMemo(activeCharId);
+                setMemo(m);
+                const p = await getStatusPanel(activeCharId);
+                setStatusPanelState(p);
+            })();
+        };
+        window.addEventListener('pageshow', reload);
+        document.addEventListener('visibilitychange', reload);
+        return () => {
+            window.removeEventListener('pageshow', reload);
+            document.removeEventListener('visibilitychange', reload);
+        };
+    }, [activeCharId]);
+
     const activeChar = characters.find((c) => c.id === activeCharId);
     const sorted = memo ? sortEntries(memo.entries) : [];
     const byRegion: Record<CharacterMemoRegion, CharacterMemoEntry[]> = {

@@ -11,6 +11,26 @@ export default defineConfig({
         server.middlewares.use('/api/minimax/bake-voice', bakeVoiceMiddleware);
       },
     },
+    // 麦麦 2026-09-06：APK WebView 缓存根治的 build id 兜底
+    //   Vite 4+ 的 define 对 globalThis.* 类的赋值不生效（试过 declare const + globalThis 都失败）
+    //   改用 transformIndexHtml 往 index.html 注入 <meta name="sullyos-build-id">，运行时读
+    //   每次 build 生成新 build id（ISO 时间戳到分钟），部署到 Vercel 后 APK 端 reload
+    {
+      name: 'sullyos-build-id',
+      transformIndexHtml() {
+        const buildId = new Date().toISOString().slice(0, 16); // YYYY-MM-DDTHH:mm
+        return [
+          {
+            tag: 'meta',
+            injectTo: 'head',
+            attrs: {
+              name: 'sullyos-build-id',
+              content: buildId,
+            },
+          },
+        ];
+      },
+    },
   ],
   // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
   base: process.env.GITHUB_PAGES ? './' : '/',
@@ -60,19 +80,17 @@ export default defineConfig({
     rollupOptions: {
       // 关键修复：将这些包排除在打包之外，让浏览器通过 index.html 的 importmap 加载
       external: ['pdfjs-dist', 'katex'],
-      // 麦麦 2026-09-06：显式声明 hash 文件名（Vite 默认就有，显式更稳）
-      //   暮色 9-6 反馈 APK WebView 反复缓存 — 确认文件名变化能被检测到
-      output: {
-        entryFileNames: 'assets/[name].[hash].js',
-        chunkFileNames: 'assets/[name].[hash].js',
-        assetFileNames: 'assets/[name].[hash].[ext]',
-      },
       onwarn(warning, defaultHandler) {
         // 抑制动态导入与静态导入混合的无害警告
         if (warning.message?.includes('dynamic import will not move module into another chunk')) return;
         defaultHandler(warning);
       },
       output: {
+        // 麦麦 2026-09-06：显式声明 hash 文件名（Vite 默认就有，显式更稳）
+        //   暮色 9-6 反馈 APK WebView 反复缓存 — 确认文件名变化能被检测到
+        entryFileNames: 'assets/[name].[hash].js',
+        chunkFileNames: 'assets/[name].[hash].js',
+        assetFileNames: 'assets/[name].[hash].[ext]',
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {

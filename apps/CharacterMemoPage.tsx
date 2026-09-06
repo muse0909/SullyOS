@@ -119,11 +119,19 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
 
     const activeChar = characters.find((c) => c.id === activeCharId);
     const sorted = memo ? sortEntries(memo.entries) : [];
+    // 麦麦 2026-09-06：兜底 unknown region（5d71187 之前 IDB 里 region='status' 的旧 entries
+    //   暮色 IDB 里有 5d71187 之前写入的 memo，跑新代码 region type='event'|'private' 时
+    //   byRegion['status'] 是 undefined → push 报错）
+    //   防御写法：忽略 unknown region（不崩），下次 DB 升级（v72）会主动清掉
     const byRegion: Record<CharacterMemoRegion, CharacterMemoEntry[]> = {
         event: [],
         private: [],
     };
-    for (const e of sorted) byRegion[e.region].push(e);
+    for (const e of sorted) {
+        const bucket = byRegion[e.region];
+        if (bucket) bucket.push(e);
+        // else: 未知 region（5d71187 之前的 'status' 残留），跳过 — 不崩
+    }
 
     // 麦麦 2026-09-06：状态面板固定槽位顺序
     const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];

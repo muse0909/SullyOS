@@ -271,26 +271,42 @@ export async function registerScheduleOnWorker(charId: string, intervalMs: numbe
  * 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
  *   AI 在回复末尾输出 [schedule_next_wakeup | YYYY-MM-DD HH:MM:SS | reason: ...] 时调
  *   POST /dynamic-schedule 把 fireAt 时间注册到 Worker，覆盖当前未触发的 dynamic
- *   跟 registerScheduleOnWorker 区别：fixed 走 /subscribe 周期触发，dynamic 走 /dynamic-schedule 单次触发
- *   userId 暂用 endpoint（同设备绑定）
+ *
+ *   暮色 9-6 21:35 反馈：web 端 register 失败 — register=false
+ *   根因：之前依赖 Web Push subscription（getOrCreateSubscription），但 web 端
+ *   经常没 Push 订阅 / 浏览器不支持 / VAPID 没配。**改成不依赖 Web Push**：
+ *     - endpoint 用占位字符串 `web:dynamic:${charId}:${timestamp}` 即可
+ *     - 不调 getOrCreateSubscription（避免浏览器兼容性 + 权限弹窗）
+ *     - 不依赖 VAPID 配
+ *
+ *   跨架构修正：web 端 Web Push 通道跟 Android WS 通道是**两套独立通道**，
+ *   之前用 sub.endpoint 当 userId 写 D1，cron 扫表要求 last_heartbeat >= 5min，
+ *   web 端从来不发 heartbeat → record 5 分钟后被扫表过滤掉 → 永远不触发。
+ *   修：worker 端扫 dynamic 时**跳过 last_heartbeat 检查**（dynamic 一次性，无所谓心跳），
+ *   触发后 broadcast 给所有 WS 连接 → APK KeepAliveService 能收到 proactive_message。
  */
 export async function registerDynamicScheduleOnWorker(charId: string, fireAt: number, reason: string): Promise<boolean> {
   const cfg = loadPushConfig();
-  if (!isPushConfigReady(cfg)) return false;
+  // 不再要求 isPushConfigReady — 只需要 workerUrl
+  if (!cfg.workerUrl.startsWith('https://')) {
+    console.warn('[ProactivePush] /dynamic-schedule: workerUrl 未配置（VITE_PROACTIVE_WORKER_URL）');
+    return false;
+  }
 
-  const { sub } = await getOrCreateSubscription(cfg.vapidPublicKey);
-  if (!sub) return false;
+  // 麦麦 2026-09-06 21:35 修：占位 endpoint，不依赖 Web Push
+  //   同 charId 的占位稳定（key 用 charId + 时间戳，cancel 时按 charId 找）
+  const placeholderEndpoint = `web:dynamic:${charId}:${Date.now()}`;
 
   try {
     const res = await fetch(`${cfg.workerUrl}/dynamic-schedule`, {
       method: 'POST',
       headers: buildHeaders(cfg),
       body: JSON.stringify({
-        endpoint: sub.endpoint,
-        p256dh: sub.p256dh,
-        auth: sub.auth,
+        endpoint: placeholderEndpoint,
+        p256dh: '',
+        auth: '',
         charId,
-        userId: sub.endpoint,           // dynamic userId 用 endpoint 简化（同设备）
+        userId: placeholderEndpoint,     // 占位即可，worker broadcast 不过滤 user
         fireAt,
         reason,
       }),
@@ -313,22 +329,24 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
 
 /**
  * 麦麦 2026-09-06：取消 dynamic schedule（暮色 9-6 21:00 需求）
- *   暮色发任何消息时自动调 → 删除 Worker D1 里该 (endpoint, charId) 的 dynamic 记录
- *   调 /cancel-dynamic-schedule
+ *   暮色发任何消息时自动调 → 删除 Worker D1 里该 (charId, schedule_type='dynamic') 的记录
+ *
+ *   暮色 9-6 21:35 反馈：之前依赖 Web Push subscription 拿 endpoint 才能 cancel。
+ *   修：改成只传 charId，worker 按 charId + schedule_type='dynamic' 删（不按 endpoint），
+ *   同一角色同一时刻只可能有 1 条 dynamic（多个 endpoint 也只保留 1 条），
+ *   cancel 时按 charId 全删即可。
  */
 export async function cancelDynamicScheduleOnWorker(charId: string): Promise<boolean> {
   const cfg = loadPushConfig();
-  if (!isPushConfigReady(cfg)) return false;
-
-  const reg = await navigator.serviceWorker?.ready?.catch(() => null);
-  const sub = reg ? await reg.pushManager.getSubscription() : null;
-  if (!sub) return false;
+  if (!cfg.workerUrl.startsWith('https://')) return false;
 
   try {
     const res = await fetch(`${cfg.workerUrl}/cancel-dynamic-schedule`, {
       method: 'POST',
       headers: buildHeaders(cfg),
-      body: JSON.stringify({ endpoint: sub.endpoint, charId }),
+      // 9-6 21:35：只传 charId，让 worker 按 charId + schedule_type='dynamic' 全删
+      //   不管占位 endpoint 是啥，同 charId 同一时刻只有 1 条 dynamic
+      body: JSON.stringify({ charId }),
     });
     if (!res.ok) {
       console.warn(`[ProactivePush] /cancel-dynamic-schedule HTTP ${res.status}`);

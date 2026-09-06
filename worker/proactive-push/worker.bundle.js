@@ -400,7 +400,10 @@ async function handleCancelDynamicSchedule(req, env) {
       WHERE user_id = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
     `).bind(body.userId, body.charId).run();
   } else {
-    return json({ error: "endpoint or userId required" }, 400);
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE char_id = ?1 AND schedule_type = 'dynamic'
+    `).bind(body.charId).run();
   }
   const deleted = result?.meta?.changes ?? result?.changes ?? 0;
   console.log(`[dynamic] cancelled: char=${body.charId} deleted=${deleted}`);
@@ -479,10 +482,10 @@ async function runScheduledSweep(env) {
   const dynamicDue = await env.DB.prepare(`
     SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
     FROM schedules
-    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
+    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1
     ORDER BY next_fire_at ASC
     LIMIT 1
-  `).bind(now, cutoff).all();
+  `).bind(now).all();
   let dynamicFired = 0;
   if (dynamicDue.results && dynamicDue.results.length > 0) {
     const row = dynamicDue.results[0];

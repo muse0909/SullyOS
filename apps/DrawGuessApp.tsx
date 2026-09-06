@@ -26,7 +26,7 @@ const DG_WORDS = [
 const COLORS = ['#000', '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6'];
 
 const DrawGuessApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, characters, apiConfig, updateApiConfig, addToast, userProfile } = useOS();
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     const [phase, setPhase] = useState<Phase>('setup');
@@ -40,23 +40,23 @@ const DrawGuessApp: React.FC = () => {
     const [isEraser, setIsEraser] = useState(false);
     const [strokes, setStrokes] = useState<Stroke[]>([]);
 
-    // 独立视觉 API 配置（存 localStorage，优先于系统识图配置）
-    const VISION_CFG_KEY = 'sullyos-draw-guess-vision-api';
-    const [visionCfg, setVisionCfg] = useState<{ baseUrl: string; apiKey: string; model: string } | null>(null);
+    // 麦麦 2026-09-06 12:36：识图 API 单一数据源 — 删 DrawGuessApp 独立 visionCfg
+    //   之前 DrawGuessApp 独立存了 visionCfg 到 localStorage 'sullyos-draw-guess-vision-api'
+    //   违反"识图 API 配置必须只有一个明确的数据源"原则
+    //   启动时 OSContext 已经做兼容迁移（见 context/OSContext.tsx loadSettings）
+    //   全部识图调用走 apiConfig.vision* —— Settings / ApiQuickFloat / DrawGuessApp / useChatAI 同一份
     const [showVisionCfg, setShowVisionCfg] = useState(false);
     const [visionForm, setVisionForm] = useState({ baseUrl: '', apiKey: '', model: '' });
-
-    useEffect(() => {
-        try {
-            const saved = localStorage.getItem(VISION_CFG_KEY);
-            if (saved) setVisionCfg(JSON.parse(saved));
-        } catch { }
-    }, []);
 
     const currentRole = characters.find(c => c.id === currentRoleId);
 
     const openVisionCfg = () => {
-        setVisionForm(visionCfg || { baseUrl: '', apiKey: '', model: '' });
+        // 改：从 apiConfig 读（不再读 visionCfg）
+        setVisionForm({
+            baseUrl: apiConfig?.visionBaseUrl || '',
+            apiKey: apiConfig?.visionApiKey || '',
+            model: apiConfig?.visionModel || '',
+        });
         setShowVisionCfg(true);
     };
 
@@ -68,18 +68,27 @@ const DrawGuessApp: React.FC = () => {
             addToast('三个字段都要填', 'error');
             return;
         }
-        const cfg = { baseUrl: b, apiKey: k, model: m };
-        setVisionCfg(cfg);
-        localStorage.setItem(VISION_CFG_KEY, JSON.stringify(cfg));
+        // 改：写到主 apiConfig（不再写 visionCfg localStorage）
+        updateApiConfig({
+            ...apiConfig,
+            visionBaseUrl: b,
+            visionApiKey: k,
+            visionModel: m,
+        });
         setShowVisionCfg(false);
-        addToast('视觉 API 已保存', 'success');
+        addToast('视觉 API 已保存（写到系统识图配置）', 'success');
     };
 
     const clearVisionCfg = () => {
-        setVisionCfg(null);
-        localStorage.removeItem(VISION_CFG_KEY);
+        // 改：清主 apiConfig.vision*
+        updateApiConfig({
+            ...apiConfig,
+            visionBaseUrl: '',
+            visionApiKey: '',
+            visionModel: '',
+        });
         setShowVisionCfg(false);
-        addToast('已清除，回退到系统识图配置', 'success');
+        addToast('已清除（系统识图配置）', 'success');
     };
 
     // 画板尺寸跟随容器（用 useLayoutEffect 同步在 layout 后跑，offsetWidth 更可靠）
@@ -214,17 +223,22 @@ const DrawGuessApp: React.FC = () => {
     // 优先级：本 App 独立配置（localStorage） > 系统识图配置
     const identifyImage = async (imageBase64: string): Promise<string> => {
         let vUrl: string, vKey: string, vModel: string;
-        if (visionCfg) {
-            vUrl = visionCfg.baseUrl;
-            vKey = visionCfg.apiKey;
-            vModel = visionCfg.model;
-        } else if (apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel) {
+        // 麦麦 2026-09-06 12:36：识图 API 单一数据源 — 删 visionCfg 优先逻辑,全部走 apiConfig
+        if (apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel) {
             vUrl = apiConfig.visionBaseUrl;
             vKey = apiConfig.visionApiKey;
             vModel = apiConfig.visionModel;
         } else {
             throw new Error('视觉 API 未配置（点右上 ⚙ 在你画我猜里设置，或在系统设置 → 识图配置）');
         }
+        // 麦麦 2026-09-06 12:36 调试日志：DrawGuessApp 实际识图读 apiConfig
+        console.log('[DrawGuessApp][vision][read-call]', {
+            source: 'OSContext.apiConfig',
+            storageKey: 'os_api_config',
+            visionBaseUrl: vUrl,
+            visionApiKeyExists: !!vKey,
+            visionModel: vModel,
+        });
         const data = await safeFetchJson(
             `${vUrl}/chat/completions`,
             {
@@ -525,11 +539,9 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                     </button>
 
                     <div className="text-xs text-gray-400 text-center pt-2 border-t border-gray-100">
-                        视觉 API：{visionCfg
-                            ? <span className="text-green-600">独立配置（{visionCfg.model}）</span>
-                            : apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel
-                                ? <span className="text-gray-600">系统配置（{apiConfig.visionModel}）</span>
-                                : <span className="text-red-500">未配置 · 点右上 ⚙</span>}
+                        视觉 API：{apiConfig?.visionBaseUrl && apiConfig?.visionApiKey && apiConfig?.visionModel
+                            ? <span className="text-gray-600">系统配置（{apiConfig.visionModel}）</span>
+                            : <span className="text-red-500">未配置 · 点右上 ⚙ 去系统设置</span>}
                     </div>
                 </div>
             )}
@@ -690,7 +702,7 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                             >
                                 取消
                             </button>
-                            {visionCfg && (
+                            {(apiConfig?.visionBaseUrl || apiConfig?.visionApiKey || apiConfig?.visionModel) && (
                                 <button
                                     onClick={clearVisionCfg}
                                     className="px-3 py-2 bg-red-50 text-red-600 rounded text-sm"

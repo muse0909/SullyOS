@@ -1027,6 +1027,42 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         if (savedModels) setAvailableModels(JSON.parse(savedModels));
         if (savedPresets) setApiPresets(JSON.parse(savedPresets));
 
+        // 麦麦 2026-09-06 12:36：识图 API 单一数据源 — 兼容迁移
+        //   之前 DrawGuessApp 独立存了一份 visionCfg 到 localStorage 'sullyos-draw-guess-vision-api'
+        //   违反"识图 API 配置必须只有一个明确的数据源"原则
+        //   启动时检查：
+        //   - 如果 DrawGuessApp 有旧 visionCfg + apiConfig.vision* 为空 → 迁到 apiConfig + 删旧 key
+        //   - 如果两边都有值 → 保留 apiConfig（主数据源，Settings/ApiQuickFloat 走的）
+        //   - 一次性迁移，跑一次就删旧 key
+        const OLD_VISION_KEY = 'sullyos-draw-guess-vision-api';
+        try {
+            const oldVisionRaw = localStorage.getItem(OLD_VISION_KEY);
+            if (oldVisionRaw) {
+                const oldVision = JSON.parse(oldVisionRaw) as { baseUrl?: string; apiKey?: string; model?: string };
+                const parsedApi = savedApi ? JSON.parse(savedApi) : {};
+                if (oldVision.baseUrl && oldVision.apiKey && oldVision.model
+                    && !parsedApi.visionBaseUrl && !parsedApi.visionApiKey && !parsedApi.visionModel) {
+                    // 旧 visionCfg 有值 + 主 apiConfig.vision* 为空 → 迁移
+                    const merged = {
+                        ...parsedApi,
+                        visionBaseUrl: oldVision.baseUrl,
+                        visionApiKey: oldVision.apiKey,
+                        visionModel: oldVision.model,
+                    };
+                    setApiConfig(merged);
+                    localStorage.setItem('os_api_config', JSON.stringify(merged));
+                    console.log('[migration] sullyos-draw-guess-vision-api → os_api_config.vision* (visionCfg 迁到主数据源)');
+                } else {
+                    console.log('[migration] sullyos-draw-guess-vision-api 已存在但 apiConfig.vision* 也有值,保留主数据源,删除旧 key');
+                }
+                localStorage.removeItem(OLD_VISION_KEY);
+            }
+        } catch (e) {
+            console.warn('[migration] 旧 visionCfg 迁移失败(非致命):', e);
+            // 出错也清掉旧 key,避免下次启动再卡
+            try { localStorage.removeItem(OLD_VISION_KEY); } catch {}
+        }
+
         // 加载实时配置
         const savedRealtimeConfig = localStorage.getItem('os_realtime_config');
         if (savedRealtimeConfig) {

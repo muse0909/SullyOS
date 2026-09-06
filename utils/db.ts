@@ -12,7 +12,9 @@ import {
     StoryTheaterEntry, StoryTheaterPreset,
     StorySceneTemplate,
     RPApiConfig,  // 暮色 8-25 第六步第一批:RP 独立 API 配置
-    RPGlobalDefaults  // 暮色 8-26:RP 全局默认配置
+    RPGlobalDefaults,  // 暮色 8-26:RP 全局默认配置
+    CharacterStatusPanel, CharacterStatusSlot,  // 麦麦 2026-09-05：状态面板（per-char IDB）
+    CharacterMemo, CharacterMemoEntry, CharacterMemoRegion  // 麦麦 2026-09-05：角色备忘录
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { pruneMemoryLinksByTopN } from './memoryPalace/links';

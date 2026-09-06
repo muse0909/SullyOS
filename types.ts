@@ -1341,7 +1341,7 @@ export interface CharacterProfile {
   phoneUsageEnabled?: boolean;
 
   // 暮色 2026-08-22：自动写日记开关（per-character）
-  //   - true：开，角色每天 22:00 自动写一篇日记
+  //   - true：开，角色每天 01:00 自动写一篇日记（9-6 从 22:00 改）
   //   - false / undefined：关（默认关，用户主动开才生效）
   //   单角色独立：开 A 不影响 B；通过 ProactiveDiary.start/stop 触发实际定时器
   autoDiaryEnabled?: boolean;

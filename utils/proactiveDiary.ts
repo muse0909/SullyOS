@@ -1,5 +1,5 @@
 // 暮色 2026-08-22：定时自动写日记（借 ProactiveChat 机制，独立 schedule）
-//   频率：每天 1 篇，22:00（miya 模式）
+//   频率：每天 1 篇，01:00（miya 模式，9-6 暮色从 22:00 改成 01:00）
 //   跟 ProactiveChat 共享 service worker 消息 + 定时器去重模式，但用独立 storage
 //   单角色开关：char.autoDiaryEnabled 控制是否 start/stop（commit 2 接 UI）
 
@@ -35,10 +35,11 @@ function saveSchedules(map: ScheduleMap) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
 }
 
-// 今天 22:00 已过 → 明天 22:00；没过 → 今天 22:00
+// 麦麦 2026-09-06：暮色把 22:00 改成 01:00（'10 点太早了'）
+//   今天 01:00 已过 → 明天 01:00；没过 → 今天 01:00
 function nextTriggerAt(now: number): number {
   const d = new Date(now);
-  d.setHours(22, 0, 0, 0);
+  d.setHours(1, 0, 0, 0);
   if (d.getTime() <= now) {
     d.setDate(d.getDate() + 1);
   }
@@ -199,7 +200,7 @@ export const ProactiveDiary = {
   },
 
   /**
-   * 启动一个角色的日记 schedule（每天 22:00）
+   * 启动一个角色的日记 schedule（每天 01:00）
    */
   start(charId: string) {
     const schedules = loadSchedules();
@@ -269,7 +270,7 @@ export const ProactiveDiary = {
    *
    *   暮色 2026-08-22：fire-and-forget — fireNow 立即返回（Promise 不 pending），
    *   生成在后台跑。生成完后 toast 自动弹"xxx 写了一篇日记"。
-   *   这跟 22:00 定时触发的行为一致（fireDueSchedules 内部也是 void runDiaryForChar）。
+   *   这跟 01:00 定时触发的行为一致（fireDueSchedules 内部也是 void runDiaryForChar）。
    */
   async fireNow(charId?: string) {
     const targetId = charId || localStorage.getItem('os_last_active_char_id') || '';

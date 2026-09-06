@@ -1810,7 +1810,7 @@ const Chat: React.FC = () => {
         }
     };
 
-    // 暮色 2026-08-22：自动写日记（单角色独立，每天 22:00 写一篇）
+    // 暮色 2026-08-22：自动写日记（单角色独立，每天 01:00 写一篇，9-6 从 22:00 改）
     //   默认关（char.autoDiaryEnabled === true 才算开）
     //   切换：开 → ProactiveDiary.start(charId) 起 schedule；关 → ProactiveDiary.stop(charId) 清 schedule
     const handleToggleAutoDiary = () => {
@@ -1822,7 +1822,7 @@ const Chat: React.FC = () => {
             addToast('自动写日记已关闭', 'info');
         } else {
             ProactiveDiary.start(char.id);
-            addToast('自动写日记已开启，明天 22:00 生效', 'success');
+            addToast('自动写日记已开启，明天 01:00 生效', 'success');
         }
     };
 

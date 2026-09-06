@@ -4375,6 +4375,9 @@ if (!isVisible || !isChattingWithThisChar) {
     addWorldbook,
     updateWorldbook,
     deleteWorldbook,
+    // 麦麦 2026-09-06：补 9-05 commit 漏加的挂载 API（之前漏进 value 对象导致 WorldbookApp 点角色名 undefined is not a function）
+    mountWorldbook,
+    unmountWorldbook,
     novels,
     addNovel,
     updateNovel,

@@ -118,7 +118,7 @@ interface ChatSettingsDrawerProps {
     onTogglePhoneUsage: () => void;
     onOpenPhoneUsageSettings: () => void;
 
-    // 暮色 2026-08-22：自动写日记（每天 22:00 写一篇）
+    // 暮色 2026-08-22：自动写日记（每天 01:00 写一篇，9-6 从 22:00 改）
     autoDiaryEnabled: boolean;
     onToggleAutoDiary: () => void;
 
@@ -540,7 +540,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                         </p>
                     </section>
 
-                    {/* === 自动写日记（每天 22:00 一篇）— 暮色 2026-08-22 单角色独立开关 === */}
+                    {/* === 自动写日记（每天 01:00 一篇，9-6 从 22:00 改）— 暮色 2026-08-22 单角色独立开关 === */}
                     <section>
                         <div className="flex items-center justify-between cursor-pointer" onClick={onToggleAutoDiary}>
                             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pointer-events-none">自动写日记</label>
@@ -549,7 +549,7 @@ const ChatSettingsDrawer: React.FC<ChatSettingsDrawerProps> = ({
                             </div>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
-                            开启后，角色会在每天 22:00 自动写一篇第一人称日记。仅当前角色生效。
+                            开启后，角色会在每天 01:00 自动写一篇第一人称日记。仅当前角色生效。
                         </p>
                     </section>
 

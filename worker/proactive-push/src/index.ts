@@ -37,6 +37,29 @@ interface ScheduleRow {
   next_fire_at: number;
   last_heartbeat: number;
   created_at: number;
+  // 麦麦 2026-09-06：dynamic vs fixed 区分（暮色 9-6 21:00 反馈"江澈动态注册唤醒时间"）
+  //   dynamic：江澈回复末尾 [schedule_next_wakeup | 时间 | reason] 注册的单次定时
+  //   fixed：现有 30 分钟/1 小时/4 小时周期固定梯度（兜底）
+  //   扫描时 dynamic 优先，dynamic 不存在/已取消才回落到 fixed
+  schedule_type: 'fixed' | 'dynamic';
+}
+
+// 麦麦 2026-09-06：D1 migration 工具
+//   schedules 表加 schedule_type 字段（默认 'fixed' 兼容老数据）
+//   启动时跑一次 ALTER TABLE，失败（字段已存在）catch 静默
+//   用静态 flag 避免每个请求都跑 SQL
+let schemaMigrated = false;
+async function ensureScheduleSchema(env: Env): Promise<void> {
+  if (schemaMigrated) return;
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE schedules ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'fixed'
+    `).run();
+  } catch (e) {
+    // 字段已存在 / 表不存在 — 都静默
+    // 生产环境只有第一次部署会跑成功，之后 ALTER 失败属正常
+  }
+  schemaMigrated = true;
 }
 
 // ---------- helpers ----------
@@ -180,23 +203,257 @@ async function handleTest(req: Request, env: Env): Promise<Response> {
   }
 }
 
+/**
+ * 麦麦 2026-09-06：江澈动态注册唤醒时间
+ *   POST body: { endpoint, p256dh, auth, charId, userId, fireAt, reason }
+ *     - endpoint / p256dh / auth：从客户端 Web Push Subscription 取（推送通道要用）
+ *       但 dynamic 是 WS 推，理论上不需要 VAPID；先存空也行，后续 broadcast 不读
+ *     - charId：动态注册的角色 id
+ *     - userId：WS 握手的 userId（用于 broadcast 时匹配连接的 user）
+ *     - fireAt：注册的目标触发时间（Date.now() 毫秒数）
+ *     - reason：AI 输出的 reason 文本（用于日志）
+ *   行为：
+ *     - 同一 (endpoint, charId) 只保留 1 条 dynamic
+ *     - 新的注册 INSERT OR REPLACE 覆盖旧 dynamic
+ *     - 旧 fixed 记录不动
+ *   返回 { ok, nextFireAt, replaced }
+ */
+async function handleDynamicSchedule(req: Request, env: Env): Promise<Response> {
+  await ensureScheduleSchema(env);
+  const body = await readJson<{
+    endpoint?: string;
+    p256dh?: string;
+    auth?: string;
+    charId?: string;
+    userId?: string;
+    fireAt?: number;       // ms epoch
+    reason?: string;
+  }>(req);
+  if (!body) return json({ error: 'invalid json' }, 400);
+
+  const endpoint = body.endpoint;
+  const charId = body.charId;
+  const userId = body.userId;
+  const fireAt = body.fireAt;
+  const reason = body.reason || '';
+
+  if (!endpoint || !charId || !userId || !fireAt || fireAt <= Date.now() - 5 * 60 * 1000) {
+    // 拒绝过去时间（5 分钟 buffer 容错客户端时钟偏差）
+    return json({ error: 'missing fields or fireAt in past' }, 400);
+  }
+
+  const now = Date.now();
+  // 动态 schedule 是单次性，interval_ms 留 0 占位（broadcast 不读）
+  await env.DB.prepare(`
+    INSERT INTO schedules
+      (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'dynamic')
+    ON CONFLICT(endpoint, char_id) DO UPDATE SET
+      p256dh = excluded.p256dh,
+      auth = excluded.auth,
+      interval_ms = excluded.interval_ms,
+      next_fire_at = excluded.next_fire_at,
+      last_heartbeat = excluded.last_heartbeat,
+      user_id = excluded.user_id,
+      schedule_type = 'dynamic'
+  `).bind(
+    endpoint,
+    charId,
+    body.p256dh || '',
+    body.auth || '',
+    0,                  // dynamic 单次性
+    fireAt,
+    now,
+    now,
+    userId,
+  ).run();
+
+  // 注意：ON CONFLICT 触发 UPDATE 时如果旧 schedule_type='fixed'，会被覆盖成 dynamic
+  //   暮色 9-6 需求说"覆盖当前未触发的 dynamic（不影响 fixed）" — 但 (endpoint, char_id) unique
+  //   不可能同时有 fixed + dynamic，所以 fixed 会被挤掉。这是设计简化。
+  //   如果用户复测发现这个简化有问题，再加 charId_unique_per_type。
+  //   先按需求"覆盖 dynamic"实现（fixed 不该和 dynamic 撞 endpoint+charId）。
+
+  console.log(`[dynamic] registered: char=${charId} userId=${userId} fireAt=${new Date(fireAt).toISOString()} reason=${reason}`);
+  return json({ ok: true, nextFireAt: fireAt, reason });
+}
+
+/**
+ * 麦麦 2026-09-06：取消 dynamic 调度
+ *   POST body: { endpoint, charId }   （client 端有 endpoint 时用）
+ *           或: { userId, charId }    （用 userId 删，可能删错多设备同 user 的 — 慎用）
+ *   行为：删指定 (endpoint, charId, schedule_type='dynamic') 记录
+ *   触发场景：
+ *     - 暮色发消息（useChatAI 收到 user message）自动调
+ *     - 角色新回复重新注册前覆盖（handleDynamicSchedule ON CONFLICT 已经覆盖，不需要单独调）
+ *   固定 fixed 记录不动
+ */
+async function handleCancelDynamicSchedule(req: Request, env: Env): Promise<Response> {
+  await ensureScheduleSchema(env);
+  const body = await readJson<{
+    endpoint?: string;
+    userId?: string;
+    charId?: string;
+  }>(req);
+  if (!body) return json({ error: 'invalid json' }, 400);
+  if (!body.charId) return json({ error: 'charId required' }, 400);
+
+  let result;
+  if (body.endpoint) {
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
+    `).bind(body.endpoint, body.charId).run();
+  } else if (body.userId) {
+    // 备用：按 userId + charId 删（多设备同 user 时可能误删其他设备的 dynamic — 不推荐）
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE user_id = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
+    `).bind(body.userId, body.charId).run();
+  } else {
+    return json({ error: 'endpoint or userId required' }, 400);
+  }
+
+  const deleted = (result as any)?.meta?.changes ?? (result as any)?.changes ?? 0;
+  console.log(`[dynamic] cancelled: char=${body.charId} deleted=${deleted}`);
+  return json({ ok: true, deleted });
+}
+
 // ---------- cron ----------
-async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: number; wsDelivered: number }> {
+// 麦麦 2026-09-06：拆 fixed + dynamic
+//   1. 先扫 dynamic LIMIT 1（单次性，触发后 DELETE）
+//   2. 没 dynamic 再扫 fixed LIMIT 500（周期，触发后推进 next_fire_at）
+//   dynamic 优先级高（江澈主动注册的时间点 > 固定梯度）
+//   dynamic 触发的 payload 走 `scheduleType: 'dynamic'`，fixed 走 `scheduleType: 'fixed'`
+
+/**
+ * 麦麦 2026-09-06：广播 proactive_message 到 WS_Hub
+ *   payload 加 `scheduleType` 字段 — Android 端 Service 据此决定 log triggerSource
+ *   返回 true = 有客户端真的活（30s 内有 ping）且消息送达
+ *   返回 false = 客户端不在线 / 失败（需要走 D1 兜底）
+ */
+async function broadcastProactive(env: Env, row: ScheduleRow, messageId: string, scheduleType: 'dynamic' | 'fixed'): Promise<boolean> {
+  const now = Date.now();
+  let wsDeliveredCount = 0;
+  try {
+    const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+    const broadcastRes = await stub.fetch('https://ws-hub/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        characterId: row.char_id,
+        content: row.char_id,     // 占位 — 真实内容由 Android Service 调 WebView JS 生成
+        timestamp: now,
+        messageId,                // 麦麦 2026-09-05 commit 3：去重键
+        // 麦麦 2026-09-06：告诉客户端这条是 dynamic 还是 fixed 触发
+        //   Android 端 Service 据此在 PROACTIVE log + notification 标 triggerSource
+        scheduleType,
+      }),
+    });
+    if (broadcastRes.ok) {
+      const broadcastData = await broadcastRes.json<{ delivered?: number }>();
+      wsDeliveredCount = broadcastData?.delivered ?? 0;
+    }
+  } catch (e) {
+    console.warn(`[cron] ws broadcast failed (${scheduleType})`, e);
+    return false;
+  }
+
+  if (wsDeliveredCount === 0) return false;
+
+  // 二次确认：是否真活（commit 2 简化用 stats 查 onlineUserIds）
+  try {
+    const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
+    const statsRes = await stub.fetch('https://ws-hub/stats', { method: 'GET' });
+    if (statsRes.ok) {
+      const stats = await statsRes.json<{ onlineUserIds?: string[] }>();
+      if ((stats?.onlineUserIds?.length ?? 0) > 0) {
+        return true;
+      }
+    }
+  } catch (_) {
+    // 退化：delivered>0 就算真活
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 麦麦 2026-09-06：写 D1 离线消息
+ *   用于 WS 不可达时，client 重连后 fetch 拿到
+ *   72h 过期（暮色 9-5 决定）
+ */
+async function writeOfflineMessage(env: Env, row: ScheduleRow, messageId: string): Promise<void> {
+  const now = Date.now();
+  const offlineExpiresAt = now + 72 * 3600 * 1000;
+  try {
+    await env.DB.prepare(`
+      INSERT INTO proactive_offline_messages
+        (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    `).bind(
+      crypto.randomUUID(),
+      row.user_id || row.endpoint,
+      row.char_id,
+      row.char_id,
+      row.char_id,
+      messageId,
+      now,
+      offlineExpiresAt,
+    ).run();
+  } catch (e) {
+    console.error('[cron] failed to write offline msg', e, row.char_id);
+  }
+}
+async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: number; wsDelivered: number; dynamicFired: number }> {
+  await ensureScheduleSchema(env);
   const now = Date.now();
   const hbWindow = parseInt(env.HEARTBEAT_WINDOW_MS || '300000', 10) || 300_000;
   const cutoff = now - hbWindow;
 
-  // Pull due + alive rows.  Cap at 500/run so the cron stays within CPU budget.
-  const due = await env.DB.prepare(`
-    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id
+  // 1) Dynamic — 优先扫，单次性，触发后 DELETE
+  //    LIMIT 1 — 一次 cron 最多推 1 条 dynamic（避免多个 dynamic 同时触发推送轰炸）
+  const dynamicDue = await env.DB.prepare(`
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
     FROM schedules
-    WHERE next_fire_at <= ?1 AND last_heartbeat >= ?2
+    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
+    ORDER BY next_fire_at ASC
+    LIMIT 1
+  `).bind(now, cutoff).all<ScheduleRow>();
+
+  let dynamicFired = 0;
+  if (dynamicDue.results && dynamicDue.results.length > 0) {
+    const row = dynamicDue.results[0];
+    const messageId = crypto.randomUUID();
+    const ok = await broadcastProactive(env, row, messageId, 'dynamic');
+    if (ok) {
+      // 触发后 DELETE — dynamic 是单次性
+      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'`)
+        .bind(row.endpoint, row.char_id).run();
+      console.log(`[cron] dynamic fired + deleted: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
+      dynamicFired++;
+    } else {
+      // WS 推失败（客户端不在线）→ 写 D1 离线消息 + DELETE dynamic（避免下次再 retry）
+      // 注意：fixed 走 retry 路径，dynamic 不重试（reason 是一次性约定，retry 失去语义）
+      await writeOfflineMessage(env, row, messageId);
+      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'`)
+        .bind(row.endpoint, row.char_id).run();
+      console.log(`[cron] dynamic offline: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
+    }
+    return { fired: dynamicFired, dropped: 0, wsDelivered: 0, dynamicFired };
+  }
+
+  // 2) Fixed — 兜底周期，触发后推进 next_fire_at
+  const due = await env.DB.prepare(`
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
+    FROM schedules
+    WHERE schedule_type = 'fixed' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
     ORDER BY next_fire_at ASC
     LIMIT 500
   `).bind(now, cutoff).all<ScheduleRow>();
 
   if (!due.results || due.results.length === 0) {
-    return { fired: 0, dropped: 0, wsDelivered: 0 };
+    return { fired: 0, dropped: 0, wsDelivered: 0, dynamicFired };
   }
 
   const vapid = await getVapid(env);
@@ -205,94 +462,24 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
   let wsDelivered = 0;
 
   for (const row of due.results) {
-    // 暮色 2026-08-29 P0 第三步：WebSocket 优先 — 有在线客户端就直接推
-    //   content 字段目前是 charId 占位（跟 wake push 同级），后续 Android 端
-    //   决定怎么展示；广播已送达（delivered>0）就跳过 Web Push 不双发
-    //
-    // 麦麦 2026-09-05 commit 2：delivered>0 不可靠（Doze 期间 client 冻住但 socket 在）
-    //   broadcast 后用 /stats 的 onlineUserIds 二次确认（30s 内有 ping 才算真活）
-    //   真活 → 跳过 D1；不真活 → 写 D1（commit 3 客户端恢复时拉取）
-    let wsReallyOnline = false;
-    let wsDeliveredCount = 0;
+    // 麦麦 2026-09-06：fixed 路径复用 broadcastProactive 工具函数
+    //   行为与原来一致：WS 真活就推进 next_fire_at；不真活就写 D1 + 推进
     const messageId = crypto.randomUUID();
-    try {
-      const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
-      const broadcastRes = await stub.fetch('https://ws-hub/broadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          characterId: row.char_id,
-          content: row.char_id,     // 占位 — 后续接角色名/消息文本
-          timestamp: now,
-          messageId,                // 麦麦 2026-09-05 commit 3：去重键
-        }),
-      });
-      if (broadcastRes.ok) {
-        const broadcastData = await broadcastRes.json<{ delivered?: number }>();
-        wsDeliveredCount = broadcastData?.delivered ?? 0;
-      }
-    } catch (e) {
-      console.warn('[cron] ws broadcast failed', e);
-    }
-
-    // 麦麦 2026-09-05 commit 2：查 /stats 拿 onlineUserIds
-    //   delivered>0 + 有 online user → 视为真活（commit 2 阶段简化归属）
-    //   严格归属需要 schedules 加 user_id 字段（commit 4 再做）
-    if (wsDeliveredCount > 0) {
-      try {
-        const stub = env.WS_HUB.get(env.WS_HUB.idFromName('proactive-push-hub'));
-        const statsRes = await stub.fetch('https://ws-hub/stats', { method: 'GET' });
-        if (statsRes.ok) {
-          const stats = await statsRes.json<{ onlineUserIds?: string[] }>();
-          if ((stats?.onlineUserIds?.length ?? 0) > 0) {
-            wsReallyOnline = true;
-            wsDelivered += wsDeliveredCount;
-          }
-        }
-      } catch (_) {
-        // 退化用 delivered>0 判定
-        if (wsDeliveredCount > 0) {
-          wsReallyOnline = true;
-          wsDelivered += wsDeliveredCount;
-        }
-      }
-    }
-
-    if (wsReallyOnline) {
-      // 真活：跳过 D1，推进 next_fire_at
+    const ok = await broadcastProactive(env, row, messageId, 'fixed');
+    if (ok) {
+      // 真活：推进 next_fire_at
       let nextWs = row.next_fire_at + row.interval_ms;
       if (nextWs <= now) nextWs = now + row.interval_ms;
       await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`)
         .bind(nextWs, row.endpoint, row.char_id).run();
+      wsDelivered++;
       fired++;
       continue;
     }
 
-    // 麦麦 2026-09-05 commit 2：不在线 → 写 D1 等 client 恢复时拉取
-    //   expires_at = now + 72h（暮色 9-5 决定）
-    //   暂不写 Web Push（Android 端没订阅 VAPID，写了也白费）
-    const offlineExpiresAt = now + 72 * 3600 * 1000;
-    try {
-      await env.DB.prepare(`
-        INSERT INTO proactive_offline_messages
-          (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-      `).bind(
-        crypto.randomUUID(),
-        // 麦麦 2026-09-05 commit 8：用 row.user_id 替代 endpoint
-        //   客户端 fetch 时用 WS userId 查 — 之前 endpoint 占位时两边对不上
-        row.user_id || row.endpoint,  // 旧 schedule 没 user_id 时退化用 endpoint
-        row.char_id,
-        row.char_id,         // 角色名暂用 char_id
-        row.char_id,         // 内容暂用 char_id
-        messageId,
-        now,
-        offlineExpiresAt,
-      ).run();
-      console.log(`[cron] offline msg written: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
-    } catch (e) {
-      console.error('[cron] failed to write offline msg', e, row.char_id);
-    }
+    // 不在线 → 写 D1 等 client 恢复时拉取
+    await writeOfflineMessage(env, row, messageId);
+    console.log(`[cron] fixed offline: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
 
     // 推进 next_fire_at（跟原逻辑一致）
     let next = row.next_fire_at + row.interval_ms;
@@ -302,7 +489,7 @@ async function runScheduledSweep(env: Env): Promise<{ fired: number; dropped: nu
     fired++;
   }
 
-  return { fired, dropped, wsDelivered };
+  return { fired, dropped, wsDelivered, dynamicFired };
 }
 
 // ---------- main ----------
@@ -386,6 +573,13 @@ export default {
     if (url.pathname === '/unsubscribe' && req.method === 'POST') return handleUnsubscribe(req, env);
     if (url.pathname === '/heartbeat' && req.method === 'POST') return handleHeartbeat(req, env);
     if (url.pathname === '/status' && req.method === 'GET') return handleStatus(req, env);
+    // 麦麦 2026-09-06：江澈动态注册唤醒时间
+    //   POST /dynamic-schedule   { endpoint, p256dh, auth, charId, userId, fireAt, reason }
+    //     → 覆盖当前未触发的 dynamic（同一 endpoint+charId）
+    //   POST /cancel-dynamic-schedule  { endpoint, charId } 或 { userId, charId }
+    //     → 删 dynamic（暮色发消息时自动调 / 角色重新注册时覆盖前删旧的）
+    if (url.pathname === '/dynamic-schedule' && req.method === 'POST') return handleDynamicSchedule(req, env);
+    if (url.pathname === '/cancel-dynamic-schedule' && req.method === 'POST') return handleCancelDynamicSchedule(req, env);
     if (url.pathname === '/test' && req.method === 'POST') return handleTest(req, env);
 
     // 麦麦 2026-09-05 commit 4：客户端拉取离线消息

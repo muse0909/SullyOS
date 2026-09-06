@@ -235,11 +235,16 @@ class KeepAliveService : Service() {
     //   - pendingProactive: map<requestId, PendingProactive> 跟踪在途触发
     //   - requestId 唯一 key：同一角色短时间内多次触发（WS 重连补发）要分别超时
     //   - timeoutRunnable: 30s 到点时降级弹占位通知
+    // 麦麦 2026-09-06：加 scheduleType（dynamic/fixed）— 透传到最终 triggerSource 标记
+    //   暮色 9-6 21:00 需求：triggerSource 标 dynamic_schedule / fixed_schedule 区分
+    //   实际实现：triggerSource 拼成 "${scheduleType}_${source}" 形式
+    //   例：dynamic_js_callback / fixed_offline_fetch / dynamic_fallback_timeout
     private var proactiveWakeLock: PowerManager.WakeLock? = null
     private data class PendingProactive(
         val charId: String,
         val content: String,
         val messageId: String,
+        val scheduleType: String,
         val timeoutRunnable: Runnable
     )
     private val pendingProactive: MutableMap<String, PendingProactive> = mutableMapOf()
@@ -643,6 +648,11 @@ class KeepAliveService : Service() {
             //   真实内容由 WebView 跑完整流程后回传
             val content = json.optString("content")
             val messageId = json.optString("messageId")
+            // 麦麦 2026-09-06：江澈动态注册 vs 固定梯度区分（暮色 9-6 21:00 需求）
+            //   dynamic_schedule = 江澈 [schedule_next_wakeup] 注册的单次定时
+            //   fixed_schedule   = 30 分钟/1 小时/4 小时固定梯度兜底
+            //   Service 端透传到 triggerProactiveFromBackground → showProactiveNotification log
+            val scheduleType = json.optString("scheduleType").ifEmpty { "fixed" }
             if (characterId.isEmpty()) {
                 logW("proactive_message missing characterId, ignore")
                 return
@@ -654,7 +664,7 @@ class KeepAliveService : Service() {
             }
             // 麦麦 2026-09-06：混合方案 —— 改前直接弹占位通知，改后调 WebView JS 生成真实内容
             //   失败时由 triggerProactiveFromBackground 内部 30s 超时降级弹占位
-            triggerProactiveFromBackground(characterId, content, messageId)
+            triggerProactiveFromBackground(characterId, content, messageId, scheduleType)
         } catch (e: Exception) {
             logE("handleMessage parse failed", e)
         }
@@ -673,15 +683,18 @@ class KeepAliveService : Service() {
      *      — 收到 JS 回传则由 handleJsProactiveResult 弹真实通知
      *   4. 失败的边界：MainActivity 没起（WebView=null）→ 立即降级弹占位
      */
-    private fun triggerProactiveFromBackground(characterId: String, content: String, messageId: String) {
+    private fun triggerProactiveFromBackground(characterId: String, content: String, messageId: String, scheduleType: String) {
         val ts = System.currentTimeMillis()
-        Log.i("PROACTIVE", "BG_TRIGGER_ENTER ts=$ts char=$characterId msgId=$messageId triggerSource=background_service thread=${Thread.currentThread().name}")
+        // 麦麦 2026-09-06：triggerSource 拼接 scheduleType — 区分 dynamic vs fixed
+        //   实际 marker：`${scheduleType}_${source}` 如 dynamic_js_callback / fixed_offline_fetch
+        val baseSource = "background_service"
+        Log.i("PROACTIVE", "BG_TRIGGER_ENTER ts=$ts char=$characterId msgId=$messageId scheduleType=$scheduleType triggerSource=${scheduleType}_$baseSource thread=${Thread.currentThread().name}")
 
         // 1) 拿 WebView 引用（MainActivity 静态 getter）
         val webView = MainActivity.getWebViewInstance()
         if (webView == null) {
             Log.w("PROACTIVE", "BG_TRIGGER_NO_WEBVIEW char=$characterId — MainActivity not running, fallback immediately")
-            showProactiveNotification(characterId, content.ifEmpty { characterId }, messageId, triggerSource = "fallback_no_webview")
+            showProactiveNotification(characterId, content.ifEmpty { characterId }, messageId, triggerSource = "${scheduleType}_fallback_no_webview")
             if (messageId.isNotEmpty()) markMessageSeen(messageId)
             return
         }
@@ -692,19 +705,19 @@ class KeepAliveService : Service() {
         // 3) 拼 JS 字符串（用 JSON 转义防 charId 含引号）
         val escapedCharId = JSONObject.quote(characterId)
         val js = "window.__sullyosTriggerProactive($escapedCharId);"
-        Log.i("PROACTIVE", "BG_TRIGGER_EVALJS ts=${System.currentTimeMillis()} char=$characterId")
+        Log.i("PROACTIVE", "BG_TRIGGER_EVALJS ts=${System.currentTimeMillis()} char=$characterId scheduleType=$scheduleType")
 
         // 4) 30s 超时：到点如果 pendingProactive 还在 → 降级
         val requestId = messageId.ifEmpty { "${characterId}_${ts}" }
         val timeoutRunnable = Runnable {
             val pending = pendingProactive.remove(requestId)
             if (pending != null) {
-                Log.w("PROACTIVE", "BG_TRIGGER_TIMEOUT ts=${System.currentTimeMillis()} char=$characterId — 30s no JS callback, fallback to placeholder")
+                Log.w("PROACTIVE", "BG_TRIGGER_TIMEOUT ts=${System.currentTimeMillis()} char=$characterId scheduleType=${pending.scheduleType} — 30s no JS callback, fallback to placeholder")
                 showProactiveNotification(
                     pending.charId,
                     content.ifEmpty { pending.charId },
                     pending.messageId,
-                    triggerSource = "fallback_timeout"
+                    triggerSource = "${pending.scheduleType}_fallback_timeout"
                 )
                 if (pending.messageId.isNotEmpty()) markMessageSeen(pending.messageId)
             }
@@ -713,7 +726,7 @@ class KeepAliveService : Service() {
                 releaseProactiveWakeLock()
             }
         }
-        pendingProactive[requestId] = PendingProactive(characterId, content, messageId, timeoutRunnable)
+        pendingProactive[requestId] = PendingProactive(characterId, content, messageId, scheduleType, timeoutRunnable)
         handler.postDelayed(timeoutRunnable, JS_RESPONSE_TIMEOUT_MS)
 
         // 5) 调 WebView（异步，不阻塞 Service）
@@ -732,7 +745,7 @@ class KeepAliveService : Service() {
                                 pending.charId,
                                 content.ifEmpty { pending.charId },
                                 pending.messageId,
-                                triggerSource = "fallback_evaljs_throw"
+                                triggerSource = "${pending.scheduleType}_fallback_evaljs_throw"
                             )
                             if (pending.messageId.isNotEmpty()) markMessageSeen(pending.messageId)
                         }
@@ -750,7 +763,7 @@ class KeepAliveService : Service() {
                         pending.charId,
                         content.ifEmpty { pending.charId },
                         pending.messageId,
-                        triggerSource = "fallback_post_throw"
+                        triggerSource = "${pending.scheduleType}_fallback_post_throw"
                     )
                     if (pending.messageId.isNotEmpty()) markMessageSeen(pending.messageId)
                 }
@@ -764,6 +777,7 @@ class KeepAliveService : Service() {
      *   Plugin 调静态入口 → 这里处理（handler 切到主线程）
      *   - 用 messageId 在 pendingProactive 里找对应请求，找不到说明已经超时降级了
      *   - 找到：取消 30s 定时器 + 弹真实通知（triggerSource=js_callback）
+     *   暮色 9-6 21:00：triggerSource 拼 scheduleType — 区分 dynamic vs fixed
      */
     private fun handleJsProactiveResult(charId: String, content: String, messageId: String, charName: String) {
         val ts = System.currentTimeMillis()
@@ -778,9 +792,11 @@ class KeepAliveService : Service() {
             return
         }
         handler.removeCallbacks(pending.timeoutRunnable)
-        Log.i("PROACTIVE", "JS_CALLBACK_OK ts=$ts char=$charId msgId=$messageId thread=${Thread.currentThread().name}")
+        // 麦麦 2026-09-06：JS_CALLBACK_OK 带 scheduleType（dynamic / fixed） — 暮色 9-6 21:00 需求
+        Log.i("PROACTIVE", "JS_CALLBACK_OK ts=$ts char=$charId msgId=$messageId scheduleType=${pending.scheduleType} thread=${Thread.currentThread().name}")
         // 用真实 content 弹通知（charName 用作 title）
-        showProactiveNotification(charId, content, messageId, charNameOverride = charName, triggerSource = "js_callback")
+        //   triggerSource 拼成 "${scheduleType}_js_callback" 形式
+        showProactiveNotification(charId, content, messageId, charNameOverride = charName, triggerSource = "${pending.scheduleType}_js_callback")
         if (messageId.isNotEmpty()) markMessageSeen(messageId)
         if (pendingProactive.isEmpty()) releaseProactiveWakeLock()
     }

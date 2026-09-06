@@ -23,6 +23,9 @@ import { processImage, saveRemoteImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
 import { ProactiveDiary } from '../utils/proactiveDiary';
+// 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
+//   暮色发任何消息时调 → 取消该角色的 dynamic schedule
+import { cancelDynamicScheduleOnWorker } from '../utils/proactivePushConfig';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
@@ -1333,6 +1336,14 @@ const Chat: React.FC = () => {
 
         await DB.saveMessage(msgPayload);
         ProactiveChat.markUserContact(char.id);
+
+        // 麦麦 2026-09-06：暮色发消息 → 取消该角色的 dynamic schedule
+        //   暮色 9-6 21:00 需求：动态注册到达前暮色发任何消息，自动取消该 dynamic
+        //   fire-and-forget — 不阻塞消息保存 / triggerAI
+        //   失败静默（最多留个 warn，不打扰用户）
+        void cancelDynamicScheduleOnWorker(char.id).catch((e) => {
+            console.warn('[Chat] cancelDynamicScheduleOnWorker 失败:', e);
+        });
 
         // 麦麦 2026-09-06：用户说"晚安"短句 → 触发该角色今晚的日记
         //   暮色原话："这个时间改成说晚安后吧，现在设置的是 10 点有点太早了"

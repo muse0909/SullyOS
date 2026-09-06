@@ -179,11 +179,13 @@ var WsHub = class _WsHub extends DurableObject {
         headers: { "Content-Type": "application/json" }
       });
     }
+    const { characterId, content, timestamp, ...extras } = body;
     const payload = JSON.stringify({
       type: "proactive_message",
-      characterId: body.characterId,
-      content: body.content,
-      timestamp: body.timestamp ?? Date.now()
+      characterId,
+      content,
+      timestamp: timestamp ?? Date.now(),
+      ...extras
     });
     let delivered = 0;
     for (const [userId, sockets] of this.connections) {
@@ -221,6 +223,17 @@ var WsHub = class _WsHub extends DurableObject {
 };
 
 // worker/proactive-push/src/index.ts
+var schemaMigrated = false;
+async function ensureScheduleSchema(env) {
+  if (schemaMigrated) return;
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE schedules ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'fixed'
+    `).run();
+  } catch (e) {
+  }
+  schemaMigrated = true;
+}
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -330,105 +343,195 @@ async function handleTest(req, env) {
     return json({ ok: false, error: String(e?.message || e) }, 500);
   }
 }
+async function handleDynamicSchedule(req, env) {
+  await ensureScheduleSchema(env);
+  const body = await readJson(req);
+  if (!body) return json({ error: "invalid json" }, 400);
+  const endpoint = body.endpoint;
+  const charId = body.charId;
+  const userId = body.userId;
+  const fireAt = body.fireAt;
+  const reason = body.reason || "";
+  if (!endpoint || !charId || !userId || !fireAt || fireAt <= Date.now() - 5 * 60 * 1e3) {
+    return json({ error: "missing fields or fireAt in past" }, 400);
+  }
+  const now = Date.now();
+  await env.DB.prepare(`
+    INSERT INTO schedules
+      (endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'dynamic')
+    ON CONFLICT(endpoint, char_id) DO UPDATE SET
+      p256dh = excluded.p256dh,
+      auth = excluded.auth,
+      interval_ms = excluded.interval_ms,
+      next_fire_at = excluded.next_fire_at,
+      last_heartbeat = excluded.last_heartbeat,
+      user_id = excluded.user_id,
+      schedule_type = 'dynamic'
+  `).bind(
+    endpoint,
+    charId,
+    body.p256dh || "",
+    body.auth || "",
+    0,
+    // dynamic 单次性
+    fireAt,
+    now,
+    now,
+    userId
+  ).run();
+  console.log(`[dynamic] registered: char=${charId} userId=${userId} fireAt=${new Date(fireAt).toISOString()} reason=${reason}`);
+  return json({ ok: true, nextFireAt: fireAt, reason });
+}
+async function handleCancelDynamicSchedule(req, env) {
+  await ensureScheduleSchema(env);
+  const body = await readJson(req);
+  if (!body) return json({ error: "invalid json" }, 400);
+  if (!body.charId) return json({ error: "charId required" }, 400);
+  let result;
+  if (body.endpoint) {
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
+    `).bind(body.endpoint, body.charId).run();
+  } else if (body.userId) {
+    result = await env.DB.prepare(`
+      DELETE FROM schedules
+      WHERE user_id = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'
+    `).bind(body.userId, body.charId).run();
+  } else {
+    return json({ error: "endpoint or userId required" }, 400);
+  }
+  const deleted = result?.meta?.changes ?? result?.changes ?? 0;
+  console.log(`[dynamic] cancelled: char=${body.charId} deleted=${deleted}`);
+  return json({ ok: true, deleted });
+}
+async function broadcastProactive(env, row, messageId, scheduleType) {
+  const now = Date.now();
+  let wsDeliveredCount = 0;
+  try {
+    const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
+    const broadcastRes = await stub.fetch("https://ws-hub/broadcast", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        characterId: row.char_id,
+        content: row.char_id,
+        // 占位 — 真实内容由 Android Service 调 WebView JS 生成
+        timestamp: now,
+        messageId,
+        // 麦麦 2026-09-05 commit 3：去重键
+        // 麦麦 2026-09-06：告诉客户端这条是 dynamic 还是 fixed 触发
+        //   Android 端 Service 据此在 PROACTIVE log + notification 标 triggerSource
+        scheduleType
+      })
+    });
+    if (broadcastRes.ok) {
+      const broadcastData = await broadcastRes.json();
+      wsDeliveredCount = broadcastData?.delivered ?? 0;
+    }
+  } catch (e) {
+    console.warn(`[cron] ws broadcast failed (${scheduleType})`, e);
+    return false;
+  }
+  if (wsDeliveredCount === 0) return false;
+  try {
+    const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
+    const statsRes = await stub.fetch("https://ws-hub/stats", { method: "GET" });
+    if (statsRes.ok) {
+      const stats = await statsRes.json();
+      if ((stats?.onlineUserIds?.length ?? 0) > 0) {
+        return true;
+      }
+    }
+  } catch (_) {
+    return true;
+  }
+  return false;
+}
+async function writeOfflineMessage(env, row, messageId) {
+  const now = Date.now();
+  const offlineExpiresAt = now + 72 * 3600 * 1e3;
+  try {
+    await env.DB.prepare(`
+      INSERT INTO proactive_offline_messages
+        (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    `).bind(
+      crypto.randomUUID(),
+      row.user_id || row.endpoint,
+      row.char_id,
+      row.char_id,
+      row.char_id,
+      messageId,
+      now,
+      offlineExpiresAt
+    ).run();
+  } catch (e) {
+    console.error("[cron] failed to write offline msg", e, row.char_id);
+  }
+}
 async function runScheduledSweep(env) {
+  await ensureScheduleSchema(env);
   const now = Date.now();
   const hbWindow = parseInt(env.HEARTBEAT_WINDOW_MS || "300000", 10) || 3e5;
   const cutoff = now - hbWindow;
-  const due = await env.DB.prepare(`
-    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id
+  const dynamicDue = await env.DB.prepare(`
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
     FROM schedules
-    WHERE next_fire_at <= ?1 AND last_heartbeat >= ?2
+    WHERE schedule_type = 'dynamic' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
+    ORDER BY next_fire_at ASC
+    LIMIT 1
+  `).bind(now, cutoff).all();
+  let dynamicFired = 0;
+  if (dynamicDue.results && dynamicDue.results.length > 0) {
+    const row = dynamicDue.results[0];
+    const messageId = crypto.randomUUID();
+    const ok = await broadcastProactive(env, row, messageId, "dynamic");
+    if (ok) {
+      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'`).bind(row.endpoint, row.char_id).run();
+      console.log(`[cron] dynamic fired + deleted: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
+      dynamicFired++;
+    } else {
+      await writeOfflineMessage(env, row, messageId);
+      await env.DB.prepare(`DELETE FROM schedules WHERE endpoint = ?1 AND char_id = ?2 AND schedule_type = 'dynamic'`).bind(row.endpoint, row.char_id).run();
+      console.log(`[cron] dynamic offline: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
+    }
+    return { fired: dynamicFired, dropped: 0, wsDelivered: 0, dynamicFired };
+  }
+  const due = await env.DB.prepare(`
+    SELECT endpoint, char_id, p256dh, auth, interval_ms, next_fire_at, last_heartbeat, created_at, user_id, schedule_type
+    FROM schedules
+    WHERE schedule_type = 'fixed' AND next_fire_at <= ?1 AND last_heartbeat >= ?2
     ORDER BY next_fire_at ASC
     LIMIT 500
   `).bind(now, cutoff).all();
   if (!due.results || due.results.length === 0) {
-    return { fired: 0, dropped: 0, wsDelivered: 0 };
+    return { fired: 0, dropped: 0, wsDelivered: 0, dynamicFired };
   }
   const vapid = await getVapid(env);
   let fired = 0;
   let dropped = 0;
   let wsDelivered = 0;
   for (const row of due.results) {
-    let wsReallyOnline = false;
-    let wsDeliveredCount = 0;
     const messageId = crypto.randomUUID();
-    try {
-      const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
-      const broadcastRes = await stub.fetch("https://ws-hub/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          characterId: row.char_id,
-          content: row.char_id,
-          // 占位 — 后续接角色名/消息文本
-          timestamp: now,
-          messageId
-          // 麦麦 2026-09-05 commit 3：去重键
-        })
-      });
-      if (broadcastRes.ok) {
-        const broadcastData = await broadcastRes.json();
-        wsDeliveredCount = broadcastData?.delivered ?? 0;
-      }
-    } catch (e) {
-      console.warn("[cron] ws broadcast failed", e);
-    }
-    if (wsDeliveredCount > 0) {
-      try {
-        const stub = env.WS_HUB.get(env.WS_HUB.idFromName("proactive-push-hub"));
-        const statsRes = await stub.fetch("https://ws-hub/stats", { method: "GET" });
-        if (statsRes.ok) {
-          const stats = await statsRes.json();
-          if ((stats?.onlineUserIds?.length ?? 0) > 0) {
-            wsReallyOnline = true;
-            wsDelivered += wsDeliveredCount;
-          }
-        }
-      } catch (_) {
-        if (wsDeliveredCount > 0) {
-          wsReallyOnline = true;
-          wsDelivered += wsDeliveredCount;
-        }
-      }
-    }
-    if (wsReallyOnline) {
+    const ok = await broadcastProactive(env, row, messageId, "fixed");
+    if (ok) {
       let nextWs = row.next_fire_at + row.interval_ms;
       if (nextWs <= now) nextWs = now + row.interval_ms;
       await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`).bind(nextWs, row.endpoint, row.char_id).run();
+      wsDelivered++;
       fired++;
       continue;
     }
-    const offlineExpiresAt = now + 72 * 3600 * 1e3;
-    try {
-      await env.DB.prepare(`
-        INSERT INTO proactive_offline_messages
-          (id, user_id, char_id, character_name, content, message_id, created_at, expires_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-      `).bind(
-        crypto.randomUUID(),
-        // 麦麦 2026-09-05 commit 8：用 row.user_id 替代 endpoint
-        //   客户端 fetch 时用 WS userId 查 — 之前 endpoint 占位时两边对不上
-        row.user_id || row.endpoint,
-        // 旧 schedule 没 user_id 时退化用 endpoint
-        row.char_id,
-        row.char_id,
-        // 角色名暂用 char_id
-        row.char_id,
-        // 内容暂用 char_id
-        messageId,
-        now,
-        offlineExpiresAt
-      ).run();
-      console.log(`[cron] offline msg written: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
-    } catch (e) {
-      console.error("[cron] failed to write offline msg", e, row.char_id);
-    }
+    await writeOfflineMessage(env, row, messageId);
+    console.log(`[cron] fixed offline: char=${row.char_id} userId=${row.user_id} msgId=${messageId}`);
     let next = row.next_fire_at + row.interval_ms;
     if (next <= now) next = now + row.interval_ms;
     await env.DB.prepare(`UPDATE schedules SET next_fire_at = ?1 WHERE endpoint = ?2 AND char_id = ?3`).bind(next, row.endpoint, row.char_id).run();
     fired++;
   }
-  return { fired, dropped, wsDelivered };
+  return { fired, dropped, wsDelivered, dynamicFired };
 }
 var src_default = {
   async fetch(req, env) {
@@ -482,6 +585,8 @@ var src_default = {
     if (url.pathname === "/unsubscribe" && req.method === "POST") return handleUnsubscribe(req, env);
     if (url.pathname === "/heartbeat" && req.method === "POST") return handleHeartbeat(req, env);
     if (url.pathname === "/status" && req.method === "GET") return handleStatus(req, env);
+    if (url.pathname === "/dynamic-schedule" && req.method === "POST") return handleDynamicSchedule(req, env);
+    if (url.pathname === "/cancel-dynamic-schedule" && req.method === "POST") return handleCancelDynamicSchedule(req, env);
     if (url.pathname === "/test" && req.method === "POST") return handleTest(req, env);
     if (url.pathname === "/api/offline-messages" && req.method === "GET") {
       const userId = url.searchParams.get("userId");

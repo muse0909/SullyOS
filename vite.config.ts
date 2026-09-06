@@ -60,6 +60,13 @@ export default defineConfig({
     rollupOptions: {
       // 关键修复：将这些包排除在打包之外，让浏览器通过 index.html 的 importmap 加载
       external: ['pdfjs-dist', 'katex'],
+      // 麦麦 2026-09-06：显式声明 hash 文件名（Vite 默认就有，显式更稳）
+      //   暮色 9-6 反馈 APK WebView 反复缓存 — 确认文件名变化能被检测到
+      output: {
+        entryFileNames: 'assets/[name].[hash].js',
+        chunkFileNames: 'assets/[name].[hash].js',
+        assetFileNames: 'assets/[name].[hash].[ext]',
+      },
       onwarn(warning, defaultHandler) {
         // 抑制动态导入与静态导入混合的无害警告
         if (warning.message?.includes('dynamic import will not move module into another chunk')) return;

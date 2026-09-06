@@ -8,17 +8,15 @@
 import React, { useState, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { CaretLeft, Notebook, Smiley, Heart, BookOpen } from '@phosphor-icons/react';
-import { getMemo, sortEntries, REGION_LABELS } from '../utils/characterMemo';
-import type { CharacterMemo, CharacterMemoEntry, CharacterMemoRegion } from '../types';
+import { getMemo, getStatusPanel, sortEntries, REGION_LABELS, STATUS_LABELS } from '../utils/characterMemo';
+import type { CharacterMemo, CharacterMemoEntry, CharacterMemoRegion, CharacterStatusPanel, CharacterStatusSlot } from '../types';
 
 const REGION_ICONS: Record<CharacterMemoRegion, React.ReactNode> = {
-    status: <Smiley size={14} weight="regular" />,
     event: <Heart size={14} weight="regular" />,
     private: <BookOpen size={14} weight="regular" />,
 };
 
 const REGION_BG: Record<CharacterMemoRegion, string> = {
-    status: 'bg-sky-50 text-sky-700 border-sky-100',
     event: 'bg-rose-50 text-rose-700 border-rose-100',
     private: 'bg-amber-50 text-amber-700 border-amber-100',
 };
@@ -55,14 +53,64 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
         return () => { cancelled = true; };
     }, [activeCharId]);
 
+    // 麦麦 2026-09-06：监听 memo-updated 事件（addMemo/setStatusSlot 写完 IDB 后派发）
+    //   暮色 9-6 反馈：APK 端写完不显示 — 因为 useEffect 只在 activeCharId 变化时重读
+    //   写 memo 后没主动重新读。现在监听事件 + 检查 charId 匹配 → 重读
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ charId: string; kind: string }>).detail;
+            if (!detail || !activeCharId) return;
+            if (detail.charId !== activeCharId) return;  // 别的角色变化不重读
+            (async () => {
+                const m = await getMemo(activeCharId);
+                setMemo(m);
+            })();
+        };
+        window.addEventListener('memo-updated', handler);
+        return () => window.removeEventListener('memo-updated', handler);
+    }, [activeCharId]);
+
+    // 状态面板独立监听（同事件但 kind='status' 也要刷）
+    const [statusPanel, setStatusPanelState] = useState<CharacterStatusPanel | null>(null);
+    useEffect(() => {
+        if (!activeCharId) return;
+        (async () => {
+            const p = await getStatusPanel(activeCharId);
+            setStatusPanelState(p);
+        })();
+    }, [activeCharId]);
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent<{ charId: string; kind: string }>).detail;
+            if (!detail || !activeCharId) return;
+            if (detail.charId !== activeCharId) return;
+            if (detail.kind !== 'status' && detail.kind !== 'both') return;
+            (async () => {
+                const p = await getStatusPanel(activeCharId);
+                setStatusPanelState(p);
+            })();
+        };
+        window.addEventListener('memo-updated', handler);
+        return () => window.removeEventListener('memo-updated', handler);
+    }, [activeCharId]);
+
     const activeChar = characters.find((c) => c.id === activeCharId);
     const sorted = memo ? sortEntries(memo.entries) : [];
     const byRegion: Record<CharacterMemoRegion, CharacterMemoEntry[]> = {
-        status: [],
         event: [],
         private: [],
     };
     for (const e of sorted) byRegion[e.region].push(e);
+
+    // 麦麦 2026-09-06：状态面板固定槽位顺序
+    const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder'];
+    const statusEntries = statusPanel
+        ? STATUS_SLOT_ORDER
+            .map(slot => ({ slot, value: statusPanel.slots[slot] }))
+            .filter(e => e.value && e.value.trim())
+        : [];
+    const hasStatus = statusEntries.length > 0;
+    const hasMemo = sorted.length > 0;
 
     return (
         <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
@@ -106,11 +154,30 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
             <div className="flex-1 overflow-y-auto px-5 pt-3 pb-6">
                 {loading ? (
                     <div className="text-center text-slate-400 text-sm py-12">加载中…</div>
-                ) : sorted.length === 0 ? (
+                ) : !hasStatus && !hasMemo ? (
                     <EmptyState charName={activeChar?.name ?? '该角色'} />
                 ) : (
                     <div className="space-y-4">
-                        {(['status', 'event', 'private'] as CharacterMemoRegion[]).map((region) => {
+                        {/* 麦麦 2026-09-06：状态面板在最上方（暮色 9-5 20:32 要求"固定显示"） */}
+                        {hasStatus && (
+                            <div className="bg-white rounded-2xl shadow-sm p-4">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-100">
+                                        <Smiley size={14} weight="regular" />
+                                        当前状态面板
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {statusEntries.map(({ slot, value }) => (
+                                        <div key={slot} className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed">
+                                            <div className="text-[10px] text-slate-400 mb-1 font-mono">{STATUS_LABELS[slot]}</div>
+                                            {value}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {(['event', 'private'] as CharacterMemoRegion[]).map((region) => {
                             const items = byRegion[region];
                             if (items.length === 0) return null;
                             return (

@@ -357,20 +357,37 @@ const ApiQuickFloat: React.FC = () => {
     setLocalImageModel(apiConfig.imageModel || '');
     // 任务 3：删 setLocalImageProtocol / setLocalImageClaude* / setLocalImageGemini* 同步
     // 暮色 2026-07-15：删 localImageGenProvider / localComfyuiSelectedModel 同步
-    setLocalVisionUrl(apiConfig.visionBaseUrl || '');
-    setLocalVisionKey(apiConfig.visionApiKey || '');
-    setLocalVisionModel(apiConfig.visionModel || '');
+    // 麦麦 2026-09-06 16:00 修识图跨协议不同步：ApiQuickFloat vision useEffect 同步
+    //   跟 8-04 暮色修 main 同款 — 之前用 visionBaseUrl/Key/Model 同步（永远 OpenAI 字段）
+    //   改成按 apiConfig.visionProtocol 选字段，跟 main 行的 syncedProtocol 同模式
+    //   deps 里也加了 visionGemini* 字段（行 ~400）防止切协议时 deps 不变不重跑
+    const syncedVisionProtocol: 'openai' | 'gemini' = apiConfig.visionProtocol === 'gemini' ? apiConfig.visionProtocol : 'openai';
+    const syncedVisionBaseUrl = syncedVisionProtocol === 'gemini'
+        ? (apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta')
+        : (apiConfig.visionBaseUrl || '');
+    const syncedVisionApiKey = syncedVisionProtocol === 'gemini'
+        ? (apiConfig.visionGeminiApiKey || '')
+        : (apiConfig.visionApiKey || '');
+    const syncedVisionModel = syncedVisionProtocol === 'gemini'
+        ? (apiConfig.visionGeminiModel || 'gemini-2.0-flash')
+        : (apiConfig.visionModel || '');
+    setLocalVisionUrl(syncedVisionBaseUrl);
+    setLocalVisionKey(syncedVisionApiKey);
+    setLocalVisionModel(syncedVisionModel);
     // 麦麦 2026-09-06 12:36 调试日志：ApiQuickFloat useEffect 同步识图 API
     console.log('[ApiQuickFloat][vision][sync-effect]', {
         source: 'OSContext.apiConfig',
         storageKey: 'os_api_config',
-        visionProtocol: apiConfig.visionProtocol || 'openai',
+        visionProtocol: syncedVisionProtocol,
         visionBaseUrl: apiConfig.visionBaseUrl,
         visionApiKeyExists: !!apiConfig.visionApiKey,
         visionModel: apiConfig.visionModel,
+        visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
+        visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
+        visionGeminiModel: apiConfig.visionGeminiModel,
     });
     // 任务 2：识图协议同步 + 删 visionClaude* 同步
-    setLocalVisionProtocol((apiConfig.visionProtocol as 'openai' | 'gemini') || 'openai');
+    setLocalVisionProtocol(syncedVisionProtocol);
     setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
     setLocalVisionGeminiKey(apiConfig.visionGeminiApiKey || '');
     setLocalVisionGeminiModel(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
@@ -572,24 +589,30 @@ const ApiQuickFloat: React.FC = () => {
     // 暮色 2026-07-15：删 ComfyUI / NAI 分支，只剩 OpenAI 兼容
     // 暮色 2026-07-27：3 tab 协议 — 同时存 3 套，切回 tab 不丢
     // 任务 2：删 Claude 那 3 行（claudeBaseUrl/claudeApiKey/claudeModel）
+    // 麦麦 2026-09-06 16:00 修主 API 跨协议不同步（写侧清干净）：
+    //   切到 OpenAI 时：只写 baseUrl/apiKey/model（清空 geminiBaseUrl/geminiApiKey/geminiModel）
+    //   切到 Gemini 时：只写 geminiBaseUrl/geminiApiKey/geminiModel（清空 baseUrl/apiKey/model）
+    //   这样 os_api_config 里"非当前协议"那组字段为空串，useChatAI 按 protocol 选字段不会拿到矛盾的旧值
+    //   旧实现"保留 apiConfig.baseUrl 不动"导致 Settings useEffect 同步 localUrl 时拿到 OpenAI 协议字段，UI 跟协议不一致
     const mainUpdates: any = {
       protocol: localProtocol,
-      baseUrl: localProtocol === 'openai' ? localUrl : (apiConfig.baseUrl || ''),
-      apiKey: localProtocol === 'openai' ? localKey : (apiConfig.apiKey || ''),
-      model: localProtocol === 'openai' ? localModel : (apiConfig.model || ''),
-      geminiBaseUrl: localProtocol === 'gemini' ? localUrl : localGeminiUrl,
-      geminiApiKey: localProtocol === 'gemini' ? localKey : localGeminiKey,
-      geminiModel: localProtocol === 'gemini' ? localModel : localGeminiModel,
+      baseUrl: localProtocol === 'openai' ? localUrl : '',
+      apiKey: localProtocol === 'openai' ? localKey : '',
+      model: localProtocol === 'openai' ? localModel : '',
+      geminiBaseUrl: localProtocol === 'gemini' ? localUrl : '',
+      geminiApiKey: localProtocol === 'gemini' ? localKey : '',
+      geminiModel: localProtocol === 'gemini' ? localModel : '',
     };
     // 任务 2：删 visionClaudeBaseUrl/visionClaudeApiKey/visionClaudeModel
+    // 麦麦 2026-09-06 16:00 修识图跨协议不同步（写侧清干净）— 同上 mainUpdates 逻辑
     const visionUpdates: any = {
       visionProtocol: localVisionProtocol,
-      visionBaseUrl: localVisionProtocol === 'openai' ? localVisionUrl : (apiConfig.visionBaseUrl || ''),
-      visionApiKey: localVisionProtocol === 'openai' ? localVisionKey : (apiConfig.visionApiKey || ''),
-      visionModel: localVisionProtocol === 'openai' ? localVisionModel : (apiConfig.visionModel || ''),
-      visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : localVisionGeminiUrl,
-      visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : localVisionGeminiKey,
-      visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : localVisionGeminiModel,
+      visionBaseUrl: localVisionProtocol === 'openai' ? localVisionUrl : '',
+      visionApiKey: localVisionProtocol === 'openai' ? localVisionKey : '',
+      visionModel: localVisionProtocol === 'openai' ? localVisionModel : '',
+      visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : '',
+      visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : '',
+      visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : '',
     };
     // 任务 3：删 imageProtocol / imageClaude* / imageGemini* 字段保存
     //   生图只走 OpenAI 协议，保存 imageBaseUrl/imageApiKey/imageModel 即可

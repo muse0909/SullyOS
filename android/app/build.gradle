@@ -2,6 +2,39 @@ apply plugin: 'com.android.application'
 // 暮色 2026-08-26 角色查手机 P0：编译 Kotlin 插件
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// 麦麦 2026-09-03：后台保活配置入口（统一从 gradle.properties / local.properties 读）
+//   这些字段是 Android 端的「服务端地址」配置 — 跟前端 utils/proactivePushConfig.ts 的
+//   import.meta.env.VITE_PROACTIVE_* 同源，名字对齐。
+//
+//   读取顺序（Gradle 优先级从低到高，高优先级覆盖低优先级）：
+//     1. android/gradle.properties          → 占位符（提交到 git，作为兜底默认值）
+//     2. android/local.properties           → 本机真值（gitignore，不提交）
+//     3. 环境变量 KEEP_ALIVE_*              → CI 注入用
+//     4. -P 启动参数 ./gradlew assembleDebug -PKEEP_ALIVE_WS_URL=...   → 临时覆盖
+//
+//   暮色正式配置走 local.properties 或环境变量。占位符保留作 fallback，
+//   build 时 gradle 脚本会 warn 提示「使用占位符，主动消息无法工作」。
+//
+// 重要：project.findProperty() 只读 gradle.properties，**不**读 local.properties。
+// local.properties 是 Android Studio 用来配 sdk.dir 的，不会自动喂给其他 property。
+// 所以我们**显式**用 Properties 类把 local.properties 加载进来，作为额外数据源。
+def localProps = new Properties()
+// build.gradle 在 android/app/，local.properties 在 android/，所以 ../local.properties
+def localPropsFile = file("../local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+
+def readCfg = { String key, String fallback ->
+    def fromLocal = localProps.getProperty(key)
+    def fromProp = project.findProperty(key)
+    def fromEnv = System.getenv(key)
+    if (fromEnv != null && !fromEnv.isEmpty()) return fromEnv      // 1. 环境变量（最高）
+    if (fromProp != null) return fromProp                          // 2. gradle.properties / -P 参数
+    if (fromLocal != null) return fromLocal                        // 3. local.properties
+    return fallback                                                // 4. 占位符兜底
+}
+
 android {
     namespace "com.aetheros.simulator"
     compileSdk rootProject.ext.compileSdkVersion
@@ -17,12 +50,50 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+
+        // 麦麦 2026-09-03：后台保活 4 个 BuildConfig 字段
+        //   - WS_URL：WebSocket 服务端地址（Cloudflare Worker）
+        //   - WS_TOKEN：客户端鉴权 token（共享密钥，配 Worker CLIENT_TOKEN）
+        //   - WS_VAPID_PUBLIC_KEY：VAPID 公钥（公开安全值，公开在源码里也行）
+        //   - KEEP_ALIVE_LOG：诊断日志开关（true / false），生产关、调试开
+        //
+        // 占位符时 KeepAliveService 启动后会打 warn 日志，主动消息通道不工作。
+        // 直接 inline localProps.getProperty()，不用 readCfg 闭包（闭包对 localProps
+        // 引用行为在 defaultConfig 块内不可靠）
+        buildConfigField "String", "WS_URL", "\"${localProps.getProperty('KEEP_ALIVE_WS_URL', 'wss://PLACEHOLDER_URL/ws/push')}\""
+        buildConfigField "String", "WS_TOKEN", "\"${localProps.getProperty('KEEP_ALIVE_WS_TOKEN', 'PLACEHOLDER_TOKEN')}\""
+        buildConfigField "String", "WS_VAPID_PUBLIC_KEY", "\"${localProps.getProperty('KEEP_ALIVE_VAPID_PUBLIC_KEY', '')}\""
+        buildConfigField "boolean", "KEEP_ALIVE_LOG", "${localProps.getProperty('KEEP_ALIVE_LOG', 'false')}"
     }
+
+    // 麦麦 2026-09-03：AGP 8.0+ 默认 buildConfig 关闭，要显式开
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+}
+
+// 麦麦 2026-09-03：占位符 build-time 警告
+//   在 build 配置阶段就提醒开发者「你还在用占位符，主动消息接不通」，
+//   避免忘配 / 配错就过 build。worker 真值由暮色给之后会改 local.properties。
+afterEvaluate {
+    def wsUrl = readCfg('KEEP_ALIVE_WS_URL', 'wss://PLACEHOLDER_URL/ws/push')
+    def wsToken = readCfg('KEEP_ALIVE_WS_TOKEN', 'PLACEHOLDER_TOKEN')
+    if (wsUrl == 'wss://PLACEHOLDER_URL/ws/push' || wsToken == 'PLACEHOLDER_TOKEN') {
+        logger.warn("================ KEEP ALIVE CONFIG WARNING ================")
+        logger.warn("KEEP_ALIVE_WS_URL or KEEP_ALIVE_WS_TOKEN is still PLACEHOLDER.")
+        logger.warn("Proactive message WebSocket channel will NOT work in this build.")
+        logger.warn("Set real values in android/local.properties or via -P / env var.")
+        logger.warn("===========================================================")
+    } else {
+        logger.lifecycle("KEEP_ALIVE_WS_URL = ${wsUrl}")
+        logger.lifecycle("KEEP_ALIVE_LOG = ${readCfg('KEEP_ALIVE_LOG', 'false')}")
     }
 }
 

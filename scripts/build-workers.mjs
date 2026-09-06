@@ -47,6 +47,9 @@ const WORKERS = [
     /** 主动消息 1.0 push 加速器（暮色 6-6 老代码，重新纳入构建） */
     entry: 'worker/proactive-push/src/index.ts',
     outfile: 'worker/proactive-push/worker.bundle.js',
+    // 麦麦 2026-09-03：cf 专有虚拟模块 cloudflare:workers 在 Mac 上不存在
+    // 但 CF 运行时（workerd）会提供 — 加 external 让 esbuild 保留 import 字符串不解析
+    external: ['cloudflare:workers'],
   },
 ];
 
@@ -77,11 +80,17 @@ await Promise.all(
       format: 'esm',
       target: 'es2022',
       platform: 'neutral',
-      minify: true,
+      // 麦麦 2026-09-03：minify: false — esbuild 0.21.5 的 minifyIdentifiers: false
+      // 参数有 bug（仍然压了 class identifier），整个关掉 minify 才能让
+      // `class WsHub extends DurableObject` 在 bundle 里保留名字。
+      // CF 静态分析（扫描 worker export 找 DurableObject subclass）需要看到 class
+      // 名字没被压。bundle 从 11KB 涨到 ~25KB，free tier 1MB 限制内完全 OK。
+      minify: false,
       treeShaking: true,
       legalComments: 'none',
-      // 不引任何 cloudflare: 模块——amsg-server 没用，proactive-push 也没用
-      // （VAPID JWT 用纯 Web Crypto 算）
+      // 麦麦 2026-09-03：worker 配的 external（cloudflare:workers 等）让 esbuild 保留
+      // import 字符串不解析 — CF 运行时（workerd）会从专有虚拟模块 resolve
+      external: w.external || [],
       logLevel: 'info',
     });
     const dt = Date.now() - t0;

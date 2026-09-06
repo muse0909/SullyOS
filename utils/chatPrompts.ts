@@ -2,6 +2,9 @@
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
+// 麦麦 2026-09-05：角色备忘录（江澈 9-5 指令）— 暮色 9-5 要求"结构独立分离"
+//   状态面板 + 备忘录条目 两个独立模块，一起拼成 characterMemoBlock 传给 buildCoreContext
+import { getStatusPanel, getMemo, formatStatusPanelForPrompt, formatMemoForPrompt } from './characterMemo';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
@@ -218,7 +221,31 @@ export const ChatPrompts = {
         //   4 断点方案 = bp1 + bp2 + bp3 + history(bp4) 各自独立 cache TTL
         // 暮色 2026-07-18：纯聊天模式（isPureMode=true）下，buildCoreContext 不注入 slotHeader/朋友圈/日记列表/笔记列表
         //   心声底色由 char.memoryPalaceInjection 处理（后面会跳过）
-        let bp3Context = ContextBuilder.buildCoreContext(char, userProfile, !isPureMode);
+        // 麦麦 2026-09-05：拼装角色备忘录 block（状态面板 + 常规条目两个独立模块）传给 buildCoreContext
+        //   暮色 9-5 20:32 要求位置：角色核心设定/世界书/私密档案之后、记忆宫殿之前
+        let characterMemoBlock = '';
+        try {
+            const [panel, memo] = await Promise.all([
+                getStatusPanel(char.id),
+                getMemo(char.id),
+            ]);
+            const statusText = formatStatusPanelForPrompt(panel);
+            const memoText = formatMemoForPrompt(memo);
+            // 状态面板在前（固定显示），memo 在后
+            characterMemoBlock = [statusText, memoText].filter(Boolean).join('\n\n');
+        } catch (e) {
+            console.warn('characterMemo: read failed', e);
+        }
+
+        let bp3Context = ContextBuilder.buildCoreContext(
+            char,
+            userProfile,
+            !isPureMode,
+            undefined,  // memoryPalaceContext（由 ContextBuilder 内部从 char.memoryPalaceInjection 读）
+            undefined,  // groupOptions（主聊天路径不传）
+            characterMemoBlock || undefined,  // 暮色 9-5 要求位置
+        );
+
         let bp2Rules = '';
         let bp1Tools = '';
         timings.buildCoreContext = Math.round(performance.now() - coreT0);

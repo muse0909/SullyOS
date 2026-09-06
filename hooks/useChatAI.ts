@@ -27,6 +27,9 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
 import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { pickRandomXiaoZhiTiaoImage, getStoredXiaoZhiTiaoStyles, pickNoteStyle, checkAndDeliverTimedXiaoZhiTiaos } from '../utils/xiaoZhiTiaoStyles';
+// 麦麦 2026-09-05：角色备忘录 token 解析（江澈 9-5 指令）
+import { addMemo, editMemo, deleteMemo, setStatusSlot, clearStatusSlot } from '../utils/characterMemo';
+import type { CharacterStatusSlot } from '../types';
 // 暮色 8-25：信箱（双向信件）token 解析 + 调度器启动
 import { createLetter as createMailboxLetter, markRead as mailboxMarkRead, MailboxEnvelope } from '../utils/mailboxStorage';
 import { startMailboxScheduler, checkAndDeliverPendingMailbox } from '../utils/mailboxScheduler';
@@ -50,8 +53,12 @@ import { mcpStorage } from '../utils/mcpStorage';
 //   - 不动请求发送/响应解析，只包住诊断日志
 const isApiLogEnabled = (): boolean => {
     try {
-        return typeof localStorage !== 'undefined'
-            && localStorage.getItem('sullyos:enableApiLog') === 'true';
+        if (typeof localStorage === 'undefined') return false;
+        const stored = localStorage.getItem('sullyos:enableApiLog');
+        // 麦麦 2026-09-05 临时：默认 true（暮色要查 actual model）
+        // 查完暮色可以 localStorage.removeItem('sullyos:enableApiLog') 改回显式 false
+        if (stored === null) return true;
+        return stored === 'true';
     } catch {
         return false;
     }
@@ -2859,12 +2866,29 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
 
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
+            // 麦麦 2026-09-05：把 response model 也存到 localStorage（actual model 查询用）
+            //   麦色要的"实际调用的模型名"在这里 — 中转站覆盖了请求 model 时
+            //   response.model 才是真相
+            const responseModel = data.model || '(no model in response)';
+            if (isApiLogEnabled()) {
+                try {
+                    localStorage.setItem('sullyos:lastApiRespModel', responseModel);
+                    localStorage.setItem('sullyos:lastApiRespLog', JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        model: responseModel,
+                        finish_reason: data.choices?.[0]?.finish_reason,
+                        usage: data.usage,
+                        content_length: data.choices?.[0]?.message?.content?.length,
+                        id: data.id,
+                    }, null, 2));
+                } catch { /* quota 忽略 */ }
+            }
             console.log('🔍 [API Response Debug]', JSON.stringify({
                 finish_reason: data.choices?.[0]?.finish_reason,
                 usage: data.usage,
                 content_length: data.choices?.[0]?.message?.content?.length,
                 raw_content: data.choices?.[0]?.message?.content,
-                model: data.model,
+                model: responseModel,
                 id: data.id,
             }, null, 2));
 
@@ -3540,6 +3564,122 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   [[XIAO_ZHI_TIAO_HIDDEN: 内容]] 藏起来 + 不通知
             //   [[XIAO_ZHI_TIAO_TIMED: YYYY-MM-DD HH:MM | 内容]] 定时投递 + 不通知
             //   三种共用每天 5 条上限
+
+            // 麦麦 2026-09-05：5.9d-2 角色备忘录（CharacterMemo）token 解析
+            //   江澈 9-5 指令 — 角色（AI）通过 [[MEMO_ADD|EDIT|DEL:...]] 自己维护
+            //   暮色 9-5 进一步：状态面板独立 → 新加 [[MEMO_SET_STATUS: slot | 内容]] / [[MEMO_CLEAR_STATUS: slot]]
+            //   暮色只读（在发现页看），不 addToast（用户看不到）
+            //   5 种 token：
+            //     [[MEMO_ADD: event|private | 内容]]    region 接受中英文
+            //     [[MEMO_EDIT: ID | 新内容]]
+            //     [[MEMO_DEL: ID]]
+            //     [[MEMO_SET_STATUS: location|health|schedule|mood|reminder | 内容]]   5 个固定槽，整体覆盖
+            //     [[MEMO_CLEAR_STATUS: slot]]    清空某个槽
+            //   token strip 后 aiContent 不带这些（用户看到的是干净文本）
+            if (aiContent.includes('[[MEMO_')) {
+                try {
+                    // region mapping：中文 → 内部 enum（AI 喜欢用"重点事件"而不是 "event"）
+                    const REGION_ALIAS: Record<string, 'event' | 'private'> = {
+                        'event': 'event',
+                        'events': 'event',
+                        '事件': 'event',
+                        '重点事件': 'event',
+                        '最近重点事件': 'event',
+                        'recent_event': 'event',
+                        'private': 'private',
+                        'personal': 'private',
+                        '私人': 'private',
+                        '笔记': 'private',
+                        '私人笔记': 'private',
+                    };
+                    // 5 个 status slot 的别名
+                    const STATUS_SLOT_ALIAS: Record<string, CharacterStatusSlot> = {
+                        'location': 'location',
+                        '所在地': 'location',
+                        'where': 'location',
+                        'place': 'location',
+                        'health': 'health',
+                        '身体': 'health',
+                        'body': 'health',
+                        'schedule': 'schedule',
+                        '在忙': 'schedule',
+                        'busy': 'schedule',
+                        'mood': 'mood',
+                        '情绪': 'mood',
+                        'reminder': 'reminder',
+                        '约定': 'reminder',
+                        '待办': 'reminder',
+                    };
+                    // MEMO_ADD: region | content  — 状态不在 region 里（走 SET_STATUS）
+                    const addMatch = aiContent.match(/\[\[MEMO_ADD:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (addMatch) {
+                        const regionRaw = addMatch[1].trim();
+                        const content = addMatch[2].trim();
+                        const region = REGION_ALIAS[regionRaw.toLowerCase()] || REGION_ALIAS[regionRaw] || null;
+                        if (!region) {
+                            console.warn(`📝 [Memo] ADD unknown region="${regionRaw}" (char=${char.id})`);
+                        } else if (content) {
+                            await addMemo(char.id, region, content);
+                            console.log(`📝 [Memo] ADD region=${region} id=${char.id} content=${content.slice(0, 30)}`);
+                        }
+                    }
+                    // MEMO_EDIT: id | newContent
+                    const editMatch = aiContent.match(/\[\[MEMO_EDIT:\s*(\d+)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (editMatch) {
+                        const id = parseInt(editMatch[1], 10);
+                        const content = editMatch[2].trim();
+                        if (Number.isFinite(id) && content) {
+                            const ok = await editMemo(char.id, id, content);
+                            console.log(`📝 [Memo] EDIT id=${id} ok=${ok}`);
+                        }
+                    }
+                    // MEMO_DEL: id
+                    const delMatch = aiContent.match(/\[\[MEMO_DEL:\s*(\d+)\s*\]\]/);
+                    if (delMatch) {
+                        const id = parseInt(delMatch[1], 10);
+                        if (Number.isFinite(id)) {
+                            const ok = await deleteMemo(char.id, id);
+                            console.log(`📝 [Memo] DEL id=${id} ok=${ok}`);
+                        }
+                    }
+                    // MEMO_SET_STATUS: slot | content  — 整体覆盖单个槽
+                    const statusSetMatch = aiContent.match(/\[\[MEMO_SET_STATUS:\s*([^\]|]+?)\s*\|\s*([\s\S]+?)\s*\]\]/);
+                    if (statusSetMatch) {
+                        const slotRaw = statusSetMatch[1].trim();
+                        const content = statusSetMatch[2].trim();
+                        const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
+                        if (!slot) {
+                            console.warn(`📝 [Status] SET unknown slot="${slotRaw}" (char=${char.id})`);
+                        } else if (content) {
+                            await setStatusSlot(char.id, slot, content);
+                            console.log(`📝 [Status] SET slot=${slot} char=${char.id} content=${content.slice(0, 30)}`);
+                        }
+                    }
+                    // MEMO_CLEAR_STATUS: slot
+                    const statusClearMatch = aiContent.match(/\[\[MEMO_CLEAR_STATUS:\s*([^\]]+?)\s*\]\]/);
+                    if (statusClearMatch) {
+                        const slotRaw = statusClearMatch[1].trim();
+                        const slot = STATUS_SLOT_ALIAS[slotRaw.toLowerCase()] || STATUS_SLOT_ALIAS[slotRaw] || null;
+                        if (!slot) {
+                            console.warn(`📝 [Status] CLEAR unknown slot="${slotRaw}"`);
+                        } else {
+                            await clearStatusSlot(char.id, slot);
+                            console.log(`📝 [Status] CLEAR slot=${slot} char=${char.id}`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('📝 [Memo] token parse failed', e);
+                }
+                // strip 五个 token 形态（不管是否成功匹配）
+                aiContent = aiContent
+                    .replace(/\[\[MEMO_ADD:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_EDIT:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_DEL:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_SET_STATUS:[^\]]*?\]\]/g, '')
+                    .replace(/\[\[MEMO_CLEAR_STATUS:[^\]]*?\]\]/g, '')
+                    .trim();
+            }
+
             if (!allowXiaoZhiTiaoParse || !isXiaoZhiTiaoEnabled()) {
                 aiContent = aiContent
                     .replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '')

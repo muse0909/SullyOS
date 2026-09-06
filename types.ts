@@ -549,6 +549,43 @@ export interface XiaoZhiTiao {
     style?: string;                       // 便签 CSS className（如 'note-pink'）
 }
 
+// 麦麦 2026-09-05：角色备忘录（CharacterMemo）
+//   江澈 9-5 给的指令 — 角色（AI）自己通过 [[MEMO_ADD|EDIT|DEL:...]] token 维护
+//   用户端（暮色）只读 — 只能在发现页看
+//   暮色 9-5 进一步要求（结构独立分离）：
+//   - 状态面板拆出独立模块（5 固定槽 + 整体覆盖）
+//   - 备忘录剩 event + private 2 种 region
+//   - 30 条上限 = memo 合计
+export type CharacterMemoRegion = 'event' | 'private';
+
+export interface CharacterMemoEntry {
+    id: number;                          // 每角色独立自增 1, 2, 3...
+    charId: string;                       // 冗余存一份（联合主键用 charId+id）
+    region: CharacterMemoRegion;
+    content: string;                      // 纯文本一句话
+    createdAt: number;                    // epoch ms
+    updatedAt: number;                    // 改 / 删时更新（按 updatedAt 淘汰老的超 30 条）
+}
+
+export interface CharacterMemo {
+    charId: string;                       // 主键（一角色一份）
+    entries: CharacterMemoEntry[];        // 已按 region 排序：event → private
+    nextId: number;                       // 下一个自增 id（从 1 开始）
+    updatedAt: number;                    // 最后一次增删改
+}
+
+// 麦麦 2026-09-05：状态面板（从记忆宫殿迁过来 + 独立模块）
+//   暮色 9-5 要求：与 memo 条目**完全独立**，不混在 memo entries 里
+//   5 个固定槽（location/health/schedule/mood/reminder）— 单条整体覆盖
+//   token: [[MEMO_SET_STATUS: slot | 内容]] / [[MEMO_CLEAR_STATUS: slot]]
+export type CharacterStatusSlot = 'location' | 'health' | 'schedule' | 'mood' | 'reminder';
+
+export interface CharacterStatusPanel {
+    charId: string;
+    slots: Partial<Record<CharacterStatusSlot, string>>;
+    updatedAt: number;
+}
+
 export interface XiaoZhiTiaoReply {
     id: string;
     parentNoteId: string;
@@ -2087,10 +2124,6 @@ export interface CloudBackupConfig {
 
     lastBackupTime?: number;    // timestamp
     lastBackupSize?: number;    // bytes
-
-    // 自动备份（暮色 2026-08-29）：开启后前台每小时自动触发一次轻量同步备份
-    autoBackup?: boolean;
-    lastAutoBackupTime?: number; // 上次自动备份成功的时间戳（与手动备份的 lastBackupTime 分开记）
 }
 
 export interface CloudBackupFile {

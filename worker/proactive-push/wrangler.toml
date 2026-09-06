@@ -1,42 +1,54 @@
 ## Proactive Push Accelerator — Cloudflare Worker config
 ##
-## 作用：给主动消息 1.0 提供"到点喊醒浏览器"能力。cron 每分钟扫一次
-## D1，对活着的订阅发 web-push。Worker 全程不接触聊天内容，所有 AI
-## 生成都在浏览器本地完成。
+## 麦麦 2026-09-03：切换到 wrangler CLI 部署 — 因为 CF 控制面板的 Durable Object
+## binding 下拉框不能手填 class 名（必须 wrangler.toml 声明 migration 后 wrangler
+## deploy 才能让 CF 自动建 WsHub class 实体）。用 no_bundle=true 直接 deploy
+## 我们 esbuild 出来的非 minify bundle（保留 WsHub class 名字，CF 静态分析能识别）。
+##
+## 部署流程：
+##   1. cd /Users/caijia/Desktop/SullyOS-master
+##   2. npm run build:worker:proactive-push   （esbuild 打到 worker/proactive-push/worker.bundle.js）
+##   3. cd worker/proactive-push
+##   4. npx wrangler deploy
+##   5. wrangler 会检测到 WsHub class 不存在 → 提示建 migration → 输 Y
+##   6. 部署成功，CF UI 上的 D1 binding 保留 + 新增 WS_HUB binding + 建 WsHub class
 
 name = "proactive-push"
-main = "src/index.ts"
+main = "./worker.bundle.js"
 compatibility_date = "2024-11-01"
-compatibility_flags = ["nodejs_compat"]
+## 我们 esbuild 自己打 bundle（保留 class 名字、external cloudflare:workers），
+## wrangler 不要重新 build
+no_bundle = true
 
-## 部署前需要把下面 database_id 换成你 `wrangler d1 create proactive-db`
-## 输出的真实 id。
+## D1 绑定：proactive-db 数据库，worker 代码里用 env.DB.prepare(...) 访问
+## database_id 字段可选（wrangler 3.x 起通过 database_name 自动解析）
 [[d1_databases]]
 binding = "DB"
 database_name = "proactive-db"
-database_id = "REPLACE_WITH_YOUR_D1_ID"
 
-## 暮色 2026-08-29 P0 第三步：Durable Object — WebSocket 连接池
-## WsHub 握住所有在线 Android 客户端的 WS 连接，cron 广播主动消息走这里
+## Durable Object 绑定：WebSocket 连接池 — env.WS_HUB.get('proactive-push-hub')
+## 跟 cron 广播主动消息走这里
 [[durable_objects.bindings]]
 name = "WS_HUB"
 class_name = "WsHub"
 
-## 首次部署时 CF 会按这个 migration 建 DO 类；改过 class 名要加新 tag
+## 首次部署时 CF 按这个 migration 建 WsHub class；改过 class 名要加新 tag
+## 麦麦 2026-09-03：CF 2025 新政策 — Durable Object 必须用 new_sqlite_classes
+## （不是 new_classes）。free plan 也强制。SQLite-backed namespace 跟 in-memory
+## Map 不冲突，worker 代码不用改。
 [[migrations]]
 tag = "v1"
-new_classes = ["WsHub"]
+new_sqlite_classes = ["WsHub"]
 
-## 每分钟扫一次即可；30 分钟间隔的主动消息粒度完全够用。
+## 每分钟扫一次即可；30 分钟间隔的主动消息粒度完全够用
 [triggers]
 crons = ["* * * * *"]
 
-## 非 secret 的环境变量放这里；VAPID 私钥用 `wrangler secret put` 设置。
+## 非 secret 的环境变量放这里；VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / CLIENT_TOKEN
+## 都用 `wrangler secret put` 设置（不进 git、不进 wrangler.toml）
 [vars]
-VAPID_SUBJECT = "mailto:replace-with-your-email@example.com"
-## 客户端调用前加这个共享 token（写进 app 设置里）。留空则不校验，
-## 不推荐线上裸跑——别人可以拿你的 cron 发垃圾 push 给其他订阅者。
-CLIENT_TOKEN = ""
+## 暮色填他的邮箱（VAPID 规范要求 mailto: 形式）
+VAPID_SUBJECT = "mailto:1812038909@qq.com"
 ## 活心跳窗口（毫秒）。超过这个时长没收到 heartbeat 就不再给该订阅发
-## wake push，避免"没 tab 还乱弹通知"。默认 5 分钟。
+## wake push。默认 5 分钟
 HEARTBEAT_WINDOW_MS = "300000"

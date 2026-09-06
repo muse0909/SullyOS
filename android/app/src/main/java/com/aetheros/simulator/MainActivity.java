@@ -72,5 +72,14 @@ public class MainActivity extends BridgeActivity {
         } else {
             startService(new Intent(this, KeepAliveService.class));
         }
+
+        // 麦麦 2026-09-03：占位符 build 提醒
+        //   KeepAliveService 已经自己 detect + log，这里再打一条方便 logcat 一眼看到
+        if (KeepAliveService.isPlaceholderBuild()) {
+            android.util.Log.w("KeepAlive",
+                "BuildConfig.WS_URL/WS_TOKEN is PLACEHOLDER — proactive message WebSocket " +
+                "channel is disabled. Foreground service still runs (process keep-alive). " +
+                "Set values in android/local.properties and rebuild to enable push.");
+        }
     }
 }

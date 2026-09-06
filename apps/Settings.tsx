@@ -7,6 +7,11 @@ import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+// 麦麦 2026-09-03：通知权限状态检测（仅原生平台用）
+import { LocalNotifications } from '@capacitor/local-notifications';
+// 麦麦 2026-09-03：诊断日志开关（占位 + 实际状态由 BuildConfig.KEEP_ALIVE_LOG 决定）
+// 这里是 UI 展示用——真正开关要重新 build APK 时设 KEEP_ALIVE_LOG=true
+const DIAG_LOG_KEY = 'sullyos:keep_alive_diag_log_hint_v1';
 import { safeResponseJson } from '../utils/safeApi';
 import { setPageZoom, readSavedPageZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, PAGE_ZOOM_DEFAULT, PAGE_ZOOM_STEP } from '../utils/pageZoom';
 import Modal from '../components/os/Modal';
@@ -145,18 +150,49 @@ const PresetChip: React.FC<{
   useEffect(() => () => clearPress(), [clearPress]);
 
   return (
-    <button
-      type="button"
-      title="点击加载，长按删除"
-      onPointerDown={handlePointerDown}
-      onPointerUp={clearPress}
-      onPointerLeave={clearPress}
-      onPointerCancel={clearPress}
-      onClick={handleClick}
-      className={`rounded-lg px-3 py-1.5 text-xs font-medium border shadow-sm transition-all ${active ? activeClassName : idleClassName} ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
+    // 麦麦 2026-09-05：改成 div + 两个 button，避免嵌套 button + 触屏 pointer events 不稳定
+    //   - 主体（点 name）= 加载预设
+    //   - X 按钮（右边）= 删（永远可见，触屏 / 桌面都能用）
+    //   - 长按 550ms = 桌面用户备选
+    //   - 右键 = 桌面用户备选
+    <div
+      className={`relative inline-flex items-center gap-0.5 rounded-lg pl-3 pr-1 py-1 text-xs font-medium border shadow-sm transition-all ${
+        active ? activeClassName : idleClassName
+      } ${pressing ? 'scale-[0.98]' : ''} ${active ? textActiveClassName : textIdleClassName}`}
     >
-      {preset.name}
-    </button>
+      <button
+        type="button"
+        title="点击加载，长按 / 右键删除"
+        onPointerDown={handlePointerDown}
+        onPointerUp={clearPress}
+        onPointerLeave={clearPress}
+        onPointerCancel={clearPress}
+        onContextMenu={(e) => {
+            e.preventDefault();
+            onRequestDelete();
+        }}
+        onClick={handleClick}
+        className="cursor-pointer"
+      >
+        {preset.name}
+      </button>
+      <button
+        type="button"
+        title="删除预设"
+        onClick={(e) => {
+            e.stopPropagation();
+            onRequestDelete();
+        }}
+        className={`ml-1 w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] leading-none transition-colors ${
+          active
+            ? 'text-emerald-400 hover:text-emerald-600 hover:bg-emerald-100'
+            : 'text-slate-400 hover:text-red-500 hover:bg-red-50'
+        }`}
+        aria-label="删除预设"
+      >
+        ×
+      </button>
+    </div>
   );
 };
 
@@ -315,13 +351,46 @@ const Settings: React.FC = () => {
   const [mcdTestStatus, setMcdTestStatus] = useState('');
   const [mcdTesting, setMcdTesting] = useState(false);
 
-  // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
+  // Proactive Push 加速器（麦麦 2026-09-03：值改从 import.meta.env 读，详见 utils/proactivePushConfig.ts）
   const initialPushCfg = loadPushConfig();
   const ppAvailable = isPushConfigAvailable();
   const [ppEnabled, setPpEnabled] = useState(initialPushCfg.enabled);
   const [ppStatus, setPpStatus] = useState<string>('');
   const [ppBusy, setPpBusy] = useState(false);
   const [showPpConfirm, setShowPpConfirm] = useState(false);
+
+  // 麦麦 2026-09-03：Android 端后台推送状态（仅原生平台查）
+  //  - notificationPermission: granted / denied / unknown
+  //  - placeholderBuild: BuildConfig 是不是占位符（Kotlin 端反映）
+  //  - 电池优化白名单**前端查不到**，UI 上只显示引导文字
+  const isNative = (() => {
+    try { return Capacitor.isNativePlatform(); } catch { return false; }
+  })();
+  const [notificationPerm, setNotificationPerm] = useState<'granted' | 'denied' | 'unknown'>('unknown');
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const perm = await LocalNotifications.checkPermissions();
+        if (cancelled) return;
+        // display 字段 = 通知权限，granted 表示允许
+        if (perm?.display === 'granted') setNotificationPerm('granted');
+        else if (perm?.display === 'denied') setNotificationPerm('denied');
+        else setNotificationPerm('unknown');
+      } catch {
+        if (!cancelled) setNotificationPerm('unknown');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isNative]);
+  const handleRequestNotificationPerm = useCallback(async () => {
+    try {
+      const perm = await LocalNotifications.requestPermissions();
+      if (perm?.display === 'granted') setNotificationPerm('granted');
+      else if (perm?.display === 'denied') setNotificationPerm('denied');
+    } catch { /* ignore */ }
+  }, []);
   // 暮色 2026-08-06：主动消息 2.0 全局配置弹窗（接 Cloudflare Worker）
   const [showAmsg2Config, setShowAmsg2Config] = useState(false);
   const [ppDiag, setPpDiag] = useState<PushDiagnostics | null>(null);
@@ -1268,13 +1337,6 @@ const handleSaveTts = () => {
       try { await cloudBackupToWebDAV(mode); } catch { /* toast handled in context */ }
   };
 
-  // 自动备份开关（暮色 2026-08-29）：状态存 cloudBackupConfig.autoBackup，
-  // 定时器逻辑在 OSContext（每小时触发一次轻量同步）
-  const handleToggleAutoBackup = (on: boolean) => {
-      updateCloudBackupConfig({ autoBackup: on });
-      addToast(on ? '自动备份已开启，每小时自动备份一次' : '自动备份已关闭', 'info');
-  };
-
   const handleOpenCloudRestore = async () => {
       setShowCloudRestoreModal(true);
       setCloudBackupFiles([]);
@@ -1659,20 +1721,6 @@ const handleSaveTts = () => {
                 {cloudBackupConfig.lastBackupTime && (
                   <p className="text-[10px] text-slate-400 text-center">上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}{cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}</p>
                 )}
-                {/* 自动备份开关（暮色 2026-08-29）：每小时自动触发一次轻量同步备份 */}
-                <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50/80 border border-slate-100 rounded-xl">
-                  <div>
-                    <p className="text-xs font-bold text-slate-600">自动备份</p>
-                    <p className="text-[10px] text-slate-400">每小时自动备份一次</p>
-                    {cloudBackupConfig.lastAutoBackupTime && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">上次自动备份: {new Date(cloudBackupConfig.lastAutoBackupTime).toLocaleString('zh-CN')}</p>
-                    )}
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
-                    <input type="checkbox" checked={!!cloudBackupConfig.autoBackup} onChange={(e) => handleToggleAutoBackup(e.target.checked)} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
-                  </label>
-                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => handleCloudBackup('text_only')} className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
@@ -2299,6 +2347,76 @@ const handleSaveTts = () => {
 
         {/* 10 - 消息加速 */}
         <SettingsSection id="proactivePush" icon="🔔" title="消息加速" subtitle="主动消息频率·推送通知" isOpen={openSectionId === 'proactivePush'} onToggle={toggleSection}>
+        {/* 麦麦 2026-09-03：未配置时显示说明卡 — 不让用户以为"加速器"在跑其实没跑 */}
+        {!ppAvailable && (
+            <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-3">
+                <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 bg-amber-100/60 rounded-xl text-amber-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                        </svg>
+                    </div>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">推送通道未配置</h2>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed mb-2">
+                    主动消息推送目前是<strong>兜底状态</strong>：本地 setInterval 计时，App 切到后台 / 锁屏 / WebView 进程被回收时就<strong>不再触发</strong>，要等你下次开 App 才补跑漏掉的。
+                </p>
+                <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                    要修通：填两个配置文件 + 重新 build —
+                </p>
+                <ol className="text-[11px] text-slate-600 leading-relaxed list-decimal pl-5 space-y-1 mb-2">
+                    <li>前端：仓库根目录的 <code className="font-mono text-[10px] bg-slate-100 px-1 rounded">.env</code>，模板看 <code className="font-mono text-[10px] bg-slate-100 px-1 rounded">.env.example</code>（填 <code className="font-mono text-[10px]">VITE_PROACTIVE_WORKER_URL</code> / <code className="font-mono text-[10px]">VITE_PROACTIVE_VAPID_PUBLIC_KEY</code> / <code className="font-mono text-[10px]">VITE_PROACTIVE_CLIENT_TOKEN</code>）</li>
+                    <li>Android：<code className="font-mono text-[10px] bg-slate-100 px-1 rounded">android/local.properties</code>，模板看 <code className="font-mono text-[10px] bg-slate-100 px-1 rounded">android/local.properties.example</code>（填 <code className="font-mono text-[10px]">KEEP_ALIVE_WS_URL</code> / <code className="font-memo text-[10px]">KEEP_ALIVE_WS_TOKEN</code>）</li>
+                </ol>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                    两条是<strong>独立通道</strong>，可以都配、可以只配一条。前端是 Web Push（浏览器标签里收推送）；Android 是 WebSocket（App 锁屏也能弹系统通知）。<br/>
+                    服务端 Cloudflare Worker 也要部署（<code className="font-mono text-[10px]">worker/proactive-push/README.md</code>），不然配了客户端也连不通。
+                </p>
+            </section>
+        )}
+        {/* 麦麦 2026-09-03：仅原生平台 — Android 后台推送依赖的权限引导 */}
+        {isNative && (
+            <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-3">
+                <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 bg-slate-100/60 rounded-xl text-slate-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+                        </svg>
+                    </div>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">Android 后台推送依赖</h2>
+                </div>
+                <div className="space-y-2 text-[11px]">
+                    <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                        <div>
+                            <p className="text-slate-600 font-medium">通知权限</p>
+                            <p className="text-[10px] text-slate-400">Android 13+ 必须授权才能弹"主动消息"系统通知</p>
+                        </div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${notificationPerm === 'granted' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {notificationPerm === 'granted' ? '已授权' : notificationPerm === 'denied' ? '已拒绝' : '未授权'}
+                        </span>
+                    </div>
+                    {notificationPerm !== 'granted' && (
+                        <button onClick={() => void handleRequestNotificationPerm()} className="w-full py-2 rounded-xl text-xs font-bold bg-teal-500 text-white hover:bg-teal-600">申请通知权限</button>
+                    )}
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-700 leading-relaxed">
+                        <p className="font-medium mb-1">电池优化（必须手动加白名单）</p>
+                        <p className="text-[10px]">
+                            Doze 模式下系统会断长连接 WebSocket，到点的主动消息可能延迟 / 漏掉。<br/>
+                            路径：<strong>系统设置 → 应用 → SullyOS → 电池 → 不受限制</strong>（不同 ROM 文案略有差异，小米是"无限制"，华为是"不允许自动启动"）<br/>
+                            本机查不到白名单状态（要原生 API），加完就行，不用每次确认。
+                        </p>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-500 leading-relaxed">
+                        <p className="font-medium mb-1">诊断日志（开发调试用）</p>
+                        <p className="text-[10px]">
+                            原生端日志开关是 build 时定死的（BuildConfig.KEEP_ALIVE_LOG），不能运行时切换。<br/>
+                            想要 logcat 看 <code className="font-mono text-[9px]">KeepAlive</code> tag 输出，重新 build 时加：<br/>
+                            <code className="font-mono text-[9px] block mt-1 break-all">cd android &amp;&amp; ./gradlew assembleDebug -PKEEP_ALIVE_LOG=true</code>
+                        </p>
+                    </div>
+                </div>
+            </section>
+        )}
         {ppAvailable && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-3">

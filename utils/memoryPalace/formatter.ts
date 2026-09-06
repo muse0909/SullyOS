@@ -16,7 +16,8 @@ import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
 import { recordRecallReceipt } from './recallReceipts';
-import { buildStatusPanelSectionForInjection } from './statusPanel';
+// 麦麦 2026-09-05：暮色 9-5 要求清理 — 移除 buildStatusPanelSectionForInjection 引用
+//   旧状态面板不再注入到记忆宫殿（迁到 characterMemo，由 chatPrompts 注入）
 
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
@@ -104,10 +105,9 @@ export async function expandAndFormat(
     preFilterCount: number = 0,
 ): Promise<string> {
     const MAX_OUTPUT_ITEMS = maxOutputItems;
-    // 0. 状态面板：拼在最前面，不占 15 条名额
-    const statusPanelSection = buildStatusPanelSectionForInjection(
-        (await import('./statusPanel')).getStatusPanel()
-    );
+    // 麦麦 2026-09-05：暮色 9-5 要求清理 — 记忆宫殿不再注入旧"📌 当前状态面板"
+    //   状态面板已迁到 characterMemo（per-char）→ 通过 chatPrompts.buildCoreContext 注入
+    //   记忆宫殿召回段只关注"召回"本身，不再带状态面板
     const allCharNodes = await MemoryNodeDB.getByCharId(charId);
 
     if (results.length === 0 && anticipations.length === 0 && statusPanelSection === '') return '';

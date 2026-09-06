@@ -2,17 +2,80 @@ import React, { useState, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook } from '../types';
 import Modal from '../components/os/Modal';
-import { DiamondsFour, BookOpen, CornersOut } from '@phosphor-icons/react';
+import { DiamondsFour, BookOpen, CornersOut, LinkSimple, Check } from '@phosphor-icons/react';
 import FullScreenEditor from '../components/common/FullScreenEditor';
 
+// 麦麦 2026-09-05：世界书挂载角色 Modal（暮色要求在世界书 app 里挂载/取消）
+//   checkbox 直接调 mountWorldbook / unmountWorldbook — 双向联动（同一字段）
+const MountModal: React.FC<{
+    book: Worldbook;
+    characters: ReturnType<typeof useOS>['characters'];
+    onClose: () => void;
+    onToggle: (charId: string, mounted: boolean) => void;
+}> = ({ book, characters, onClose, onToggle }) => {
+    return (
+        <Modal
+            isOpen={true}
+            title={`挂载角色 — ${book.title}`}
+            onClose={onClose}
+            footer={
+                <button onClick={onClose} className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform">
+                    完成
+                </button>
+            }
+        >
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                {characters.length === 0 ? (
+                    <div className="text-center text-slate-400 text-xs py-8">还没有任何角色</div>
+                ) : (
+                    characters.map(char => {
+                        const mounted = char.mountedWorldbooks?.some(m => m.id === book.id) ?? false;
+                        return (
+                            <button
+                                key={char.id}
+                                onClick={() => onToggle(char.id, mounted)}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all ${
+                                    mounted
+                                        ? 'bg-emerald-50 border border-emerald-200'
+                                        : 'bg-slate-50 border border-slate-100 hover:bg-slate-100'
+                                }`}
+                            >
+                                <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 border-2 ${
+                                    mounted ? 'bg-emerald-500 border-emerald-500' : 'bg-white border-slate-300'
+                                }`}>
+                                    {mounted && <Check size={14} weight="bold" className="text-white" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className={`text-sm font-medium ${mounted ? 'text-emerald-700' : 'text-slate-700'}`}>
+                                        {char.name}
+                                    </div>
+                                    {mounted && (
+                                        <div className="text-[10px] text-emerald-600 mt-0.5">已挂载 — 点击取消</div>
+                                    )}
+                                </div>
+                            </button>
+                        );
+                    })
+                )}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-3 text-center px-1">
+                勾选 = 挂载给该角色（也会出现在该角色"扩展设定"里）
+            </p>
+        </Modal>
+    );
+};
+
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
-    
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast,
+        characters, mountWorldbook, unmountWorldbook } = useOS();
+
     // View State
     const [isEditing, setIsEditing] = useState(false);
     const [editingBook, setEditingBook] = useState<Worldbook | null>(null);
     const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
     const [previewBookId, setPreviewBookId] = useState<string | null>(null);
+    // 麦麦 2026-09-05：挂载角色 modal 状态
+    const [mountingBook, setMountingBook] = useState<Worldbook | null>(null);
 
     // Edit Form State
     const [tempTitle, setTempTitle] = useState('');
@@ -257,15 +320,23 @@ const WorldbookApp: React.FC = () => {
                                         </div>
                                         
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); handleEdit(book); }} 
+                                            {/* 麦麦 2026-09-05：挂载角色按钮（暮色要求在世界书 app 也能挂载） */}
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setMountingBook(book); }}
+                                                className="p-2 rounded-full hover:bg-white text-slate-400 hover:text-emerald-600 transition-colors"
+                                                title="挂载角色"
+                                            >
+                                                <LinkSimple size={16} weight="bold" />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleEdit(book); }}
                                                 className="p-2 rounded-full hover:bg-white text-slate-400 hover:text-indigo-600 transition-colors"
                                                 title="编辑"
                                             >
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
                                             </button>
-                                            <button 
-                                                onClick={(e) => requestDelete(e, book)} 
+                                            <button
+                                                onClick={(e) => requestDelete(e, book)}
                                                 className="p-2 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors"
                                                 title="删除"
                                             >
@@ -273,6 +344,32 @@ const WorldbookApp: React.FC = () => {
                                             </button>
                                         </div>
                                     </div>
+
+                                    {/* 麦麦 2026-09-05：已挂载角色标签（暮色要求双向联动可见） */}
+                                    {(() => {
+                                        const mountedCharIds = characters
+                                            .filter(c => c.mountedWorldbooks?.some(m => m.id === book.id))
+                                            .map(c => c.id);
+                                        if (mountedCharIds.length === 0) return null;
+                                        const mountedNames = characters
+                                            .filter(c => mountedCharIds.includes(c.id))
+                                            .map(c => c.name);
+                                        return (
+                                            <div
+                                                onClick={() => togglePreview(book.id)}
+                                                className="px-4 pb-2 -mt-1 cursor-pointer"
+                                            >
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    <span className="text-[10px] text-slate-400 shrink-0">已挂载：</span>
+                                                    {mountedNames.map((name, i) => (
+                                                        <span key={i} className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-100">
+                                                            {name}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
 
                                     {/* Expanded Content Preview */}
                                     {previewBookId === book.id && (
@@ -312,6 +409,22 @@ const WorldbookApp: React.FC = () => {
                     </div>
                 </div>
             </Modal>
+
+            {/* 麦麦 2026-09-05：世界书挂载角色 Modal（暮色要求在世界书 app 也能挂载） */}
+            {mountingBook && (
+                <MountModal
+                    book={mountingBook}
+                    characters={characters}
+                    onClose={() => setMountingBook(null)}
+                    onToggle={(charId, mounted) => {
+                        if (mounted) {
+                            unmountWorldbook(charId, mountingBook.id);
+                        } else {
+                            mountWorldbook(charId, mountingBook.id);
+                        }
+                    }}
+                />
+            )}
         </div>
     );
 };

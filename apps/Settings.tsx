@@ -521,19 +521,25 @@ const Settings: React.FC = () => {
 
   // Auto-save draft configs locally to prevent loss during typing
   useEffect(() => {
-      setLocalUrl(apiConfig.baseUrl);
-      setLocalKey(apiConfig.apiKey);
-      setLocalModel(apiConfig.model);
-      // 麦麦 2026-09-06 15:10 修主 API 跨协议不同步：useEffect 同步 apiConfig 时漏了 localProtocol
-      //   症状：在悬浮窗从 OpenAI 切到 Gemini 直连预设保存后，apiConfig.protocol 已变 gemini，
-      //   但 Settings 的 localProtocol 还停留在 'openai'，UI 仍展示 OpenAI tab + 那组字段（值已是 Gemini 的）
-      //   修复：跟 vision 一样从 apiConfig.protocol 同步 localProtocol
-      setLocalProtocol(apiConfig.protocol === 'gemini' ? 'gemini' : 'openai');
+      // 麦麦 2026-09-06 16:00 修主 API 跨协议不同步（读侧按协议同步）：
+      //   旧实现：setLocalUrl(apiConfig.baseUrl) — 永远拿 OpenAI 那组，protocol=gemini 时 UI 显示 OpenAI 字段
+      //   新实现：按 apiConfig.protocol 选字段，protocol=gemini 时 setLocalUrl(apiConfig.geminiBaseUrl)
+      const mainProto = apiConfig.protocol === 'gemini' ? 'gemini' : 'openai';
+      setLocalProtocol(mainProto);
+      if (mainProto === 'gemini') {
+          setLocalUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+          setLocalKey(apiConfig.geminiApiKey || '');
+          setLocalModel(apiConfig.geminiModel || 'gemini-2.0-flash');
+      } else {
+          setLocalUrl(apiConfig.baseUrl || '');
+          setLocalKey(apiConfig.apiKey || '');
+          setLocalModel(apiConfig.model || '');
+      }
       // 麦麦 2026-09-06 12:36 调试日志：Settings useEffect 同步主 API
       console.log('[Settings][main][sync-effect]', {
           source: 'OSContext.apiConfig',
           storageKey: 'os_api_config',
-          protocol: apiConfig.protocol || 'openai',
+          protocol: mainProto,
           baseUrl: apiConfig.baseUrl,
           apiKeyExists: !!apiConfig.apiKey,
           model: apiConfig.model,
@@ -541,18 +547,30 @@ const Settings: React.FC = () => {
           geminiApiKeyExists: !!apiConfig.geminiApiKey,
           geminiModel: apiConfig.geminiModel,
       });
+      // 麦麦 2026-09-06 16:00 修识图跨协议不同步（读侧按协议同步）— 同 main 逻辑
+      const visionProto = apiConfig.visionProtocol === 'gemini' ? 'gemini' : 'openai';
+      setLocalVisionProtocol(visionProto);
+      if (visionProto === 'gemini') {
+          setLocalVisionUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+          setLocalVisionKey(apiConfig.visionGeminiApiKey || '');
+          setLocalVisionModel(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
+      } else {
+          setLocalVisionUrl(apiConfig.visionBaseUrl || '');
+          setLocalVisionKey(apiConfig.visionApiKey || '');
+          setLocalVisionModel(apiConfig.visionModel || '');
+      }
       // 麦麦 2026-09-06 12:36 调试日志：Settings useEffect 同步识图 API
       console.log('[Settings][vision][sync-effect]', {
           source: 'OSContext.apiConfig',
           storageKey: 'os_api_config',
-          visionProtocol: apiConfig.visionProtocol || 'openai',
+          visionProtocol: visionProto,
           visionBaseUrl: apiConfig.visionBaseUrl,
           visionApiKeyExists: !!apiConfig.visionApiKey,
           visionModel: apiConfig.visionModel,
+          visionGeminiBaseUrl: apiConfig.visionGeminiBaseUrl,
+          visionGeminiApiKeyExists: !!apiConfig.visionGeminiApiKey,
+          visionGeminiModel: apiConfig.visionGeminiModel,
       });
-      setLocalVisionUrl(apiConfig.visionBaseUrl || '');
-      setLocalVisionKey(apiConfig.visionApiKey || '');
-      setLocalVisionModel(apiConfig.visionModel || '');
       setLocalImgbbApiKey(apiConfig.imgbbApiKey || '');
       setLocalCloudinaryCloudName(apiConfig.cloudinaryCloudName || '');
       setLocalCloudinaryUploadPreset(apiConfig.cloudinaryUploadPreset || '');
@@ -567,10 +585,10 @@ const Settings: React.FC = () => {
       setLocalImageModel(apiConfig.imageModel || '');
       // 暮色 2026-07-15：删 setLocalImageGenProvider / setLocalComfyuiSelectedModel
       // 修复 2：删 setLocalClaude* 同步（Claude 协议不再用）
+      // Gemini 组 local state 也要同步（switchMainProtocol 从这里读、切协议时也用）
       setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalGeminiKey(apiConfig.geminiApiKey || '');
       setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
-      setLocalVisionProtocol(apiConfig.visionProtocol === 'gemini' ? 'gemini' : 'openai');
       // 修复 2：删 setLocalVisionClaude* 同步
       setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalVisionGeminiKey(apiConfig.visionGeminiApiKey || '');
@@ -837,19 +855,19 @@ const Settings: React.FC = () => {
     // 修复 2：2 tab 协议切换 — 把当前 localUrl/localKey/localModel 存到对应协议那组
     //   - 当前是 openai → 存到 baseUrl/apiKey/model
     //   - 当前是 gemini → 存到 geminiBaseUrl/geminiApiKey/geminiModel
-    //   - **同时存 2 套**（即使当前不在那组），不然切回 tab 时之前的配置会丢
+    // 麦麦 2026-09-06 16:00 修主 API 跨协议不同步（写侧清干净）— 非当前协议字段清空，避免 Settings useEffect 同步时拿到矛盾的旧值
     const mainFieldUpdates: any = {
       protocol: localProtocol,
       stream: localStream,
       temperature: localTemperature,
       // OpenAI 组（默认）
-      baseUrl: localProtocol === 'openai' ? localUrl : (apiConfig.baseUrl || ''),
-      apiKey: localProtocol === 'openai' ? localKey : (apiConfig.apiKey || ''),
-      model: localProtocol === 'openai' ? localModel : (apiConfig.model || ''),
-      // Gemini 组（缓存）
-      geminiBaseUrl: localProtocol === 'gemini' ? localUrl : localGeminiUrl,
-      geminiApiKey: localProtocol === 'gemini' ? localKey : localGeminiKey,
-      geminiModel: localProtocol === 'gemini' ? localModel : localGeminiModel,
+      baseUrl: localProtocol === 'openai' ? localUrl : '',
+      apiKey: localProtocol === 'openai' ? localKey : '',
+      model: localProtocol === 'openai' ? localModel : '',
+      // Gemini 组
+      geminiBaseUrl: localProtocol === 'gemini' ? localUrl : '',
+      geminiApiKey: localProtocol === 'gemini' ? localKey : '',
+      geminiModel: localProtocol === 'gemini' ? localModel : '',
     };
     updateApiConfig({
       ...apiConfig,
@@ -888,16 +906,17 @@ const Settings: React.FC = () => {
 
      const handleSaveVisionApi = () => {
     // 修复 2：识图 2 tab 协议切换（OpenAI / Gemini）—— 删 Claude 组
+    // 麦麦 2026-09-06 16:00 修识图跨协议不同步（写侧清干净）— 同 mainFieldUpdates 逻辑
     const visionFieldUpdates: any = {
       visionProtocol: localVisionProtocol,
       // OpenAI 组（默认）
-      visionBaseUrl: localVisionProtocol === 'openai' ? localVisionUrl : (apiConfig.visionBaseUrl || ''),
-      visionApiKey: localVisionProtocol === 'openai' ? localVisionKey : (apiConfig.visionApiKey || ''),
-      visionModel: localVisionProtocol === 'openai' ? localVisionModel : (apiConfig.visionModel || ''),
+      visionBaseUrl: localVisionProtocol === 'openai' ? localVisionUrl : '',
+      visionApiKey: localVisionProtocol === 'openai' ? localVisionKey : '',
+      visionModel: localVisionProtocol === 'openai' ? localVisionModel : '',
       // Gemini 组
-      visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : localVisionGeminiUrl,
-      visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : localVisionGeminiKey,
-      visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : localVisionGeminiModel,
+      visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : '',
+      visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : '',
+      visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : '',
     };
     updateApiConfig({
       ...apiConfig,

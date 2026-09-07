@@ -37,6 +37,13 @@ export async function safeResponseJson(response: Response): Promise<any> {
     try {
         return JSON.parse(text);
     } catch (e) {
+        // 麦麦 2026-09-07 13:25 修：JSON.parse 失败时再 try SSE 一次
+        //   暮色反馈新 API 站点响应体开头是 "keep-alive\n\ndata: {...}\n\ndata: {...}"
+        //   （HTTP/1.1 chunked 注释 + SSE 流的组合），trimStart 不去 "keep-alive"
+        //   → 上面 trimmed.startsWith('data:') 判 false → 落到 JSON.parse → 报错
+        //   修：catch 块里再 try parseSseToCompletion，覆盖这种"先 chunked 注释后 SSE 流"的响应
+        const sse = parseSseToCompletion(text);
+        if (sse) return sse;
         // Show a snippet of what we got for debugging
         const preview = text.slice(0, 200);
         throw new Error(

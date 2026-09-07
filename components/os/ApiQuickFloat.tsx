@@ -238,7 +238,7 @@ const ApiQuickFloat: React.FC = () => {
   // 任务 2：删主 API 的 claude* state（Claude 协议不再用）
   const [localGeminiUrl, setLocalGeminiUrl] = useState(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
   const [localGeminiKey, setLocalGeminiKey] = useState(apiConfig.geminiApiKey || '');
-  const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-2.0-flash');
+  const [localGeminiModel, setLocalGeminiModel] = useState(apiConfig.geminiModel || 'gemini-3.6-flash');
 
   const [localImageUrl, setLocalImageUrl] = useState(apiConfig.imageBaseUrl || '');
   const [localImageKey, setLocalImageKey] = useState(apiConfig.imageApiKey || '');
@@ -282,7 +282,7 @@ const ApiQuickFloat: React.FC = () => {
   );
   const [localLightGeminiKey, setLocalLightGeminiKey] = useState((memoryPalaceConfig?.lightLLM as any)?.geminiApiKey || '');
   const [localLightGeminiModel, setLocalLightGeminiModel] = useState(
-    (memoryPalaceConfig?.lightLLM as any)?.geminiModel || 'gemini-2.0-flash'
+    (memoryPalaceConfig?.lightLLM as any)?.geminiModel || 'gemini-3.6-flash'
   );
 
   // 任务 2：识图协议 2 tab（OpenAI / Gemini）—— 删 Claude tab
@@ -295,7 +295,7 @@ const ApiQuickFloat: React.FC = () => {
   );
   const [localVisionGeminiKey, setLocalVisionGeminiKey] = useState(apiConfig.visionGeminiApiKey || '');
   const [localVisionGeminiModel, setLocalVisionGeminiModel] = useState(
-    apiConfig.visionGeminiModel || 'gemini-2.0-flash'
+    apiConfig.visionGeminiModel || 'gemini-3.6-flash'
   );
 
   const [showMainKey, setShowMainKey] = useState(false);
@@ -341,7 +341,7 @@ const ApiQuickFloat: React.FC = () => {
         ? (apiConfig.geminiApiKey || '')
         : (apiConfig.apiKey || '');
     const syncedModel = syncedProtocol === 'gemini'
-        ? (apiConfig.geminiModel || 'gemini-2.0-flash')
+        ? (apiConfig.geminiModel || 'gemini-3.6-flash')
         : (apiConfig.model || '');
     setLocalUrl(syncedBaseUrl);
     setLocalKey(syncedApiKey);
@@ -351,7 +351,7 @@ const ApiQuickFloat: React.FC = () => {
     // 任务 2：删主 API claude* 同步（Claude 协议不再用）
     setLocalGeminiUrl(apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
     setLocalGeminiKey(apiConfig.geminiApiKey || '');
-    setLocalGeminiModel(apiConfig.geminiModel || 'gemini-2.0-flash');
+    setLocalGeminiModel(apiConfig.geminiModel || 'gemini-3.6-flash');
     setLocalImageUrl(apiConfig.imageBaseUrl || '');
     setLocalImageKey(apiConfig.imageApiKey || '');
     setLocalImageModel(apiConfig.imageModel || '');
@@ -369,7 +369,7 @@ const ApiQuickFloat: React.FC = () => {
         ? (apiConfig.visionGeminiApiKey || '')
         : (apiConfig.visionApiKey || '');
     const syncedVisionModel = syncedVisionProtocol === 'gemini'
-        ? (apiConfig.visionGeminiModel || 'gemini-2.0-flash')
+        ? (apiConfig.visionGeminiModel || 'gemini-3.6-flash')
         : (apiConfig.visionModel || '');
     setLocalVisionUrl(syncedVisionBaseUrl);
     setLocalVisionKey(syncedVisionApiKey);
@@ -390,7 +390,7 @@ const ApiQuickFloat: React.FC = () => {
     setLocalVisionProtocol(syncedVisionProtocol);
     setLocalVisionGeminiUrl(apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
     setLocalVisionGeminiKey(apiConfig.visionGeminiApiKey || '');
-    setLocalVisionGeminiModel(apiConfig.visionGeminiModel || 'gemini-2.0-flash');
+    setLocalVisionGeminiModel(apiConfig.visionGeminiModel || 'gemini-3.6-flash');
     // 暮色 2026-07-15：同步副 API（记忆宫殿 lightLLM）— 抽原始字段做 deps，避免对象新引用触发重跑
     if (memoryPalaceConfig?.lightLLM) {
       setLocalLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
@@ -403,7 +403,7 @@ const ApiQuickFloat: React.FC = () => {
       setLocalLightClaudeModel((memoryPalaceConfig.lightLLM as any).claudeModel || '');
       setLocalLightGeminiUrl((memoryPalaceConfig.lightLLM as any).geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalLightGeminiKey((memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
-      setLocalLightGeminiModel((memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash');
+      setLocalLightGeminiModel((memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-3.6-flash');
     }
   }, [
     apiConfig.baseUrl,
@@ -575,7 +575,7 @@ const ApiQuickFloat: React.FC = () => {
     } else {
       setLocalUrl(localGeminiUrl || apiConfig.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalKey(localGeminiKey || apiConfig.geminiApiKey || '');
-      setLocalModel(localGeminiModel || apiConfig.geminiModel || 'gemini-2.0-flash');
+      setLocalModel(localGeminiModel || apiConfig.geminiModel || 'gemini-3.6-flash');
     }
     setLocalProtocol(newProtocol);
   };
@@ -852,7 +852,7 @@ const ApiQuickFloat: React.FC = () => {
     } else {
       setLocalLightUrl(localLightGeminiUrl || (memoryPalaceConfig?.lightLLM as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalLightKey(localLightGeminiKey || (memoryPalaceConfig?.lightLLM as any)?.geminiApiKey || '');
-      setLocalLightModel(localLightGeminiModel || (memoryPalaceConfig?.lightLLM as any)?.geminiModel || 'gemini-2.0-flash');
+      setLocalLightModel(localLightGeminiModel || (memoryPalaceConfig?.lightLLM as any)?.geminiModel || 'gemini-3.6-flash');
     }
     setLocalLightProtocol(newProtocol);
   };
@@ -873,7 +873,7 @@ const ApiQuickFloat: React.FC = () => {
     } else {
       setLocalVisionUrl(localVisionGeminiUrl || apiConfig.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
       setLocalVisionKey(localVisionGeminiKey || apiConfig.visionGeminiApiKey || '');
-      setLocalVisionModel(localVisionGeminiModel || apiConfig.visionGeminiModel || 'gemini-2.0-flash');
+      setLocalVisionModel(localVisionGeminiModel || apiConfig.visionGeminiModel || 'gemini-3.6-flash');
     }
     setLocalVisionProtocol(newProtocol);
   };
@@ -896,7 +896,7 @@ const ApiQuickFloat: React.FC = () => {
       if (vProto === 'gemini') {
         const url = (c as any).visionGeminiBaseUrl || c.visionBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
         const key = (c as any).visionGeminiApiKey || c.visionApiKey || '';
-        const model = (c as any).visionGeminiModel || c.visionModel || 'gemini-2.0-flash';
+        const model = (c as any).visionGeminiModel || c.visionModel || 'gemini-3.6-flash';
         setLocalVisionGeminiUrl(url);
         setLocalVisionGeminiKey(key);
         setLocalVisionGeminiModel(model);
@@ -929,7 +929,7 @@ const ApiQuickFloat: React.FC = () => {
       } else if (lProto === 'gemini') {
         const url = (c as any).geminiBaseUrl || c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
         const key = (c as any).geminiApiKey || c.apiKey || '';
-        const model = (c as any).geminiModel || c.model || 'gemini-2.0-flash';
+        const model = (c as any).geminiModel || c.model || 'gemini-3.6-flash';
         setLocalLightGeminiUrl(url);
         setLocalLightGeminiKey(key);
         setLocalLightGeminiModel(model);
@@ -952,7 +952,7 @@ const ApiQuickFloat: React.FC = () => {
     if (mProto === 'gemini') {
       const url = (c as any).geminiBaseUrl || c.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
       const key = (c as any).geminiApiKey || c.apiKey || '';
-      const model = (c as any).geminiModel || c.model || 'gemini-2.0-flash';
+      const model = (c as any).geminiModel || c.model || 'gemini-3.6-flash';
       setLocalGeminiUrl(url);
       setLocalGeminiKey(key);
       setLocalGeminiModel(model);

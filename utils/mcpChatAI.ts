@@ -117,6 +117,7 @@ async function doGeminiFollowUp(opts: McpToolCallLoopOpts, contents: any[]): Pro
         generationConfig: {
             temperature: opts.effectiveApi.temperature ?? 0.85,
             maxOutputTokens: 4096,
+            thinkingConfig: { thinkingBudget: 0 },
         },
     };
     const systemMsg = opts.baseMessages.find((m: any) => m.role === 'system');

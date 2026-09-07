@@ -1446,7 +1446,7 @@ const visionActiveKey = useVisionGeminiProtocol
     ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
     : effectiveApi.visionApiKey;
 const visionActiveModel = useVisionGeminiProtocol
-    ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
+    ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-3.6-flash')
     : (effectiveApi.visionModel || 'gemini-1.5-flash');
 // 麦麦 2026-09-06 12:36 调试日志：实际识图调用读 effectiveApi.vision*
 //   effectiveApi 来源 = overrideApiConfig || (charHasAnyApi ? { ...apiConfig, ...charApi } : apiConfig)
@@ -1519,7 +1519,7 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
             systemInstruction: { role: 'system', parts: [{ text: systemText }] },
             // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
             //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
-            generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
+            generationConfig: { temperature: 0.85, maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 0 } },
         };
     };
 
@@ -1823,6 +1823,7 @@ ${visionDesc}
                     generationConfig: {
                         temperature: userTemp,
                         maxOutputTokens: 8000,
+                        thinkingConfig: { thinkingBudget: 0 },
                     },
                 };
                 if (toolsList.length > 0) {
@@ -2024,7 +2025,7 @@ ${visionDesc}
                 return {
                     contents,
                     systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-                    generationConfig: { temperature: userTemp, maxOutputTokens: 8000 },
+                    generationConfig: { temperature: userTemp, maxOutputTokens: 8000, thinkingConfig: { thinkingBudget: 0 } },
                 };
             }
             async function doGeminiRequest(reqBody: any, logLabel: string): Promise<any> {

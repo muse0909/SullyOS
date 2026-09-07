@@ -5,7 +5,7 @@
   "server": {
     "androidScheme": "https",
     "cleartext": true,
-    "url": "https://sully-muse-vert.vercel.app",
+    "url": "https://sully-os-git-preview-muse0909s-projects.vercel.app",
     "allowNavigation": [
       "sully-muse-vert.vercel.app",
       "sully-os-git-preview-muse0909s-projects.vercel.app"

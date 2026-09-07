@@ -1900,7 +1900,7 @@ if (!isVisible || !isChattingWithThisChar) {
                   reqBody = {
                       contents,
                       systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-                      generationConfig: { temperature: 0.8, maxOutputTokens: 2000, thinkingConfig: { thinkingBudget: 0 } },
+                      generationConfig: { temperature: 0.8, maxOutputTokens: 2000 },
                   };
               } else {
                   reqBody = {

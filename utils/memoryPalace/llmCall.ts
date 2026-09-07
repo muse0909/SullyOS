@@ -240,7 +240,7 @@ async function callGemini(
         body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
             systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
-            generationConfig: { temperature, maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: 0 } },
+            generationConfig: { temperature, maxOutputTokens: maxTokens },
         }),
     }, LLM_CALL_TIMEOUT_MS, 'Gemini');
     if (!res.ok) {

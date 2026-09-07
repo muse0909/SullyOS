@@ -1519,7 +1519,7 @@ if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey)
             systemInstruction: { role: 'system', parts: [{ text: systemText }] },
             // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
             //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
-            generationConfig: { temperature: 0.85, maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 0 } },
+            generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
         };
     };
 
@@ -1823,7 +1823,6 @@ ${visionDesc}
                     generationConfig: {
                         temperature: userTemp,
                         maxOutputTokens: 8000,
-                        thinkingConfig: { thinkingBudget: 0 },
                     },
                 };
                 if (toolsList.length > 0) {
@@ -2025,7 +2024,7 @@ ${visionDesc}
                 return {
                     contents,
                     systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-                    generationConfig: { temperature: userTemp, maxOutputTokens: 8000, thinkingConfig: { thinkingBudget: 0 } },
+                    generationConfig: { temperature: userTemp, maxOutputTokens: 8000 },
                 };
             }
             async function doGeminiRequest(reqBody: any, logLabel: string): Promise<any> {

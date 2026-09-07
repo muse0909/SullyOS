@@ -1,6 +1,6 @@
 {
   "appId": "com.aetheros.simulator",
-  "appName": "手抓糯米机",
+  "appName": "拾光机",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
@@ -13,7 +13,7 @@
   },
   "plugins": {
     "SplashScreen": {
-      "launchShowDuration": 0
+      "launchShowDuration": 2000
     },
     "Keyboard": {
       "resize": "body",

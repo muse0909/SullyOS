@@ -13,7 +13,7 @@
   },
   "plugins": {
     "SplashScreen": {
-      "launchShowDuration": 0
+      "launchShowDuration": 2000
     },
     "Keyboard": {
       "resize": "body",

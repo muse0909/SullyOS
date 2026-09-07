@@ -2085,6 +2085,13 @@ if (!isVisible || !isChattingWithThisChar) {
 
               aiContent = normalizeProactiveAiContent(aiContent);
               aiContent = ChatParser.sanitize(aiContent);
+              // 麦麦 2026-09-07 12:55：主动消息路径也要 strip [schedule_next_wakeup] token
+              //   暮色 12:54 反馈：主动消息（runProactive）的 token 没被 strip，聊天页还显示原始 token
+              //   之前只在 useChatAI 主聊天路径 strip（line 3756 + 保险 3764）—— 主动消息路径不经过 useChatAI
+              //   修：OSContext 这边独立 strip（不依赖 ChatParser.sanitize 行为）
+              aiContent = aiContent
+                  .replace(/\[schedule_next_wakeup\s*\|[^\]]*?\]/g, '')
+                  .trim();
 
               // 暮色 2026-08-23 v3：定时投递检查（主动消息入口顺带触发）
               //   跟 useChatAI 同款 — 简化版不定 schedule，依赖主消息流触发

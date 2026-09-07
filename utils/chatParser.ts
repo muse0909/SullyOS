@@ -349,6 +349,11 @@ export const ChatParser = {
             .replace(/(?:^|\n)\s*THOUGHT\s*:\s*[\s\S]*?]]/g, '')
             .replace(/\[\[\s*THOUGHT\s*:[\s\S]*?(?=\n\n|$)/gm, '')
             .replace(/\[schedule_message[^\]]*\]/g, '')
+            // 麦麦 2026-09-07 12:55：江澈动态注册唤醒时间 token（暮色 9-6 21:00 需求）
+            //   跟 useChatAI / OSContext 内部 strip 同款，sanitize 兜底
+            //   覆盖所有变体：[schedule_next_wakeup ...] / [[schedule_next_wakeup ...]] / [Ss]大小写
+            //   暮色 9-7 12:55：贪婪匹配 — 1+ 个 [ + schedule_next_wakeup + 1+ 个非 ] 字符 + 1+ 个 ]
+            .replace(/\[+[Ss]chedule_next_wakeup[^\]]+\]+/g, '')
             .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
             // [回复 "content"]: format (AI mimics history context format)

@@ -72,6 +72,28 @@ async function fetchWithTimeout(
     }
 }
 
+/** 暮色 2026-09-07：503 服务端过载重试 1 次 — 等 2 秒再试
+ *   3.7/3.8 flash 高峰期偶发 503，3.6 稳但也加上做兜底
+ *   只重试 503；其他错误（401/403/429/5xx）保持原行为不重试
+ */
+async function fetchWith503Retry(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    label: string
+): Promise<Response> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await fetchWithTimeout(url, init, timeoutMs, label);
+        if (res.status === 503 && attempt === 0) {
+            console.warn(`[MemoryPalace/llmCall] ${label} 503，等 2 秒重试 1 次`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+        }
+        return res;
+    }
+    throw new Error(`${label} 503 重试 1 次仍失败`);
+}
+
 /** 走 Vercel 服务端 /api/proxy 转发（POST + JSON），绕开浏览器 CORS。 */
 async function proxyFetch(targetUrl: string, init: RequestInit): Promise<Response> {
     const headers: Record<string, string> = {};
@@ -125,7 +147,7 @@ async function callOpenAI(
     maxTokens: number,
     stream: boolean
 ): Promise<CallLLMResult> {
-    const res = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+    const res = await fetchWith503Retry(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -168,7 +190,7 @@ async function callClaude(
     maxTokens: number
 ): Promise<CallLLMResult> {
     // Claude 协议走 /v1/messages
-    const res = await fetchWithTimeout(`${baseUrl}/v1/messages`, {
+    const res = await fetchWith503Retry(`${baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -212,7 +234,7 @@ async function callGemini(
     // Gemini 协议走 /v1beta/models/{model}:generateContent?key=xxx
     const cleanBase = baseUrl.replace(/\/+$/, '');
     const url = `${cleanBase}/models/${encodeURIComponent(llmConfig.model)}:generateContent?key=${encodeURIComponent(llmConfig.apiKey || '')}`;
-    const res = await fetchWithTimeout(url, {
+    const res = await fetchWith503Retry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

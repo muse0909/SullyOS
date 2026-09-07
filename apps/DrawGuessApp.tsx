@@ -691,7 +691,7 @@ ${imageDescription ? '4. 不要直接说视觉识别的原话，用人设方式�
                             <input
                                 value={visionForm.model}
                                 onChange={e => setVisionForm({ ...visionForm, model: e.target.value })}
-                                placeholder="gemini-2.0-flash"
+                                placeholder="gemini-3.6-flash"
                                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
                             />
                         </div>

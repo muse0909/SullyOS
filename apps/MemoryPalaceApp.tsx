@@ -604,7 +604,7 @@ export default function MemoryPalaceApp() {
     );
     const [lightGeminiKey, setLightGeminiKey] = useState((memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
     const [lightGeminiModel, setLightGeminiModel] = useState(
-        (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash'
+        (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-3.6-flash'
     );
     const [lightSaved, setLightSaved] = useState(false);
     const [testingLight, setTestingLight] = useState(false);
@@ -635,7 +635,7 @@ export default function MemoryPalaceApp() {
                 || 'https://generativelanguage.googleapis.com/v1beta'
             );
             setLightKey(lightGeminiKey || (memoryPalaceConfig.lightLLM as any).geminiApiKey || '');
-            setLightModel(lightGeminiModel || (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-2.0-flash');
+            setLightModel(lightGeminiModel || (memoryPalaceConfig.lightLLM as any).geminiModel || 'gemini-3.6-flash');
         }
         setLightProtocol(newProtocol);
     };
@@ -680,7 +680,7 @@ export default function MemoryPalaceApp() {
         } else {
             setLightUrl(_llm.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
             setLightKey(_llm.geminiApiKey || '');
-            setLightModel(_llm.geminiModel || 'gemini-2.0-flash');
+            setLightModel(_llm.geminiModel || 'gemini-3.6-flash');
         }
         // gemini 字段也要同步（切回那个 tab 时不丢）
         setLightGeminiUrl(
@@ -688,7 +688,7 @@ export default function MemoryPalaceApp() {
             || 'https://generativelanguage.googleapis.com/v1beta'
         );
         setLightGeminiKey(_llm.geminiApiKey || '');
-        setLightGeminiModel(_llm.geminiModel || 'gemini-2.0-flash');
+        setLightGeminiModel(_llm.geminiModel || 'gemini-3.6-flash');
         setRrEnabled(!!memoryPalaceConfig.rerank?.enabled);
         setRrUrl(memoryPalaceConfig.rerank?.baseUrl || '');
         setRrKey(memoryPalaceConfig.rerank?.apiKey || '');

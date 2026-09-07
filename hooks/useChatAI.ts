@@ -1446,7 +1446,7 @@ const visionActiveKey = useVisionGeminiProtocol
     ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
     : effectiveApi.visionApiKey;
 const visionActiveModel = useVisionGeminiProtocol
-    ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash')
+    ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-3.6-flash')
     : (effectiveApi.visionModel || 'gemini-1.5-flash');
 // 麦麦 2026-09-06 12:36 调试日志：实际识图调用读 effectiveApi.vision*
 //   effectiveApi 来源 = overrideApiConfig || (charHasAnyApi ? { ...apiConfig, ...charApi } : apiConfig)

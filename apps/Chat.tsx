@@ -218,7 +218,7 @@ const Chat: React.FC = () => {
     const [perCharApiProtocol, setPerCharApiProtocol] = useState<'openai' | 'gemini'>('openai');
     const [perCharApiGeminiUrl, setPerCharApiGeminiUrl] = useState('https://generativelanguage.googleapis.com/v1beta');
     const [perCharApiGeminiKey, setPerCharApiGeminiKey] = useState('');
-    const [perCharApiGeminiModel, setPerCharApiGeminiModel] = useState('gemini-2.0-flash');
+    const [perCharApiGeminiModel, setPerCharApiGeminiModel] = useState('gemini-3.6-flash');
     const [showPerCharKey, setShowPerCharKey] = useState(false);
     // 模型下拉相关 state（暮色 2026-07-24 — 照搬 ApiQuickFloat 的模型加载）
     const [perCharAvailableModels, setPerCharAvailableModels] = useState<string[]>([]);
@@ -244,7 +244,7 @@ const Chat: React.FC = () => {
             const proto = ((char.apiConfig as any)?.protocol as 'openai' | 'gemini') || 'openai';
             const geminiUrl = (char.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
             const geminiKey = (char.apiConfig as any)?.geminiApiKey || '';
-            const geminiModel = (char.apiConfig as any)?.geminiModel || 'gemini-2.0-flash';
+            const geminiModel = (char.apiConfig as any)?.geminiModel || 'gemini-3.6-flash';
             setPerCharApiProtocol(proto);
             setPerCharApiGeminiUrl(geminiUrl);
             setPerCharApiGeminiKey(geminiKey);
@@ -290,7 +290,7 @@ const Chat: React.FC = () => {
         } else {
             setPerCharApiBaseUrl(perCharApiGeminiUrl || (char?.apiConfig as any)?.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta');
             setPerCharApiKey(perCharApiGeminiKey || (char?.apiConfig as any)?.geminiApiKey || '');
-            setPerCharApiModel(perCharApiGeminiModel || (char?.apiConfig as any)?.geminiModel || 'gemini-2.0-flash');
+            setPerCharApiModel(perCharApiGeminiModel || (char?.apiConfig as any)?.geminiModel || 'gemini-3.6-flash');
         }
         setPerCharApiProtocol(newProtocol);
     };

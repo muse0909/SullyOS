@@ -3757,6 +3757,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     .trim();
             }
 
+            // 麦麦 2026-09-07 09:45：保险 strip — 不依赖上面 if 块是否进入
+            //   暮色反馈聊天界面看到 token —— 可能 Vercel build 没及时生效
+            //   再 strip 一次覆盖所有变体：标准 / 无空格 / [[双括号]] / 大小写
+            //   这里 strip 100% 跑（无条件），上面 if 块里的 strip 是 catch 保险
+            aiContent = aiContent
+                .replace(/\[\[?\s*[Ss]chedule_next_wakeup\b[^\]]*?\]?\]?/g, '')
+                .replace(/^\s*[\r\n]+|[\r\n]+\s*$/g, '')  // 清理 strip 后可能的多余空行
+                .trim();
+
             if (!allowXiaoZhiTiaoParse || !isXiaoZhiTiaoEnabled()) {
                 aiContent = aiContent
                     .replace(/\[\[XIAO_ZHI_TIAO:[\s\S]*?\]\]/g, '')

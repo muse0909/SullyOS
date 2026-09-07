@@ -33,6 +33,12 @@ const PLACEHOLDER_URL_MARKER = 'PLACEHOLDER_URL';
 //   否则线上前端拿不到 worker URL，/dynamic-schedule fetch 失败
 //   跟 Android KEEP_ALIVE_* 走 local.properties fallback 同款设计
 const FALLBACK_WORKER_URL = 'https://proactive-push.1812038909.workers.dev';
+// 麦麦 2026-09-07 09:45 修：CLIENT_TOKEN 也加 fallback
+//   暮色反馈 /dynamic-schedule /cancel-dynamic-schedule 返回 401
+//   根因：buildHeaders 只在 cfg.clientToken 非空时加 X-Client-Token 头，
+//   Vercel 没配 VITE_PROACTIVE_CLIENT_TOKEN → clientToken 空 → 头不加 → 401
+//   跟 worker URL 一样硬编码 fallback —— 跟 android/local.properties 的 WS_TOKEN 同值
+const FALLBACK_CLIENT_TOKEN = 'sully-1812038909-keepalive-secret';
 
 function readEnv(key: string): string {
   try {
@@ -53,7 +59,8 @@ export function getVapidPublicKey(): string {
 }
 
 export function getClientToken(): string {
-  return readEnv('VITE_PROACTIVE_CLIENT_TOKEN');
+  // 麦麦 2026-09-07 09:45：env 缺失时 fallback 硬编码（避免 401）
+  return readEnv('VITE_PROACTIVE_CLIENT_TOKEN') || FALLBACK_CLIENT_TOKEN;
 }
 
 /** True if the deployment constants are filled in (regardless of user toggle). */

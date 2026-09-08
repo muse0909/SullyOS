@@ -1,6 +1,6 @@
 
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Copy, PencilSimple } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Copy, PencilSimple, CloudArrowUp } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -72,12 +72,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const panelContainerRef = useRef<HTMLDivElement>(null);
     const toggleActionsBtnRef = useRef<HTMLButtonElement>(null);
     const toggleEmojisBtnRef = useRef<HTMLButtonElement>(null);
-    const [actionsPage, setActionsPage] = useState<0 | 1>(0);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
     const isLongPressTriggered = useRef(false); // Track if long press action fired
-    const actionsSwipeStart = useRef<{ x: number; y: number } | null>(null);
-    const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
 
     // 点空白处收起面板（暮色要求）：
@@ -181,44 +178,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     };
 
     // --- Actions Panel Swipe (left/right page switch) ---
-    const handleActionsSwipeStart = (e: React.TouchEvent) => {
-        const t = e.touches[0];
-        actionsSwipeStart.current = { x: t.clientX, y: t.clientY };
-        actionsSwipeMoved.current = false;
-    };
-
-    const handleActionsSwipeMove = (e: React.TouchEvent) => {
-        if (!actionsSwipeStart.current) return;
-        const t = e.touches[0];
-        const dx = t.clientX - actionsSwipeStart.current.x;
-        const dy = t.clientY - actionsSwipeStart.current.y;
-        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
-            actionsSwipeMoved.current = true;
-        }
-    };
-
-    const handleActionsSwipeEnd = (e: React.TouchEvent) => {
-        if (!actionsSwipeStart.current) return;
-        const t = e.changedTouches[0];
-        const dx = t.clientX - actionsSwipeStart.current.x;
-        const dy = t.clientY - actionsSwipeStart.current.y;
-        actionsSwipeStart.current = null;
-        const SWIPE_THRESHOLD = 40;
-        if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
-            if (dx < 0 && actionsPage === 0) setActionsPage(1);
-            else if (dx > 0 && actionsPage === 1) setActionsPage(0);
-        }
-    };
-
-    const handleActionsClickCapture = (e: React.MouseEvent) => {
-        if (actionsSwipeMoved.current) {
-            e.stopPropagation();
-            e.preventDefault();
-            actionsSwipeMoved.current = false;
-        }
-    };
-
-
     // Wrapper for Click to prevent conflicts
     const handleItemClick = (e: React.MouseEvent, item: any, type: 'emoji' | 'category') => {
         // If long press action triggered, block the click event (do not send)
@@ -504,28 +463,22 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </>
                     )}
 
-                    {/* Actions Panel (paginated: page 0 = 内置功能, page 1 = 外部服务) */}
+                    {/* Actions Panel — 麦麦 2026-09-08：去掉左右翻页,改上下滚动一页显示全部 */}
                     {showPanel === 'actions' && (
-                        <div
-                            className="overflow-y-auto"
-                            onTouchStart={handleActionsSwipeStart}
-                            onTouchMove={handleActionsSwipeMove}
-                            onTouchEnd={handleActionsSwipeEnd}
-                            onClickCapture={handleActionsClickCapture}
-                        >
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
+                        <div className="overflow-y-auto no-scrollbar p-6">
+                          <div className="grid grid-cols-4 gap-6">
                             <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">转账</span>
                             </button>
-                            
+
                             <button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 border-sky-400/20' : 'bg-sky-50 border-sky-100'}`}><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-6 h-6" /></div>
                                 <span className="text-xs font-bold">戳一戳</span>
                             </button>
-                            
+
                             <button onClick={() => onPanelAction('archive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-400 border-indigo-100'}`}>
                                     <BookOpenText className="w-6 h-6" weight="bold" />
@@ -568,10 +521,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">日程</span>
                             </button>
 
-                          </div>
+                            {/* 麦麦 2026-09-08：图床管理入口(暮色 9-8 14:50 要求"在聊天+号里") */}
+                            <button onClick={() => onPanelAction('image-bed-manager')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
+                                    <CloudArrowUp className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">图床</span>
+                            </button>
 
-                          {/* Page 1: 外部服务 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                            {/* 原 page 1 内容也合并进单页(MCD / HTML) */}
                             <button
                               onClick={() => {
                                 if (!mcdConfigured) { onPanelAction('mcd-not-configured'); return; }
@@ -606,22 +564,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </div>
                               <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
                             </button>
-                          </div>
-
-                          {/* 翻页指示器 */}
-                          <div className="flex items-center justify-center gap-3 pb-3 -mt-2">
-                            <button
-                              type="button"
-                              aria-label="第 1 页"
-                              onClick={() => setActionsPage(0)}
-                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 0 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
-                            />
-                            <button
-                              type="button"
-                              aria-label="第 2 页"
-                              onClick={() => setActionsPage(1)}
-                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 1 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
-                            />
                           </div>
                         </div>
                      )}

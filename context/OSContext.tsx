@@ -3712,6 +3712,28 @@ if (!isVisible || !isChattingWithThisChar) {
               customCssPresets: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('custom_css_presets'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               customCssActive: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('custom_css_active') || undefined) : undefined,
               customCssLastApplied: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('custom_css_last_applied') || undefined) : undefined,
+
+              // 麦麦 2026-09-08：再补 5 个 localStorage 字段
+              // - discover_last_seen_at：发现页"上次看到时间"，通知红点用
+              discoverLastSeenAt: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const v = localStorage.getItem('discover_last_seen_at');
+                  if (!v) return undefined;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : undefined;
+              })() : undefined,
+              // - os_date_quick_phrases：见面 app 快捷短语配置
+              dateQuickPhrases: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_date_quick_phrases'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              // - os_sync_device_id：多端同步设备 ID（UUID v4）
+              syncDeviceId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('os_sync_device_id') || undefined) : undefined,
+              // - handbook_lifestream_depth：跨角色手账深度
+              handbookLifestreamDepth: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const v = localStorage.getItem('handbook_lifestream_depth');
+                  if (!v) return undefined;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : undefined;
+              })() : undefined,
+              // - vr_help_seen：VR 帮助已看过标记（UI 标记）
+              vrHelpSeen: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_help_seen') || undefined) : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -4280,6 +4302,28 @@ if (!isVisible || !isChattingWithThisChar) {
           }
           if (typeof data.customCssLastApplied === 'string') {
               try { localStorage.setItem('custom_css_last_applied', data.customCssLastApplied); } catch (e) { console.warn('[importSystem] restore customCssLastApplied failed:', e); }
+          }
+
+          // 麦麦 2026-09-08：再补 5 个 localStorage 字段回写
+          // - discover_last_seen_at：发现页"上次看到时间"
+          if (typeof data.discoverLastSeenAt === 'number' && Number.isFinite(data.discoverLastSeenAt) && data.discoverLastSeenAt > 0) {
+              try { localStorage.setItem('discover_last_seen_at', String(data.discoverLastSeenAt)); } catch (e) { console.warn('[importSystem] restore discoverLastSeenAt failed:', e); }
+          }
+          // - os_date_quick_phrases：见面 app 快捷短语配置
+          if (Array.isArray(data.dateQuickPhrases)) {
+              try { localStorage.setItem('os_date_quick_phrases', JSON.stringify(data.dateQuickPhrases)); } catch (e) { console.warn('[importSystem] restore dateQuickPhrases failed:', e); }
+          }
+          // - os_sync_device_id：多端同步设备 ID
+          if (typeof data.syncDeviceId === 'string' && data.syncDeviceId.length > 0) {
+              try { localStorage.setItem('os_sync_device_id', data.syncDeviceId); } catch (e) { console.warn('[importSystem] restore syncDeviceId failed:', e); }
+          }
+          // - handbook_lifestream_depth：跨角色手账深度
+          if (typeof data.handbookLifestreamDepth === 'number' && Number.isFinite(data.handbookLifestreamDepth) && data.handbookLifestreamDepth > 0) {
+              try { localStorage.setItem('handbook_lifestream_depth', String(data.handbookLifestreamDepth)); } catch (e) { console.warn('[importSystem] restore handbookLifestreamDepth failed:', e); }
+          }
+          // - vr_help_seen：VR 帮助已看过标记
+          if (typeof data.vrHelpSeen === 'string' && data.vrHelpSeen.length > 0) {
+              try { localStorage.setItem('vr_help_seen', data.vrHelpSeen); } catch (e) { console.warn('[importSystem] restore vrHelpSeen failed:', e); }
           }
           
           if (data.socialAppData) {

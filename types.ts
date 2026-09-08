@@ -2121,6 +2121,18 @@ export interface FullBackupData {
     customCssPresets?: any[];
     customCssActive?: string;
     customCssLastApplied?: string;
+
+    // 麦麦 2026-09-08：再补 5 个 localStorage 字段（暮色要求"别有遗漏"）
+    // - discover_last_seen_at：发现页"上次看到时间"，用于通知红点未读数
+    discoverLastSeenAt?: number;
+    // - os_date_quick_phrases：见面 app 快捷短语配置
+    dateQuickPhrases?: any[];
+    // - os_sync_device_id：多端同步设备 ID
+    syncDeviceId?: string;
+    // - handbook_lifestream_depth：跨角色手账深度
+    handbookLifestreamDepth?: number;
+    // - vr_help_seen：VR 帮助已看过标记（UI 标记，避免重弹）
+    vrHelpSeen?: string;
 }
 
 // --- CLOUD BACKUP TYPES ---

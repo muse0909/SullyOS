@@ -12,6 +12,11 @@ import { House, User, Package, Warning } from '@phosphor-icons/react';
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
+// 麦麦 2026-09-08：朋友圈默认背景（暮色给的图，用户没设 userBgImage 时 fallback）
+//   暮色原话"把朋友圈默认背景换成这个"——把 profile header 那个 fallback 改了
+//   之前是 userProfile.avatar 模糊图，现在换成暮色给的 ibb 图
+const DEFAULT_USER_BG = 'https://i.ibb.co/HTmsY1Zk/12542546.png';
+
 const STICKER_OPTIONS = [
     { code: '2728', label: 'sparkles' },
     { code: '1f388', label: 'balloon' },
@@ -953,7 +958,7 @@ ${identityMap}
                                     {userBgImage ? (
                                         <img src={userBgImage} className="w-full h-full object-cover" />
                                     ) : (
-                                        <img src={userProfile.avatar} className="w-full h-full object-cover blur-2xl opacity-60 scale-125" />
+                                        <img src={DEFAULT_USER_BG} className="w-full h-full object-cover" />
                                     )}
                                     <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                         <span className="text-white text-xs font-bold bg-black/30 px-3 py-1 rounded-full backdrop-blur-md">更换背景</span>

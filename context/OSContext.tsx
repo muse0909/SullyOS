@@ -4192,7 +4192,23 @@ if (!isVisible || !isChattingWithThisChar) {
           if (data.theme) {
               await updateTheme(data.theme);
           }
-          if (data.apiConfig) updateApiConfig(data.apiConfig);
+          if (data.apiConfig) {
+              // 麦麦 2026-09-08：空值不覆盖本地（"图床配置掉了"根因之一）
+              //   原代码 `updateApiConfig(data.apiConfig)` 直接 spread,空字符串字段会
+              //   覆盖本地已有值。例:老备份 apiConfig.imgbbApiKey = ''（用户之前清空过,
+              //   或者某个老版本 export 把空字符串序列化了）→ 恢复时把当前配的 imgbbApiKey
+              //   覆盖成空 → 图床失效
+              //   修法:只 update 非空字段,空值/缺失保留本地
+              const _apiUpdates: any = {};
+              for (const [k, v] of Object.entries(data.apiConfig)) {
+                  if (v !== '' && v !== null && v !== undefined) {
+                      _apiUpdates[k] = v;
+                  }
+              }
+              if (Object.keys(_apiUpdates).length > 0) {
+                  updateApiConfig(_apiUpdates);
+              }
+          }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置

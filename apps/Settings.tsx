@@ -654,7 +654,9 @@ const Settings: React.FC = () => {
         visionGeminiBaseUrl: c.visionGeminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta',
         visionGeminiApiKey: c.visionGeminiApiKey || '',
         visionGeminiModel: c.visionGeminiModel || 'gemini-3.6-flash',
-        imgbbApiKey: c.imgbbApiKey || '',
+        // 麦麦 2026-09-08：删 imgbbApiKey 覆盖（识图预设不该动图床配置）
+        //   原代码 `imgbbApiKey: c.imgbbApiKey || ''` 会把当前 apiConfig.imgbbApiKey
+        //   覆盖成空串(c 是识图预设,没图床字段)—— 暮色"图床配置掉了"的根因之一
       });
       addToast(`已加载识图预设: ${preset.name} (${loadedVisionProtocol === 'gemini' ? 'Gemini' : 'OpenAI'})`, 'info');
       return;
@@ -687,16 +689,22 @@ const Settings: React.FC = () => {
       if (_bedKind === 'imgbb' || _bedKind === 'cloudinary' || _bedKind === 'r2') {
         setLocalImageBed(_bedKind);
       }
-      updateApiConfig({
-        imgbbApiKey: c.imgbbApiKey || '',
-        cloudinaryCloudName: c.cloudinaryCloudName || '',
-        cloudinaryUploadPreset: c.cloudinaryUploadPreset || '',
-        r2AccountId: c.r2AccountId || '',
-        r2AccessKeyId: c.r2AccessKeyId || '',
-        r2SecretAccessKey: c.r2SecretAccessKey || '',
-        r2Bucket: c.r2Bucket || '',
-        r2PublicUrl: c.r2PublicUrl || '',
-      });
+      // 麦麦 2026-09-08：只 updateApiConfig 有值字段（暮色"图床配置掉了"根因修复）
+      //   原代码 `xxx: c.xxx || ''` 8 个字段全覆盖,空值会清掉本机已有配置
+      //   例:点 Cloudinary 预设 1（没 imgbbApiKey）→ 之前配的 imgbbApiKey 被覆盖成空
+      //   修法:空值/缺失字段不进 update 对象,保留本地
+      const _updates: any = {};
+      if (c.imgbbApiKey) _updates.imgbbApiKey = c.imgbbApiKey;
+      if (c.cloudinaryCloudName) _updates.cloudinaryCloudName = c.cloudinaryCloudName;
+      if (c.cloudinaryUploadPreset) _updates.cloudinaryUploadPreset = c.cloudinaryUploadPreset;
+      if (c.r2AccountId) _updates.r2AccountId = c.r2AccountId;
+      if (c.r2AccessKeyId) _updates.r2AccessKeyId = c.r2AccessKeyId;
+      if (c.r2SecretAccessKey) _updates.r2SecretAccessKey = c.r2SecretAccessKey;
+      if (c.r2Bucket) _updates.r2Bucket = c.r2Bucket;
+      if (c.r2PublicUrl) _updates.r2PublicUrl = c.r2PublicUrl;
+      if (Object.keys(_updates).length > 0) {
+        updateApiConfig(_updates);
+      }
       addToast(`已加载图床预设: ${preset.name}`, 'info');
       return;
     }

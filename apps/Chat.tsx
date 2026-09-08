@@ -40,6 +40,7 @@ import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import MemoryReviewModal from '../components/chat/MemoryReviewModal';
+import ImageBedManagerModal from '../components/chat/ImageBedManagerModal';
 import ChatSettingsDrawer from '../components/chat/ChatSettingsDrawer';
 import ChatSearchDrawer from '../components/chat/ChatSearchDrawer';
 import Modal from '../components/os/Modal';
@@ -145,7 +146,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'emoji-manager'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'emoji-manager' | 'image-bed-manager'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
@@ -1538,6 +1539,11 @@ const Chat: React.FC = () => {
                     updateCharacter(char.id, { htmlModeEnabled: true } as any);
                 }
                 setShowChatSettingsDrawer(true);
+                break;
+            }
+            // 麦麦 2026-09-08：图床管理（聊天+号入口）
+            case 'image-bed-manager': {
+                setModalType('image-bed-manager');
                 break;
             }
         }
@@ -2934,6 +2940,12 @@ if (keepN > 0) {
                      onDeleteMemory={handleReviewDelete}
                  />
              )}
+
+            {/* 麦麦 2026-09-08：图床管理 Modal（聊天+号 → 图床） */}
+            <ImageBedManagerModal
+                isOpen={modalType === 'image-bed-manager'}
+                onClose={() => setModalType('none')}
+            />
 
             <ChatModals
                 modalType={modalType} setModalType={setModalType}

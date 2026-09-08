@@ -2433,67 +2433,34 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     // 暮色 2026-07-15：图床顺序调整 — R2 已放弃（试过一直卡 Vercel 函数 10 秒超时）
                     // 默认直接走 imgbb。imgbb 成功不弹 toast（正常流程不该打扰）；
                     // imgbb 失败时用 'bell' 样式 toast 提示"已用 base64 临时存储，会占 localStorage 空间"
-                    const _imgbbKey = (effectiveApi as any)?.imgbbApiKey;
-                    // 暮色 2026-08-20：imgbb 网络不稳（节点受限速）→ 加 Cloudinary 作 fallback
-                    //   imgbb 失败（fetch 抛错 / 5xx）自动切 Cloudinary；
-                    //   Cloudinary 用 unsigned upload preset（控制台创建，无需签名）
-                    //   Cloudinary 也失败才退 data URL
-                    const _cloudName = (effectiveApi as any)?.cloudinaryCloudName;
-                    const _cloudPreset = (effectiveApi as any)?.cloudinaryUploadPreset;
-                    if (_imgbbKey) {
-                        console.log('🎨 [ImageGen] 站点返 b64_json，开始上传到 imgbb...');
-                        let _imgbbSucceeded = false;
-                        try {
-                            const _formData = new FormData();
-                            _formData.append('image', _imgData0.b64_json);
-                            const _uploadRes = await fetch(`https://api.imgbb.com/1/upload?key=${_imgbbKey}`, {
-                                method: 'POST',
-                                body: _formData,
-                            });
-                            const _uploadData = await _uploadRes.json().catch(() => ({} as any));
-                            if (_uploadRes.ok && _uploadData?.data?.url) {
-                                imageUrl = _uploadData.data.url;
-                                _imgbbSucceeded = true;
-                                console.log('🎨 [ImageGen] b64 已上传到 imgbb, url =', imageUrl);
-                                // imgbb 成功：不弹 toast，正常流程不该打扰
-                            } else {
-                                console.warn('🎨 [ImageGen] imgbb 上传失败:', _uploadData?.error?.message);
-                            }
-                        } catch (uploadErr: any) {
-                            console.warn('🎨 [ImageGen] imgbb 上传异常:', uploadErr?.message);
+                    // 暮色 2026-09-08：抽到 utils/imageBedUpload.ts,加中间步骤 toast
+                    //   暮色原话:"imgbb 失败直接弹提醒图床上传失败,实际用时是自动切"
+                    //   9-08 之前没中间 toast,用户看不到 imgbb → Cloudinary 切换过程
+                    //   9-08 加 toast 序列:imgbb 失败 → "imgbb 失败,正在试 Cloudinary"
+                    //                          Cloudinary 失败 → "Cloudinary 也失败,已用 base64 兜底"
+                    const { uploadImageToBed } = await import('../utils/imageBedUpload');
+                    const dataUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                    const _result = await uploadImageToBed(dataUrl, _mime, {
+                        imgbbApiKey: (effectiveApi as any)?.imgbbApiKey,
+                        cloudinaryCloudName: (effectiveApi as any)?.cloudinaryCloudName,
+                        cloudinaryUploadPreset: (effectiveApi as any)?.cloudinaryUploadPreset,
+                        bedKind: (effectiveApi as any)?.bedKind,
+                    } as any, (evt) => {
+                        // 中间步骤 toast
+                        if (evt.status === 'failed' && evt.stage === 'imgbb') {
+                            onImageBedWarning?.('imgbb 失败,正在试 Cloudinary');
+                        } else if (evt.status === 'failed' && evt.stage === 'cloudinary') {
+                            onImageBedWarning?.('Cloudinary 也失败,已用 base64 兜底');
                         }
-                        // imgbb 失败：fallback 切 Cloudinary
-                        if (!_imgbbSucceeded && _cloudName && _cloudPreset) {
-                            console.log('🎨 [ImageGen] imgbb 失败，fallback 到 Cloudinary...');
-                            try {
-                                const _cForm = new FormData();
-                                _cForm.append('file', `data:${_mime};base64,${_imgData0.b64_json}`);
-                                _cForm.append('upload_preset', _cloudPreset);
-                                const _cRes = await fetch(`https://api.cloudinary.com/v1_1/${_cloudName}/image/upload`, {
-                                    method: 'POST',
-                                    body: _cForm,
-                                });
-                                const _cData = await _cRes.json().catch(() => ({} as any));
-                                if (_cRes.ok && _cData?.secure_url) {
-                                    imageUrl = _cData.secure_url;
-                                    console.log('🎨 [ImageGen] b64 已上传到 Cloudinary, url =', imageUrl);
-                                } else {
-                                    console.warn('🎨 [ImageGen] Cloudinary 上传失败:', _cData?.error?.message);
-                                }
-                            } catch (cErr: any) {
-                                console.warn('🎨 [ImageGen] Cloudinary 上传异常:', cErr?.message);
-                            }
-                        }
-                        // imgbb + Cloudinary 都失败：data URL 兜底
-                        if (!imageUrl) {
-                            onImageBedWarning?.('图床失败，生图已用原图发送，占内存，建议看完删除');
-                            imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
-                        }
+                    });
+                    if (_result.ok && _result.url) {
+                        imageUrl = _result.url;
                     } else {
-                        // imgbb 没配：data URL 兜底
-                        console.warn('🎨 [ImageGen] 站点返 b64_json 但 imgbb 未配置，用 data URL 兜底。建议在 API 卡片配 imgbb 凭证以获得永久 URL。');
-                        onImageBedWarning?.('未配图床，生图已用原图发送，占内存，建议看完删除');
-                        imageUrl = `data:${_mime};base64,${_imgData0.b64_json}`;
+                        if (_result.reason === 'no_config') {
+                            onImageBedWarning?.('未配图床，生图已用原图发送，占内存，建议看完删除');
+                        }
+                        // 中间步骤 toast 已经在 onStage callback 里触发了,这里不再重复
+                        imageUrl = dataUrl;
                     }
                 }
 

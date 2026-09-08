@@ -2603,6 +2603,13 @@ export const DB = {
       'cc_custom_parts',
       // 暮色 8-25：信箱 store（双向信件）
       'mailbox_letters',
+      // 麦麦 2026-09-08：补 7 个 store（暮色 9-8 13:32 反馈"传上来的备忘录还是空的"——根因）
+      //   漏在 availableStores 里 → tx 不开这些 store 的写权限 → clearAndAdd 内部
+      //   !availableStores.includes(storeName) return 跳过 → 永远写不进去
+      //   暮色 8-25 笔记:"11 个新 store 必须加进 availableStores,否则 tx 不开写权限"
+      'character_memos', 'character_status_panels',
+      'story_theaters', 'story_theater_presets', 'scene_templates',
+      'rp_api_configs', 'rp_global_defaults',
   ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');

@@ -1993,7 +1993,18 @@ export interface FullBackupData {
         userId?: string;
         userBg?: string;
     };
-    
+
+    // 麦麦 2026-09-08：朋友圈文字数据(text_only + full 都带,跟原 socialAppData 拆开)
+    //   原 socialAppData 整个只在 media_only + full 带,text_only 模式 charHandles/userId
+    //   这些纯文字也跟着丢(朋友圈背景 userBg 是图片,text_only 本就不该带,但 charHandles 是文字应该带)
+    //   暮色 9-8 反馈"朋友圈换的背景经常恢复初始状态"——即使没用云端备份,刷新也丢,
+    //   根因:DB.saveAsset 没等 transaction oncomplete(utils/db.ts:961-965)→ put 异步发起
+    //   后立刻返回,如果 setUserBgImage 同步触发组件重渲染/重 mount,put 可能被中断
+    socialAppTextData?: {
+        charHandles?: Record<string, SubAccount[]>;
+        userId?: string;
+    };
+
     mediaAssets?: {
         charId: string;
         avatar?: string;

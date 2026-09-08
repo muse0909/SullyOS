@@ -962,6 +962,16 @@ export const DB = {
     const db = await openDB();
     const transaction = db.transaction(STORE_ASSETS, 'readwrite');
     transaction.objectStore(STORE_ASSETS).put({ id, data });
+    // 麦麦 2026-09-08：等 transaction oncomplete 再 resolve
+    //   根因：原版 put 发起后立刻返回，调用方 setUserBgImage(base64) 同步触发组件重渲染
+    //   → React 卸载组件或组件重 mount → put 异步请求可能被中断 → 朋友圈背景 "经常恢复初始状态"
+    //   所有走 DB.saveAsset 的（头像/外观预设/图标/字体/朋友圈背景/社交资料/room 资产/wallpaper 等）
+    //   都中招，这里是统一兜底
+    await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error || new Error('Transaction aborted'));
+    });
   },
 
   getAssetRaw: async (id: string): Promise<any | null> => {

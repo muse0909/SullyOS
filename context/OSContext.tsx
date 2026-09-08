@@ -3593,6 +3593,13 @@ if (!isVisible || !isChattingWithThisChar) {
                   userId: localStorage.getItem('spark_user_id') || undefined,
                   userBg: sparkUserBg || undefined
               } : undefined,
+              // 麦麦 2026-09-08：朋友圈纯文字数据(text_only + full 也带)
+              // 原 socialAppData 整块只在 media_only + full,text_only 模式 charHandles/userId
+              // 这些文字也跟着丢。拆出来让 text_only 模式也能恢复朋友圈配置
+              socialAppTextData: (mode === 'text_only' || mode === 'full') ? {
+                  charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
+                  userId: localStorage.getItem('spark_user_id') || undefined
+              } : undefined,
 
               roomCustomAssets: (mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
               mediaAssets: [], // Initialize mediaAssets array
@@ -4329,10 +4336,16 @@ if (!isVisible || !isChattingWithThisChar) {
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
               if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
-              
+
               // Restore heavy assets to DB
               if (data.socialAppData.userProfile) await DB.saveAsset('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
               if (data.socialAppData.userBg) await DB.saveAsset('spark_user_bg', data.socialAppData.userBg);
+          }
+          // 麦麦 2026-09-08：朋友圈纯文字数据(text_only + full 模式走这里)
+          // 优先级:socialAppTextData(新) > socialAppData.charHandles/userId(老 text_only 模式备份可能没这字段)
+          if (data.socialAppTextData) {
+              if (data.socialAppTextData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppTextData.charHandles));
+              if (data.socialAppTextData.userId) localStorage.setItem('spark_user_id', data.socialAppTextData.userId);
           }
           
           // Restore Room Custom Assets to DB (migrate old format on import)

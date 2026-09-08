@@ -3521,6 +3521,13 @@ if (!isVisible || !isChattingWithThisChar) {
               'cc_custom_parts',
               // 暮色 8-25：信箱（双向信件）
               'mailbox_letters',
+              // 麦麦 2026-09-08：补 7 个 store（之前漏写云端备份会丢数据）
+              // - 角色备忘录 + 状态面板（9-5/9-6 加）
+              'character_memos', 'character_status_panels',
+              // - 剧情模式 3 个（8-25 加）
+              'story_theaters', 'story_theater_presets', 'scene_templates',
+              // - RP 独立 API 配置 + RP 全局默认（8-25/8-26 加）
+              'rp_api_configs', 'rp_global_defaults',
               // 注：mcp_call_logs / api_call_log 是临时统计日志，不备份（跟 proactiveLastError 一样）
           ];
 
@@ -3543,6 +3550,10 @@ if (!isVisible || !isChattingWithThisChar) {
                   'trackers', 'tracker_entries', 'handbook',
                   'vr_novels', 'vr_annotations', 'vr_music', 'vr_guestbook', 'vr_scripts', 'vr_plays', 'vr_presets', 'vr_settings', 'vr_letters',
                   'mailbox_letters',
+                  // 麦麦 2026-09-08：text_only 也带这 7 个 store（全纯文字，跟"文字+记忆+基础数据"原则一致）
+                  'character_memos', 'character_status_panels',
+                  'story_theaters', 'story_theater_presets', 'scene_templates',
+                  'rp_api_configs', 'rp_global_defaults',
               ];
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
@@ -3686,6 +3697,43 @@ if (!isVisible || !isChattingWithThisChar) {
               vrSchedules: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('vr_schedules'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               vrPoBase: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_po_base') || undefined) : undefined,
               vrPoDevice: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_po_device') || undefined) : undefined,
+
+              // 麦麦 2026-09-08：补 4 个 localStorage 字段
+              // - sullyos_page_zoom (8-27 page-zoom-css)：页面缩放，0.7~1.3
+              //   丢了 → 重装/恢复后缩放回到 100%
+              pageZoom: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const v = localStorage.getItem('sullyos_page_zoom');
+                  if (!v) return undefined;
+                  const n = parseFloat(v);
+                  return Number.isFinite(n) ? n : undefined;
+              })() : undefined,
+              // - custom_css_presets / custom_css_active / custom_css_last_applied (8-27 custom-css-state-persistence)
+              //   丢了 → 自定义 CSS 预设全丢
+              customCssPresets: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('custom_css_presets'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              customCssActive: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('custom_css_active') || undefined) : undefined,
+              customCssLastApplied: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('custom_css_last_applied') || undefined) : undefined,
+
+              // 麦麦 2026-09-08：再补 5 个 localStorage 字段
+              // - discover_last_seen_at：发现页"上次看到时间"，通知红点用
+              discoverLastSeenAt: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const v = localStorage.getItem('discover_last_seen_at');
+                  if (!v) return undefined;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : undefined;
+              })() : undefined,
+              // - os_date_quick_phrases：见面 app 快捷短语配置
+              dateQuickPhrases: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_date_quick_phrases'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              // - os_sync_device_id：多端同步设备 ID（UUID v4）
+              syncDeviceId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('os_sync_device_id') || undefined) : undefined,
+              // - handbook_lifestream_depth：跨角色手账深度
+              handbookLifestreamDepth: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const v = localStorage.getItem('handbook_lifestream_depth');
+                  if (!v) return undefined;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : undefined;
+              })() : undefined,
+              // - vr_help_seen：VR 帮助已看过标记（UI 标记）
+              vrHelpSeen: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('vr_help_seen') || undefined) : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -3938,6 +3986,14 @@ if (!isVisible || !isChattingWithThisChar) {
                   case 'cc_custom_parts': backupData.ccCustomParts = processedData; break;
                   // 暮色 8-25：信箱（双向信件）
                   case 'mailbox_letters': backupData.mailboxLetters = processedData; break;
+                  // 麦麦 2026-09-08：补 7 个 store 分发（云端备份别漏）
+                  case 'character_memos': backupData.characterMemos = processedData; break;
+                  case 'character_status_panels': backupData.characterStatusPanels = processedData; break;
+                  case 'story_theaters': backupData.storyTheaters = processedData; break;
+                  case 'story_theater_presets': backupData.storyTheaterPresets = processedData; break;
+                  case 'scene_templates': backupData.sceneTemplates = processedData; break;
+                  case 'rp_api_configs': backupData.rpApiConfigs = processedData; break;
+                  case 'rp_global_defaults': backupData.rpGlobalDefaults = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -3959,7 +4015,12 @@ if (!isVisible || !isChattingWithThisChar) {
               'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
               'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
               'scheduledMessages',
-              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts'] as const;
+              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts',
+              // 麦麦 2026-09-08：补 7 个新 store 的 largeKey 映射（避免单 key JSON.stringify 巨大对象炸内存）
+              'characterMemos', 'characterStatusPanels',
+              'storyTheaters', 'storyTheaterPresets', 'sceneTemplates',
+              'rpApiConfigs', 'rpGlobalDefaults',
+          ] as const;
 
           // Build metadata (small fields) separately
           const metadata: Record<string, any> = {};
@@ -4224,6 +4285,45 @@ if (!isVisible || !isChattingWithThisChar) {
               } catch (e) {
                   console.warn('[importSystem] restore mcpServers failed:', e);
               }
+          }
+
+          // 麦麦 2026-09-08：补 4 个 localStorage 字段回写
+          // - 页面缩放（8-27 page-zoom-css）
+          if (typeof data.pageZoom === 'number' && Number.isFinite(data.pageZoom)) {
+              localStorage.setItem('sullyos_page_zoom', String(data.pageZoom));
+          }
+          // - 自定义 CSS 预设 / 激活名 / 最后应用内容（8-27 custom-css-state-persistence）
+          //   3 个都校验 + 独立 try-catch,失败不影响其它字段恢复
+          if (Array.isArray(data.customCssPresets)) {
+              try { localStorage.setItem('custom_css_presets', JSON.stringify(data.customCssPresets)); } catch (e) { console.warn('[importSystem] restore customCssPresets failed:', e); }
+          }
+          if (typeof data.customCssActive === 'string') {
+              try { localStorage.setItem('custom_css_active', data.customCssActive); } catch (e) { console.warn('[importSystem] restore customCssActive failed:', e); }
+          }
+          if (typeof data.customCssLastApplied === 'string') {
+              try { localStorage.setItem('custom_css_last_applied', data.customCssLastApplied); } catch (e) { console.warn('[importSystem] restore customCssLastApplied failed:', e); }
+          }
+
+          // 麦麦 2026-09-08：再补 5 个 localStorage 字段回写
+          // - discover_last_seen_at：发现页"上次看到时间"
+          if (typeof data.discoverLastSeenAt === 'number' && Number.isFinite(data.discoverLastSeenAt) && data.discoverLastSeenAt > 0) {
+              try { localStorage.setItem('discover_last_seen_at', String(data.discoverLastSeenAt)); } catch (e) { console.warn('[importSystem] restore discoverLastSeenAt failed:', e); }
+          }
+          // - os_date_quick_phrases：见面 app 快捷短语配置
+          if (Array.isArray(data.dateQuickPhrases)) {
+              try { localStorage.setItem('os_date_quick_phrases', JSON.stringify(data.dateQuickPhrases)); } catch (e) { console.warn('[importSystem] restore dateQuickPhrases failed:', e); }
+          }
+          // - os_sync_device_id：多端同步设备 ID
+          if (typeof data.syncDeviceId === 'string' && data.syncDeviceId.length > 0) {
+              try { localStorage.setItem('os_sync_device_id', data.syncDeviceId); } catch (e) { console.warn('[importSystem] restore syncDeviceId failed:', e); }
+          }
+          // - handbook_lifestream_depth：跨角色手账深度
+          if (typeof data.handbookLifestreamDepth === 'number' && Number.isFinite(data.handbookLifestreamDepth) && data.handbookLifestreamDepth > 0) {
+              try { localStorage.setItem('handbook_lifestream_depth', String(data.handbookLifestreamDepth)); } catch (e) { console.warn('[importSystem] restore handbookLifestreamDepth failed:', e); }
+          }
+          // - vr_help_seen：VR 帮助已看过标记
+          if (typeof data.vrHelpSeen === 'string' && data.vrHelpSeen.length > 0) {
+              try { localStorage.setItem('vr_help_seen', data.vrHelpSeen); } catch (e) { console.warn('[importSystem] restore vrHelpSeen failed:', e); }
           }
           
           if (data.socialAppData) {

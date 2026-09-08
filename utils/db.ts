@@ -2816,6 +2816,15 @@ export const DB = {
       // 暮色 8-25：信箱（双向信件）
       if (data.mailboxLetters && db.objectStoreNames.contains('mailbox_letters')) clearAndAdd('mailbox_letters', data.mailboxLetters);
 
+      // 麦麦 2026-09-08：补 7 个 store 回写（云端备份 import 别再漏）
+      if (data.characterMemos && db.objectStoreNames.contains('character_memos')) clearAndAdd('character_memos', data.characterMemos);
+      if (data.characterStatusPanels && db.objectStoreNames.contains('character_status_panels')) clearAndAdd('character_status_panels', data.characterStatusPanels);
+      if (data.storyTheaters && db.objectStoreNames.contains('story_theaters')) clearAndAdd('story_theaters', data.storyTheaters);
+      if (data.storyTheaterPresets && db.objectStoreNames.contains('story_theater_presets')) clearAndAdd('story_theater_presets', data.storyTheaterPresets);
+      if (data.sceneTemplates && db.objectStoreNames.contains('scene_templates')) clearAndAdd('scene_templates', data.sceneTemplates);
+      if (data.rpApiConfigs && db.objectStoreNames.contains('rp_api_configs')) clearAndAdd('rp_api_configs', data.rpApiConfigs);
+      if (data.rpGlobalDefaults && db.objectStoreNames.contains('rp_global_defaults')) clearAndAdd('rp_global_defaults', data.rpGlobalDefaults);
+
       if (data.userProfile) {
           // 暮色 2026-07-21：text_only 模式不覆盖 user profile — 修头像覆盖 bug
           //   根因：phone A 头像 = R2 URL（美化过的）→ text_only 导出 → phone B 恢复 → clear+put 覆盖本机 → R2 域名 phone B 访问不到 → 头像显示空方块

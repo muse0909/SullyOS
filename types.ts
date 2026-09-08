@@ -2100,6 +2100,27 @@ export interface FullBackupData {
     //   text_only + full 模式都带（配置属于"基础数据"，纯文字同步应该带上）
     //   media_only 不带（媒体模式只同步图片/美化素材）
     mcpServers?: McpServerConfig[];
+
+    // 麦麦 2026-09-08：补 7 个 IDB store 字段（之前 export/import 漏写导致云端备份丢数据）
+    // - 角色备忘录（event/private region 条目，9-5 push-c-and-memo 加）
+    characterMemos?: any[];
+    // - 角色状态面板（per-char 5 槽+recent，9-5/9-6 status-panel 加）
+    characterStatusPanels?: any[];
+    // - 剧情模式：剧场存档 / 预设库 / 场景模板（8-25 story-theater 加）
+    storyTheaters?: any[];
+    storyTheaterPresets?: any[];
+    sceneTemplates?: any[];
+    // - RP 独立 API 配置（8-25 第六步）+ RP 全局默认（8-26）
+    rpApiConfigs?: any[];
+    rpGlobalDefaults?: any[];
+
+    // 麦麦 2026-09-08：补 4 个 localStorage 字段
+    // - 页面缩放（8-27 page-zoom-css）
+    pageZoom?: number;
+    // - 自定义 CSS：预设列表 / 激活名 / 最后应用内容（8-27 custom-css-state-persistence）
+    customCssPresets?: any[];
+    customCssActive?: string;
+    customCssLastApplied?: string;
 }
 
 // --- CLOUD BACKUP TYPES ---

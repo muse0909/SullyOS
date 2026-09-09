@@ -477,8 +477,15 @@ const PhoneShell: React.FC = () => {
         <div
           className="absolute left-0 right-0 bottom-0 overflow-hidden"
           style={{
+            // 暮色 2026-09-09（第四次修正）：hideStatusBar=true 时 App 容器顶到屏幕顶 0
+            //   之前是 env(safe-area-inset-top, 0px) —— App 从安全区顶部开始
+            //   0-30px（Android 系统状态栏区域）属于 PhoneShell 容器**外**，显示 PhoneShell line 440 粉紫渐变
+            //   → chat header sticky top-0 顶到的是 App 容器顶（= safe-area-top），不是屏幕顶 0
+            //   → 0-30px 还是透 PhoneShell 粉紫渐变（暮色看到的"边"）
+            //   改成 0 后：App 容器顶到屏幕顶 0，chat header sticky top-0 = 屏幕顶 0
+            //   → 0-30px 是 chat header 粉紫渐变背景（覆盖 PhoneShell 透出处）
             top: theme.hideStatusBar
-              ? 'env(safe-area-inset-top, 0px)'
+              ? 0
               : 'calc(env(safe-area-inset-top, 0px) + 2.5rem)'
           }}
         >

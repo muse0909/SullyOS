@@ -26,6 +26,15 @@ const StatusBar: React.FC = () => {
   // Format numbers to have leading zeros
   const format = (n: number) => n.toString().padStart(2, '0');
 
+  // 状态栏背景与聊天头部风格联动
+  // 暮色 2026-09-09（第四次修 TDZ）：把 headerStyle/chromeStyle 提前到 line 30 之前
+  //   之前 line 30-44 的 autoTextColor 引用了 headerStyle，但 headerStyle 是 line 88 才声明的 const
+  //   —— 同一个组件作用域内 const 提前用触发 TDZ（Temporal Dead Zone）"Cannot access 'g' before initialization"
+  //   表现是打开 SullyOS StatusBar（hideStatusBar=false）整个组件渲染崩，App 卡死。
+  //   现在提到前面，让 line 30-44 的 autoTextColor 能正常读到。
+  const headerStyle = (theme as any).chatHeaderStyle || 'default';
+  const chromeStyle = (theme as any).chatChromeStyle || 'soft';
+
   // Use content color from theme
   // 暮色 2026-09-09（第三次修正）：textColor 根据 headerStyle 自动变（深底浅字 / 浅底深字）
   //   之前固定 '#ffffff' 白色，'gradient' 模式浅紫底上白字看不清。
@@ -71,8 +80,8 @@ const StatusBar: React.FC = () => {
   }, []);
 
   // 状态栏背景与聊天头部风格联动
-  const headerStyle = (theme as any).chatHeaderStyle || 'default';
-  const chromeStyle = (theme as any).chatChromeStyle || 'soft';
+  // headerStyle / chromeStyle 已在 line 30-34 声明（提前避免 TDZ），
+  // 这里不再重复声明
   // 暮色 2026-09-09（第三次修正）：'gradient' 模式恢复成原版粉紫渐变（跟 chat header 联动），
   //   textColor 改成深字 #1f2937（之前是白字看不清）。
   //   之前我误把 gradient 改成白底导致'状态栏和头像栏联动没了'，已改回。

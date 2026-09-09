@@ -111,13 +111,12 @@ const StatusBar: React.FC = () => {
           className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-1 text-[11px] font-semibold bg-black/5 backdrop-blur-xl ${statusBarBgClass}`}
           style={{
               color: textColor,
-              // 暮色 9-9 22:42 修双倍计算：之前同时设 paddingTop + height 含 env(safe-area-inset-top)
-              //   content-box 默认 box-sizing 下 padding 加在外面，总高度 = 2*env + 2.5rem（特别宽）
-              //   现在 height 不含 safe-area-top（保留作为顶部内边距），box-sizing 改 border-box
-              //   → 总高度 = env + 2.5rem（正确）
+              // 暮色 9-9 23:00 修字没居中：之前 paddingTop: env + height: 2.5rem + box-sizing border-box
+              //   → 内容区 = 2.5rem - env，剩 0-几 px，flex items-center 居中贴底
+              //   现在去 paddingTop，height = env + 2.5rem（总高度含安全区），flex items-center 让内容居中
+              //   Android 系统状态栏已经 hide()，safe-area-top 区域没东西，StatusBar 内容可以填进去
               boxSizing: 'border-box',
-              paddingTop: 'env(safe-area-inset-top)',
-              height: '2.5rem'
+              height: 'calc(env(safe-area-inset-top, 0px) + 2.5rem)'
           }}
       >
         <div className="w-1/3 pl-2 flex items-center gap-2 pointer-events-auto">

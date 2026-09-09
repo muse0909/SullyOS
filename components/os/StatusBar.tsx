@@ -62,8 +62,10 @@ const StatusBar: React.FC = () => {
   // 状态栏背景与聊天头部风格联动
   const headerStyle = (theme as any).chatHeaderStyle || 'default';
   const chromeStyle = (theme as any).chatChromeStyle || 'soft';
+  // 暮色 2026-09-09：'gradient' 模式去掉粉紫渐变（之前是 from-primary/20 via-primary/10 to-white/80），
+  //   跟 chat header 一起改。跟 chat header 'minimal' 模式对齐（白底 + 模糊）。
   const statusBarBgClass = headerStyle === 'gradient'
-    ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl'
+    ? 'bg-white/95 backdrop-blur-md'
     : headerStyle === 'minimal'
     ? 'bg-white/95 backdrop-blur-md'
     : headerStyle === 'wechat'

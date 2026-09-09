@@ -168,8 +168,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
 
     const headerToneClass =
+        // 暮色 2026-09-09：'gradient' 模式去掉粉紫渐变（之前是 from-primary/20 via-primary/10 to-white/80），
+        //   改成跟 'minimal' 几乎一致（白底 + 模糊 + 细边），只保留 gradient 标签本身的语义。
+        //   原因：那条渐变条盖在 chat header 顶部像 status bar 那种"边"，全屏体验被破坏。
         headerStyle === 'gradient'
-            ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm'
+            ? 'bg-white/85 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
             : headerStyle === 'minimal'
               ? 'bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
               : headerStyle === 'wechat'

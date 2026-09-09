@@ -260,12 +260,17 @@ const PhoneShell: React.FC = () => {
   // 现在不弹了
 
   // Capacitor Native Handling
+  // 暮色 2026-09-09（第二次修正）：改 setOverlaysWebView({ overlay: false }) + setBackgroundColor 白色
+  //   之前是 overlay: true + hide() —— overlay:true 让 WebView 顶到屏幕最顶 0，
+  //   hide() 只隐藏状态栏文字图标但 0-Xpx 还是 WebView 区域 → PhoneShell 背景（粉紫渐变）从这漏出来。
+  //   改成 overlay:false + 白色背景：0-Xpx 是 Android 系统状态栏区域（白色），WebView 从 X 开始
+  //   → PhoneShell 粉紫渐变不再透过状态栏漏出。
   useEffect(() => {
     const initNative = async () => {
         if (Capacitor.isNativePlatform()) {
             try {
-                await CapStatusBar.setOverlaysWebView({ overlay: true });
-                await CapStatusBar.hide();
+                await CapStatusBar.setOverlaysWebView({ overlay: false });
+                await CapStatusBar.setBackgroundColor({ color: '#FFFFFF' });
                 await CapStatusBar.setStyle({ style: StatusBarStyle.Dark });
 
                 const permStatus = await LocalNotifications.checkPermissions();

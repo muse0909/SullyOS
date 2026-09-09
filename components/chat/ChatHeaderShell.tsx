@@ -168,11 +168,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
 
     const headerToneClass =
-        // 暮色 2026-09-09：'gradient' 模式去掉粉紫渐变（之前是 from-primary/20 via-primary/10 to-white/80），
-        //   改成跟 'minimal' 几乎一致（白底 + 模糊 + 细边），只保留 gradient 标签本身的语义。
-        //   原因：那条渐变条盖在 chat header 顶部像 status bar 那种"边"，全屏体验被破坏。
+        // 暮色 2026-09-09（第二次修正）：'gradient' 模式的粉紫渐变要保留（暮色自己设的 gradient 就是要这个渐变），
+        //   之前我误把整个 gradient 改掉导致头像栏变"白色色块"，已改回。
+        //   真正该修的不是 chat header 自己的渐变，是 Android 系统状态栏透明让 PhoneShell 背景透出来
+        //   （见 components/os/StatusBar.tsx 用 @capacitor/status-bar 设 Android 状态栏背景色 + styles.xml Android 12+ SplashScreen API）。
         headerStyle === 'gradient'
-            ? 'bg-white/85 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
+            ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm'
             : headerStyle === 'minimal'
               ? 'bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
               : headerStyle === 'wechat'

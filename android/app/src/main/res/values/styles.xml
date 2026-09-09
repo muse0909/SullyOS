@@ -16,12 +16,11 @@
     </style>
 
 
-    <!-- 暮色 2026-09-09：加 Android 12+ SplashScreen API 兼容
-         之前只配 android:background（Android 5-11 生效），12+ 用了新 SplashScreen API，
-         不认 android:background 字段，所以 splash 显示成默认白底（暮色看到"先白屏再蓝闪"）。
-         加 windowSplashScreenBackground（背景色，跟 loading 图底色 #b8d4ec 一致防止闪黑）
-         + windowSplashScreenAnimatedIcon（icon 居中显示 splash 图），
-         同时保留 android:background 给旧 Android 兜底。 -->
+    <!-- 暮色 2026-09-09（第五次修正 splash）：换暮色给的新 splash 图（1254x1254 方形）
+         https://i.ibb.co/PGc3K1YG/tb2-1.png（深蓝月夜风 + 月亮 + 牵牛星 + 小女孩 + 猫）
+         Android 12+ SplashScreen API：背景色 #b8d4ec + 居中图标（splash 图 ~108dp）
+         Android 5-11 用 android:background 兜底（全屏背景图）
+         暮色 21:43 给的新图替代之前的浅蓝拱窗（暮色之前看到"压缩成很小一个"就是 SplashScreen API 居中 icon）。 -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
         <item name="windowSplashScreenBackground">#b8d4ec</item>

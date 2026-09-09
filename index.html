@@ -190,9 +190,10 @@
         position: fixed;
         inset: 0;
         z-index: 99999;
-        /* 暮色 2026-09-09 换图：背景色跟默认 loading 图底色一致（旧图 #b8d4ec 浅蓝，
-           新图暮色 21:43 给的深蓝月夜风 tb2-1.png — 用 #0a1628 深蓝夜空防闪） */
-        background: #0a1628;
+        /* 暮色 2026-09-09 22:43 换图：背景色跟默认 loading 图底色一致
+           暮色给的新图（NOCTURNE 浅蓝拱窗白天 1080x2376）底色是浅蓝
+           用 #b8d4ec 浅蓝底色（图片加载前不闪黑） */
+        background: #b8d4ec;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -200,9 +201,13 @@
         transition: opacity 0.5s ease-out;
       }
       #sullyos-loading img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover; /* 跟原图比例一致铺满 */
+        /* 暮色 9-9 22:42：完整显示图（不裁剪），空余区域由 #b8d4ec 背景填充
+           之前 cover 会放大裁掉四周，跟暮色要的"看到完整图"不符 */
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain;
         display: block;
       }
       #sullyos-loading.sullyos-loading-fade {
@@ -230,30 +235,47 @@
 </script>
 </head>
   <body>
-    <!-- 暮色 2026-09-09：WebView loading 阶段显示的图（点开应用图标 → Capacitor splash → WebView 加载远程资源 → React 渲染） -->
-    <!-- 默认图是 public/loading-default.png（暮色给的浅蓝拱窗白天那张） -->
+    <!-- 暮色 2026-09-09 22:43：WebView loading 阶段显示的图
+         流程：splash (1s) → 加载图 (强制 2s) → React 渲染完 → 淡出
+         总时长 ≈ 3s（splash 1s + loading 2s）
+         暮色 9-9 22:42 反馈 "开屏 1 秒，加载 2 秒然后跳桌面" -->
+    <!-- 默认图是 public/loading-default.png（暮色 9-9 22:43 给的 NOCTURNE 浅蓝拱窗白天那张高分辨率版） -->
     <!-- 用户上传的图由 utils/loadingImage.ts 在 index.tsx 启动时读 localStorage 覆盖 src -->
-    <!-- React 渲染完 App 后会派发 sullyos:app-ready 事件，这里监听后淡出 -->
     <div id="sullyos-loading" aria-hidden="true">
       <img id="sullyos-loading-img" src="./loading-default.png" alt="" />
     </div>
     <script>
       (function setupLoadingFadeOut() {
-        // 监听 React 启动后派发的 sullyos:app-ready 事件，淡出 loading
+        // 暮色 9-9 22:42：loading 阶段固定显示 2 秒（不管 React 渲染完没完）
+        //   React 渲染完会派发 sullyos:app-ready — 但我们要等 2 秒再看效果
+        //   之前是 React 一渲染完就淡出，导致 loading 闪一下就没了
         function fadeOut() {
           var el = document.getElementById('sullyos-loading');
           if (!el) return;
           el.classList.add('sullyos-loading-fade');
-          // 淡出动画 0.5s 后从 DOM 移除（释放内存）
           setTimeout(function () {
             if (el && el.parentNode) el.parentNode.removeChild(el);
           }, 600);
         }
-        // 兜底：10s 后无论 React 启动没启动都淡出（防止卡死白屏）
-        var fallback = setTimeout(fadeOut, 10000);
+        // 暮色 9-9 22:42 想要的开屏 1s + loading 2s = 3s 总时长
+        // splash 阶段由 Android launchShowDuration 控制（1s）
+        // loading 阶段固定显示 2 秒，从 DOMContentLoaded 起算（不依赖 React 渲染）
+        var loadingStart = Date.now();
+        var LOADING_MIN_MS = 2000;  // loading 最少显示 2 秒
+        function maybeFadeOut() {
+          var elapsed = Date.now() - loadingStart;
+          if (elapsed >= LOADING_MIN_MS) {
+            fadeOut();
+          } else {
+            setTimeout(fadeOut, LOADING_MIN_MS - elapsed);
+          }
+        }
+        // 兜底：splash + loading + React 渲染超过 12s 强制淡出（防卡死白屏）
+        var fallback = setTimeout(fadeOut, 12000);
         window.addEventListener('sullyos:app-ready', function () {
+          // React 渲染完，但不立刻淡出 —— 等到至少 2 秒再淡出
           clearTimeout(fallback);
-          fadeOut();
+          maybeFadeOut();
         }, { once: true });
       })();
     </script>

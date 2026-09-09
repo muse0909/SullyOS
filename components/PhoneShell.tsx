@@ -260,18 +260,18 @@ const PhoneShell: React.FC = () => {
   // 现在不弹了
 
   // Capacitor Native Handling
-  // 暮色 2026-09-09（第二次修正）：改 setOverlaysWebView({ overlay: false }) + setBackgroundColor 白色
-  //   之前是 overlay: true + hide() —— overlay:true 让 WebView 顶到屏幕最顶 0，
-  //   hide() 只隐藏状态栏文字图标但 0-Xpx 还是 WebView 区域 → PhoneShell 背景（粉紫渐变）从这漏出来。
-  //   改成 overlay:false + 白色背景：0-Xpx 是 Android 系统状态栏区域（白色），WebView 从 X 开始
-  //   → PhoneShell 粉紫渐变不再透过状态栏漏出。
+  // 暮色 2026-09-09（第三次修正）：恢复 setOverlaysWebView({ overlay: true }) + hide()
+  //   之前误改 overlay:false + setBackgroundColor('#FFFFFF') 试图用 Android 系统状态栏遮 PhoneShell 粉紫
+  //   渐变背景 —— 但暮色 Android 11- StatusBarStyle.Dark = 白字，跟 #FFFFFF 背景撞色看不清时间。
+  //   正确做法：让 Android 系统状态栏整个消失（hide()），WebView 顶到屏幕顶 0
+  //   （overlay:true），chat header 自己用 sticky top-0 + padding-top: env(safe-area-inset-top)
+  //   让背景延伸到 0 但内容从安全区下开始 —— 这样 PhoneShell 粉紫不再透出，chat header 也顶到顶。
   useEffect(() => {
     const initNative = async () => {
         if (Capacitor.isNativePlatform()) {
             try {
-                await CapStatusBar.setOverlaysWebView({ overlay: false });
-                await CapStatusBar.setBackgroundColor({ color: '#FFFFFF' });
-                await CapStatusBar.setStyle({ style: StatusBarStyle.Dark });
+                await CapStatusBar.setOverlaysWebView({ overlay: true });
+                await CapStatusBar.hide();
 
                 const permStatus = await LocalNotifications.checkPermissions();
                 if (permStatus.display !== 'granted') {

@@ -347,7 +347,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
 
     return (
-        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
+        // 暮色 2026-09-09（第三次修正）：sticky top-0 + paddingTop: env(safe-area-inset-top)
+        //   让 header 背景延伸覆盖到屏幕顶 0（包括 Android 状态栏区域），
+        //   但内容从安全区下开始不跟状态栏撞。
+        //   PhoneShell.tsx 已改 overlay:true + hide() 让 Android 状态栏消失 + WebView 顶到 0，
+        //   所以这里 sticky top-0 = 屏幕顶 0，paddingTop 把头像/麦麦/星/设置推到安全区下。
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`} style={{ paddingTop: 'env(safe-area-inset-top)' }}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>

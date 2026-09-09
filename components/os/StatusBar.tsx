@@ -27,7 +27,18 @@ const StatusBar: React.FC = () => {
   const format = (n: number) => n.toString().padStart(2, '0');
 
   // Use content color from theme
-  const textColor = theme.contentColor || '#ffffff';
+  // 暮色 2026-09-09（第三次修正）：textColor 根据 headerStyle 自动变（深底浅字 / 浅底深字）
+  //   之前固定 '#ffffff' 白色，'gradient' 模式浅紫底上白字看不清。
+  //   手动按 headerStyle 映射（不引入 contrast 库减少 bundle）：
+  //   - gradient / minimal / wechat / telegram / floating / default 都是浅色背景 → 深字
+  //   - discord 是深色背景 → 浅字
+  //   - pixel 是棕色背景 → 浅字
+  //   - flat 是纯白底 → 深字
+  const autoTextColor =
+    headerStyle === 'discord' ? '#ffffff'
+    : headerStyle === 'pixel' ? '#fff7ed'
+    : '#1f2937';  // 其他都是浅色背景用深字
+  const textColor = theme.contentColor || autoTextColor;
 
   useEffect(() => {
     const initBattery = async () => {
@@ -62,10 +73,11 @@ const StatusBar: React.FC = () => {
   // 状态栏背景与聊天头部风格联动
   const headerStyle = (theme as any).chatHeaderStyle || 'default';
   const chromeStyle = (theme as any).chatChromeStyle || 'soft';
-  // 暮色 2026-09-09：'gradient' 模式去掉粉紫渐变（之前是 from-primary/20 via-primary/10 to-white/80），
-  //   跟 chat header 一起改。跟 chat header 'minimal' 模式对齐（白底 + 模糊）。
+  // 暮色 2026-09-09（第三次修正）：'gradient' 模式恢复成原版粉紫渐变（跟 chat header 联动），
+  //   textColor 改成深字 #1f2937（之前是白字看不清）。
+  //   之前我误把 gradient 改成白底导致'状态栏和头像栏联动没了'，已改回。
   const statusBarBgClass = headerStyle === 'gradient'
-    ? 'bg-white/95 backdrop-blur-md'
+    ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl'
     : headerStyle === 'minimal'
     ? 'bg-white/95 backdrop-blur-md'
     : headerStyle === 'wechat'

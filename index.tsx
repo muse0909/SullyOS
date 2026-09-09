@@ -194,6 +194,21 @@ applyPageZoom();
   bootstrapUserCustomCss();
 })();
 
+// 暮色 2026-09-09：覆盖 WebView loading 阶段显示的图（index.html 里的 #sullyos-loading-img）
+//   流程：index.html 默认 src 指向 ./loading-default.png；这里读 localStorage，
+//   如果用户上传过图就覆盖 src（base64 dataURL），React 渲染完 App.tsx 派发 sullyos:app-ready 后淡出。
+//   必须在 root.render 之前跑（同步读 localStorage，img 元素已存在，直接 setAttribute）
+(() => {
+  if (typeof document === 'undefined') return;
+  try {
+    const custom = localStorage.getItem('custom_loading_image');
+    if (custom) {
+      const img = document.getElementById('sullyos-loading-img') as HTMLImageElement | null;
+      if (img) img.src = custom;
+    }
+  } catch {}
+})();
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");

@@ -4,6 +4,14 @@ import { useOS, DEFAULT_WALLPAPER, NOSTALGIA_APPEARANCE, PAPER_WALLPAPER, isPape
 import { OSTheme, DesktopDecoration, AppearancePreset, Toast, AppID } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
+// 暮色 2026-09-09：启动加载图（系统级，WebView 加载远程资源时显示）
+import {
+  hasCustomLoadingImage,
+  setCustomLoadingImage as setCustomLoadingImageUtil,
+  clearCustomLoadingImage as clearCustomLoadingImageUtil,
+  getDefaultLoadingImageUrl,
+  getActiveLoadingImageUrl,
+} from '../utils/loadingImage';
 import { Sparkle } from '@phosphor-icons/react';
 import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import { Capacitor } from '@capacitor/core';
@@ -220,6 +228,97 @@ const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<
                 聊天界面设置全局生效。单个角色的气泡颜色、背景图等可在聊天内的「捏主题」中自定义。
             </div>
         </div>
+    );
+};
+
+// --- Loading Image Panel Component ---
+// 暮色 2026-09-09：启动加载图设置面板
+// - 预览当前激活的图（用户上传 or 默认那张浅蓝拱窗）
+// - 点上传按钮：选图 → 读 base64 → localStorage
+// - 长按预览：清除用户图，回默认
+// - 跟 Wallpaper 块的交互模式对齐（点上传/长按恢复）
+interface LoadingImagePanelProps {
+    addToast: (msg: string, type?: Toast['type']) => void;
+}
+const LoadingImagePanel: React.FC<LoadingImagePanelProps> = ({ addToast }) => {
+    const inputRef = useRef<HTMLInputElement>(null);
+    // 强制刷新用：上传/清除后 setState 让预览立刻更新
+    const [previewKey, setPreviewKey] = useState(0);
+    const [previewUrl, setPreviewUrl] = useState<string>(() => getActiveLoadingImageUrl());
+    const [hasCustom, setHasCustom] = useState<boolean>(() => hasCustomLoadingImage());
+
+    const handleUpload = useCallback(async (file: File) => {
+        try {
+            await setCustomLoadingImageUtil(file);
+            const url = getActiveLoadingImageUrl();
+            setPreviewUrl(url);
+            setHasCustom(true);
+            setPreviewKey(k => k + 1);
+            addToast('加载图已更新，下次启动生效', 'success');
+        } catch (e: any) {
+            addToast(e?.message || '保存失败', 'error');
+        }
+    }, [addToast]);
+
+    const handleClear = useCallback(() => {
+        clearCustomLoadingImageUtil();
+        setPreviewUrl(getDefaultLoadingImageUrl());
+        setHasCustom(false);
+        setPreviewKey(k => k + 1);
+        addToast('已恢复默认加载图', 'success');
+    }, [addToast]);
+
+    return (
+        <>
+            <div
+                className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
+                onClick={() => inputRef.current?.click()}
+                onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!hasCustom) {
+                        addToast('当前已是默认加载图', 'info');
+                        return;
+                    }
+                    handleClear();
+                }}
+            >
+                <img
+                    key={previewKey}
+                    src={previewUrl}
+                    alt="加载图预览"
+                    className="w-full h-full object-cover"
+                    draggable={false}
+                />
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">
+                        更换加载图
+                    </span>
+                </div>
+            </div>
+            <input
+                type="file"
+                ref={inputRef}
+                className="hidden"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleUpload(f);
+                    // 清空 value 允许重复选同一张
+                    e.target.value = '';
+                }}
+            />
+            <p className="text-center text-[10px] text-slate-400 mb-2">
+                点击上传 / 长按{hasCustom ? '恢复默认' : '已是默认'}
+            </p>
+            {hasCustom && (
+                <button
+                    onClick={handleClear}
+                    className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100"
+                >
+                    恢复默认加载图
+                </button>
+            )}
+        </>
     );
 };
 
@@ -903,6 +1002,16 @@ const Appearance: React.FC = () => {
                         </button>
                         <p className="text-[10px] text-slate-400">直接引用网络图片，不占用本地存储</p>
                     </div>
+                </section>
+
+                {/* 暮色 2026-09-09：启动加载图（系统级，WebView 加载远程资源到 React 渲染完之间显示）
+                    跟 Wallpaper 同语义层级：都是「App 启动/系统级」视觉。跟「桌面装饰/聊天外观」分开。
+                    默认图是暮色给的浅蓝拱窗白天那张（public/loading-default.png）。
+                    用户上传后存 localStorage（base64 dataURL），下次启动自动用。 */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">启动加载图</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">App 启动时 WebView 加载到主界面之间的过渡图。点上传换图，长按恢复默认。</p>
+                    <LoadingImagePanel addToast={addToast} />
                 </section>
 
                 {/* Page 1 Desktop Square Image */}

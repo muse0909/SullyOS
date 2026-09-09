@@ -347,18 +347,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
 
     return (
-        // 暮色 2026-09-09 23:00 修：
-        //   1. 头像靠下 — 之前 StatusBar 高度 env+2.5rem ≈ 90px > chat header h-[72px] 72px，
-        //      chat header 被 StatusBar 完全盖住（z-50 > 30）
-        //   2. 中间多出一条 — StatusBar 渐变在小高度看起来白，chat header 渐变在大高度看起来紫，不接缝
-        //   现在：去 headerDensityClass 固定高度，改 inline 高度 = env+4.5rem（覆盖 StatusBar 高度 + 内容高度），
-        //      paddingTop = env（让内容从安全区下开始，避开 StatusBar 高度内的内容），
-        //      items-start 让内容贴顶（不是居中）
-        //   0-env：ChatHeader 渐变顶部空白（透 StatusBar 覆盖区域）
-        //   env-env+2.5rem：被 StatusBar 盖住（StatusBar z-50）
-        //   env+2.5rem-env+4.5rem：ChatHeader 内容 + 渐变（StatusBar 已经结束）
-        //   两段渐变颜色一致（都是 'gradient' 模式粉紫）→ 视觉上连续，没中间条
-        <div className={`sully-chat-header flex items-start shrink-0 z-30 sticky top-0 relative ${headerToneClass}`} style={{ height: 'calc(env(safe-area-inset-top, 0px) + 4.5rem)', paddingTop: 'env(safe-area-inset-top)' }}>
+        // 暮色 2026-09-09 23:10 改：去掉 inline 高度 + paddingTop，恢复默认 h-[72px] + flex items-center
+        //   之前 height: calc(env + 4.5rem) 让 chat header 撑到 122px，暮色看到"占半个屏幕"
+        //   现在 PhoneShell App 容器 hideStatusBar=false 时 top = calc(env + 2.5rem)
+        //   → App 从 StatusBar 下面开始（不重叠），chat header 在 App 容器内顶部（env+2.5rem 处）
+        //   → 默认 h-[72px] 高度正好，flex items-center 内容居中
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>

@@ -347,13 +347,13 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
 
     return (
-        // 暮色 2026-09-10 17:45 改：sticky top: 2.5rem 紧接 StatusBar 下方 + paddingTop: env(safe-area-inset-top)
-        //   让头像从 Android 系统状态栏区域下方开始（避开 StatusBar 高度）
-        //   0-2.5rem: StatusBar (z-50)
-        //   2.5rem-env: chat header 顶部空白（StatusBar 已经结束，下面是 chat header 渐变空白区）
-        //   env-env+72px: chat header 内容（头像/麦麦/星/设置）
-        //   状态栏和头像栏贴一起（中间无空白），但头像不会跟 StatusBar 字撞
-        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky relative ${headerToneClass}`} style={{ top: '2.5rem', paddingTop: 'env(safe-area-inset-top)' }}>
+        // 暮色 2026-09-10 18:16 改：去掉 paddingTop + 改回 sticky top-0（昨天 93c3e8fb 居中版本）
+        //   之前 paddingTop: env + flex items-center 居中导致头像偏下（paddingTop 把内容推到容器下半）
+        //   现在 PhoneShell App 容器 hideStatusBar=false 时 top: 2.5rem，App 从 40px 起
+        //   sticky top-0 在 App 容器内顶部 = 屏顶 40px（紧接 StatusBar 下方）
+        //   h-[72px] + flex items-center → 头像在 76px 屏顶（居中）
+        //   Android 系统状态栏已 hide()，不需要 paddingTop 避安全区
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>

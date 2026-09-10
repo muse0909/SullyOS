@@ -477,14 +477,15 @@ const PhoneShell: React.FC = () => {
         <div
           className="absolute left-0 right-0 bottom-0 overflow-hidden"
           style={{
-            // 暮色 2026-09-10 17:45 改：App 容器永远 top: 0（不管是 hideStatusBar 还是打开状态栏）
-            //   之前 hideStatusBar=false 时 top: calc(env + 2.5rem) —— 给 StatusBar 留了 env 高度的顶部空白
-            //   → 0-2.5rem=StatusBar, 2.5rem-env+2.5rem=空白（中间条）, env+2.5rem-App=chat header
-            //   改 0 后 App 从屏幕顶开始，sticky chat header 用 top: 2.5rem 紧接 StatusBar 下方
-            //   0-2.5rem: StatusBar (z-50)
-            //   2.5rem 起: App 容器 + chat header
-            //   中间无空白，状态栏和头像栏贴一起
-            top: 0
+            // 暮色 2026-09-10 18:16 改：hideStatusBar=false 时 App 容器从 2.5rem 开始（StatusBar 底边）
+            //   之前我改永远 top: 0 → App 内容从屏顶 0 开始，被 StatusBar (0-40px) 覆盖
+            //   现在 hideStatusBar=false 时 App 从 40px 开始 → 所有 App 内容紧贴 StatusBar 下方
+            //   hideStatusBar=true 时 App 还是从 0 开始（之前逻辑）
+            //   chat header sticky top-0（在 App 容器内顶部 = 屏顶 2.5rem = 40px 处）紧接 StatusBar 下方
+            //   头像栏 h-[72px] 默认，flex items-center 内容居中
+            top: theme.hideStatusBar
+              ? 0
+              : '2.5rem'
           }}
         >
           <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>

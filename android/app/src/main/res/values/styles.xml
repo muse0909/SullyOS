@@ -16,14 +16,17 @@
     </style>
 
 
-    <!-- 暮色 2026-09-09（第五次修正 splash）：换暮色给的新 splash 图（1254x1254 方形）
-         https://i.ibb.co/PGc3K1YG/tb2-1.png（深蓝月夜风 + 月亮 + 牵牛星 + 小女孩 + 猫）
-         Android 12+ SplashScreen API：背景色 #b8d4ec + 居中图标（splash 图 ~108dp）
+    <!-- 暮色 2026-09-10（第六次修正 splash）：换暮色 21:43 给的 tb2-1.png（1254x1254 方形圆角深蓝月夜）
+         https://i.ibb.co/PGc3K1YG/tb2-1.png
+         Android 12+ SplashScreen API：白色背景 #ffffff + 居中图标（tb2-1.png ~108dp）
          Android 5-11 用 android:background 兜底（全屏背景图）
-         暮色 21:43 给的新图替代之前的浅蓝拱窗（暮色之前看到"压缩成很小一个"就是 SplashScreen API 居中 icon）。 -->
+         android:windowBackground=#ffffff 让 splash 关掉那一帧 WebView 默认底也是白色（无白闪）
+         暮色 9-10 22:17 明确要求"背景要白色，不要浅蓝"
+         加载页（loading-default.png = 1233455.jpg 长方形浅蓝拱窗）保持不动 -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
-        <item name="windowSplashScreenBackground">#b8d4ec</item>
+        <item name="android:windowBackground">#ffffff</item>
+        <item name="windowSplashScreenBackground">#ffffff</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>

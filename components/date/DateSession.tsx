@@ -855,8 +855,11 @@ const DateSession: React.FC<DateSessionProps> = ({
             ></div>
 
             {/* Top Return Button */}
+            {/* 暮色 2026-09-10 19:18：之前 paddingTop: env + 28px 标题离状态栏太远
+                PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起
+                不需要再 paddingTop env，改成 1.75rem (28px) 让按钮贴紧状态栏下方 */}
             <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none flex items-start px-4"
-              style={{ paddingTop: 'calc(env(safe-area-inset-top, 12px) + 28px)' }}>
+              style={{ paddingTop: '1.75rem' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowExitModal(true); }}
                 className="pointer-events-auto w-10 h-10 rounded-full bg-black/40 backdrop-blur-md border border-white/20 text-white flex items-center justify-center active:scale-90 transition-all shadow-lg"
@@ -882,7 +885,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
                     maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 6%, rgba(0,0,0,1) 14%, rgba(0,0,0,1) 100%)',
                   } : {
-                    paddingTop: 'max(56px, calc(env(safe-area-inset-top) + 44px))',
+                    paddingTop: 'max(28px, calc(env(safe-area-inset-top) + 12px))',
                     paddingBottom: 'max(160px, calc(env(safe-area-inset-bottom) + 140px))',
                     paddingLeft: '16px',
                     paddingRight: '16px',

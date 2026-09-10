@@ -21,13 +21,13 @@ import { safeResponseJson } from '../utils/safeApi';
 const genLocalId = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 
 // 安全区单一来源：index.html :root 定义 --safe-top/--safe-bottom/--chrome-top，
-// 暮色 2026-09-10 18:45：之前 VR_TOP = 'var(--chrome-top)' = env + 2.5rem = ~90px 标题离状态栏太远
-//   PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起，不需要再 paddingTop env
-//   改成 2.5rem (40px) 让标题贴紧状态栏下方
-const VR_TOP = '2.5rem';
+// 暮色 2026-09-10 19:18：之前 VR_TOP = 2.5rem (40px) 标题离状态栏还有 40px 空（App 40 + VR 40 = 80）
+//   PhoneShell App 容器已 top: 2.5rem (= 40px)，VR 顶部再 paddingTop 2.5rem 让标题离状态栏 40px
+//   改成 0.5rem (8px) 让标题贴紧状态栏下方 8px
+const VR_TOP = '0.5rem';
 const VR_SAFE_BOTTOM = 'var(--safe-bottom)';
-// 暮色 18:45：VR_ROOM_PANEL_TOP 也跟着改（房间内浮层从顶栏下方开始 = 2.5rem + 3.75rem）
-const VR_ROOM_PANEL_TOP = 'calc(2.5rem + 3.75rem)';
+// 暮色 19:18：VR_ROOM_PANEL_TOP 也跟着改（房间内浮层从顶栏下方开始 = 0.5rem + 3.75rem）
+const VR_ROOM_PANEL_TOP = 'calc(0.5rem + 3.75rem)';
 // 底部额外留一点手势余量；iOS 全屏隐藏 home 条时也不让交互区贴着物理底边。
 const VR_BOTTOM_TOUCH_GAP = '0.75rem';
 // 底部内边距 / 贴底定位统一用它：base + 安全区 + 手势余量。

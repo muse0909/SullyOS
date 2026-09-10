@@ -43,11 +43,22 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // 暮色 2026-09-10：APK 自动版本号
-        //   versionCode = 打包时刻 yyyyMMddHHmm（分钟级精度，保证每次 build 唯一递增）
+        //   versionCode = Unix timestamp 秒数（从 1970 起）
+        //   2026 年约 17.5 亿秒，远小于 Integer.MAX_VALUE (21 亿)
+        //   每次 build 都唯一递增（秒级精度，同一秒内两次 build 相同但概率低）
         //   versionName = 日期 + 短 git commit hash（暮色手机能看到完整版本来源）
         //   例如 2026-09-10-6772f4b（看一眼就知道是 9-10 打的 6772f4b commit）
-        versionCode Integer.parseInt(new Date().format("yyyyMMddHHmm"))
-        versionName new Date().format("yyyy-MM-dd") + "-" + ('git rev-parse --short HEAD'.execute().text.trim())
+        versionCode ((System.currentTimeMillis() / 1000L) as int)
+        def buildDate = new Date().format("yyyy-MM-dd")
+        def gitHash = 'local'
+        try {
+            def proc = ['git', 'rev-parse', '--short', 'HEAD'].execute()
+            proc.waitFor()
+            if (proc.exitValue() == 0) {
+                gitHash = proc.text.trim()
+            }
+        } catch (Exception ignored) {}
+        versionName "${buildDate}-${gitHash}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -79,6 +90,21 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // 暮色 2026-09-10：APK 文件名带版本号 + 应用名（"拾光机-xxxx"）
+    //   xxxx = versionName（例如 2026-09-10-6b76cac3）
+    //   debug 包后缀加 -debug，release 包不加后缀
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def versionName = variant.versionName
+            def apkName = "拾光机-${versionName}"
+            if (variant.buildType.name == 'debug') {
+                apkName += '-debug'
+            }
+            apkName += '.apk'
+            output.outputFileName = apkName
         }
     }
 }

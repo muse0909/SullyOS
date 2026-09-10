@@ -714,7 +714,9 @@ Format:
     if (view === 'select') {
         return (
             <div className="absolute inset-0 flex flex-col bg-slate-900 font-light overflow-hidden">
-                <div className="h-20 pt-4 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10 shrink-0">
+                {/* 暮色 2026-09-10 19:18：之前 h-20 pt-4 (96px) 头部过高
+                    改成 h-14 pt-2 (64px) 让标题贴紧状态栏下方，跟详情页头部一致 */}
+                <div className="h-14 pt-2 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10 shrink-0">
                     <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-white/10 text-white">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>

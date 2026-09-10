@@ -42,8 +42,12 @@ android {
         applicationId "com.aetheros.simulator"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // 暮色 2026-09-10：APK 自动版本号
+        //   versionCode = 打包时刻 yyyyMMddHHmm（分钟级精度，保证每次 build 唯一递增）
+        //   versionName = 日期 + 短 git commit hash（暮色手机能看到完整版本来源）
+        //   例如 2026-09-10-6772f4b（看一眼就知道是 9-10 打的 6772f4b commit）
+        versionCode Integer.parseInt(new Date().format("yyyyMMddHHmm"))
+        versionName new Date().format("yyyy-MM-dd") + "-" + ('git rev-parse --short HEAD'.execute().text.trim())
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

@@ -263,7 +263,9 @@ const WorldbookApp: React.FC = () => {
             <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white/80 to-transparent pointer-events-none z-10"></div>
 
             {/* Header */}
-            <div className="h-20 bg-white/70 backdrop-blur-xl flex items-end pb-3 px-6 border-b border-white/40 shrink-0 sticky top-0 z-20 shadow-sm">
+            {/* 暮色 2026-09-10 18:45：之前 h-20 (80px) 头部过高，标题离状态栏太远
+                改成 h-14 (56px) + pb-2 让头部紧凑，标题贴紧状态栏下方 */}
+            <div className="h-14 bg-white/70 backdrop-blur-xl flex items-end pb-2 px-6 border-b border-white/40 shrink-0 sticky top-0 z-20 shadow-sm">
                 <div className="flex justify-between items-center w-full">
                     <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>

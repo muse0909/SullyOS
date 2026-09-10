@@ -741,7 +741,10 @@ ${previousGuestbook}
         <div className="h-full w-full flex flex-col font-sans relative overflow-hidden" style={{ background: 'linear-gradient(180deg, #FDF6E3 0%, #FFF8E1 100%)' }}>
 
             {/* Premium Header */}
-            <div className="pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-3 px-4 sticky top-0 z-[50] shrink-0"
+            {/* 暮色 2026-09-10 18:45：之前 pt-[calc(env+1.5rem)] = ~74px 标题离状态栏太远
+                PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起
+                改成 pt-4 (1rem = 16px) 让标题贴紧状态栏下方 */}
+            <div className="pt-4 pb-3 px-4 sticky top-0 z-[50] shrink-0"
                  style={{ background: 'linear-gradient(180deg, rgba(141, 110, 99, 0.95) 0%, rgba(109, 76, 65, 0.95) 100%)', backdropFilter: 'blur(10px)' }}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -871,7 +874,9 @@ ${previousGuestbook}
             {showGuestbook && (
                 <div className="absolute inset-0 z-[100] flex flex-col animate-slide-up" style={{ background: 'linear-gradient(180deg, #FDF6E3 0%, #FFF8E1 100%)' }}>
                     {/* Header */}
-                    <div className="pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 px-4 shrink-0"
+                    {/* 暮色 2026-09-10 18:45：之前 pt-[calc(env+0.75rem)] = ~62px 标题离状态栏太远
+                        改成 pt-2 (8px) 让标题贴紧状态栏下方 */}
+                    <div className="pt-2 pb-3 px-4 shrink-0"
                          style={{ background: 'linear-gradient(180deg, rgba(141, 110, 99, 0.95) 0%, rgba(109, 76, 65, 0.95) 100%)', backdropFilter: 'blur(10px)' }}>
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">

@@ -748,7 +748,10 @@ const DateApp: React.FC = () => {
                 <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: SELECT_THEME.stars }} />
 
                 {/* 顶栏 + 标题 */}
-                <div className="relative z-10 shrink-0" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
+                {/* 暮色 2026-09-10 18:45：之前 max(1.25rem, var(--safe-top)) = 50px 标题离状态栏太远
+                    PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起
+                    不需要再 paddingTop env，改成固定 1.25rem (20px) 让标题贴紧状态栏下方 */}
+                <div className="relative z-10 shrink-0" style={{ paddingTop: '1.25rem' }}>
                     <div className="relative flex items-center justify-center px-5 pt-2">
                         <button onClick={closeApp} className="absolute left-4 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-all"
                                 style={{ color: '#8f7bb5', background: 'rgba(255,255,255,0.6)', boxShadow: '0 2px 8px rgba(150,120,200,0.15)' }}>

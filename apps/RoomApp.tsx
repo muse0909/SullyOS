@@ -1054,7 +1054,10 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     if (viewState === 'select') {
         return (
             <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="pt-12 pb-3 px-6 bg-white sticky top-0 z-20 shrink-0">
+                {/* 暮色 2026-09-10 18:45：之前 pt-12 (48px) 标题离状态栏太远
+                    PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起
+                    改成 pt-2 (8px) 让标题贴紧状态栏下方 */}
+                <div className="pt-2 pb-3 px-6 bg-white sticky top-0 z-20 shrink-0">
                     <div className="flex items-center justify-between h-12">
                         <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:scale-90 transition-transform">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>

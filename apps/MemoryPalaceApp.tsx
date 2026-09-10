@@ -33,8 +33,10 @@ type LinkedMemoryUI = {
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
-/** 顶部安全区 padding：优先用 iOS safe-area-inset-top，没有则退回 40px，避免手机状态栏遮挡按钮 */
-const SAFE_PAD_TOP: React.CSSProperties['paddingTop'] = 'max(40px, calc(env(safe-area-inset-top) + 16px))';
+/** 暮色 2026-09-10 18:45：之前 max(40px, calc(env + 16px)) 让标题离状态栏太远
+    PhoneShell App 容器已 top: 2.5rem (= 40px)，不需要再 paddingTop env
+    改成固定 16px，让标题贴紧状态栏下方 */
+const SAFE_PAD_TOP: React.CSSProperties['paddingTop'] = '16px';
 
 /** 房间图标：用纯线条 SVG 代替 emoji，用 currentColor 跟随房间主题色 */
 const RoomIcon: React.FC<{ room: MemoryRoom; size?: number; style?: React.CSSProperties }> = ({ room, size = 20, style }) => {

@@ -958,8 +958,10 @@ ${isInitialGeneration ? `
     <div className="h-full w-full bg-slate-50/30 font-light relative">
        {view === 'list' ? (
            <div className="flex flex-col h-full animate-fade-in">
-               {/* INCREASED PADDING TOP HERE */}
-               <div className="px-6 pt-16 pb-4 shrink-0 flex items-center justify-between">
+               {/* 暮色 2026-09-10 18:45：之前 pt-16 (64px) 标题离状态栏太远
+                   PhoneShell App 容器已 top: 2.5rem (= 40px)，不需要再 paddingTop env
+                   改成 pt-2 (8px) 让标题贴紧状态栏下方 */}
+               <div className="px-6 pt-2 pb-4 shrink-0 flex items-center justify-between">
                    <div><h1 className="text-2xl font-light text-slate-800 tracking-tight">神经链接</h1><p className="text-xs text-slate-400 mt-1">已建立 {characters.length} 个角色连接</p></div>
                    <div className="flex gap-2">
                         <button onClick={() => cardImportRef.current?.click()} className="p-2 rounded-full bg-white/40 hover:bg-white/80 transition-colors text-slate-600" title="导入角色卡">

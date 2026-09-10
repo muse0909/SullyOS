@@ -1267,7 +1267,9 @@ const SongwritingApp: React.FC = () => {
                 <CrossStar size={8} color={MusicC.glow} delay={0.4} className="absolute bottom-20 right-7" solid={false} />
 
                 {/* Header */}
-                <div className="h-24 flex items-end pb-4 px-6 shrink-0 z-10 relative">
+                {/* 暮色 2026-09-10 18:45：之前 h-24 (96px) 头部过高，标题离状态栏太远
+                    改成 h-16 (64px) + pb-3 让头部紧凑，标题贴紧状态栏下方 */}
+                <div className="h-16 flex items-end pb-3 px-6 shrink-0 z-10 relative">
                     <div className="flex justify-between items-center w-full">
                         <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>

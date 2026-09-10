@@ -189,7 +189,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         : chromeStyle === 'floating'
                           ? 'bg-white/85 backdrop-blur-xl border-b border-white/70 shadow-sm'
                           : 'bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm';
-    const headerDensityClass = headerDensity === 'compact' ? 'h-16 px-4' : headerDensity === 'airy' ? 'h-24 px-6 pb-5' : 'h-[72px] px-3';
+    // 暮色 2026-09-10 18:45：之前默认 h-[72px] (72px) 头像框过高，"稍微调窄一点"
+    //   改成 h-14 (56px) 让头像框紧凑，跟 CheckPhone / WorldBook 头部一致
+    const headerDensityClass = headerDensity === 'compact' ? 'h-14 px-4' : headerDensity === 'airy' ? 'h-20 px-6 pb-5' : 'h-14 px-3';
     const primaryTextClass = isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
     const secondaryTextClass = isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
     const iconButtonClass = isDarkHeader

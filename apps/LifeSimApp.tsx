@@ -872,7 +872,10 @@ const LifeSimApp: React.FC = () => {
         winter: { bg: '#d0d4e0', accent: '#7878a0', titlebar: '#9898b8', windowBg: '#eaebf2' },
     };
     const pal = seasonPalette[season] || seasonPalette.spring;
-    const topSafePadding = 'max(12px, env(safe-area-inset-top, 12px))';
+    // 暮色 2026-09-10 18:45：之前 max(12px, env) = ~50px 标题离状态栏太远
+    //   PhoneShell App 容器已 top: 2.5rem，App 从屏顶 40px 起
+    //   改成固定 12px 让标题贴紧状态栏下方
+    const topSafePadding = '12px';
 
     const TAB_LABELS: Record<string, string> = { npcs: '住户.exe', drama: '动态.log', relations: '关系.dat' };
 

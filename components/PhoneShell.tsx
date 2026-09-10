@@ -477,16 +477,14 @@ const PhoneShell: React.FC = () => {
         <div
           className="absolute left-0 right-0 bottom-0 overflow-hidden"
           style={{
-            // 暮色 2026-09-09（第四次修正）：hideStatusBar=true 时 App 容器顶到屏幕顶 0
-            //   之前是 env(safe-area-inset-top, 0px) —— App 从安全区顶部开始
-            //   0-30px（Android 系统状态栏区域）属于 PhoneShell 容器**外**，显示 PhoneShell line 440 粉紫渐变
-            //   → chat header sticky top-0 顶到的是 App 容器顶（= safe-area-top），不是屏幕顶 0
-            //   → 0-30px 还是透 PhoneShell 粉紫渐变（暮色看到的"边"）
-            //   改成 0 后：App 容器顶到屏幕顶 0，chat header sticky top-0 = 屏幕顶 0
-            //   → 0-30px 是 chat header 粉紫渐变背景（覆盖 PhoneShell 透出处）
-            top: theme.hideStatusBar
-              ? 0
-              : 'calc(env(safe-area-inset-top, 0px) + 2.5rem)'
+            // 暮色 2026-09-10 17:45 改：App 容器永远 top: 0（不管是 hideStatusBar 还是打开状态栏）
+            //   之前 hideStatusBar=false 时 top: calc(env + 2.5rem) —— 给 StatusBar 留了 env 高度的顶部空白
+            //   → 0-2.5rem=StatusBar, 2.5rem-env+2.5rem=空白（中间条）, env+2.5rem-App=chat header
+            //   改 0 后 App 从屏幕顶开始，sticky chat header 用 top: 2.5rem 紧接 StatusBar 下方
+            //   0-2.5rem: StatusBar (z-50)
+            //   2.5rem 起: App 容器 + chat header
+            //   中间无空白，状态栏和头像栏贴一起
+            top: 0
           }}
         >
           <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>

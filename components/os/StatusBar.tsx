@@ -82,11 +82,12 @@ const StatusBar: React.FC = () => {
   // 状态栏背景与聊天头部风格联动
   // headerStyle / chromeStyle 已在 line 30-34 声明（提前避免 TDZ），
   // 这里不再重复声明
-  // 暮色 2026-09-09（第三次修正）：'gradient' 模式恢复成原版粉紫渐变（跟 chat header 联动），
-  //   textColor 改成深字 #1f2937（之前是白字看不清）。
-  //   之前我误把 gradient 改成白底导致'状态栏和头像栏联动没了'，已改回。
+  // 暮色 2026-09-10 17:45 改：'gradient' 模式渐变端点改用 to-primary/5（保持紫色调）
+  //   之前 to-white/80 让 StatusBar 在 40px 短高度看起来接近白，跟 chat header 72px 渐变（左紫右白）接缝明显
+  //   现在 to-primary/5 让 StatusBar 整体保持紫色（不那么白），跟 chat header 接缝更平滑
+  //   textColor 保持深字 #1f2937
   const statusBarBgClass = headerStyle === 'gradient'
-    ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl'
+    ? 'bg-gradient-to-r from-primary/30 via-primary/15 to-primary/5 backdrop-blur-xl'
     : headerStyle === 'minimal'
     ? 'bg-white/95 backdrop-blur-md'
     : headerStyle === 'wechat'

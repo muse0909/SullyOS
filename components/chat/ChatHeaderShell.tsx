@@ -168,12 +168,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
 
     const headerToneClass =
-        // 暮色 2026-09-09（第二次修正）：'gradient' 模式的粉紫渐变要保留（暮色自己设的 gradient 就是要这个渐变），
-        //   之前我误把整个 gradient 改掉导致头像栏变"白色色块"，已改回。
-        //   真正该修的不是 chat header 自己的渐变，是 Android 系统状态栏透明让 PhoneShell 背景透出来
-        //   （见 components/os/StatusBar.tsx 用 @capacitor/status-bar 设 Android 状态栏背景色 + styles.xml Android 12+ SplashScreen API）。
+        // 暮色 2026-09-10 17:45 改：'gradient' 渐变方向反向（from-primary/5 → via-primary/15 → to-primary/30）
+        //   之前 from-primary/20 → to-white/80（左紫右白）
+        //   现在 chat header 顶部 from-primary/5（淡紫），跟 StatusBar 底部 to-primary/5（淡紫）颜色一致
+        //   → 状态栏和头像栏接缝处颜色平滑过渡
         headerStyle === 'gradient'
-            ? 'bg-gradient-to-r from-primary/20 via-primary/10 to-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm'
+            ? 'bg-gradient-to-r from-primary/5 via-primary/15 to-primary/30 backdrop-blur-xl border-b border-slate-200/60 shadow-sm'
             : headerStyle === 'minimal'
               ? 'bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-sm'
               : headerStyle === 'wechat'
@@ -347,12 +347,13 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
 
     return (
-        // 暮色 2026-09-09 23:10 改：去掉 inline 高度 + paddingTop，恢复默认 h-[72px] + flex items-center
-        //   之前 height: calc(env + 4.5rem) 让 chat header 撑到 122px，暮色看到"占半个屏幕"
-        //   现在 PhoneShell App 容器 hideStatusBar=false 时 top = calc(env + 2.5rem)
-        //   → App 从 StatusBar 下面开始（不重叠），chat header 在 App 容器内顶部（env+2.5rem 处）
-        //   → 默认 h-[72px] 高度正好，flex items-center 内容居中
-        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
+        // 暮色 2026-09-10 17:45 改：sticky top: 2.5rem 紧接 StatusBar 下方 + paddingTop: env(safe-area-inset-top)
+        //   让头像从 Android 系统状态栏区域下方开始（避开 StatusBar 高度）
+        //   0-2.5rem: StatusBar (z-50)
+        //   2.5rem-env: chat header 顶部空白（StatusBar 已经结束，下面是 chat header 渐变空白区）
+        //   env-env+72px: chat header 内容（头像/麦麦/星/设置）
+        //   状态栏和头像栏贴一起（中间无空白），但头像不会跟 StatusBar 字撞
+        <div className={`sully-chat-header ${headerDensityClass} flex items-center shrink-0 z-30 sticky relative ${headerToneClass}`} style={{ top: '2.5rem', paddingTop: 'env(safe-area-inset-top)' }}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>

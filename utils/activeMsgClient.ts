@@ -539,6 +539,8 @@ export const ActiveMsgClient = {
       firstSendTime,
       recurrenceType: config.recurrenceType,
       expirePolicy: config.expirePolicy ?? 'expire',
+      // 麦麦 2026-09-11 同步上游：连发上限。Worker 端 SDK 2.6.0-next.12 是否认未知，标注待后端适配。
+      maxUnansweredSends: config.maxUnansweredSends,
       pushSubscription,
       metadata: {
         charId: char.id,

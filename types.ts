@@ -306,6 +306,12 @@ export interface ActiveMsg2CharacterConfig {
   userMessage?: string;
   promptHint?: string;
   maxTokens?: number;
+  /**
+   * 麦麦 2026-09-11 同步上游：用户没回消息时 TA 最多连续主动发几条。
+   * 0 = 不限；缺省 = worker 用 DEFAULT_MAX_UNANSWERED_SENDS（=3）。
+   * 暮色 9-11 拍板"UI 保留，Worker 端 SDK 2.6.0-next.12 是否认未知，需端到端验证"。
+   */
+  maxUnansweredSends?: number;
   taskUuid?: string;
   remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
   useSecondaryApi?: boolean;

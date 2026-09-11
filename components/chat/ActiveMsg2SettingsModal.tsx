@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Modal from '../os/Modal';
 import { APIConfig, ActiveMsg2ExpirePolicy, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../../types';
 import { ActiveMsgClient, getDefaultActiveMsgFirstSendTime } from '../../utils/activeMsgClient';
+import { DEFAULT_MAX_UNANSWERED_SENDS } from '../../utils/amsgFirePack';
 
 interface ActiveMsg2SettingsModalProps {
   isOpen: boolean;
@@ -52,6 +53,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   const [userMessage, setUserMessage] = useState(saved?.userMessage ?? '');
   const [promptHint, setPromptHint] = useState(saved?.promptHint ?? '');
   const [maxTokens, setMaxTokens] = useState(String(saved?.maxTokens ?? ''));
+  // '' = 没设（用默认值）；'0' = 不限；其余 1-10
+  const [maxUnanswered, setMaxUnanswered] = useState(
+    saved?.maxUnansweredSends === undefined ? '' : String(saved.maxUnansweredSends),
+  );
   const [useSecondaryApi, setUseSecondaryApi] = useState(saved?.useSecondaryApi ?? false);
   const [secUrl, setSecUrl] = useState(saved?.secondaryApi?.baseUrl ?? '');
   const [secKey, setSecKey] = useState(saved?.secondaryApi?.apiKey ?? '');
@@ -72,6 +77,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     setUserMessage(next?.userMessage ?? '');
     setPromptHint(next?.promptHint ?? '');
     setMaxTokens(next?.maxTokens ? String(next.maxTokens) : '');
+    setMaxUnanswered(next?.maxUnansweredSends === undefined ? '' : String(next.maxUnansweredSends));
     setUseSecondaryApi(next?.useSecondaryApi ?? false);
     setSecUrl(next?.secondaryApi?.baseUrl ?? '');
     setSecKey(next?.secondaryApi?.apiKey ?? '');
@@ -96,6 +102,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     userMessage: userMessage.trim() || undefined,
     promptHint: promptHint.trim() || undefined,
     maxTokens: maxTokens.trim() ? Number(maxTokens) : undefined,
+    maxUnansweredSends: maxUnanswered === '' ? undefined : Number(maxUnanswered),
     taskUuid: saved?.taskUuid,
     remoteStatus: saved?.remoteStatus || 'idle',
     useSecondaryApi: useSecondaryApi && !!secUrl,
@@ -305,6 +312,28 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 </div>
               </>
             )}
+
+            <div className="pt-1 border-t border-slate-100">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
+                连发上限（自动/提示词模式时生效）
+              </label>
+              <select
+                value={maxUnanswered}
+                onChange={(event) => setMaxUnanswered(event.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm"
+              >
+                <option value="">默认（{DEFAULT_MAX_UNANSWERED_SENDS} 条）</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={String(n)}>{n} 条</option>
+                ))}
+                <option value="0">不限</option>
+              </select>
+              <p className="text-[11px] text-slate-400 mt-1.5 pl-1 leading-relaxed">
+                你没回消息的时候，TA 最多连续主动发几条——这是 TA 能连续主动发言的次数上限。
+                到上限后 TA 自己排的会暂停，你回一句就重新计数；面板里亲手排的任务不受它限制。
+                字段是 9-11 同步上游加的，Worker 端 SDK 2.6.0-next.12 是否认未知，<b>需端到端验证</b>。
+              </p>
+            </div>
 
             <div className="pt-1 border-t border-slate-100">
               <div className="flex items-center justify-between mb-2">

@@ -590,6 +590,15 @@ export const renderFirePack = (
 export const FIRE_PACK_VERSION = 6;
 
 /**
+ * 主动消息 2.0 连发上限默认值
+ *
+ * 麦麦 2026-09-11 同步上游：用户没回消息时，TA 最多连续主动发几条。
+ * 暮色 9-11 22:30 拍板"UI 保留但 Worker 端 SDK 2.6.0-next.12 是否认未知，需端到端验证"。
+ * 上游（upstream/master）默认值 = 3。
+ */
+export const DEFAULT_MAX_UNANSWERED_SENDS = 3;
+
+/**
  * 解析失败时给人看的一句原因。
  *
  * 存在的理由：升 fire_pack 版本需要 worker bundle 和前端一起动，而设置页的版本门槛读的是

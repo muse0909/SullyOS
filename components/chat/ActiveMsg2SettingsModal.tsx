@@ -1,8 +1,50 @@
 import React, { useEffect, useState } from 'react';
 import Modal from '../os/Modal';
-import { APIConfig, ActiveMsg2ExpirePolicy, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../../types';
+import {
+  ActiveMsg2CharacterConfig,
+  ActiveMsg2ExpirePolicy,
+  ActiveMsg2Mode,
+  ActiveMsg2Recurrence,
+  ActiveMsg2TaskRecord,
+  APIConfig,
+  CharacterProfile,
+  GroupProfile,
+  RealtimeConfig,
+  UserProfile,
+} from '../../types';
 import { ActiveMsgClient, getDefaultActiveMsgFirstSendTime } from '../../utils/activeMsgClient';
-import { DEFAULT_MAX_UNANSWERED_SENDS } from '../../utils/amsgFirePack';
+import { ActiveMsgStore } from '../../utils/activeMsgStore';
+import { type AmsgLastSkip, DEFAULT_MAX_UNANSWERED_SENDS, describeLastSkip } from '../../utils/amsgFirePack';
+// SullyOS 缺 amsgInstantChat / amsgStateSync / amsg2TaskContext / analytics —— 对应功能块（即时对话开关 / 防穿帮闸 / 任务收件箱 / 调试）按暮色 22:30 指令删掉对应 import 和功能块。
+import {
+  applyRemoteTaskDelta,
+  applyScheduledTask,
+  currentOccurrenceMs,
+  describeExpirePolicy,
+  describeRecurrence,
+  describeRemoteLastError,
+  describeTaskMode,
+  describeTaskProgress,
+  formatTaskTime,
+  fromDatetimeLocalValue,
+  isAmsg2EnabledForChar,
+  isPendingTask,
+  isRemoteMissingTask,
+  keepUncancelledTasks,
+  pruneFiredTasks,
+  reconcileTasksWithRemote,
+  resolveExpirePolicy,
+  type RemoteTaskLastError,
+  type RemoteTaskProjection,
+  shortTaskId,
+  toDatetimeLocalValue,
+} from '../../utils/amsg2Tasks';
+
+// 麦麦 2026-09-11 21:59：覆盖 upstream modal 后的本地兼容桩，删功能块时把残留调用指到这里。
+const trackEvent = (_event: string, _props?: any) => { /* SullyOS 缺 analytics 模块，跟踪桩 */ };
+const syncAmsgLlmCredentials = (_apiConfig: any) => { /* SullyOS 缺 amsgStateSync，凭证同步桩 */ };
+const buildUserCancelledNotices = (..._args: any[]): any[] => [];
+const isInstantChatReady = async (): Promise<boolean> => false;
 
 interface ActiveMsg2SettingsModalProps {
   isOpen: boolean;
@@ -12,7 +54,14 @@ interface ActiveMsg2SettingsModalProps {
   userProfile: UserProfile;
   groups: GroupProfile[];
   realtimeConfig: RealtimeConfig;
-  onSave: (config: NonNullable<CharacterProfile['activeMsg2Config']>) => void;
+  /**
+   * 落盘角色级设置。
+   *
+   * 暮色 9-11 21:59 指令"onSave 改成 plain object 形态"——SullyOS 的 updateCharacter
+   * 签名只接受 Partial<CharacterProfile>（plain object），不支持 functional updater。
+   * 所以 onSave 接收整份 config 对象，调用方直接 updateCharacter(char.id, { activeMsg2Config: config })。
+   */
+  onSave: (config: ActiveMsg2CharacterConfig) => void;
   addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -28,11 +77,6 @@ const RECURRENCE_OPTIONS = [
   { id: 'weekly', label: '每周' },
 ] as const;
 
-const EXPIRE_OPTIONS = [
-  { id: 'expire', label: '自动作废', desc: '转为对话里自然带出' },
-  { id: 'force', label: '强制发送', desc: '闹钟型，照发' },
-] as const;
-
 const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -45,8 +89,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   addToast,
 }) => {
   const saved = char.activeMsg2Config;
-  const [enabled, setEnabled] = useState(saved?.enabled ?? false);
-  const [mode, setMode] = useState<NonNullable<CharacterProfile['activeMsg2Config']>['mode']>(saved?.mode ?? 'auto');
+
+  // 开关初值走和工具注入门同一个判定：面板显示「关」而角色其实还能排程，界面就在骗人。
+  const [enabled, setEnabled] = useState(() => isAmsg2EnabledForChar(char));
+  const [mode, setMode] = useState<ActiveMsg2Mode>(saved?.mode ?? 'auto');
   const [firstSendTime, setFirstSendTime] = useState(saved?.firstSendTime ?? getDefaultActiveMsgFirstSendTime());
   const [recurrenceType, setRecurrenceType] = useState(saved?.recurrenceType ?? 'none');
   const [expirePolicy, setExpirePolicy] = useState<ActiveMsg2ExpirePolicy>(saved?.expirePolicy ?? 'expire');
@@ -64,24 +110,33 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   const [globalReady, setGlobalReady] = useState(false);
   const [pushSummary, setPushSummary] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 麦麦 2026-09-11 21:59：删掉以下功能块对应的 state —— 任务列表 / 任务编辑 / 即时对话开关 / 防穿帮闸 / 远端对账 / 收件箱。
 
+  // 表单值重置：面板打开时用 saved 字段填表单
   useEffect(() => {
     if (!isOpen) return;
 
-    const next = char.activeMsg2Config;
-    setEnabled(next?.enabled ?? false);
-    setMode(next?.mode ?? 'auto');
-    setFirstSendTime(next?.firstSendTime ?? getDefaultActiveMsgFirstSendTime());
-    setRecurrenceType(next?.recurrenceType ?? 'none');
-    setExpirePolicy(next?.expirePolicy ?? 'expire');
-    setUserMessage(next?.userMessage ?? '');
-    setPromptHint(next?.promptHint ?? '');
-    setMaxTokens(next?.maxTokens ? String(next.maxTokens) : '');
-    setMaxUnanswered(next?.maxUnansweredSends === undefined ? '' : String(next.maxUnansweredSends));
-    setUseSecondaryApi(next?.useSecondaryApi ?? false);
-    setSecUrl(next?.secondaryApi?.baseUrl ?? '');
-    setSecKey(next?.secondaryApi?.apiKey ?? '');
-    setSecModel(next?.secondaryApi?.model ?? '');
+    const config = char.activeMsg2Config;
+    setEnabled(isAmsg2EnabledForChar(char));
+    setMode(config?.mode ?? 'auto');
+    setFirstSendTime(config?.firstSendTime ?? getDefaultActiveMsgFirstSendTime());
+    setRecurrenceType(config?.recurrenceType ?? 'none');
+    setExpirePolicy(config?.expirePolicy ?? 'expire');
+    setUserMessage(config?.userMessage ?? '');
+    setPromptHint(config?.promptHint ?? '');
+    setMaxTokens(config?.maxTokens ? String(config.maxTokens) : '');
+    setMaxUnanswered(config?.maxUnansweredSends === undefined ? '' : String(config.maxUnansweredSends));
+    setUseSecondaryApi(config?.useSecondaryApi ?? false);
+    setSecUrl(config?.secondaryApi?.baseUrl ?? '');
+    setSecKey(config?.secondaryApi?.apiKey ?? '');
+    setSecModel(config?.secondaryApi?.model ?? '');
+  }, [isOpen, char.id, char.activeMsg2Config]);
+
+  // 麦麦 2026-09-11 21:59：删掉即时对话开关 / 防穿帮闸 / 远端对账 / 任务编辑对应的 useEffect 块。
+
+  // 打开面板时的 push 状态检查（只随 isOpen / 角色变化跑）。
+  useEffect(() => {
+    if (!isOpen) return;
 
     void (async () => {
       const globalConfig = await ActiveMsgClient.getGlobalConfig();
@@ -91,8 +146,23 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
         ? `权限：${pushStatus.permission} / 订阅：${pushStatus.hasSubscription ? '已就绪' : '未创建'}`
         : '当前环境不支持 Web Push');
     })();
-  }, [isOpen, char.id, char.activeMsg2Config]);
+  }, [isOpen, char.id]);
 
+  /**
+   * 麦麦 2026-09-11 21:59：覆盖 upstream modal 后，删掉以下功能块：
+   * - buildConfig 函数的 tasksOf 参数（任务清单已不属本轮最小闭环）
+   * - handleToggleEnabled（拨开关本身保存的 updater 形态）
+   * - handleToggleInstantChat（即时对话开关）
+   * - writeCancelledNotices（取消回执）
+   * - handleCancelTask（取消任务）
+   * - handleSubmit 里的 tasks.map / editingTaskUuid / replaceTaskUuid / clientTaskId / firstSendAt / replacedCancelFailed / refreshCharPendingAiTaskCredentials 等
+   *
+   * 保留：基础 5 大需求表单 + 提交时调 ActiveMsgClient.scheduleCharacterTask（plain object 形态）。
+   */
+
+  /**
+   * 拼一份要落盘的 config（plain object 形态，暮色 21:59 拍板）
+   */
   const buildNextConfig = (): NonNullable<CharacterProfile['activeMsg2Config']> => ({
     enabled,
     mode,
@@ -103,29 +173,48 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     promptHint: promptHint.trim() || undefined,
     maxTokens: maxTokens.trim() ? Number(maxTokens) : undefined,
     maxUnansweredSends: maxUnanswered === '' ? undefined : Number(maxUnanswered),
-    taskUuid: saved?.taskUuid,
-    remoteStatus: saved?.remoteStatus || 'idle',
     useSecondaryApi: useSecondaryApi && !!secUrl,
     secondaryApi: useSecondaryApi && secUrl ? {
       baseUrl: secUrl.trim(),
       apiKey: secKey.trim(),
       model: secModel.trim(),
     } : undefined,
+    taskUuid: saved?.taskUuid,
+    remoteStatus: saved?.remoteStatus || 'idle',
     lastSyncedAt: saved?.lastSyncedAt,
     lastError: saved?.lastError,
   });
 
-  const handleSubmit = async () => {
-    const nextConfig = buildNextConfig();
-    setIsSubmitting(true);
+  /**
+   * 拨开关本身就算一次保存（plain object 形态）
+   */
+  const handleToggleEnabled = () => {
+    const turningOn = !enabled;
+    setEnabled(!enabled);
+    if (turningOn) {
+      onSave({
+        ...buildNextConfig(),
+        enabled: true,
+        lastSyncedAt: Date.now(),
+      });
+    }
+  };
 
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
     try {
-      if (!nextConfig.enabled) {
-        if (nextConfig.taskUuid) {
-          await ActiveMsgClient.cancelTask(nextConfig.taskUuid);
+      if (!enabled) {
+        // 关闭 2.0 = 取消远端任务（如果存在）+ 落盘 enabled:false
+        if (saved?.taskUuid) {
+          try {
+            await ActiveMsgClient.cancelTask(saved.taskUuid);
+          } catch (e) {
+            console.warn('[ActiveMsg2Modal] cancel old task failed', e);
+          }
         }
         onSave({
-          ...nextConfig,
+          ...buildNextConfig(),
+          enabled: false,
           taskUuid: undefined,
           remoteStatus: 'idle',
           lastSyncedAt: Date.now(),
@@ -137,12 +226,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       }
 
       if (!globalReady) {
-        throw new Error('请先去系统设置里完成“主动消息 2.0”的全局配置。');
+        throw new Error('请先去系统设置里完成"主动消息 2.0"的全局配置。');
       }
 
       const result = await ActiveMsgClient.scheduleCharacterTask({
         char,
-        config: nextConfig,
+        config: buildNextConfig(),
         userProfile,
         groups,
         realtimeConfig,
@@ -150,7 +239,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       });
 
       onSave({
-        ...nextConfig,
+        ...buildNextConfig(),
         taskUuid: result.uuid,
         remoteStatus: result.status === 'sent' ? 'sent' : 'scheduled',
         lastSyncedAt: Date.now(),
@@ -161,7 +250,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     } catch (error: any) {
       const message = error?.message || '主动消息 2.0 保存失败。';
       onSave({
-        ...nextConfig,
+        ...buildNextConfig(),
         remoteStatus: 'error',
         lastError: message,
       });
@@ -181,8 +270,8 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
           <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">
             取消
           </button>
-          <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-3 bg-violet-300 text-violet-800 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50">
-            {isSubmitting ? '保存中...' : enabled ? '保存并同步' : '关闭 2.0'}
+          <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-3 bg-fuchsia-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50">
+            {isSubmitting ? '保存中...' : !enabled ? '关闭 2.0' : '保存'}
           </button>
         </>
       )}
@@ -192,40 +281,48 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
           这是新的云端主动消息入口。它会把当前角色设定、最近聊天快照和推送订阅一起提交到主动消息标准服务里。长周期循环任务建议在剧情变化后重新保存一次，避免使用过旧的上下文。
         </p>
 
-        <div className="flex items-center justify-between bg-violet-50 border border-violet-100 rounded-2xl p-4">
+        <div className="flex items-center justify-between bg-fuchsia-50 border border-fuchsia-100 rounded-2xl p-4">
           <div>
             <div className="font-bold text-slate-700">启用主动消息 2.0</div>
-            <div className="text-xs text-violet-600 mt-1">{pushSummary || '正在检查 Push 状态...'}</div>
+            <div className="text-xs text-fuchsia-600 mt-1">{pushSummary || '正在检查 Push 状态...'}</div>
           </div>
           <button
-            onClick={() => setEnabled(!enabled)}
-            className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-violet-300' : 'bg-slate-200'}`}
+            onClick={handleToggleEnabled}
+            className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-fuchsia-500' : 'bg-slate-200'}`}
           >
             <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
 
-        {saved?.taskUuid ? (
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-1">
-            <div>当前任务 UUID：<span className="font-mono break-all">{saved.taskUuid}</span></div>
-            <div>状态：<span className="font-bold">{saved.remoteStatus || 'unknown'}</span></div>
-            {saved.lastError ? <div className="text-red-500">最近错误：{saved.lastError}</div> : null}
-          </div>
+        {/* 关着的时候面板下面整块都是空的，不说一句的话，用户看不出这个开关是按角色算的，
+            也不知道打开它能换来什么。 */}
+        {!enabled ? (
+          <p className="text-xs leading-relaxed text-slate-400 pl-1">
+            主动消息 2.0 按角色单独开启。打开这个开关，TA 才能在聊天里给你排定时消息，到点由云端发出。
+          </p>
         ) : null}
+
+        {/* 麦麦 2026-09-11 21:59：删掉即时对话开关 / 防穿帮闸说明 / 任务列表 / 任务编辑 JSX 块。 */}
 
         {enabled ? (
           <>
             <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">模式</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">
+                主动消息设置
+              </label>
               <div className="space-y-2">
                 {MODE_OPTIONS.map((option) => (
                   <button
                     key={option.id}
-                    onClick={() => setMode(option.id)}
-                    className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${mode === option.id ? 'bg-violet-300 text-violet-800 border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                    onClick={() => {
+                      setMode(option.id);
+                      // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
+                      if (option.id === 'fixed') setExpirePolicy('force');
+                    }}
+                    className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${mode === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
                   >
                     <div className="font-bold">{option.label}</div>
-                    <div className={`text-xs mt-1 ${mode === option.id ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
+                    <div className={`text-xs mt-1 ${mode === option.id ? 'text-fuchsia-50' : 'text-slate-400'}`}>{option.desc}</div>
                   </button>
                 ))}
               </div>
@@ -248,7 +345,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                   <button
                     key={option.id}
                     onClick={() => setRecurrenceType(option.id)}
-                    className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${recurrenceType === option.id ? 'bg-violet-300 text-violet-800 border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                    className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${recurrenceType === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
                   >
                     {option.label}
                   </button>
@@ -259,21 +356,26 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               </div>
             </div>
 
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
-              <div className="grid grid-cols-2 gap-2">
-                {EXPIRE_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => setExpirePolicy(option.id)}
-                    className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${expirePolicy === option.id ? 'bg-violet-300 text-violet-800 border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
-                  >
-                    {option.label}
-                    <div className={`font-normal mt-0.5 ${expirePolicy === option.id ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
-                  </button>
-                ))}
+            {mode !== 'fixed' ? (
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { id: 'expire', label: '自动作废', desc: '转为对话里自然带出' },
+                    { id: 'force', label: '强制发送', desc: '闹钟型，照发' },
+                  ] as const).map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => setExpirePolicy(option.id)}
+                      className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${expirePolicy === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
+                    >
+                      {option.label}
+                      <div className={`font-normal mt-0.5 ${expirePolicy === option.id ? 'text-fuchsia-100' : 'text-slate-400'}`}>{option.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {mode === 'fixed' ? (
               <div>
@@ -314,9 +416,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             )}
 
             <div className="pt-1 border-t border-slate-100">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
-                连发上限（自动/提示词模式时生效）
-              </label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">连发上限</label>
               <select
                 value={maxUnanswered}
                 onChange={(event) => setMaxUnanswered(event.target.value)}
@@ -328,10 +428,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 ))}
                 <option value="0">不限</option>
               </select>
-              <p className="text-[11px] text-slate-400 mt-1.5 pl-1 leading-relaxed">
-                你没回消息的时候，TA 最多连续主动发几条——这是 TA 能连续主动发言的次数上限。
-                到上限后 TA 自己排的会暂停，你回一句就重新计数；面板里亲手排的任务不受它限制。
-                字段是 9-11 同步上游加的，Worker 端 SDK 2.6.0-next.12 是否认未知，<b>需端到端验证</b>。
+              <p className="text-xs text-slate-400 mt-1.5 pl-1 leading-relaxed">
+                你没回消息的时候，TA 最多连续主动发几条——这就是 TA 能连续主动发言的次数上限（包括
+                TA 给自己排的后续）。到上限后 TA 自己排的会暂停，你回一句就重新计数；你在这个面板里
+                亲手排的任务不受它限制。比如你俩有时差、想让 TA 在你睡觉时每隔一阵报备一句，就把这里调大些。
               </p>
             </div>
 
@@ -343,7 +443,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => setUseSecondaryApi(!useSecondaryApi)}
-                  className={`w-12 h-7 rounded-full transition-colors relative ${useSecondaryApi ? 'bg-violet-300' : 'bg-slate-200'}`}
+                  className={`w-12 h-7 rounded-full transition-colors relative ${useSecondaryApi ? 'bg-fuchsia-500' : 'bg-slate-200'}`}
                 >
                   <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${useSecondaryApi ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>

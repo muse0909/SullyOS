@@ -2598,6 +2598,7 @@ const handleSaveTts = () => {
           isOpen={showAmsg2Config}
           onClose={() => setShowAmsg2Config(false)}
           addToast={addToast}
+          realtimeConfig={realtimeConfig}
       />
 
       {/* 主动消息 Push 加速 · 启用前确认 */}

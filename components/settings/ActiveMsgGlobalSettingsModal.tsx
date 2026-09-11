@@ -190,7 +190,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           <button
             onClick={handleCreateSubscription}
             disabled={loading}
-            className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
+            className="w-full py-3 bg-violet-300 text-violet-800 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
           >
             {loading ? '处理中...' : '开启通知与推送'}
           </button>

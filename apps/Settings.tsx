@@ -2518,8 +2518,7 @@ const handleSaveTts = () => {
         )}
         </SettingsSection>
 
-        {/* 暮色 2026-08-06：主动消息 2.0 全局配置入口（接 Cloudflare Worker） — 暮色 2026-08-09 暂停,AMSG2_ENABLED=false 不渲染 */}
-        {AMSG2_ENABLED && (
+        {/* 主动消息 2.0 全局配置入口（接 Cloudflare Worker）— 9-11 开启 Settings 页入口（AMSG2_ENABLED 仅短路 OSContext 事件 / proactiveChat 接入点，Settings 入口独立） */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -2547,7 +2546,6 @@ const handleSaveTts = () => {
                 v2 雏形已经能弹出来 + 报友好错误（不会白屏），但没 Worker 之前实际排程跑不通。
             </p>
         </section>
-        )}
 
         {/* 11 - API 请求账本 */}
         <SettingsSection id="apiLog" icon="📋" title="API 请求账本" subtitle="本地调试日志·脱敏导出" isOpen={openSectionId === 'apiLog'} onToggle={toggleSection}>
@@ -2595,14 +2593,12 @@ const handleSaveTts = () => {
         </div>
       </div>
 
-      {/* 暮色 2026-08-06：主动消息 2.0 全局配置弹窗 — 暮色 2026-08-09 暂停,AMSG2_ENABLED=false 不渲染 */}
-      {AMSG2_ENABLED && (
+      {/* 主动消息 2.0 全局配置弹窗 — 9-11 开启 Settings 页入口，弹窗同步显示 */}
       <ActiveMsgGlobalSettingsModal
           isOpen={showAmsg2Config}
           onClose={() => setShowAmsg2Config(false)}
           addToast={addToast}
       />
-      )}
 
       {/* 主动消息 Push 加速 · 启用前确认 */}
       <Modal

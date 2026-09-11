@@ -98,7 +98,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                         停止
                     </button>
                 ) : null}
-                <button onClick={handleSave} className="flex-1 py-3 bg-violet-500 text-white font-bold rounded-2xl active:scale-95 transition-transform shadow-lg">
+                <button onClick={handleSave} className="flex-1 py-3 bg-violet-300 text-violet-800 font-bold rounded-2xl active:scale-95 transition-transform shadow-lg">
                     {enabled ? '启动' : '保存'}
                 </button>
             </>
@@ -114,7 +114,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                     <span className="text-sm font-bold text-slate-700">启用主动消息</span>
                     <button
                         onClick={() => setEnabled(!enabled)}
-                        className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-violet-500' : 'bg-slate-200'}`}
+                        className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-violet-300' : 'bg-slate-200'}`}
                     >
                         <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
@@ -123,7 +123,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                 {/* Status indicator */}
                 {isProactiveActive && (
                     <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 rounded-xl border border-violet-100">
-                        <span className="w-2 h-2 bg-violet-500 rounded-full animate-pulse" />
+                        <span className="w-2 h-2 bg-violet-300 rounded-full animate-pulse" />
                         <span className="text-xs text-violet-600 font-medium">主动消息进行中</span>
                     </div>
                 )}
@@ -139,7 +139,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                         key={opt.value}
                                         onClick={() => setInterval_(opt.value)}
                                         className={`py-2 px-3 rounded-xl text-xs font-bold transition-all ${interval === opt.value
-                                            ? 'bg-violet-500 text-white shadow-md'
+                                            ? 'bg-violet-300 text-violet-800 shadow-md'
                                             : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                                         }`}
                                     >
@@ -155,7 +155,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                 <span className="text-sm font-bold text-slate-700">睡眠时间</span>
                                 <button
                                     onClick={() => setQuietHoursEnabled(!quietHoursEnabled)}
-                                    className={`w-12 h-7 rounded-full transition-colors relative ${quietHoursEnabled ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                    className={`w-12 h-7 rounded-full transition-colors relative ${quietHoursEnabled ? 'bg-violet-300' : 'bg-slate-200'}`}
                                 >
                                     <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${quietHoursEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                                 </button>
@@ -194,7 +194,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                 <span className="text-sm font-bold text-slate-700">使用副 API</span>
                                 <button
                                     onClick={() => { setUseSecondaryApi(!useSecondaryApi); setShowApiSection(!useSecondaryApi); }}
-                                    className={`w-12 h-7 rounded-full transition-colors relative ${useSecondaryApi ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                    className={`w-12 h-7 rounded-full transition-colors relative ${useSecondaryApi ? 'bg-violet-300' : 'bg-slate-200'}`}
                                 >
                                     <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${useSecondaryApi ? 'translate-x-5' : 'translate-x-0'}`} />
                                 </button>
@@ -244,7 +244,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                     <span className="text-sm font-bold text-slate-700">使用角色独立 API</span>
                                     <button
                                         onClick={() => setUseCharApi(!useCharApi)}
-                                        className={`w-12 h-7 rounded-full transition-colors relative ${useCharApi ? 'bg-violet-500' : 'bg-slate-200'}`}
+                                        className={`w-12 h-7 rounded-full transition-colors relative ${useCharApi ? 'bg-violet-300' : 'bg-slate-200'}`}
                                     >
                                         <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${useCharApi ? 'translate-x-5' : 'translate-x-0'}`} />
                                     </button>

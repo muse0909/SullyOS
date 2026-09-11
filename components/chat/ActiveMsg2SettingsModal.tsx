@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Modal from '../os/Modal';
-import { APIConfig, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../../types';
+import { APIConfig, ActiveMsg2ExpirePolicy, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../../types';
 import { ActiveMsgClient, getDefaultActiveMsgFirstSendTime } from '../../utils/activeMsgClient';
 
 interface ActiveMsg2SettingsModalProps {
@@ -27,6 +27,11 @@ const RECURRENCE_OPTIONS = [
   { id: 'weekly', label: '每周' },
 ] as const;
 
+const EXPIRE_OPTIONS = [
+  { id: 'expire', label: '自动作废', desc: '转为对话里自然带出' },
+  { id: 'force', label: '强制发送', desc: '闹钟型，照发' },
+] as const;
+
 const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -43,6 +48,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   const [mode, setMode] = useState<NonNullable<CharacterProfile['activeMsg2Config']>['mode']>(saved?.mode ?? 'auto');
   const [firstSendTime, setFirstSendTime] = useState(saved?.firstSendTime ?? getDefaultActiveMsgFirstSendTime());
   const [recurrenceType, setRecurrenceType] = useState(saved?.recurrenceType ?? 'none');
+  const [expirePolicy, setExpirePolicy] = useState<ActiveMsg2ExpirePolicy>(saved?.expirePolicy ?? 'expire');
   const [userMessage, setUserMessage] = useState(saved?.userMessage ?? '');
   const [promptHint, setPromptHint] = useState(saved?.promptHint ?? '');
   const [maxTokens, setMaxTokens] = useState(String(saved?.maxTokens ?? ''));
@@ -62,6 +68,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     setMode(next?.mode ?? 'auto');
     setFirstSendTime(next?.firstSendTime ?? getDefaultActiveMsgFirstSendTime());
     setRecurrenceType(next?.recurrenceType ?? 'none');
+    setExpirePolicy(next?.expirePolicy ?? 'expire');
     setUserMessage(next?.userMessage ?? '');
     setPromptHint(next?.promptHint ?? '');
     setMaxTokens(next?.maxTokens ? String(next.maxTokens) : '');
@@ -85,6 +92,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     mode,
     firstSendTime,
     recurrenceType,
+    expirePolicy,
     userMessage: userMessage.trim() || undefined,
     promptHint: promptHint.trim() || undefined,
     maxTokens: maxTokens.trim() ? Number(maxTokens) : undefined,
@@ -241,6 +249,22 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               </div>
               <div className="text-[11px] text-slate-400 mt-2 pl-1">
                 2.0 标准版目前只支持：一次 / 每天 / 每周。30 分钟、1 小时、2 小时这类间隔暂时不支持。
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
+              <div className="grid grid-cols-2 gap-2">
+                {EXPIRE_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => setExpirePolicy(option.id)}
+                    className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${expirePolicy === option.id ? 'bg-violet-300 text-violet-800 border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                  >
+                    {option.label}
+                    <div className={`font-normal mt-0.5 ${expirePolicy === option.id ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
+                  </button>
+                ))}
               </div>
             </div>
 

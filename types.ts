@@ -302,6 +302,7 @@ export interface ActiveMsg2CharacterConfig {
   mode: ActiveMsg2Mode;
   firstSendTime: string;
   recurrenceType: ActiveMsg2Recurrence;
+  expirePolicy?: ActiveMsg2ExpirePolicy;
   userMessage?: string;
   promptHint?: string;
   maxTokens?: number;

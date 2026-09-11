@@ -538,6 +538,7 @@ export const ActiveMsgClient = {
       messageSubtype: 'chat',
       firstSendTime,
       recurrenceType: config.recurrenceType,
+      expirePolicy: config.expirePolicy ?? 'expire',
       pushSubscription,
       metadata: {
         charId: char.id,

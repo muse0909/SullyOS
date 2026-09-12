@@ -696,3 +696,12 @@ export const AnticipationDB = {
     getActive: (charId: string) =>
         AnticipationDB.getByStatus(charId, 'active'),
 };
+
+/**
+ * 「门牌被后台改写过了」的窗口事件（`detail: { charId, rooms }`）。
+ *
+ * 给云端整理用的：结果晚几分钟才回来，那时用户多半正开着记忆宫殿。门牌已经写进
+ * IndexedDB，界面却还挂着提交前那份——不派这个事件的话得关掉再打开才看得见，看上去
+ * 就像整理压根没跑。名字放在门牌读写这一层，派发方和监听方都别手抄字符串。
+ */
+export const ROOM_PLATES_UPDATED_EVENT = 'room-plates-updated';

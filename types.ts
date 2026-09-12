@@ -273,6 +273,27 @@ volinkTtsVoice?: string;   // 全局默认声音ID（角色没配时用这个）
 volinkTtsModel?: string;
 }
 
+export interface InstantPushConfig {
+  enabled: boolean;
+  workerUrl: string;        // https://your-instant.workers.dev
+  // VAPID 公私钥已迁移到 utils/pushVapid.ts (push_vapid_v1)，与 Proactive Push
+  // 共享同一份，避免两边互相 unsubscribe 抢同一个 pushManager 订阅。
+  clientToken?: string;     // 对应 Worker 的 AMSG_CLIENT_TOKEN
+  // 发送文本后是否自动触发 AI 回复 (worker 端跑 + push 回写). 仅控制"自动触发"这件事,
+  // 不改变 instant push 本身的开关含义. 关闭时 instant 模式也保留手动 ⚡, 跟本地模式一致.
+  // 缺省 (undefined) 视为关闭 — 避免"启用 instant = 自动回复"的反直觉强绑定.
+  autoTriggerOnSend?: boolean;
+  // 大 payload 的传输方式默认走 multipart。只有连接测试确认 Worker 绑定了可用 D1 后,
+  // 前台才允许用户打开 D1 envelope。
+  useD1BlobStore?: boolean;
+  d1Available?: boolean;
+  d1CheckedAt?: number;
+  d1CheckedWorkerUrl?: string;
+  updatedAt?: number;
+}
+
+export type InstantOversizeTransport = 'multipart' | 'd1';
+
 export type ActiveMsg2DbDriver = 'pg' | 'neon';
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
@@ -293,6 +314,16 @@ export interface ActiveMsg2GlobalConfig {
   cronToken?: string;
   cronWebhookUrl?: string;
   masterKeyFingerprint?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：Worker 部署 URL。
+   * 9-12 接入时为可选，存量数据没有时 fallback 到 tenantToken。
+   */
+  workerUrl?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：即时对话总开关（云端生成的开关）。
+   * undefined = 默认开（跟随全局默认）。
+   */
+  instantChatEnabled?: boolean;
   initializedAt?: number;
   updatedAt?: number;
 }
@@ -303,6 +334,13 @@ export interface ActiveMsg2CharacterConfig {
   firstSendTime: string;
   recurrenceType: ActiveMsg2Recurrence;
   expirePolicy?: ActiveMsg2ExpirePolicy;
+  /**
+   * 麦麦 2026-09-12 同步上游：多任务清单（替换单任务字段）。
+   * 22 个新 utils（amsg2Tasks / amsg2ToolBridge / amsg2DebugView / amsg2TaskContext 等）
+   * 都按多任务模型读 / 写此字段。SullyOS 7-3 时只有单任务（taskUuid 字段），本字段
+   * 9-12 接入时为可选，保持存量数据兼容。
+   */
+  tasks?: ActiveMsg2TaskRecord[];
   userMessage?: string;
   promptHint?: string;
   maxTokens?: number;
@@ -332,6 +370,60 @@ export interface ActiveMsg2InboxMessage {
   taskId?: string | null;
   metadata?: Record<string, any>;
   sentAt?: number;
+  receivedAt: number;
+}
+
+// Phase 2 Round 1 — Instant Push agentic loop session state, written client-side
+// before /instant and consumed by /continue. See plans/instant-push-agentic-loop-phase2.md
+export interface InstantPushOutboundSession {
+  sessionId: string;
+  charId: string;
+  /** Conversation messages snapshot at /instant call time — fed to /continue as agentic-loop history. */
+  messages: any[];
+  /** API credentials needed to resume via /continue when worker calls back. */
+  apiCredentials: { baseUrl: string; apiKey: string; model: string };
+  createdAt: number;
+}
+
+// Phase 2 Round 2 — SW will populate these stores; Round 1 just defines schema (empty).
+export interface InstantPushPendingToolCall {
+  sessionId: string;
+  charId: string;
+  /** OpenAI-shape tool_calls from worker LLM emit, ready to dispatch via agenticTools. */
+  toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** Pre-tool-call LLM text output, used to prefix assistant-side content if needed. */
+  llmOutputText: string;
+  /**
+   * Agentic-loop iteration that produced this tool_request (0-indexed at worker side, see
+   * amsg-instant SessionContext.iteration). Client POST /continue must use iteration + 1,
+   * worker rejects non-incrementing values with HTTP 400. Default 0 for safety when the
+   * push didn't carry metadata.iteration (e.g. legacy worker).
+   */
+  iteration: number;
+  createdAt: number;
+}
+
+/**
+ * SW writes reasoning_buffer when amsg-instant emits ReasoningPush.
+ * 0.8.0-next.2 起, ReasoningPush 自带 (messageIndex, totalMessages, chunkIndex,
+ * totalChunks) 四个字段 — long reasoning_content 会被 amsg-instant 按 UTF-8
+ * 字节自动切多 push (默认 reasoningChunkBytes=2000), 多 push 通过 chunks[]
+ * 累积, claimReasoning 按 (messageIndex, chunkIndex) 排序后拼接成完整 reasoning.
+ *
+ * `reasoningContent` 字段是 claimReasoning 输出 (向后兼容老 Round 1 buffer 形态).
+ * `chunks` 字段是 SW 累积形态 (新 push 进来 read-modify-write 追加一条).
+ */
+export interface InstantPushReasoningBufferEntry {
+  sessionId: string;
+  charId: string;
+  /** 拼接后的完整 reasoning. claimReasoning 输出时填这个字段; SW 写入时可省略. */
+  reasoningContent?: string;
+  /** SW 累积式 buffer — 每条 ReasoningPush 进来追加一条. */
+  chunks?: Array<{
+    messageIndex: number;
+    chunkIndex: number;
+    reasoningContent: string;
+  }>;
   receivedAt: number;
 }
 

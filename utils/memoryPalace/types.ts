@@ -263,3 +263,24 @@ export interface ScoredMemory {
     bm25Score: number;          // BM25 分数
     roomScore: number;          // 房间评分后的最终分
 }
+
+// ─── 房间门牌（Room Plate — 情景→语义的固化终点） ──────
+
+/**
+ * 门牌：每个房间头上那层常驻的"蒸馏物"。
+ *
+ * 房间装的是情景记忆（一条条带时间戳的事件），门牌写的是这些经历沉淀出的
+ * 认知——不走向量召回、不衰减、每轮常驻注入 System Prompt。
+ * 对应人脑里"海马体情景记忆固化为新皮质语义知识"的那一步。
+ *
+ * 四个房间有门牌：
+ * - user_room「TA的事」  — 用户的稳定事实（家庭、居住、重要他人、雷区）
+ * - self_room「我是谁」  — 角色对自己的稳定认知
+ * - bedroom  「我们之间」— 关系的质地。硬规则：只描述现象，禁止给关系命名
+ * - study    「我的领域」— 会什么、在学什么
+ *
+ * 客厅天生短暂不配门牌；阁楼/窗台已有各自的生命周期机制（本质上就是它们的门牌）。
+ */
+export type PlateRoom = 'user_room' | 'self_room' | 'bedroom' | 'study';
+
+export const PLATE_ROOMS: PlateRoom[] = ['user_room', 'self_room', 'bedroom', 'study'];

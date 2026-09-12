@@ -30,7 +30,7 @@ const DB_NAME = 'AetherOS_Data';
 //   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
 //   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
 //   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
-const DB_VERSION = 73;
+const DB_VERSION = 74;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -224,6 +224,16 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_XHS_OWNED_POSTS)) {
           const xhsOwnedStore = db.createObjectStore(STORE_XHS_OWNED_POSTS, { keyPath: 'id' });
           xhsOwnedStore.createIndex('characterId', 'characterId', { unique: false });
+      }
+
+      // 麦麦 2026-09-12 同步上游：记忆宫殿房间门牌（22 个新文件 roomPlateCore / roomPlateCloud / autoArchive 用）
+      // 主 store 走 `${charId}:${room}` 复合主键（plateId），外加 charId 索引方便整角色查
+      if (!db.objectStoreNames.contains('room_plates')) {
+          const roomPlatesStore = db.createObjectStore('room_plates', { keyPath: 'id' });
+          roomPlatesStore.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('digest_reports')) {
+          db.createObjectStore('digest_reports', { keyPath: 'id' });
       }
 
       createStore(STORE_SONGS, { keyPath: 'id' });

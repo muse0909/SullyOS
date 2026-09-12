@@ -284,3 +284,39 @@ export interface ScoredMemory {
 export type PlateRoom = 'user_room' | 'self_room' | 'bedroom' | 'study';
 
 export const PLATE_ROOMS: PlateRoom[] = ['user_room', 'self_room', 'bedroom', 'study'];
+
+// 麦麦 2026-09-12 同步上游：22 个新文件 roomPlateCore 等引用
+export const PLATE_ENTRY_CAPS: Record<PlateRoom, number> = {
+    user_room: 12,
+    self_room: 10,
+    bedroom:   10,
+    study:     8,
+};
+
+export const PLATE_ENTRY_TARGET_CHARS = 50;
+export const PLATE_ENTRY_HARD_MAX_CHARS = 90;
+
+export const PLATE_TITLES: Record<PlateRoom, string> = {
+    user_room: 'TA的事',
+    self_room: '我是谁',
+    bedroom:   '我们之间',
+    study:     '我的领域',
+};
+
+export interface PlateEntry {
+    id: string;             // pe_xxx
+    text: string;           // 梗概条目，目标 ≤ PLATE_ENTRY_TARGET_CHARS 字
+    firstLearnedAt: number; // 首次蒸馏出这条认知的时间
+    updatedAt: number;      // 最近一次被合并/改写的时间
+    sourceCount: number;    // 被印证的次数（提过一次 vs 反复出现）
+    /** 2-4 字分类标签，LLM 整理时给出，UI 渲染 chip 与图标 */
+    tag?: string;
+}
+
+export interface RoomPlate {
+    charId: string;
+    room: PlateRoom;
+    entries: PlateEntry[];
+    basePackAt: number;     // 上次全量整理的时间戳
+    updatedAt: number;
+}

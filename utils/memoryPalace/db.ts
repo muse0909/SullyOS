@@ -9,6 +9,7 @@ import type {
     MemoryNode, MemoryVector, MemoryLink, MemoryBatch,
     TopicBox, Anticipation, MemoryRoom, BoxStatus, AnticipationStatus,
     EventBox,
+    PlateRoom, RoomPlate,  // 麦麦 2026-09-12 同步上游：22 个新文件 roomPlateCore / roomPlateCloud 引用
 } from './types';
 import { bm25Index } from './bm25Index';
 import { pruneMemoryLinksByTopN } from './links';
@@ -22,6 +23,9 @@ const STORE_MEMORY_BATCHES = 'memory_batches';
 const STORE_TOPIC_BOXES    = 'topic_boxes';
 const STORE_ANTICIPATIONS  = 'anticipations';
 const STORE_EVENT_BOXES    = 'event_boxes';
+// 麦麦 2026-09-12 同步上游：22 个新文件 roomPlateCore / roomPlateCloud / autoArchive 引用
+const STORE_ROOM_PLATES    = 'room_plates';
+const STORE_DIGEST_REPORTS = 'digest_reports';
 
 // ─── 通用辅助 ──────────────────────────────────────────
 
@@ -705,3 +709,66 @@ export const AnticipationDB = {
  * 就像整理压根没跑。名字放在门牌读写这一层，派发方和监听方都别手抄字符串。
  */
 export const ROOM_PLATES_UPDATED_EVENT = 'room-plates-updated';
+
+// ─── RoomPlate CRUD（房间门牌） ────────────────────────
+
+/** 门牌主键：一角色一房间一块 */
+export function plateId(charId: string, room: PlateRoom): string {
+    return `${charId}:${room}`;
+}
+
+export const RoomPlateDB = {
+    save: (plate: RoomPlate) => put<RoomPlate>(STORE_ROOM_PLATES, plate),
+
+    get: (charId: string, room: PlateRoom) =>
+        getByKey<RoomPlate>(STORE_ROOM_PLATES, plateId(charId, room)),
+
+    getByCharId: (charId: string) =>
+        getAllByIndex<RoomPlate>(STORE_ROOM_PLATES, 'charId', charId),
+
+    delete: (charId: string, room: PlateRoom) =>
+        deleteByKey(STORE_ROOM_PLATES, plateId(charId, room)),
+};
+
+/**
+ * 读一块门牌，没有就现造一块空的（不落库，由调用方决定要不要存）。
+ * 住在这儿是因为两条整理路径（本地的 roomPlates、上云的 roomPlateCloud）都要它，
+ * 而新门牌的初始形态——尤其是 `version: 0` 这个乐观锁起点——两边必须一模一样。
+ */
+export async function loadOrCreatePlate(charId: string, room: PlateRoom): Promise<RoomPlate> {
+    const existing = await RoomPlateDB.get(charId, room);
+    if (existing) return existing;
+    const now = Date.now();
+    return {
+        charId,
+        room,
+        entries: [],
+        basePackAt: 0,
+        updatedAt: now,
+    } as RoomPlate;
+}
+
+// 写串行化：同一块门牌（charId+room）的变更排队执行，队尾吞异常防止 unhandled rejection 蔓延
+const plateWriteQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * 读改写一块门牌：先 loadOrCreatePlate → 调 change 算 next → save。
+ * 同一 key 的调用按到达顺序排队，避免两边同时整理把后到的覆盖前到的。
+ */
+export async function mutatePlate(
+    charId: string,
+    room: PlateRoom,
+    change: (plate: RoomPlate) => RoomPlate | null,
+): Promise<RoomPlate | null> {
+    const key = plateId(charId, room);
+    const run = async (): Promise<RoomPlate | null> => {
+        const fresh = await loadOrCreatePlate(charId, room);
+        const next = change(fresh);
+        if (!next) return null;
+        await RoomPlateDB.save(next);
+        return next;
+    };
+    const write = (plateWriteQueues.get(key) ?? Promise.resolve()).then(run, run);
+    plateWriteQueues.set(key, write.catch(() => {}));
+    return write;
+}

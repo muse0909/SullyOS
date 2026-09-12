@@ -626,6 +626,36 @@ export const DB = {
     });
 },
 
+/**
+ * 麦麦 2026-09-12 同步上游：函数式 patch 版本（22 个新文件 activeMsgRuntime 等用）。
+ * 跟 updateMessageMeta 的区别是 patch 参数可以是函数 (prev) => nextPatch，
+ * 拿到当前 metadata 后再决定怎么改。
+ */
+updateMessageMetadata: async (
+    id: number,
+    patchOrFn: Record<string, any> | ((prev: any) => Record<string, any>),
+): Promise<void> => {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
+    const store = transaction.objectStore(STORE_MESSAGES);
+    return new Promise((resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => {
+            const data = req.result;
+            if (data) {
+                const prev = data.metadata || {};
+                const patch = typeof patchOrFn === 'function' ? patchOrFn(prev) : patchOrFn;
+                data.metadata = { ...prev, ...patch };
+                store.put(data);
+                resolve();
+            } else {
+                reject(new Error('Message not found'));
+            }
+        };
+        req.onerror = () => reject(req.error);
+    });
+},
+
     updateMessage: async (id: number, content: string): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_MESSAGES, 'readwrite');

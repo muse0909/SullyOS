@@ -341,6 +341,32 @@ const extractFirstXsecToken = (data: any): string | undefined => {
 
 // ==================== Public API (双模式) ====================
 
+/**
+ * 把小红书返回的"互动数"统一成 number —— 输入可能是 number 也可能是
+ * "1.2万" / "3,456" / "+99" / "10w" 这类带量词/分隔符的字符串。负数视作 0。
+ */
+export const parseXhsCount = (value: unknown): number => {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+    }
+    if (typeof value !== 'string') return 0;
+
+    const normalized = value.trim().replace(/[,\s+]/g, '');
+    if (!normalized) return 0;
+    const match = normalized.match(/^(-?\d+(?:\.\d+)?)(万|億|亿|千|[kKmMwW])?/);
+    if (!match) return 0;
+
+    const base = Number(match[1]);
+    if (!Number.isFinite(base) || base < 0) return 0;
+    const unit = match[2]?.toLowerCase();
+    const multiplier = unit === '万' || unit === 'w' ? 10_000
+        : unit === '億' || unit === '亿' ? 100_000_000
+        : unit === '千' || unit === 'k' ? 1_000
+        : unit === 'm' ? 1_000_000
+        : 1;
+    return Math.round(base * multiplier);
+};
+
 export const XhsMcpClient = {
 
     resetSession: () => {

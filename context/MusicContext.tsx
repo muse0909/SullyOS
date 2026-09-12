@@ -13,6 +13,7 @@ import React, {
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 import { DB } from '../utils/db';
+import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -122,6 +123,20 @@ const loadCfg = (): MusicCfg => {
  * MusicCfg。走 localStorage 持久化层，不挂 Context。
  */
 export const loadMusicCfgStandalone = (): MusicCfg => loadCfg();
+
+/**
+ * Music 后处理钩子 — applyAssistantPostProcessing 在 MUSIC_ACTION 分支里读这个，
+ * 拿到当前 MusicContext 里的解析/搜索/队列函数。SullyOS 旧版直接走 chatParser 里的静态
+ * 导入，2.0 起改用钩子（activeMsgClient / activeMsgRuntime 的 instant push 路径要复用同一份，
+ * 避免双份维护 + push 路径漏注入）。这里先占位，UI 端在挂载 MusicProvider 时把钩子塞进来。
+ *
+ * 麦麦 2026-09-12 同步上游。
+ */
+let __musicHooks: PostProcessMusicHooks | null = null;
+export const loadMusicHooks = (): PostProcessMusicHooks | null => __musicHooks;
+export const setMusicHooks = (hooks: PostProcessMusicHooks | null): void => {
+  __musicHooks = hooks;
+};
 
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}

@@ -68,6 +68,29 @@ export const ChatPrompts = {
         return `[系统提示: 距离上一条消息: ${days} 天。用户消失了很久。请根据你们的关系做出反应（想念、生气、担心或冷漠）。]`;
     },
 
+    /**
+     * 麦麦 2026-09-12 同步上游：按角色可见性过滤表情包。
+     * 主动消息（proactive）等不经过 Chat.tsx UI 的路径必须复用本函数，
+     * 否则角色会在主动消息里用到不属于自己范围的表情包。
+     */
+    filterVisibleEmojis: (
+        emojis: Emoji[],
+        categories: EmojiCategory[],
+        charId: string,
+    ): { emojis: Emoji[]; categories: EmojiCategory[] } => {
+        const visibleCategories = categories.filter(cat => {
+            if (!cat.allowedCharacterIds || cat.allowedCharacterIds.length === 0) return true;
+            return cat.allowedCharacterIds.includes(charId);
+        });
+        const hiddenIds = new Set(
+            categories.filter(c => !visibleCategories.some(vc => vc.id === c.id)).map(c => c.id),
+        );
+        const visibleEmojis = hiddenIds.size === 0
+            ? emojis
+            : emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
+        return { emojis: visibleEmojis, categories: visibleCategories };
+    },
+
     // 构建表情包上下文
     buildEmojiContext: (emojis: Emoji[], categories: EmojiCategory[]) => {
         if (emojis.length === 0) return '无';

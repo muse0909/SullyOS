@@ -320,11 +320,44 @@ export interface ActiveMsg2GlobalConfig {
    */
   workerUrl?: string;
   /**
+   * 麦麦 2026-09-12 同步上游：与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token，缺/错 worker 返回 401
+   */
+  serverToken?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：一键部署时生成的 AMSG_MASTER_KEY（worker 侧用它加密任务内容）。
+   * 存在这里只为「重装时沿用同一把」——它一换，之前加密进 D1 的任务就全解不开了。
+   */
+  masterKey?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：上次「连接」（在 worker 端建表）成功的时间
+   */
+  initializedAt?: number;
+  /**
    * 麦麦 2026-09-12 同步上游：即时对话总开关（云端生成的开关）。
    * undefined = 默认开（跟随全局默认）。
    */
   instantChatEnabled?: boolean;
-  initializedAt?: number;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次**明确探到**的「那台 Worker 真的跑得动即时对话吗」
+   * （见 ActiveMsgClient.probeInstantChatSupportDetailed）。
+   * false 时即时对话让位给本地生成，**用户开着也不走**
+   */
+  instantChatSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次探到的「这台 Worker 能不能把 LLM 凭据存成表里的一行」
+   * （GET /capabilities 的 features 含 'llm-credentials'）
+   */
+  llmCredentialsSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次探到的「这台 Worker 认不认 PUT /client-state 里 value: null 的删行语义」
+   * （GET /capabilities 的 features 含 'client-state-delete'）
+   */
+  clientStateDeleteSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：旁路存储的存量空壳已经扫过一遍的角色 id
+   * （见 activeMsgClient 的存量空壳清理）
+   */
+  sidechannelShellsSweptCharIds?: string[];
   updatedAt?: number;
 }
 
@@ -456,6 +489,8 @@ export interface RealtimeConfig {
   // 新闻配置
   newsEnabled: boolean;
   newsApiKey?: string;
+  // 麦麦 2026-09-12 同步上游：新闻平台多选列表（22 个新文件 amsgToolPack 引用）
+  newsPlatforms?: string[];
 
   // Notion 配置
   notionEnabled: boolean;
@@ -1251,11 +1286,20 @@ export interface CharacterProfile {
   contextLimit?: number;
   hideSystemLogs?: boolean;
   hideBeforeMessageId?: number;
+  // 麦麦 2026-09-12 同步上游：2.0 上下文范围（22 个新文件 chatContextRange 引用）
+  contextRangeMode?: 'adaptive' | 'manual';
+  contextFollowsMemoryPalaceHwm?: boolean;
+  contextRangePolicyVersion?: number;
+  contextUserStartMessageId?: number;
   // 暮色 2026-08-05 Phase 3：角色自定义时区（异国恋 / 角色身处异国等场景）
   //   开启后，注入给该角色的"当前时间 / 消息时间戳 / 夜间判断"都按这个时区折算
   //   让 ta 真的活在自己的本地时间里
   customTimezoneEnabled?: boolean;
   customTimezone?: string;  // IANA 时区 id，如 'America/New_York'，空 = 跟随设备
+  // 麦麦 2026-09-12 同步上游：主动消息 2.0 用，角色级时间感知开关。
+  // 关闭时角色不感知时间（无 time hint 注入），主要用于避免某些剧情角色/系统
+  // 角色被时间感干扰。与 customTimezoneEnabled 独立：时区是「几点」，这个是「要不要」知道。
+  timeAwarenessEnabled?: boolean;
   
   dateBackground?: string;
   dateBubbleThemeStyle?: 'light' | 'dark'; // 长文气泡主题（亮色/暗色）
@@ -2459,8 +2503,10 @@ export interface XhsFreeRoamSession {
 export interface XhsMcpConfig {
     enabled: boolean;
     serverUrl: string;  // MCP: "http://localhost:18060/mcp" | Skills: "http://localhost:18061/api"
+    cookie?: string;   // 麦麦 2026-09-12 同步上游：lite 模式登录态（22 个新文件 amsgToolPack 引用）
     loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
+    userXsecToken?: string; // 麦麦 2026-09-12 同步上游
 }
 
 // ============================================================

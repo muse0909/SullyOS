@@ -1856,6 +1856,10 @@ export interface XhsNote {
     title: string;
     desc: string;
     likes: number;
+    // 麦麦 2026-09-12 同步上游：22 个新文件 applyAssistantPostProcessing 引用
+    collects?: number;
+    commentCount?: number;
+    shareCount?: number;
     author: string;
     authorId: string;
     xsecToken?: string;

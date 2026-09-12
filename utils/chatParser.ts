@@ -25,6 +25,31 @@ import { CharacterProfile, CharPlaylistSong } from '../types';
  */
 export const playSongAndJoinHandled = new Set<string>();
 
+/**
+ * 暮色 2026-09-12 2.0 主动消息补完：把「这一刻 user 在听的歌」冻进 directive。
+ *
+ * 之前 chatParser 每次重放都现场调 `musicHooks.getListeningSnapshot()` —— 听起来没问题，
+ * 但 instant push / worker 后台补发那条路径里，到点重放时 user 早把播放器关了，
+ * 「用户此刻在听的那首」，用户多半早就没在放歌了 —— 正文聊着这首歌，卡片和加歌单
+ * 却整个没发生。worker 到点把那首歌冻进 directive，调用方（applyAssistantPostProcessing）
+ * 再显式传进来。本地聊天 / instant push 路径不传，走原来的实时快照。
+ */
+export interface FrozenMusicSong {
+    id?: number;
+    name: string;
+    artists: string;
+}
+
+/** 冻结的那首歌来自推送 metadata，字段形状不保证；歌名都没有就当没传。 */
+const normalizeFrozenSong = (song?: FrozenMusicSong | null): FrozenMusicSong | null => {
+    if (!song || typeof song.name !== 'string' || !song.name.trim()) return null;
+    return {
+        id: typeof song.id === 'number' ? song.id : undefined,
+        name: song.name,
+        artists: typeof song.artists === 'string' ? song.artists : '',
+    };
+};
+
 export interface MusicActionSnapshot {
     songId: number;
     name: string;

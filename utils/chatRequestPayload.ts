@@ -19,8 +19,13 @@ import { buildHtmlPrompt } from './htmlPrompt';
 import { buildThinkingChainPrompt } from './thinkingChainPrompt';
 import { buildMcdMiniAppContextBlock } from './mcdToolBridge';
 import type { McdMiniAppSnapshot } from './mcdToolBridge';
-import type { MusicCfg, Song, LyricLine, MusicPlaybackSnapshot } from '../context/MusicContext';
+import type { MusicCfg, Song, LyricLine } from '../context/MusicContext';
 import { isPromptBuildSkipped } from './devDebug';
+
+// 麦麦 2026-09-12：SullyOS MusicContext 旧版没 MusicPlaybackSnapshot 类型，
+// 只用 MusicPlaybackSnapshot 当任意结构传（22 个新文件走 musicSnapshot 入口，
+// 实际形态由 caller 决定；helper 内部只读 listening 字段）
+type MusicPlaybackSnapshot = any;
 
 export interface UserListeningContext {
     songName: string;

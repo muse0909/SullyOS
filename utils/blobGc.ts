@@ -98,7 +98,10 @@ async function* iterateRefSources(): AsyncGenerator<string> {
     for (const storeName of REF_SOURCE_STORES) {
         let afterKey: IDBValidKey | null = null;
         for (;;) {
-            const { rows, lastKey } = await DB.getStoreRowsPage(storeName, afterKey, PAGE_SIZE);
+            const page: { rows: any[]; lastKey: IDBValidKey | null } =
+                await DB.getStoreRowsPage<any>(storeName, afterKey, PAGE_SIZE);
+            const rows = page.rows;
+            const lastKey = page.lastKey;
             for (const row of rows) {
                 const text = JSON.stringify(row);
                 // JSON.stringify(undefined) 是 undefined（不是字符串），跳过这类空洞行

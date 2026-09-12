@@ -36,6 +36,8 @@ const capacitorDefaultWorkerUrl = import.meta.env.VITE_AMSG_NATIVE_PUSH === 'tru
 
 const defaultGlobalConfig: ActiveMsg2GlobalConfig = {
   userId: '',
+  driver: 'pg',
+  databaseUrl: '',
   workerUrl: capacitorDefaultWorkerUrl,
 };
 

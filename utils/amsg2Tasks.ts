@@ -215,8 +215,14 @@ export const describeTaskProgress = (
   return remoteStatus === 'failed' ? '发送失败' : '已到点·待处理';
 };
 
+/**
+ * 麦麦 2026-09-12：放宽 config 类型 — 测试调用方只传 { enabled, tasks }，不强求 mode / firstSendTime / recurrenceType
+ * （这三个字段本函数没用到，spec 严了反而要测试里加 stub）
+ */
+export type PendingTasksConfig = Pick<ActiveMsg2CharacterConfig, 'tasks' | 'enabled'> | undefined;
+
 export const getPendingTasks = (
-  config: ActiveMsg2CharacterConfig | undefined,
+  config: PendingTasksConfig,
   nowMs: number,
 ): ActiveMsg2TaskRecord[] =>
   (config?.tasks ?? []).filter((t) => isPendingTask(t, nowMs));
@@ -227,7 +233,7 @@ export const canExpire = (task: ActiveMsg2TaskRecord): boolean =>
 
 /** 有没有还会响的 AI 任务（amsgStateSync 的同步门用：fixed 不需要 fire_pack）。 */
 export const hasActiveAiTask = (
-  config: ActiveMsg2CharacterConfig | undefined,
+  config: PendingTasksConfig,
   nowMs = Date.now(),
 ): boolean => getPendingTasks(config, nowMs).some((t) => t.mode !== 'fixed');
 

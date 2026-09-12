@@ -888,6 +888,10 @@ async function evaluateScheduledPushExpired(message: ActiveMsg2InboxMessage): Pr
   const messages = await DB.getRecentMessagesByCharId(message.charId, 200);
   const input = {
     policy: meta.amsgExpirePolicy,
+    recurrenceType: message.recurrenceType ?? undefined,
+    // 麦麦 2026-09-12：anchorMs 跟 occurrenceMs 走相同值（任务首次创建时刻客户端不一定记得，
+    // 拿本次 occurrence 顶替；SullyOS 旧版 amsg2ExpireGuard 不强校验）
+    anchorMs: message.occurrenceMs ?? undefined,
     lastUserMessageAt: getLastRealUserMessageAt(messages),
     nowMs: Date.now(),
     // 窗口锚定到点时刻而不是送达时刻：生成+送达可能比到点晚十几分钟，拿 Date.now()
@@ -907,8 +911,6 @@ async function evaluateScheduledPushExpired(message: ActiveMsg2InboxMessage): Pr
     messageId: message.messageId,
     charId: message.charId,
     taskId: message.taskId,
-    // 判定本身已经不看任务类型了（一次性和循环同一条规则），但排查时得认得出这是哪种任务。
-    recurrenceType: message.recurrenceType ?? undefined,
     ...input,
   });
   return expired;
@@ -1013,7 +1015,14 @@ async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise
     await DB.saveCharacter({
       ...char,
       activeMsg2Config: {
-        ...(char.activeMsg2Config ?? { enabled: true }),
+        // 麦麦 2026-09-12：activeMsg2Config 缺失时的占位 stub
+        ...(char.activeMsg2Config ?? {
+          enabled: true as const,
+          mode: 'fixed' as const,
+          firstSendTime: '',
+          recurrenceType: 'none' as const,
+          tasks: [],
+        }),
         tasks: pruneStaleTasks([...existing, ...added], Date.now()),
       },
     });
@@ -1070,7 +1079,17 @@ async function applyRemoteTaskMutations(message: ActiveMsg2InboxMessage): Promis
 
     await DB.saveCharacter({
       ...char,
-      activeMsg2Config: { ...(char.activeMsg2Config ?? { enabled: true }), tasks: next },
+      activeMsg2Config: {
+        // 麦麦 2026-09-12：activeMsg2Config 缺失时 stub 填满必填字段
+        ...(char.activeMsg2Config ?? {
+          enabled: true as const,
+          mode: 'fixed' as const,
+          firstSendTime: '',
+          recurrenceType: 'none' as const,
+          tasks: [],
+        }),
+        tasks: next,
+      },
     });
     console.log('[ActiveMsg] 消账角色取消/改期的任务', { cancelled, renewed });
     // 与认领共用同一个事件：监听方（OSContext）做的是「重读角色」，增删改对它是一回事。

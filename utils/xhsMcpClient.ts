@@ -661,7 +661,7 @@ export const extractNotesFromMcpData = (data: any): any[] => {
     return [];
 };
 
-export const normalizeNote = (n: any): { noteId: string; title: string; desc: string; author: string; authorId: string; likes: number; xsecToken?: string; coverUrl?: string; type?: string } => {
+export const normalizeNote = (n: any): { noteId: string; title: string; desc: string; author: string; authorId: string; likes: number; xsecToken?: string; coverUrl?: string; type?: string; collects?: number; commentCount?: number; shareCount?: number } => {
     const card = n.noteCard || n.notecard;
     const coverObj = card?.cover || n.cover;
     const rawCoverUrl = typeof coverObj === 'string' ? coverObj
@@ -671,6 +671,10 @@ export const normalizeNote = (n: any): { noteId: string; title: string; desc: st
     const likesRaw = n.likes || n.liked_count
         || n.interact_info?.liked_count || n.interactInfo?.likedCount
         || card?.interact_info?.liked_count || card?.interactInfo?.likedCount || 0;
+    // 收藏 / 评论 / 分享：22 个新文件 agenticTools 用，2.0 升级
+    const collectsRaw = n.collected_count ?? n.collects ?? n.interact_info?.collected_count ?? card?.interact_info?.collected_count ?? 0;
+    const commentCountRaw = n.comment_count ?? n.commentCount ?? n.interact_info?.comment_count ?? card?.interact_info?.comment_count ?? 0;
+    const shareCountRaw = n.share_count ?? n.shareCount ?? n.interact_info?.share_count ?? card?.interact_info?.share_count ?? 0;
     return {
         noteId: n.noteId || n.note_id || n.id || card?.note_id || card?.noteId || card?.noteId || '',
         title: n.title || n.display_title || n.displayTitle || card?.display_title || card?.displayTitle || '',
@@ -681,5 +685,118 @@ export const normalizeNote = (n: any): { noteId: string; title: string; desc: st
         xsecToken: n.xsecToken || n.xsec_token || card?.xsec_token || card?.xsecToken || undefined,
         coverUrl,
         type: n.type || card?.type || undefined,
+        collects: typeof collectsRaw === 'string' ? parseInt(collectsRaw, 10) || 0 : (collectsRaw || 0),
+        commentCount: typeof commentCountRaw === 'string' ? parseInt(commentCountRaw, 10) || 0 : (commentCountRaw || 0),
+        shareCount: typeof shareCountRaw === 'string' ? parseInt(shareCountRaw, 10) || 0 : (shareCountRaw || 0),
     };
+};
+
+// ==================== 2.0 New: Comments Normalization ====================
+
+export interface NormalizedXhsComment {
+    commentId: string;
+    userId: string;
+    author: string;
+    content: string;
+    likes: number;
+    parentCommentId?: string;
+    subComments: NormalizedXhsComment[];
+}
+
+export type XhsCommentReadStatus = 'loaded' | 'empty' | 'unavailable' | 'not_requested';
+
+export const firstArray = (...values: any[]): any[] | undefined => {
+    for (const value of values) {
+        if (Array.isArray(value)) return value;
+    }
+    return undefined;
+};
+
+export const normalizeXhsComments = (payload: any): NormalizedXhsComment[] => {
+    const root = payload?.data && typeof payload.data === 'object' ? payload.data : payload || {};
+    const note = root.note || payload?.note || {};
+    const rawComments = firstArray(
+        root.comments?.list,
+        root.comments?.comment_list,
+        root.comment_list,
+        Array.isArray(root.comments) ? root.comments : undefined,
+        payload?.comments?.list,
+        payload?.comments?.comment_list,
+        payload?.comment_list,
+        Array.isArray(payload?.comments) ? payload.comments : undefined,
+        note.comments?.list,
+        note.comments?.comment_list,
+        note.comment_list,
+        Array.isArray(note.comments) ? note.comments : undefined,
+    ) || [];
+
+    const normalizeComment = (comment: any, parentCommentId?: string): NormalizedXhsComment => {
+        const user = comment?.userInfo || comment?.user_info || comment?.user || {};
+        const commentId = String(comment?.id || comment?.commentId || comment?.comment_id || '');
+        const replies = firstArray(
+            comment?.subComments,
+            comment?.sub_comments,
+            comment?.sub_comment_list,
+            comment?.replies,
+        ) || [];
+        return {
+            commentId,
+            userId: String(user.userId || user.user_id || comment?.userId || comment?.user_id || ''),
+            author: String(
+                user.nickname || user.name || comment?.nickname || comment?.userName
+                || comment?.user_name || comment?.author_name || comment?.author || '匿名',
+            ),
+            content: String(comment?.content || '').trim(),
+            likes: parseXhsCount(comment?.likeCount ?? comment?.like_count ?? comment?.likes ?? 0),
+            parentCommentId,
+            subComments: replies.map((reply: any) => normalizeComment(reply, commentId || parentCommentId)),
+        };
+    };
+
+    return rawComments.map((comment: any) => normalizeComment(comment));
+};
+
+export const normalizeXhsLiteDetail = (payload: any, commentLimit = 15): ReturnType<typeof normalizeNote> & {
+    comments?: { author: string; content: string; likes: number; commentId?: string; userId?: string }[];
+    commentReadStatus: XhsCommentReadStatus;
+} => {
+    const root = payload?.data && typeof payload.data === 'object' ? payload.data : payload || {};
+    const note = normalizeNote(root.note || payload?.note || payload || {});
+    const comments: { author: string; content: string; likes: number; commentId?: string; userId?: string }[] = [];
+    const appendComments = (items: NormalizedXhsComment[]) => {
+        for (const item of items) {
+            if (comments.length >= commentLimit) return;
+            if (item.content) {
+                comments.push({
+                    author: item.author,
+                    content: item.content,
+                    likes: item.likes,
+                    commentId: item.commentId || undefined,
+                    userId: item.userId || undefined,
+                });
+            }
+            appendComments(item.subComments);
+        }
+    };
+    appendComments(normalizeXhsComments(payload));
+
+    const rawCommentArray = firstArray(
+        root.comments?.list,
+        root.comments?.comment_list,
+        root.comment_list,
+        Array.isArray(root.comments) ? root.comments : undefined,
+    );
+    const explicitStatus = root.comments_status || root.comment_read_status || payload?.comments_status;
+    const commentError = root.comments_error || payload?.comments_error;
+    const commentReadStatus: XhsCommentReadStatus = comments.length > 0 || explicitStatus === 'loaded'
+        ? 'loaded'
+        : explicitStatus === 'unavailable' || commentError
+            ? 'unavailable'
+            : rawCommentArray
+                ? 'empty'
+                : 'not_requested';
+
+    return comments.length
+        ? { ...note, comments, commentReadStatus }
+        : { ...note, commentReadStatus };
 };

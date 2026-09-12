@@ -30,7 +30,7 @@ const DB_NAME = 'AetherOS_Data';
 //   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
 //   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
 //   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
-const DB_VERSION = 72;
+const DB_VERSION = 73;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -65,6 +65,8 @@ const STORE_BANK_TX = 'bank_transactions';
 const STORE_BANK_DATA = 'bank_data';
 const STORE_XHS_STOCK = 'xhs_stock';
 const STORE_XHS_ACTIVITIES = 'xhs_activities';
+// 麦麦 2026-09-12 同步上游：角色主页"我发过的小红书笔记"索引（22 个新文件 applyAssistantPostProcessing 引用）
+const STORE_XHS_OWNED_POSTS = 'xhs_owned_posts';
 const STORE_SONGS = 'songs';
 const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
@@ -216,6 +218,12 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_XHS_ACTIVITIES)) {
           const xhsActStore = db.createObjectStore(STORE_XHS_ACTIVITIES, { keyPath: 'id' });
           xhsActStore.createIndex('characterId', 'characterId', { unique: false });
+      }
+
+      // 麦麦 2026-09-12 同步上游：角色主页已发布小红书笔记索引
+      if (!db.objectStoreNames.contains(STORE_XHS_OWNED_POSTS)) {
+          const xhsOwnedStore = db.createObjectStore(STORE_XHS_OWNED_POSTS, { keyPath: 'id' });
+          xhsOwnedStore.createIndex('characterId', 'characterId', { unique: false });
       }
 
       createStore(STORE_SONGS, { keyPath: 'id' });
@@ -453,6 +461,21 @@ export const DB = {
       const store = transaction.objectStore(STORE_CHARACTERS);
       const request = store.getAll();
       request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  /**
+   * 麦麦 2026-09-12 同步上游：按 id 读单个角色（22 个新文件 chatContextRange 引用）。
+   * SullyOS 旧版只有 getAllCharacters，单个读取靠内存缓存；这里补一份原生 IDB 读取。
+   */
+  getCharacter: async (id: string): Promise<CharacterProfile | null> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+      const store = transaction.objectStore(STORE_CHARACTERS);
+      const request = store.get(id);
+      request.onsuccess = () => resolve(request.result || null);
       request.onerror = () => reject(request.error);
     });
   },
@@ -2911,5 +2934,160 @@ updateMessageMetadata: async (
           };
           tx.onerror = () => reject(tx.error);
       });
-  }
+  },
+
+  // ========== 麦麦 2026-09-12 同步上游 2.0 必需方法 ==========
+
+  /**
+   * 分页读一个 IDB store 的一批行（blobRef / blobGc 走这里扫引用）。
+   * - storeName: 已存在的 store 名（不存在的会返回空 rows + null lastKey）
+   * - afterKey: 上次最后一行主键；undefined / null = 从头开读
+   * - pageSize: 这一批最多多少行
+   * 返回 { rows, lastKey }：rows 是当批，lastKey 是当批最后一行主键（null = 已读完）
+   * 每批用独立事务，内存峰值只有一批。
+   */
+  getStoreRowsPage: async <T = any>(
+    storeName: string,
+    afterKey: IDBValidKey | null | undefined,
+    pageSize: number,
+  ): Promise<{ rows: T[]; lastKey: IDBValidKey | null }> => {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(storeName)) {
+      return { rows: [], lastKey: null };
+    }
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, 'readonly');
+      const store = transaction.objectStore(storeName);
+      const range = afterKey != null
+        ? IDBKeyRange.lowerBound(afterKey, /* open */ true)
+        : undefined;
+      const request = store.openCursor(range, 'next');
+      const rows: T[] = [];
+      let lastKey: IDBValidKey | null = null;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor && rows.length < pageSize) {
+          rows.push(cursor.value as T);
+          lastKey = cursor.key;
+          cursor.continue();
+        } else {
+          // cursor 为空（读完）或者已经攒满 pageSize：返回当批
+          // lastKey 为 null 表示已读到尾
+          resolve({ rows, lastKey: cursor ? lastKey : null });
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  /**
+   * 麦麦 2026-09-12 同步上游：保存角色已发布的小红书笔记到本地索引。
+   * id 由 caller 传 `${characterId}:${noteId}` 保证唯一。
+   */
+  saveXhsOwnedPost: async (post: {
+    id: string;
+    characterId: string;
+    noteId: string;
+    title?: string;
+    body?: string;
+    tags?: string[];
+    publishedAt: number;
+    updatedAt: number;
+  }): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_XHS_OWNED_POSTS, 'readwrite');
+      const store = transaction.objectStore(STORE_XHS_OWNED_POSTS);
+      const request = store.put(post);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  /**
+   * 麦麦 2026-09-12 同步上游：按 characterId 查已发布的小红书笔记索引。
+   * 返回按 publishedAt 倒序（最新在前）。
+   */
+  getXhsOwnedPosts: async (characterId: string): Promise<any[]> => {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_XHS_OWNED_POSTS)) return [];
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_XHS_OWNED_POSTS, 'readonly');
+      const store = transaction.objectStore(STORE_XHS_OWNED_POSTS);
+      const index = store.index('characterId');
+      const request = index.getAll(characterId);
+      request.onsuccess = () => {
+        const rows = (request.result || []) as any[];
+        rows.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+        resolve(rows);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  // ========== Blob asset store（22 个新文件 blobStore 引用） ==========
+  //
+  // 麦麦 2026-09-12：SullyOS 旧版用 base64 string 存图片（getAsset / putAsset 返回 data URL），
+  // 22 个新文件 blobStore 走原生 Blob 形态（@rei-standard/blob-store SDK 期望）。
+  // 这里加 4 个原生 Blob 形态方法（getBlobAsset / putBlobAsset / deleteBlobAsset / listBlobAssetIds），
+  // 共用 STORE_ASSETS store，跟旧版 getAsset 共存（旧版继续返回 base64 字符串）。
+
+  getBlobAsset: async (id: string): Promise<Blob | null> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readonly');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const rec = request.result as any;
+        if (!rec) return resolve(null);
+        // 旧版可能存 { id, data: 'data:...' } 字符串格式（getAsset 用），新版可能存 { id, data: Blob }
+        if (rec.data instanceof Blob) return resolve(rec.data);
+        // 旧版 base64 字符串：转 Blob 兼容（但 caller 可能更想要 data URL，这是 SDK 接入点决定的事）
+        return resolve(null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  putBlobAsset: async (id: string, blob: Blob): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const request = store.put({ id, data: blob });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  deleteBlobAsset: async (id: string): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const request = store.delete(id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  /**
+   * 列 blobRef 命名空间（id 形如 b_xxx）的全部 id。SDK 适配器要求 keys() 只覆盖一个命名空间
+   * （见 blobStore.ts 注释），否则 GC 会把 VRM / Live2D / 陪伴语音等其他族 id 当孤儿删掉。
+   */
+  listBlobAssetIds: async (): Promise<string[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readonly');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const request = store.getAllKeys();
+      request.onsuccess = () => {
+        const keys = (request.result || []) as string[];
+        // blobRef 命名空间：b_ 前缀（upstream SDK 格式），img_ 前缀（老格式）也保留
+        resolve(keys.filter((k) => typeof k === 'string' && (k.startsWith('b_') || k.startsWith('img_'))));
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
 };

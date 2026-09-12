@@ -316,9 +316,10 @@ export interface ActiveMsg2GlobalConfig {
   masterKeyFingerprint?: string;
   /**
    * 麦麦 2026-09-12 同步上游：Worker 部署 URL。
-   * 9-12 接入时为可选，存量数据没有时 fallback 到 tenantToken。
+   * 必填。22 个新文件 activeMsgClient 当 string 用，老的 fallback 到 tenantToken 的
+   * 旧逻辑已废弃——没配 workerUrl 就不调 amsg 链路。
    */
-  workerUrl?: string;
+  workerUrl: string;
   /**
    * 麦麦 2026-09-12 同步上游：与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token，缺/错 worker 返回 401
    */
@@ -2037,7 +2038,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call' | 'room_card';
 
 // 暮色 2026-08-24：MCP 工具调用摘要（聊天页灰色小气泡）
 //   useChatAI 跑完 processMcpToolCalls 后，把 executed 的工具列表塞进 chat 消息
@@ -2367,7 +2368,7 @@ export type McpCallResult =
 //   工具名内部采用 mcp__${serverId}__${toolName}（接口预留 listMcpTools / callMcpTool）
 export type McpTransport = 'streamable-http';   // 第一版只实现 streamable-http；'sse' 占位不实现
 export type McpAuthType = 'none' | 'bearer' | 'headers';
-export type McpErrorType = 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList' | 'unknown';
+export type McpErrorType = 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList' | 'unknown' | 'cancelled';
 
 export interface McpTool {
     name: string;
@@ -2399,6 +2400,8 @@ export interface McpServerConfig {
     authType: McpAuthType;
     bearerToken?: string;                // 敏感字段，UI 脱敏，日志严禁打印
     customHeaders?: Record<string, string>;  // 敏感字段，UI 脱敏，日志严禁打印
+    // 麦麦 2026-09-12：22 个新文件 mcpClient 桥接 wrapper 引用（upstream 风格）
+    proxyUrl?: string;
     createdAt: number;
     lastConnectedAt?: number;            // 最近一次成功连接时间
     lastTestedAt?: number;               // 最近一次测试时间（成功或失败都更新）
@@ -2481,6 +2484,9 @@ export interface XhsActivityRecord {
         body?: string;
         tags?: string[];
         keyword?: string;
+        // 麦麦 2026-09-12：22 个新文件 xhsFreeRoamOwnership 用 activity.content.noteId 取顶层 noteId
+        // （post 动作的产物）。savedTopics / notesViewed / commentTarget 各自有 noteId 字段互不干扰。
+        noteId?: string;
         savedTopics?: { title: string; desc: string; noteId?: string }[];
         notesViewed?: { noteId: string; title: string; desc: string; author: string; likes: number }[];
         commentTarget?: { noteId: string; title: string };
@@ -2489,6 +2495,25 @@ export interface XhsActivityRecord {
     thinking: string;  // Character's internal monologue / reasoning
     result: 'success' | 'failed' | 'skipped';
     resultMessage?: string;
+}
+
+/**
+ * 麦麦 2026-09-12 同步上游：角色已发布小红书笔记索引（22 个新文件 xhsFreeRoamOwnership / xhsOwnedPostReference 引用）
+ */
+export interface XhsOwnedPost {
+    id: string; // `${characterId}:${noteId}`
+    characterId: string;
+    noteId: string;
+    title: string;
+    body: string;
+    tags?: string[];
+    publishedAt: number;
+    updatedAt: number;
+    xsecToken?: string;
+    likes?: number;
+    collects?: number;
+    commentCount?: number;
+    shareCount?: number;
 }
 
 export interface XhsFreeRoamSession {

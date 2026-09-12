@@ -207,12 +207,16 @@ export const ChatPrompts = {
         //   - 'pure':       纯聊天模式，跳过朋友圈/音乐/群聊/日记列表/笔记列表/心声底色/slotHeader
         //                   工具层里 Notion/飞书/小红书/搜索 的提示词也不输出
         //                   目的：降输入 token
-        chatMode?: 'full' | 'pure',
+        // 麦麦 2026-09-12：22 个新文件少传了 chatMode，把 isProactive 的对象传到了 chatMode 位置。
+        // 这里放宽成 string | object | undefined（函数体里只判 !== 'pure'，对象也算 full）。
+        chatMode?: 'full' | 'pure' | string | object,
         // 暮色 2026-08-05：isProactive 控制是否注入 realtimeText（真实世界感知）
         //   - true  （主动消息路径）: 注入天气/热搜/时间，AI 主动发消息需要感知真实世界
         //   - false （正常聊天路径）: 不注入，每次请求不带"今天天气"等已经过期内容
         //   正常聊天不带 → 避免每次请求都重复塞热搜 5 条 + 天气 + 时间
-        isProactive?: boolean,
+        // 麦麦 2026-09-12：22 个新文件传 { forFirePack: true } / { useVisionDescriptions: ... }
+        // 这种对象形式（旧版只接布尔）。这里兼容两种。
+        isProactive?: boolean | { forFirePack?: boolean; useVisionDescriptions?: boolean },
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -1158,20 +1162,17 @@ ${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
         //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
         //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
         //   - dynamicTail: realtime 时间戳 + innerState 意识流（不参与 cache）
-        return {
-            bp1Tools,
-            bp2Rules,
-            bp3Context,
-            dynamicTail: {
-                // 暮色 2026-08-05：拆成两段
-                //   - timeText: 时间戳（每次都带，isProactive 无关）
-                //   - hotNewsText: 5 条热搜 + 天气（仅 isProactive=true 时带 = 主动消息 / 早晚推）
-                //   正常聊天 → 每次少塞热搜 + 天气，token 省 1-2k
-                realtimeText: timeText || '',
-                hotNewsText: hotNewsText || '',
-                innerState: evolvedNarrative || '',
-            },
-        };
+        // 麦麦 2026-09-12：SullyOS 旧版 5 个 caller 都用 string 拼接（systemPrompt += '...'）。
+        // 现阶段先返回 string 让所有 caller 编译过。dynamicTail 拼到末尾（4 段合一）。
+        const dynamicTail = [
+            bp1Tools,           // 行为+工具
+            bp2Rules,           // 模式提示
+            bp3Context,         // 角色卡+世界书+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
+            timeText || '',     // 时间戳（每次都带）
+            hotNewsText || '',  // 热搜+天气（仅 isProactive）
+            evolvedNarrative || '',  // 意识流内心独白
+        ].filter(Boolean).join('\n\n');
+        return dynamicTail;
     },
 
     // 格式化消息历史
@@ -1182,6 +1183,10 @@ ${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
         userProfile: UserProfile,
         emojis: Emoji[],
         processedExcludeIds?: Set<number>,
+        // 麦麦 2026-09-12 同步上游：22 个新文件 activeMsgClient 传 { forFirePack: true }
+        // upstream 新版叫 useVisionDescriptions；SullyOS 拿到的是过渡期版本，字段名是 forFirePack。
+        // 这里只接受签名（TS 编译过），行为参数还没在 SullyOS 旧版里实现，后续按需加。
+        _options?: { forFirePack?: boolean; useVisionDescriptions?: boolean },
     ) => {
         // Filter Logic
         let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);

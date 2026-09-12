@@ -75,7 +75,7 @@ export type AddSongTarget =
 
 export interface MusicActionHooks {
     /** 返回 user 此刻正在听的歌快照（chatParser 自己不去碰 MusicContext） */
-    getListeningSnapshot: () => MusicActionSnapshot | null;
+    getListeningSnapshot: () => any | null;
     /** 将 charId 加入"一起听"名单（chatParser 不维护状态，只通知） */
     joinListeningTogether: (charId: string) => void;
     /**
@@ -84,15 +84,18 @@ export interface MusicActionHooks {
      */
     addSongToCharPlaylist: (
         charId: string,
-        song: CharPlaylistSong,
-        target?: AddSongTarget,
+        song: any,
+        target?: any,
     ) => Promise<{ playlistTitle: string; created: boolean } | null>;
     /**
      * 暮色 2026-08-01：LLM 主动给用户放歌（play_song token）。
      * 接收歌名 → 搜歌 + 播放 → 推 system 消息到 chat 流。
      * 返回 { songName, artists, songId } —— 失败返回 null（歌搜不到 / 用户关掉 AI 主动放歌 等）。
+     *
+     * 麦麦 2026-09-12：可选 — SullyOS 旧版 PostProcessMusicHooks 没这方法（applyAssistantPostProcessing
+     * 那边不实现 play_song token）。缺这方法时 chatParser 内部把 play_song 退化成只记 toast，不发请求。
      */
-    playSongFromChar: (charId: string, songName: string) => Promise<MusicActionSnapshot | null>;
+    playSongFromChar?: (charId: string, songName: string) => Promise<any | null>;
 }
 
 export const ChatParser = {
@@ -103,6 +106,24 @@ export const ChatParser = {
         charName: string,
         addToast: (msg: string, type: 'info'|'success'|'error') => void,
         musicHooks?: MusicActionHooks,
+        // 麦麦 2026-09-12 同步上游：补 4 个可选参数
+        /** 角色自定义时区；定时消息里的时间是角色照着自己的钟写的，要按这个还原成真实时刻。 */
+        charTz?: string,
+        /**
+         * 这一轮消息该落的时间戳（离线补收时是原始发送时刻）。不传则各条按写库当刻。
+         * 必须跟 applyAssistantPostProcessing 的 persistMessage 用同一个值。
+         */
+        messageTimestamp?: number,
+        /**
+         * 戳一戳/转账/音乐/新闻/日程/生活记录等卡片的统一标记，跟正文气泡带同一个标识。
+         * 主动消息处理失败重来时靠这个标记认出「上一趟已经做过了」，避免副作用重跑。
+         */
+        mcdInheritMeta?: Record<string, any>,
+        /**
+         * 冻结的那首歌：directive 里带的歌单 + 歌名一起递下来（chatParser 自己只从 directive 读
+         * 歌单名，带不动歌名）。applyAssistantPostProcessing 在 22 个新文件调用时显式传入。
+         */
+        frozenMusicSong?: { id?: number; name: string; artists: string },
     ) => {
         let content = aiContent;
 
@@ -350,7 +371,16 @@ export const ChatParser = {
      * Removes AI-specific artifacts that should never appear in chat bubbles.
      * Safe to call multiple times (idempotent). Preserves %%BILINGUAL%% markers.
      */
-    sanitize: (text: string): string => {
+    sanitize: (text: string, options?: { keepCitations?: boolean }): string => {
+        // 麦麦 2026-09-12 同步上游：keepCitations=true 时保留 [[QUOTE:...]] / [回复 ...] 引用标记
+        // （双语路径要靠这些标记路由到原消息）。
+        const quoteStripPattern = options?.keepCitations
+            ? []
+            : [
+                /\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g,
+                /\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g,
+                /\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g,
+              ];
         return text
             // Convert literal \n (backslash + n) the AI sometimes outputs into real newlines
             .replace(/\\n/g, '\n')
@@ -379,10 +409,10 @@ export const ChatParser = {
             //   覆盖所有变体：[schedule_next_wakeup ...] / [[schedule_next_wakeup ...]] / [Ss]大小写
             //   暮色 9-7 12:55：贪婪匹配 — 1+ 个 [ + schedule_next_wakeup + 1+ 个非 ] 字符 + 1+ 个 ]
             .replace(/\[+[Ss]chedule_next_wakeup[^\]]+\]+/g, '')
-            .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
-            .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
-            // [回复 "content"]: format (AI mimics history context format)
-            .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')
+            // 引用标记 strip 走 keepCitations 分支（见 sanitize 函数顶部）
+            .replace(quoteStripPattern[0] || /$^/, '')
+            .replace(quoteStripPattern[1] || /$^/, '')
+            .replace(quoteStripPattern[2] || /$^/, '')
             // Strip backtick-wrapped action tags and empty backtick pairs
             .replace(/`(\[\[[\s\S]*?\]\])`/g, '$1')
             .replace(/``+/g, '')

@@ -115,7 +115,10 @@ async function isRefStillReferenced(ref: string): Promise<boolean> {
     for (const storeName of REF_SOURCE_STORES) {
         let afterKey: IDBValidKey | null = null;
         for (;;) {
-            const { rows, lastKey } = await DB.getStoreRowsPage(storeName, afterKey, REF_SCAN_PAGE_SIZE);
+            const page: { rows: any[]; lastKey: IDBValidKey | null } =
+                await DB.getStoreRowsPage<any>(storeName, afterKey, REF_SCAN_PAGE_SIZE);
+            const rows = page.rows;
+            const lastKey = page.lastKey;
             for (const row of rows) {
                 const text = JSON.stringify(row);
                 if (typeof text === 'string' && text.includes(ref)) return true;
@@ -279,8 +282,8 @@ export async function migrateAppearancePresetBlobRefs(
     };
 
     const theme = { ...preset.theme };
-    theme.wallpaper = (await migrate(theme.wallpaper)) || theme.wallpaper;
-    if ('lockWallpaper' in theme) theme.lockWallpaper = await migrate(theme.lockWallpaper);
+    theme.wallpaper = (await migrate(theme.wallpaper as string | undefined)) || theme.wallpaper;
+    if ('lockWallpaper' in theme) theme.lockWallpaper = await migrate(theme.lockWallpaper as string | undefined);
 
     // 桌面小组件图。槽位键遍历全部，不写死 tl/tr/wide/dsq——老美化包的预设里还压着
     // polaroid_* 这类历史键，一并转掉，免得它们以 base64 形态一直躺在预设 JSON 里。

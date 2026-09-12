@@ -1860,6 +1860,7 @@ export interface XhsNote {
     collects?: number;
     commentCount?: number;
     shareCount?: number;
+    comments?: { author: string; content: string; likes: number; commentId?: string; userId?: string }[];
     author: string;
     authorId: string;
     xsecToken?: string;

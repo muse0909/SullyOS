@@ -3361,7 +3361,15 @@ export const ActiveMsgClient = {
       .filter((char) => isAmsg2EnabledForChar(char))
       .map((char) => ({
         char,
-        config: char.activeMsg2Config ?? { enabled: true },
+        // 麦麦 2026-09-12：activeMsg2Config 缺失时的占位 stub — 实际不会进循环
+        // （同行的 aiTaskUuids filter 会把空任务剔除），TS 类型上要填满必填字段。
+        config: char.activeMsg2Config ?? ({
+          enabled: true,
+          mode: 'fixed' as const,
+          firstSendTime: '',
+          recurrenceType: 'none' as const,
+          tasks: [],
+        } as ActiveMsg2CharacterConfig),
         aiTaskUuids: getPendingTasks(char.activeMsg2Config, now)
           .filter((t) => t.mode !== 'fixed')
           .map((t) => t.taskUuid),

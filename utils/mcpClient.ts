@@ -109,7 +109,7 @@ const buildAuthHeaders = (config: McpServerConfig): Record<string, string> => {
 
 // ==================== JSON-RPC 工具 ====================
 
-const buildRequest = (method: string, params?: any, isNotification = false, session: McpSession): McpJsonRpcRequest => {
+const buildRequest = (method: string, session: McpSession, params?: any, isNotification = false): McpJsonRpcRequest => {
     const req: McpJsonRpcRequest = { jsonrpc: '2.0', method, params };
     if (!isNotification) req.id = ++session.requestIdCounter;
     return req;
@@ -330,11 +330,11 @@ export const mcpClient = {
         session.discoveredTools = [];
 
         // 1. initialize
-        const initReq = buildRequest('initialize', {
+        const initReq = buildRequest('initialize', session, {
             protocolVersion: '2024-11-05',
             capabilities: {},
             clientInfo: { name: 'SullyOS', version: '1.0.0' },
-        }, false, session);
+        }, false);
         const { response: initResp, sessionId: initSessionId } = await post(config, initReq, true, session);
         if (initSessionId) session.sessionId = initSessionId;
         if (initResp?.error) {
@@ -351,7 +351,7 @@ export const mcpClient = {
         }
 
         // 2. notifications/initialized (无响应)
-        const notifReq = buildRequest('notifications/initialized', {}, true, session);
+        const notifReq = buildRequest('notifications/initialized', session, {}, true);
         try {
             await post(config, notifReq, false, session);
         } catch {
@@ -360,7 +360,7 @@ export const mcpClient = {
 
         // 3. tools/list
         try {
-            const toolsReq = buildRequest('tools/list', undefined, false, session);
+            const toolsReq = buildRequest('tools/list', session, undefined, false);
             const { response: toolsResp } = await post(config, toolsReq, true, session);
             if (toolsResp?.error) {
                 throw makeError(`tools/list 错误: ${toolsResp.error.message}`, 'toolsList');
@@ -511,7 +511,7 @@ export const mcpClient = {
             }
 
             // 4. tools/call 请求
-            const req = buildRequest('tools/call', { name: toolName, arguments: args }, false, session);
+            const req = buildRequest('tools/call', session, { name: toolName, arguments: args }, false);
             let postResult;
             try {
                 postResult = await post(config, req, true, session, controller.signal);

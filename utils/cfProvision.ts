@@ -15,13 +15,26 @@
 import { getProxyWorkerUrl } from './proxyWorker';
 import { generateVapidKeyPair, generateClientToken } from './vapidGen';
 
-/** 部署出来的 Worker / D1 默认叫这个，跟 worker/amsg/wrangler.toml 对齐。 */
-export const AMSG_SCRIPT_NAME = 'sullyos-amsg';
-export const AMSG_D1_NAME = 'sullyos-amsg';
+/**
+ * 部署出来的 Worker / D1 默认叫这个，跟 worker/amsg/wrangler.toml 对齐。
+ *
+ * 麦麦 2026-09-15：拾光机 fork 适配。原版拾光机（upstream / friedsully.com）worker 名
+ * 是 `sullyos-amsg`、D1 名也是 `sullyos-amsg`；拾光机 fork 自己部署的 worker 名
+ * （wrangler.toml:name = "sullyos"）+ D1 名是 `sully-amsg2`。一键部署建出来的要跟
+ * 拾光机 wrangler.toml 对齐，否则拾光机前端读不到 worker URL、连不上。
+ */
+export const AMSG_SCRIPT_NAME = 'sullyos';
+export const AMSG_D1_NAME = 'sully-amsg2';
 
 /** 上传时的模块名，同时是 metadata.main_module，两处必须一致。 */
 const MAIN_MODULE = 'worker.bundle.js';
 
+/**
+ * 麦麦 2026-09-15：拾光机 fork 适配。bundle 现在从 Tosd0 那个公共仓库拉，
+ * 因为拾光机 fork HEAD 跟 upstream HEAD 在 worker/amsg/src/index.ts 完全一致
+ * （diff 空），用 upstream 的 bundle 等同于用拾光机自己的 bundle。
+ * 后续如果拾光机 fork 有自己的私有 bundle 仓库，把这里改成对应 URL。
+ */
 const BUNDLE_BASE = 'https://raw.githubusercontent.com/Tosd0/sullyos-workers/main/amsg';
 const BUNDLE_URL = `${BUNDLE_BASE}/${MAIN_MODULE}`;
 const WRANGLER_URL = `${BUNDLE_BASE}/wrangler.toml`;

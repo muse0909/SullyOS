@@ -738,22 +738,32 @@ export const buildFirePack = async (
     library.categories,
     char.id,
   );
-  const systemPrompt = templateStub ? '' : await ChatPrompts.buildSystemPrompt(
-    char,
-    userProfile,
-    groups,
-    emojis,
-    categories,
-    recentMessages,
-    realtimeConfig,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
-    // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
-    { forFirePack: true },
-  );
+  // 麦麦 2026-09-15 修：chatPrompts.buildSystemPrompt 9-12 step 4 临时改成返 string 后又恢复返对象，
+  // 这里跟着按对象字段拼成 string。fire_pack 模板只关心角色人设和上下文，dynamicTail 的实时热搜
+  // / 天气 / 意识流 fields 在 fire 那一刻 worker 侧再渲染（见 renderFirePack），不烤进打包这一刻的模板。
+  const systemPromptResult = templateStub
+    ? null
+    : await ChatPrompts.buildSystemPrompt(
+        char,
+        userProfile,
+        groups,
+        emojis,
+        categories,
+        recentMessages,
+        realtimeConfig,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
+        // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
+        { forFirePack: true },
+      );
+  const systemPrompt = systemPromptResult
+    ? [systemPromptResult.bp1Tools, systemPromptResult.bp2Rules, systemPromptResult.bp3Context]
+        .filter(Boolean)
+        .join('\n\n')
+    : '';
   const recentTranscript = templateStub ? '' : ChatPrompts.buildMessageHistory(
     recentMessages,
     Math.max(1, recentMessages.length),

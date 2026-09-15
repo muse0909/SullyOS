@@ -1162,17 +1162,23 @@ ${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
         //   - bp2Rules:   date/call 模式提示 + 语音禁用提示
         //   - bp3Context: 角色卡+世界书+slotHeader+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
         //   - dynamicTail: realtime 时间戳 + innerState 意识流（不参与 cache）
-        // 麦麦 2026-09-12：SullyOS 旧版 5 个 caller 都用 string 拼接（systemPrompt += '...'）。
-        // 现阶段先返回 string 让所有 caller 编译过。dynamicTail 拼到末尾（4 段合一）。
-        const dynamicTail = [
-            bp1Tools,           // 行为+工具
-            bp2Rules,           // 模式提示
-            bp3Context,         // 角色卡+世界书+朋友圈+音乐+群聊+日记列表+笔记列表+心声底色
-            timeText || '',     // 时间戳（每次都带）
-            hotNewsText || '',  // 热搜+天气（仅 isProactive）
-            evolvedNarrative || '',  // 意识流内心独白
-        ].filter(Boolean).join('\n\n');
-        return dynamicTail;
+        // 麦麦 2026-09-12：step 4 commit 把这里临时改成返 string（"5 caller 都 string"），
+        // 但当时只升级了 chatRequestPayload / activeMsgClient 两个 caller，useChatAI 和 OSContext
+        // 还是按对象字段读，结果 systemPromptResult.bp1Tools 全是 undefined，进入 console.log 字面量
+        // 求值时立刻 `bp1Tools.length` TypeError，触发 [连接中断: Cannot read properties of undefined (reading 'length')]。
+        //
+        // 麦麦 2026-09-15 修：恢复 4 段对象契约，并同步改另外 2 个原本当 string 用的 caller
+        // （chatRequestPayload.ts、activeMsgClient.ts）让它们按对象字段拼。
+        return {
+            bp1Tools,
+            bp2Rules,
+            bp3Context,
+            dynamicTail: {
+                realtimeText: timeText || '',
+                hotNewsText: hotNewsText || '',
+                innerState: evolvedNarrative || '',
+            },
+        };
     },
 
     // 格式化消息历史

@@ -148,6 +148,13 @@ dependencies {
     //   KeepAliveService 里用 OkHttp WebSocket 跟 Cloudflare Worker 建立长连接
     //   4.12.0 是当前稳定版，minSdk 22 / Java 17 兼容
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
+
+    // 麦麦 2026-09-15：拾光机 主动消息 2.0 后台推送 — UnifiedPush Android 桥接
+    //   给 SullyOS fork 补的 AmsgUnifiedPushPlugin + UnifiedPushReceiver 用
+    //   原版拾光机 fork 的原生壳保留在 CHICK2 私有仓库，不公开；
+    //   这里用 UnifiedPush 官方 android-connector 3.0.0（JitPack 分发）。
+    //   选 3.0.0 是因为它支持 INSTANCE_DEFAULT 常量和 tryUseCurrentOrDefaultDistributor 回调签名。
+    implementation 'com.github.UnifiedPush:android-connector:3.0.0'
 }
 
 apply from: 'capacitor.build.gradle'

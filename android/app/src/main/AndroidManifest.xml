@@ -52,14 +52,17 @@
              UnifiedPushService 继承 org.unifiedpush.android.connector.PushService，
              SDK 自带的 MessagingReceiverImpl 收到 ntfy broadcast 后会在内部 bind 我们这个 service，
              然后调我们的 onNewEndpoint / onMessage / onRegistrationFailed / onUnregistered。
-             **注意：不要自己注册 receiver**——SDK 那个 intent-filter 会被我们声明的 receiver 抢占，
-             SDK 的 receiver 就跑不起来了，事件没人转发给 service。第一版用 MessagingReceiver 时栽在这。
-             export=true：Service 必须能被 SDK bind（同设备 + 显式 component name 绑定，export=true 是
-             Android 12+ required）。-->
+             **必须**声明 intent-filter 处理 `org.unifiedpush.android.connector.PUSH_EVENT`——
+             SDK 用的是 implicit intent (action=PUSH_EVENT + setPackage=myPackage) bind 我们，
+             Android 必须靠 intent-filter 匹配才能找到 service（不是按 component name）。
+             第一版没 intent-filter，导致 ntfy 建了订阅主题但 NEW_ENDPOINT 永远不到。-->
         <service
             android:name=".UnifiedPushService"
             android:exported="true"
             tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
         </service>
     </application>
 

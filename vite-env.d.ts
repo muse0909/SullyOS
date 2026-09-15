@@ -15,3 +15,12 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// 麦麦 2026-09-15：vite.config.ts define 注入的构建时常量类型声明
+//   buildInfo.ts / BuildBadge.tsx / DevDebugPanel.tsx 直接用这些全局常量，
+//   Vite 构建时会按 define 配置替换成字符串字面量，TS 编译需要类型声明
+//   才能识别它们。
+declare const __BUILD_BRANCH__: string;
+declare const __BUILD_COMMIT__: string;
+declare const __BUILD_TIME__: string;
+declare const __BUILD_BADGE_VISIBLE__: boolean;

@@ -3,6 +3,9 @@ import React from 'react';
 import { OSProvider } from './context/OSContext';
 import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
+import Amsg2DebugPanel from './components/Amsg2DebugPanel';
+import BuildBadge from './components/BuildBadge';
+import DevDebugPanel from './components/DevDebugPanel';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 
 const App: React.FC = () => {
@@ -35,9 +38,16 @@ const App: React.FC = () => {
         <OSProvider>
           <MusicProvider>
             <PhoneShell />
+            {/* 麦麦 2026-09-15 同步上游：挂在 Provider 里能直接读 characters（省掉轮询 IndexedDB），
+                面板自身用 portal 渲染到 body，绕开上面那层 transform 对 fixed 定位的影响。 */}
+            <Amsg2DebugPanel />
           </MusicProvider>
         </OSProvider>
       </div>
+      {/* 麦麦 2026-09-15 同步上游：构建版本指示器（右下角 preview@xxx 小标签）
+          + dev debug 面板（连点 5 下解锁）。挂 OSProvider 外层，不依赖 store。 */}
+      <BuildBadge />
+      <DevDebugPanel />
     </div>
   );
 };

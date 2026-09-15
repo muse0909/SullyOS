@@ -41,6 +41,9 @@ const WORKERS = [
     entry: 'worker/amsg/src/index.ts',
     /** 打到 worker/amsg/worker.bundle.js（同 worker/proactive-push 旧约定） */
     outfile: 'worker/amsg/worker.bundle.js',
+    // 麦麦 2026-09-15：upstream 完整版 index.ts 用了 DurableObject，需要 cloudflare:workers
+    // 虚拟模块（CF workerd 运行时提供）；proactive-push 已经配了同样的 external。
+    external: ['cloudflare:workers'],
   },
   {
     name: 'proactive-push',

@@ -267,7 +267,8 @@ function applyDateBoost(
  *
  * 返回 null：memories 为空（没有新记忆，不需要归档动作）。
  */
-function buildAutoArchiveFragments(
+// 麦麦 2026-09-12 同步上游：22 个新文件 memoryPalace/autoArchive 引用，原私有改 export
+export function buildAutoArchiveFragments(
     memories: { id: string; content: string; createdAt: number }[],
     hideBeforeMessageId: number,
 ): NonNullable<PipelineResult['autoArchive']> | null {
@@ -1707,3 +1708,10 @@ export async function processNewMessages(
         processingLocks.delete(charId);
     }
 }
+
+// 麦麦 2026-09-12 同步上游：22 个新文件 memoryPalace/autoArchive 引用 buildAutoArchiveFragments。
+// SullyOS 旧版 pipeline.ts:270 已有同名函数（私有），给原函数加 export 即可，
+// 不要再加一个（重复声明 Vite build 报错）。
+// 22 个新文件引用是从 upstream pipeline.ts 拿的实现，逻辑等价。
+// 把这一段空实现删掉，下面给 line 270 加 export。
+//（已删除重复声明）

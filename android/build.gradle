@@ -23,6 +23,10 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // 麦麦 2026-09-15：拾光机 主动消息 2.0 后台推送 — UnifiedPush Android 桥接
+        //   com.github.UnifiedPush:android-connector 3.0.0 通过 JitPack 分发
+        //   https://jitpack.io/#UnifiedPush/android-connector
+        maven { url 'https://jitpack.io' }
     }
 }
 

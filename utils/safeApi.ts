@@ -196,13 +196,34 @@ async function proxyFetch(url: string, options: RequestInit): Promise<Response> 
     return resp;
 }
 
+/**
+ * 麦麦 2026-09-12 同步上游：5th 参数兼容 2.0 风格的 meta 对象。
+ * 旧路径（'openai' | 'claude' 字符串）继续工作，新路径（meta 对象）也接受。
+ * 对象形态是给 apiCallLog 用的：purpose / appName / charId / charName 这 4 个字段
+ * 会附在请求上，便于按用途 / 角色 / App 维度查日志。
+ */
+export type SafeFetchJsonProtocol = 'openai' | 'claude';
+export interface SafeFetchJsonMeta {
+    purpose?: string;
+    appName?: string;
+    charId?: string;
+    charName?: string;
+    /** 显式声明的协议；缺省视为 'openai' */
+    protocol?: SafeFetchJsonProtocol;
+}
+
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
     maxRetries: number = 2,
     timeoutMs: number = 0,
-    protocol: 'openai' | 'claude' = 'openai',
+    protocolOrMeta: SafeFetchJsonProtocol | SafeFetchJsonMeta = 'openai',
 ): Promise<any> {
+    // 兼容两种调用风格：旧字符串 'openai' | 'claude'，新对象 { purpose, appName, ... }
+    const protocol: SafeFetchJsonProtocol = typeof protocolOrMeta === 'string'
+        ? protocolOrMeta
+        : (protocolOrMeta.protocol ?? 'openai');
+    const meta: SafeFetchJsonMeta = typeof protocolOrMeta === 'string' ? {} : protocolOrMeta;
     // 暮色 2026-07-17：协议分支
     //   - OpenAI (默认): {url}/chat/completions，原样转发
     //   - Claude:         {url}/v1/messages，自动加 x-api-key + anthropic-version

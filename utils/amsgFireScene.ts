@@ -99,6 +99,8 @@ export const renderFireSceneBlock = (
   scene: AmsgFireScene | null,
   nowMs: number,
   tz: AmsgTzRef,
+  // 麦麦 2026-09-12 同步上游：22 个新文件 amsgFirePack 传 { includeClock: ... }
+  options?: { includeClock?: boolean },
 ): string => {
   if (!scene?.schedule?.slots?.length) return '';
 

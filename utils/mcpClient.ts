@@ -109,7 +109,7 @@ const buildAuthHeaders = (config: McpServerConfig): Record<string, string> => {
 
 // ==================== JSON-RPC 工具 ====================
 
-const buildRequest = (method: string, params?: any, isNotification = false, session: McpSession): McpJsonRpcRequest => {
+const buildRequest = (method: string, session: McpSession, params?: any, isNotification = false): McpJsonRpcRequest => {
     const req: McpJsonRpcRequest = { jsonrpc: '2.0', method, params };
     if (!isNotification) req.id = ++session.requestIdCounter;
     return req;
@@ -330,11 +330,11 @@ export const mcpClient = {
         session.discoveredTools = [];
 
         // 1. initialize
-        const initReq = buildRequest('initialize', {
+        const initReq = buildRequest('initialize', session, {
             protocolVersion: '2024-11-05',
             capabilities: {},
             clientInfo: { name: 'SullyOS', version: '1.0.0' },
-        }, false, session);
+        }, false);
         const { response: initResp, sessionId: initSessionId } = await post(config, initReq, true, session);
         if (initSessionId) session.sessionId = initSessionId;
         if (initResp?.error) {
@@ -351,7 +351,7 @@ export const mcpClient = {
         }
 
         // 2. notifications/initialized (无响应)
-        const notifReq = buildRequest('notifications/initialized', {}, true, session);
+        const notifReq = buildRequest('notifications/initialized', session, {}, true);
         try {
             await post(config, notifReq, false, session);
         } catch {
@@ -360,7 +360,7 @@ export const mcpClient = {
 
         // 3. tools/list
         try {
-            const toolsReq = buildRequest('tools/list', undefined, false, session);
+            const toolsReq = buildRequest('tools/list', session, undefined, false);
             const { response: toolsResp } = await post(config, toolsReq, true, session);
             if (toolsResp?.error) {
                 throw makeError(`tools/list 错误: ${toolsResp.error.message}`, 'toolsList');
@@ -511,7 +511,7 @@ export const mcpClient = {
             }
 
             // 4. tools/call 请求
-            const req = buildRequest('tools/call', { name: toolName, arguments: args }, false, session);
+            const req = buildRequest('tools/call', session, { name: toolName, arguments: args }, false);
             let postResult;
             try {
                 postResult = await post(config, req, true, session, controller.signal);
@@ -594,3 +594,67 @@ export const mcpClient = {
 export const getMcpDefaultProxyHint = (): string => {
     return getProxyWorkerUrl();
 };
+
+// ========== 2.0 上云侧 MCP 接口（2026-09-12 同步上游） ==========
+//
+// 上游用 localStorage 持久化 mcp servers + useNativeTools 开关；SullyOS 旧版
+// 把 server 配置放在 utils/mcpStorage.ts（也是 localStorage，但 key 不同：`os_mcp_servers_v1`），
+// useNativeTools 开关 8-23 之前没显式存过，按"默认 true"语义处理。这里写 4 个 wrapper
+// 桥接上去：22 个新文件（activeMsgClient / activeMsgRuntime / amsgToolPack 等）走
+// upstream 风格的 import path，跟老 mcpClient.initialize / mcpStorage.add 互不干扰。
+import { mcpStorage } from './mcpStorage';
+import type { McpFireServer, McpFireToolDef } from './mcpFireCore';
+import { isWorkerReachableUrl } from './amsgToolPack';
+
+const MCP_USE_NATIVE_TOOLS_KEY = 'os_mcp_use_native_tools';
+
+/** 把 SullyOS 旧版 McpServerConfig 转成上游的 McpFireServer（去掉代理字段、保留核心）。 */
+const toMcpFireServer = (s: any): McpFireServer => {
+    const tools: McpFireToolDef[] = (s.tools || [])
+        .filter((t: any) => t && t.name)
+        .filter((t: any) => !t.annotations || t.annotations.destructiveHint !== true)
+        .map((t: any) => ({
+            name: t.name,
+            title: t.title,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            outputSchema: t.outputSchema,
+            annotations: t.annotations,
+        }));
+    return {
+        id: s.id,
+        name: s.name,
+        url: s.url,
+        ...(s.bearerToken ? { token: s.bearerToken } : {}),
+        ...(s.customHeaders && Object.keys(s.customHeaders).length
+            ? { customHeaders: Object.entries(s.customHeaders).map(([name, value]) => ({ name, value: value as string })) }
+            : {}),
+        ...(Array.isArray(s.charIds) && s.charIds.length ? { charIds: s.charIds } : {}),
+        tools,
+    };
+};
+
+/** 22 个新文件要 `loadMcpServers`：从 SullyOS 自己的 mcpStorage 桥接。 */
+export const loadMcpServers = (): any[] => mcpStorage.getAll();
+
+/** 22 个新文件要 `getMcpUseNativeTools`：读 os_mcp_use_native_tools，缺省 true。 */
+export const getMcpUseNativeTools = (): boolean => {
+    try { return localStorage.getItem(MCP_USE_NATIVE_TOOLS_KEY) !== '0'; }
+    catch { return true; }
+};
+
+/** 22 个新文件要 `setMcpUseNativeTools`：写 os_mcp_use_native_tools。 */
+export const setMcpUseNativeTools = (enabled: boolean): void => {
+    try { localStorage.setItem(MCP_USE_NATIVE_TOOLS_KEY, enabled ? '1' : '0'); } catch { /* ignore */ }
+};
+
+/**
+ * 上云给 amsg worker 用的服务器子集（22 个新文件要的接口）。
+ * 注意：upstream 走 getEnabledMcpServers(charId)；SullyOS 旧版没有这个函数
+ * （mcpStorage 不分角色），先用 loadMcpServers() 通用版顶替，后续接 2.0 时再加分角色。
+ */
+export const collectMcpFireServers = (): McpFireServer[] =>
+    loadMcpServers()
+        .filter((s) => s.enabled && s.url && (s.tools?.length || 0) > 0 && isWorkerReachableUrl(s.url))
+        .map(toMcpFireServer)
+        .filter((s) => s.tools && s.tools.length > 0);

@@ -273,6 +273,27 @@ volinkTtsVoice?: string;   // 全局默认声音ID（角色没配时用这个）
 volinkTtsModel?: string;
 }
 
+export interface InstantPushConfig {
+  enabled: boolean;
+  workerUrl: string;        // https://your-instant.workers.dev
+  // VAPID 公私钥已迁移到 utils/pushVapid.ts (push_vapid_v1)，与 Proactive Push
+  // 共享同一份，避免两边互相 unsubscribe 抢同一个 pushManager 订阅。
+  clientToken?: string;     // 对应 Worker 的 AMSG_CLIENT_TOKEN
+  // 发送文本后是否自动触发 AI 回复 (worker 端跑 + push 回写). 仅控制"自动触发"这件事,
+  // 不改变 instant push 本身的开关含义. 关闭时 instant 模式也保留手动 ⚡, 跟本地模式一致.
+  // 缺省 (undefined) 视为关闭 — 避免"启用 instant = 自动回复"的反直觉强绑定.
+  autoTriggerOnSend?: boolean;
+  // 大 payload 的传输方式默认走 multipart。只有连接测试确认 Worker 绑定了可用 D1 后,
+  // 前台才允许用户打开 D1 envelope。
+  useD1BlobStore?: boolean;
+  d1Available?: boolean;
+  d1CheckedAt?: number;
+  d1CheckedWorkerUrl?: string;
+  updatedAt?: number;
+}
+
+export type InstantOversizeTransport = 'multipart' | 'd1';
+
 export type ActiveMsg2DbDriver = 'pg' | 'neon';
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
@@ -293,7 +314,51 @@ export interface ActiveMsg2GlobalConfig {
   cronToken?: string;
   cronWebhookUrl?: string;
   masterKeyFingerprint?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：Worker 部署 URL。
+   * 必填。22 个新文件 activeMsgClient 当 string 用，老的 fallback 到 tenantToken 的
+   * 旧逻辑已废弃——没配 workerUrl 就不调 amsg 链路。
+   */
+  workerUrl: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token，缺/错 worker 返回 401
+   */
+  serverToken?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：一键部署时生成的 AMSG_MASTER_KEY（worker 侧用它加密任务内容）。
+   * 存在这里只为「重装时沿用同一把」——它一换，之前加密进 D1 的任务就全解不开了。
+   */
+  masterKey?: string;
+  /**
+   * 麦麦 2026-09-12 同步上游：上次「连接」（在 worker 端建表）成功的时间
+   */
   initializedAt?: number;
+  /**
+   * 麦麦 2026-09-12 同步上游：即时对话总开关（云端生成的开关）。
+   * undefined = 默认开（跟随全局默认）。
+   */
+  instantChatEnabled?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次**明确探到**的「那台 Worker 真的跑得动即时对话吗」
+   * （见 ActiveMsgClient.probeInstantChatSupportDetailed）。
+   * false 时即时对话让位给本地生成，**用户开着也不走**
+   */
+  instantChatSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次探到的「这台 Worker 能不能把 LLM 凭据存成表里的一行」
+   * （GET /capabilities 的 features 含 'llm-credentials'）
+   */
+  llmCredentialsSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：上一次探到的「这台 Worker 认不认 PUT /client-state 里 value: null 的删行语义」
+   * （GET /capabilities 的 features 含 'client-state-delete'）
+   */
+  clientStateDeleteSupported?: boolean;
+  /**
+   * 麦麦 2026-09-12 同步上游：旁路存储的存量空壳已经扫过一遍的角色 id
+   * （见 activeMsgClient 的存量空壳清理）
+   */
+  sidechannelShellsSweptCharIds?: string[];
   updatedAt?: number;
 }
 
@@ -302,11 +367,31 @@ export interface ActiveMsg2CharacterConfig {
   mode: ActiveMsg2Mode;
   firstSendTime: string;
   recurrenceType: ActiveMsg2Recurrence;
+  expirePolicy?: ActiveMsg2ExpirePolicy;
+  /**
+   * 麦麦 2026-09-12 同步上游：多任务清单（替换单任务字段）。
+   * 22 个新 utils（amsg2Tasks / amsg2ToolBridge / amsg2DebugView / amsg2TaskContext 等）
+   * 都按多任务模型读 / 写此字段。SullyOS 7-3 时只有单任务（taskUuid 字段），本字段
+   * 9-12 接入时为可选，保持存量数据兼容。
+   */
+  tasks?: ActiveMsg2TaskRecord[];
   userMessage?: string;
   promptHint?: string;
   maxTokens?: number;
+  /**
+   * 麦麦 2026-09-11 同步上游：用户没回消息时 TA 最多连续主动发几条。
+   * 0 = 不限；缺省 = worker 用 DEFAULT_MAX_UNANSWERED_SENDS（=3）。
+   * 暮色 9-11 拍板"UI 保留，Worker 端 SDK 2.6.0-next.12 是否认未知，需端到端验证"。
+   */
+  maxUnansweredSends?: number;
   taskUuid?: string;
   remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
+  /**
+   * 麦麦 2026-09-15 同步上游（modal 762 行完整版覆盖）：即时对话按角色单独开关。
+   * undefined = 跟随全局默认开，所以只有显式 false 才显示成关。
+   * 与 ActiveMsg2GlobalConfig.instantChatEnabled 配套。
+   */
+  instantChatEnabled?: boolean;
   useSecondaryApi?: boolean;
   secondaryApi?: ActiveMsg2ApiConfig;
   lastSyncedAt?: number;
@@ -325,6 +410,60 @@ export interface ActiveMsg2InboxMessage {
   taskId?: string | null;
   metadata?: Record<string, any>;
   sentAt?: number;
+  receivedAt: number;
+}
+
+// Phase 2 Round 1 — Instant Push agentic loop session state, written client-side
+// before /instant and consumed by /continue. See plans/instant-push-agentic-loop-phase2.md
+export interface InstantPushOutboundSession {
+  sessionId: string;
+  charId: string;
+  /** Conversation messages snapshot at /instant call time — fed to /continue as agentic-loop history. */
+  messages: any[];
+  /** API credentials needed to resume via /continue when worker calls back. */
+  apiCredentials: { baseUrl: string; apiKey: string; model: string };
+  createdAt: number;
+}
+
+// Phase 2 Round 2 — SW will populate these stores; Round 1 just defines schema (empty).
+export interface InstantPushPendingToolCall {
+  sessionId: string;
+  charId: string;
+  /** OpenAI-shape tool_calls from worker LLM emit, ready to dispatch via agenticTools. */
+  toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** Pre-tool-call LLM text output, used to prefix assistant-side content if needed. */
+  llmOutputText: string;
+  /**
+   * Agentic-loop iteration that produced this tool_request (0-indexed at worker side, see
+   * amsg-instant SessionContext.iteration). Client POST /continue must use iteration + 1,
+   * worker rejects non-incrementing values with HTTP 400. Default 0 for safety when the
+   * push didn't carry metadata.iteration (e.g. legacy worker).
+   */
+  iteration: number;
+  createdAt: number;
+}
+
+/**
+ * SW writes reasoning_buffer when amsg-instant emits ReasoningPush.
+ * 0.8.0-next.2 起, ReasoningPush 自带 (messageIndex, totalMessages, chunkIndex,
+ * totalChunks) 四个字段 — long reasoning_content 会被 amsg-instant 按 UTF-8
+ * 字节自动切多 push (默认 reasoningChunkBytes=2000), 多 push 通过 chunks[]
+ * 累积, claimReasoning 按 (messageIndex, chunkIndex) 排序后拼接成完整 reasoning.
+ *
+ * `reasoningContent` 字段是 claimReasoning 输出 (向后兼容老 Round 1 buffer 形态).
+ * `chunks` 字段是 SW 累积形态 (新 push 进来 read-modify-write 追加一条).
+ */
+export interface InstantPushReasoningBufferEntry {
+  sessionId: string;
+  charId: string;
+  /** 拼接后的完整 reasoning. claimReasoning 输出时填这个字段; SW 写入时可省略. */
+  reasoningContent?: string;
+  /** SW 累积式 buffer — 每条 ReasoningPush 进来追加一条. */
+  chunks?: Array<{
+    messageIndex: number;
+    chunkIndex: number;
+    reasoningContent: string;
+  }>;
   receivedAt: number;
 }
 
@@ -357,6 +496,8 @@ export interface RealtimeConfig {
   // 新闻配置
   newsEnabled: boolean;
   newsApiKey?: string;
+  // 麦麦 2026-09-12 同步上游：新闻平台多选列表（22 个新文件 amsgToolPack 引用）
+  newsPlatforms?: string[];
 
   // Notion 配置
   notionEnabled: boolean;
@@ -1152,11 +1293,20 @@ export interface CharacterProfile {
   contextLimit?: number;
   hideSystemLogs?: boolean;
   hideBeforeMessageId?: number;
+  // 麦麦 2026-09-12 同步上游：2.0 上下文范围（22 个新文件 chatContextRange 引用）
+  contextRangeMode?: 'adaptive' | 'manual';
+  contextFollowsMemoryPalaceHwm?: boolean;
+  contextRangePolicyVersion?: number;
+  contextUserStartMessageId?: number;
   // 暮色 2026-08-05 Phase 3：角色自定义时区（异国恋 / 角色身处异国等场景）
   //   开启后，注入给该角色的"当前时间 / 消息时间戳 / 夜间判断"都按这个时区折算
   //   让 ta 真的活在自己的本地时间里
   customTimezoneEnabled?: boolean;
   customTimezone?: string;  // IANA 时区 id，如 'America/New_York'，空 = 跟随设备
+  // 麦麦 2026-09-12 同步上游：主动消息 2.0 用，角色级时间感知开关。
+  // 关闭时角色不感知时间（无 time hint 注入），主要用于避免某些剧情角色/系统
+  // 角色被时间感干扰。与 customTimezoneEnabled 独立：时区是「几点」，这个是「要不要」知道。
+  timeAwarenessEnabled?: boolean;
   
   dateBackground?: string;
   dateBubbleThemeStyle?: 'light' | 'dark'; // 长文气泡主题（亮色/暗色）
@@ -1894,7 +2044,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'couple_space_invite' | 'couple_space_event' | 'music_invite' | 'mcp_tool_call' | 'room_card';
 
 // 暮色 2026-08-24：MCP 工具调用摘要（聊天页灰色小气泡）
 //   useChatAI 跑完 processMcpToolCalls 后，把 executed 的工具列表塞进 chat 消息
@@ -2224,7 +2374,7 @@ export type McpCallResult =
 //   工具名内部采用 mcp__${serverId}__${toolName}（接口预留 listMcpTools / callMcpTool）
 export type McpTransport = 'streamable-http';   // 第一版只实现 streamable-http；'sse' 占位不实现
 export type McpAuthType = 'none' | 'bearer' | 'headers';
-export type McpErrorType = 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList' | 'unknown';
+export type McpErrorType = 'cors' | 'network' | 'auth' | 'protocol' | 'toolsList' | 'unknown' | 'cancelled';
 
 export interface McpTool {
     name: string;
@@ -2256,6 +2406,8 @@ export interface McpServerConfig {
     authType: McpAuthType;
     bearerToken?: string;                // 敏感字段，UI 脱敏，日志严禁打印
     customHeaders?: Record<string, string>;  // 敏感字段，UI 脱敏，日志严禁打印
+    // 麦麦 2026-09-12：22 个新文件 mcpClient 桥接 wrapper 引用（upstream 风格）
+    proxyUrl?: string;
     createdAt: number;
     lastConnectedAt?: number;            // 最近一次成功连接时间
     lastTestedAt?: number;               // 最近一次测试时间（成功或失败都更新）
@@ -2338,6 +2490,9 @@ export interface XhsActivityRecord {
         body?: string;
         tags?: string[];
         keyword?: string;
+        // 麦麦 2026-09-12：22 个新文件 xhsFreeRoamOwnership 用 activity.content.noteId 取顶层 noteId
+        // （post 动作的产物）。savedTopics / notesViewed / commentTarget 各自有 noteId 字段互不干扰。
+        noteId?: string;
         savedTopics?: { title: string; desc: string; noteId?: string }[];
         notesViewed?: { noteId: string; title: string; desc: string; author: string; likes: number }[];
         commentTarget?: { noteId: string; title: string };
@@ -2346,6 +2501,25 @@ export interface XhsActivityRecord {
     thinking: string;  // Character's internal monologue / reasoning
     result: 'success' | 'failed' | 'skipped';
     resultMessage?: string;
+}
+
+/**
+ * 麦麦 2026-09-12 同步上游：角色已发布小红书笔记索引（22 个新文件 xhsFreeRoamOwnership / xhsOwnedPostReference 引用）
+ */
+export interface XhsOwnedPost {
+    id: string; // `${characterId}:${noteId}`
+    characterId: string;
+    noteId: string;
+    title: string;
+    body: string;
+    tags?: string[];
+    publishedAt: number;
+    updatedAt: number;
+    xsecToken?: string;
+    likes?: number;
+    collects?: number;
+    commentCount?: number;
+    shareCount?: number;
 }
 
 export interface XhsFreeRoamSession {
@@ -2360,8 +2534,10 @@ export interface XhsFreeRoamSession {
 export interface XhsMcpConfig {
     enabled: boolean;
     serverUrl: string;  // MCP: "http://localhost:18060/mcp" | Skills: "http://localhost:18061/api"
+    cookie?: string;   // 麦麦 2026-09-12 同步上游：lite 模式登录态（22 个新文件 amsgToolPack 引用）
     loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
+    userXsecToken?: string; // 麦麦 2026-09-12 同步上游
 }
 
 // ============================================================

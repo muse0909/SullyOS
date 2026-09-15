@@ -45,6 +45,11 @@ public class MainActivity extends BridgeActivity {
         //   下面第 60-66 行的 startForegroundService 是 8-27 已有的直启，**不要动**。
         registerPlugin(KeepAlivePlugin.class);
 
+        // 麦麦 2026-09-15：拾光机 主动消息 2.0 后台推送 — 注册 AmsgUnifiedPushPlugin
+        //   前端 utils/unifiedPushPlugin.ts 通过 registerPlugin("AmsgUnifiedPush") 找它
+        //   跟 UnifiedPushReceiver 配合，把 ntfy 推送的消息转给前端 Capacitor channel
+        registerPlugin(AmsgUnifiedPushPlugin.class);
+
         // 必须先 super.onCreate（它会初始化 bridge + WebView + 按 capacitor.config 加载 URL）
         super.onCreate(savedInstanceState);
 

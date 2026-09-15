@@ -4,6 +4,8 @@ import { OSProvider } from './context/OSContext';
 import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
 import Amsg2DebugPanel from './components/Amsg2DebugPanel';
+import BuildBadge from './components/BuildBadge';
+import DevDebugPanel from './components/DevDebugPanel';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 
 const App: React.FC = () => {
@@ -42,6 +44,10 @@ const App: React.FC = () => {
           </MusicProvider>
         </OSProvider>
       </div>
+      {/* 麦麦 2026-09-15 同步上游：构建版本指示器（右下角 preview@xxx 小标签）
+          + dev debug 面板（连点 5 下解锁）。挂 OSProvider 外层，不依赖 store。 */}
+      <BuildBadge />
+      <DevDebugPanel />
     </div>
   );
 };

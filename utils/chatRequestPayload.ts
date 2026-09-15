@@ -199,13 +199,20 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 3. buildSystemPrompt 核心 ─────────────────────────
-    let systemPrompt = await ChatPrompts.buildSystemPrompt(
+    // 麦麦 2026-09-15 修：chatPrompts.buildSystemPrompt 9-12 step 4 临时改成返 string 后又恢复返对象，
+    // 这里跟着按对象字段拼。chatRequestPayload 原本就当 string 用（后面 `systemPrompt += ...` 拼接），
+    // 拆 3 段拼成一个大 string 保持原行为（dynamicTail 的 3 个字段不进聊天即时请求的 system prompt，
+    // 由 useChatAI 自行拼到 messages 末尾）
+    const systemPromptResult = await ChatPrompts.buildSystemPrompt(
         char, userProfile, groups, emojis, categories, recentMsgsHint,
         realtimeConfig, innerState || undefined,
         userListeningContext ?? null,
         !!isListeningTogether,
         musicCfg,
     );
+    let systemPrompt = [systemPromptResult.bp1Tools, systemPromptResult.bp2Rules, systemPromptResult.bp3Context]
+        .filter(Boolean)
+        .join('\n\n');
 
     // ── 4. 双语指令注入 ───────────────────────────────────
     const bilingualActive = !!(translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang);

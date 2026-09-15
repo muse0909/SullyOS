@@ -386,6 +386,12 @@ export interface ActiveMsg2CharacterConfig {
   maxUnansweredSends?: number;
   taskUuid?: string;
   remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
+  /**
+   * 麦麦 2026-09-15 同步上游（modal 762 行完整版覆盖）：即时对话按角色单独开关。
+   * undefined = 跟随全局默认开，所以只有显式 false 才显示成关。
+   * 与 ActiveMsg2GlobalConfig.instantChatEnabled 配套。
+   */
+  instantChatEnabled?: boolean;
   useSecondaryApi?: boolean;
   secondaryApi?: ActiveMsg2ApiConfig;
   lastSyncedAt?: number;

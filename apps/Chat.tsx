@@ -3477,7 +3477,7 @@ if (keepN > 0) {
                     userProfile={userProfile}
                     groups={groups}
                     realtimeConfig={realtimeConfig}
-                    onSave={(config) => updateCharacter(char.id, { activeMsg2Config: config })}
+                    onSave={(updater) => updateCharacter(char.id, { activeMsg2Config: updater(char.activeMsg2Config) })}
                     addToast={addToast}
                 />
             )}

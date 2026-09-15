@@ -48,26 +48,19 @@
                 android:value="保活 WebView 进程以维持实时消息推送和主动唤醒" />
         </service>
 
-        <!-- 麦麦 2026-09-15：拾光机 主动消息 2.0 后台推送 — UnifiedPush 接收端
-             UnifiedPushReceiver 继承 org.unifiedpush.android.connector.MessagingReceiver，
-             ntfy（或其他 UnifiedPush distributor）会通过这 5 个 action 发广播：
-               - org.unifiedpush.android.connector.MESSAGE          收到推送
-               - org.unifiedpush.android.connector.NEW_ENDPOINT    注册成功 / endpoint 变化
-               - org.unifiedpush.android.connector.UNREGISTERED   被 distributor 注销
-               - org.unifiedpush.android.connector.REGISTRATION_FAILED  注册失败
-               - org.unifiedpush.android.connector.REGISTRATION_REFUSED 注册被拒
-             收到的事件落到 UnifiedPushReceiver.onMessage 等抽象方法里。 -->
-        <receiver
-            android:name=".UnifiedPushReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
-                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
-                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
-                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
-                <action android:name="org.unifiedpush.android.connector.REGISTRATION_REFUSED" />
-            </intent-filter>
-        </receiver>
+        <!-- 麦麦 2026-09-15：拾光机 主动消息 2.0 后台推送 — UnifiedPush Service
+             UnifiedPushService 继承 org.unifiedpush.android.connector.PushService，
+             SDK 自带的 MessagingReceiverImpl 收到 ntfy broadcast 后会在内部 bind 我们这个 service，
+             然后调我们的 onNewEndpoint / onMessage / onRegistrationFailed / onUnregistered。
+             **注意：不要自己注册 receiver**——SDK 那个 intent-filter 会被我们声明的 receiver 抢占，
+             SDK 的 receiver 就跑不起来了，事件没人转发给 service。第一版用 MessagingReceiver 时栽在这。
+             export=true：Service 必须能被 SDK bind（同设备 + 显式 component name 绑定，export=true 是
+             Android 12+ required）。-->
+        <service
+            android:name=".UnifiedPushService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+        </service>
     </application>
 
     <!-- Permissions -->

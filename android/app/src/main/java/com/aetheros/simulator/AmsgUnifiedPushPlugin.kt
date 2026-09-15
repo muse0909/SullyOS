@@ -28,8 +28,10 @@ import java.security.spec.ECGenParameterSpec
  *   - drainPendingPushes()   → 取走 SharedPreferences 里缓存的消息
  *   - addListener(...)        → Capacitor 标准事件订阅（pushReceived / notificationTapped / registrationChanged）
  *
- * UnifiedPush 接收端在 UnifiedPushReceiver.kt（继承 org.unifiedpush.android.connector.MessagingReceiver），
- * 在 AndroidManifest 注册为 receiver。消息通过 SharedPreferences 在 receiver 和 plugin 之间共享。
+ * UnifiedPush 接收端在 UnifiedPushService.kt（继承 org.unifiedpush.android.connector.PushService），
+ * 在 AndroidManifest 注册为 service（exported=true）。SDK 自带的 MessagingReceiverImpl 在内部
+ * bind 我们，把 ntfy 推送事件转发到 PushService 的 4 个回调。消息通过 SharedPreferences 在
+ * service 和 plugin 之间共享。
  *
  * VAPID 密钥对（ECDSA P-256，公钥 → base64url）：
  *   UnifiedPush 协议要求客户端生成 VAPID 公钥发给 distributor，distributor 用它做 RFC8292
@@ -45,8 +47,8 @@ class AmsgUnifiedPushPlugin : Plugin() {
         const val VAPID_PRIVATE_KEY = "privateKey" // PKCS#8 encoded, base64
         const val VAPID_PUBLIC_KEY = "publicKey"   // SEC1 uncompressed, base64url
         const val ENDPOINT_PREFS = "unifiedpush_endpoint_v1"
-        const val PENDING_PREFS = UnifiedPushReceiver.PENDING_PREFS
-        const val PENDING_KEY = UnifiedPushReceiver.PENDING_KEY
+        const val PENDING_PREFS = UnifiedPushService.PENDING_PREFS
+        const val PENDING_KEY = UnifiedPushService.PENDING_KEY
         const val INSTANCE = "amsg2_main"
     }
 
@@ -199,7 +201,7 @@ class AmsgUnifiedPushPlugin : Plugin() {
             sp.edit().putString(PENDING_KEY, "[]").apply()
 
             // 启动 payload
-            val launchPayload = UnifiedPushReceiver.consumeLaunchPayload(context)
+            val launchPayload = UnifiedPushService.consumeLaunchPayload(context)
 
             val ret = JSObject()
             ret.put("messages", messages)

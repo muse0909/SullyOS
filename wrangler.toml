@@ -51,12 +51,14 @@ database_name = "sully-amsg2"
 crons = ["* * * * *"]
 
 ## 非敏感环境变量（明文可放这里）。密钥类走 Secret。
-##   - SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
-##     留空 = 不校验（生产环境必须设强随机串）
+##   - AMSG_SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
+##     **变量名必须是 AMSG_SERVER_TOKEN（不是 SERVER_TOKEN）**——
+##     Worker 代码读 env.AMSG_SERVER_TOKEN，wrangler.toml 写别的名字 env 读不到。
+##     留空 = 不校验（生产环境必须设强随机串）。
 ##   - CORS_ALLOWED_ORIGIN：跨域白名单。填具体 origin（推荐），
 ##     留空则按请求 origin 回显（开发模式）。
 ##
 ## MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL 走 Secret
 [vars]
-SERVER_TOKEN = ""
+AMSG_SERVER_TOKEN = ""
 CORS_ALLOWED_ORIGIN = "https://sully-os-git-preview-muse0909s-projects.vercel.app"

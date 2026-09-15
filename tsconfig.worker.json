@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  // 麦麦 2026-09-15：worker 端 tsc 只扫 worker/ 子目录；utils/ 留给前端 tsconfig.json
+  //   utils/ 大量依赖浏览器 API（localStorage / IndexedDB / DOM），esbuild 打 bundle 时
+  //   只把用到的部分打进去，运行时不调用那些 API——但 TS 类型检查不能识别这个，
+  //   会让 worker tsc 一堆无意义的浏览器 API 报错。
+  //   所以这里硬 exclude utils/，穿透 import 也不扫。
+  "include": [
+    "worker/amsg/src/**/*.ts",
+    "worker/instant-push/src/**/*.ts",
+    "worker/proactive-push/src/**/*.ts",
+    "worker/sw-keep-alive.ts",
+    "worker/types-shim.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "utils",
+    "apps",
+    "components",
+    "context",
+    "hooks",
+    "api",
+    "**/*.bundle.js"
+  ]
+}

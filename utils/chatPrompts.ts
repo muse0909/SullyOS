@@ -282,21 +282,27 @@ export const ChatPrompts = {
                 //   Worker D1 schedules 表注册 dynamic record，到点按混合方案触发主动消息
                 //   暮色发消息会自动取消当前 dynamic（不需要管取消逻辑）
                 //   优先级高于固定梯度（30/60/240 分钟）— 存在 dynamic 时只走 dynamic
-                '【下次唤醒时间 (Dynamic Schedule)】',
-                '你想在某个具体时间点主动找暮色说话时（而不是等固定 30/60/240 分钟梯度），用下面这个 token。它会注册一个单次性定时，到点触发主动消息。',
+                //
+                //   麦麦 2026-09-16 plan step B：搬到了主动消息 2.0 后端。
+                //   该 token 现在落 2.0 的 amsg D1（不是老 1.x proactive-push worker 那条死路）。
+                //   到点云端 Worker 用 UnifiedPush + ntfy 推回手机 / 用户面板的「主动消息 2.0」任务清单
+                //   里能看到这条「角色创建」，跟用户手动建的任务用同一条通道。1.x 那条 KeepAliveService
+                //   WebSocket 路径已被国产安卓 / iOS 后台切断，所以迁移到 2.0 是必须的，不是"想搬"。
+                '【下次唤醒时间（2.0 通道）】',
+                '你想在某个具体时间点主动找暮色说话时（而不是等固定 30/60/240 分钟梯度），用下面这个 token。它会注册一个单次性定时，到点从云端 Worker 推一条主动消息到暮色手机（走 UnifiedPush，不依赖 WebSocket 后台保活）。',
                 '',
                 '[schedule_next_wakeup | YYYY-MM-DD HH:MM:SS | reason: 一句话原因]',
                 '',
                 '- 时间用 24 小时制本地时间（HH:MM:SS），最少精确到分钟：YYYY-MM-DD HH:MM 也行',
-                '- reason 写一句简短的触发原因（"该写日记了" / "她好久没回" / "提醒她吃饭"等），方便用户诊断 log',
+                '- reason 写一句简短的触发原因（"该写日记了" / "她好久没回" / "提醒她吃饭"等），会写到任务的 metadata，到点 Worker 拼到 system hint "你当时安排的理由是 [reason]" 让你知道这是你自己定的',
                 '- 输出位置：在普通回复**末尾**（不要在中间，会被 strip 漏掉）',
-                '- 暮色 9-6 反馈：写之前先想想"她真的在忙吗"，别 5 分钟调一次，太频繁反而像骚扰',
+                '- 别 5 分钟调一次，太频繁反而像骚扰',
                 '- 暮色在 dynamic 时间到达前发任何消息，当前 dynamic 自动取消（不需要你自己处理）',
                 '- 新的回复会覆盖之前未触发的 dynamic（同一角色只有 1 条 dynamic 在册）',
                 '',
                 '示例：',
-                '[schedule_next_wakeup | 2026-09-06 21:15:00 | reason: 3 分钟后测试动态注册]',
-                '[schedule_next_wakeup | 2026-09-07 19:00:00 | reason: 提醒她今天约了牙医]',
+                '[schedule_next_wakeup | 2026-09-16 21:15:00 | reason: 3 分钟后测试动态注册]',
+                '[schedule_next_wakeup | 2026-09-17 19:00:00 | reason: 提醒她今天约了牙医]',
             ].join('\n');
             characterMemoBlock = [statusText, memoText, writeGuide].filter(Boolean).join('\n\n');
         } catch (e) {

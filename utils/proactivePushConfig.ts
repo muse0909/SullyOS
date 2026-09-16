@@ -299,7 +299,22 @@ export async function registerScheduleOnWorker(charId: string, intervalMs: numbe
  *   修：worker 端扫 dynamic 时**跳过 last_heartbeat 检查**（dynamic 一次性，无所谓心跳），
  *   触发后 broadcast 给所有 WS 连接 → APK KeepAliveService 能收到 proactive_message。
  */
-export async function registerDynamicScheduleOnWorker(charId: string, fireAt: number, reason: string): Promise<boolean> {
+export async function registerDynamicScheduleOnWorker(charId: string, fireAt: number, reason: string, userId?: string): Promise<boolean> {
+  // 麦麦 2026-09-16：合并到 2.0 — 优先尝试主动消息 2.0 amsg 通道（UnifiedPush + ntfy 可
+  //   靠），fallback 才走旧的 1.x /dynamic-schedule（KeepAliveService WebSocket 路径
+  //   已被国产安卓/iOS 后台切断，老路径实际跑不通，但保留当 fallback 兜底）。
+  //   reason 字段写入 task.metadata.amsgReason，任务 source 标记为 'character'，
+  //   worker onBeforeFire 看到这个 source 会拼"主动视角"的 system hint + 收起
+  //   cancel/renew/schedule 那批任务管理工具。
+  try {
+    const ok = await registerDynamicScheduleOnActiveMsg2(charId, fireAt, reason, userId);
+    if (ok) return true;
+    console.warn('[ProactivePush] 2.0 通道没接上，回落 1.x /dynamic-schedule');
+  } catch (e) {
+    console.warn('[ProactivePush] 2.0 通道报错，回落 1.x /dynamic-schedule:', e);
+  }
+
+  // 1.x fallback：保留老逻辑不动
   const cfg = loadPushConfig();
   // 不再要求 isPushConfigReady — 只需要 workerUrl
   if (!cfg.workerUrl.startsWith('https://')) {
@@ -339,6 +354,62 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
     console.warn('[ProactivePush] /dynamic-schedule failed', e);
     return false;
   }
+}
+
+/**
+ * 麦麦 2026-09-16：把 schedule_next_wakeup token 解析出的 "TA 给你排" 任务写到主动消息 2.0。
+ *   走 ActiveMsgClient.scheduleCharacterTask 而不是老 1.x /dynamic-schedule —— 2.0 通道
+ *   用 UnifiedPush + ntfy 推回手机，不依赖被后台切断的 WebSocket。
+ *   任务 metadata 写 source='character' + amsgReason=reason，worker onBeforeFire 会据此
+ *   切主动视角 system hint。
+ */
+async function registerDynamicScheduleOnActiveMsg2(
+  charId: string, fireAt: number, reason: string, userId?: string,
+): Promise<boolean> {
+  const fireDate = new Date(fireAt);
+  // 延迟引入避免循环依赖 + 避免在 module 顶层引入 iDB / onMessage 等大块
+  const [{ ActiveMsgClient }, , ActiveMsgStore] = await Promise.all([
+    import('./activeMsgClient'),
+    import('./activeMsgFeatureFlag'),
+    import('./activeMsgStore'),
+  ]);
+  const flag = await import('./activeMsgFeatureFlag').then((m) => m.AMSG2_ENABLED);
+  if (!flag) return false;
+
+  // 拿到全局 modal 配置（workerUrl / masterKey 等）
+  const globalConfig = await ActiveMsgStore.getGlobalConfig().catch(() => null);
+  if (!globalConfig?.workerUrl?.startsWith('https://')) return false;
+  const charIdStr = String(charId);
+  const charStub: { id: string; name: string } = {
+    id: charIdStr,
+    name: userId ? `动态-${charIdStr.slice(0, 8)}` : charIdStr,
+  };
+  const baseConfig = globalConfig.amsgGlobalConfig ?? globalConfig;
+  await ActiveMsgClient.scheduleCharacterTask({
+    char: charStub as any,
+    config: { enabled: true } as any,
+    task: {
+      mode: 'prompted',
+      // 转本地墙钟串给 scheduleCharacterTask（内部走 ensureFutureTime 折绝对时刻）
+      firstSendTime: formatLocalDatetime(fireDate, globalConfig.amsgGlobalConfig?.tzId ?? globalConfig.tzId ?? ''),
+      recurrenceType: 'none',
+      promptHint: reason,
+      // 新增：标记 TA 自己排的 + 携带 reason 给 worker prompt 拼接
+      source: 'character',
+      reason,
+    } as any,
+    userProfile: { name: userId ?? '你' } as any,
+    groups: [],
+    realtimeConfig: baseConfig as any,
+    apiConfig: { baseUrl: '', apiKey: '', model: '' } as any,
+  });
+  return true;
+}
+
+/** Date → "YYYY-MM-DD HH:MM"（不带秒），匹配任务编辑 modal 的 datetime-local 输入格式。 */
+function formatLocalDatetime(d: Date, _tzId: string): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**

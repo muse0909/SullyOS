@@ -3680,6 +3680,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   → 解析后调 /dynamic-schedule 注册到 Worker，覆盖当前未触发的 dynamic
             //   跟 MEMO 体系解耦（不需要 addToast — 用户看不到，但 chat 页打 log 留痕）
             //   解析失败时静默 + strip（用户看到干净文本）
+            //
+            //   麦麦 2026-09-16 plan step B：调的不是老 1.x /dynamic-schedule，而是
+            //   registerDynamicScheduleOnWorker 的新 dispatcher（优先 2.0 amsg 通道
+            //   写 task source='character' + amsgReason=reason，到点 worker 拼"主动视角"
+            //   system hint）。同时把成功注册事件以 toast 形式告诉用户 —— 让暮色
+            //   知道"TA 给你安排了一条"。
             if (aiContent.includes('[schedule_next_wakeup')) {
                 try {
                     // 解析 [schedule_next_wakeup | 时间 | reason: 原因]
@@ -3711,9 +3717,22 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.warn(`⏰ [ScheduleNextWakeup] 时间已过期或无效: ${timeStr} → ${fireAt}`);
                             continue;
                         }
-                        // 调 Worker /dynamic-schedule（fire-and-forget — 不阻塞回复保存）
-                        const ok = await registerDynamicScheduleOnWorker(char.id, fireAt, reason);
+                        // 调 dispatcher（2.0 amsg 优先，1.x fallback）—— fire-and-forget，不阻塞回复保存
+                        const ok = await registerDynamicScheduleOnWorker(
+                          char.id, fireAt, reason, userProfile?.id,
+                        );
                         console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
+                        if (ok) {
+                          // toast: 用户能看到"TA 给你排了 X 任务 · 时间" — 让暮色知道发生了什么。
+                          // fireAt 是 epoch ms，用本地时区短字符串展示就够。
+                          const timeText = new Date(fireAt).toLocaleString('zh-CN', {
+                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                          });
+                          addToast(
+                            `TA 给你安排了一条 — ${reason || '提醒'} · ${timeText}`,
+                            'info',
+                          );
+                        }
                     }
                 } catch (e) {
                     console.warn('⏰ [ScheduleNextWakeup] token 解析炸了:', e);

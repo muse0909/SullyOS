@@ -54,11 +54,12 @@ crons = ["* * * * *"]
 ##   - AMSG_SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
 ##     **变量名必须是 AMSG_SERVER_TOKEN（不是 SERVER_TOKEN）**——
 ##     Worker 代码读 env.AMSG_SERVER_TOKEN，wrangler.toml 写别的名字 env 读不到。
-##     留空 = 不校验（生产环境必须设强随机串）。
+##     CF 不允许 vars 和 secret 同名（[code 10053]）——
+##     AMSG_SERVER_TOKEN 只能在 wrangler secret put 通道写入，
+##     wrangler.toml 留空字符串会占 binding 名、阻塞 secret put。
 ##   - CORS_ALLOWED_ORIGIN：跨域白名单。填具体 origin（推荐），
 ##     留空则按请求 origin 回显（开发模式）。
 ##
 ## MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL 走 Secret
 [vars]
-AMSG_SERVER_TOKEN = ""
 CORS_ALLOWED_ORIGIN = "https://sully-os-git-preview-muse0909s-projects.vercel.app"

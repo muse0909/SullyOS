@@ -49,6 +49,10 @@ import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { ActiveMsgRuntime } from '../utils/activeMsgRuntime';
+// 麦麦 2026-09-17：主动消息 2.0 全局配置加进云端备份（暮色反馈"换 apk 后 2.0 设置还得重新填"）
+//   export/import 函数早就在 utils/activeMsgStore.ts 写好了，但 exportSystem/importSystem
+//   主流程没接，备份包里一直没这个字段。这次挂到主流程上。
+import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from '../utils/activeMsgStore';
 
 
 
@@ -3612,6 +3616,11 @@ if (!isVisible || !isChattingWithThisChar) {
               cloudBackupConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               remoteVectorConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_remote_vector_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
 
+              // 麦麦 2026-09-17：主动消息 2.0 全局配置（Worker URL / 密钥 / 即时对话开关等）
+              //   没配过 Worker 时 exportAmsg2GlobalConfig 返回 undefined，这里不出现字段（避免空覆盖）
+              //   text_only + full 模式都带（这属于"基础文字配置"，不是媒体素材）
+              amsg2GlobalConfig: (mode === 'text_only' || mode === 'full') ? await exportAmsg2GlobalConfig() : undefined,
+
               // Memory Palace 水位线
               memoryPalaceHighWaterMarks: (mode === 'text_only' || mode === 'full') ? (() => {
                   const hwm: Record<string, number> = {};
@@ -4347,6 +4356,18 @@ if (!isVisible || !isChattingWithThisChar) {
           // - vr_help_seen：VR 帮助已看过标记
           if (typeof data.vrHelpSeen === 'string' && data.vrHelpSeen.length > 0) {
               try { localStorage.setItem('vr_help_seen', data.vrHelpSeen); } catch (e) { console.warn('[importSystem] restore vrHelpSeen failed:', e); }
+          }
+
+          // 麦麦 2026-09-17：主动消息 2.0 全局配置恢复
+          //   workerUrl 非空时才写回（避免空对象覆盖本地已有配置）。
+          //   instantChatSupported 字段在 import 函数里被剥掉（探测结果，不还原），
+          //   导入后首次握手会自动重探。
+          if (data.amsg2GlobalConfig) {
+              try {
+                  await importAmsg2GlobalConfig(data.amsg2GlobalConfig);
+              } catch (e) {
+                  console.warn('[importSystem] restore amsg2GlobalConfig failed:', e);
+              }
           }
           
           if (data.socialAppData) {

@@ -2294,6 +2294,12 @@ export interface FullBackupData {
     handbookLifestreamDepth?: number;
     // - vr_help_seen：VR 帮助已看过标记（UI 标记，避免重弹）
     vrHelpSeen?: string;
+
+    // 麦麦 2026-09-17：主动消息 2.0 全局配置（Worker URL / 密钥 / 即时对话开关等）
+    //   暮色反馈"换 apk 后 2.0 设置还得重新填"——根因 export/import 主流程没接进去，
+    //   虽然 utils/activeMsgStore.ts 早就写好了 exportAmsg2GlobalConfig/importAmsg2GlobalConfig。
+    //   没配过 Worker 时 exportAmsg2GlobalConfig 返回 undefined，这里就不出现字段。
+    amsg2GlobalConfig?: ActiveMsg2GlobalConfig;
 }
 
 // --- CLOUD BACKUP TYPES ---

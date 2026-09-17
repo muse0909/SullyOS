@@ -357,6 +357,74 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
 }
 
 /**
+ * 暮色 2026-09-17 21:50:schedule_next_wakeup 第四模式 — 独立入口
+ *
+ *   跟 registerDynamicScheduleOnWorker 的差别：
+ *     1) 不经过 AMSG2_ENABLED 开关 — 这个开关只管自动模式 (proactiveChat) 和事件通道
+ *        (OSContext);schedule_next_wakeup 是"角色自己排的"，开关关了也照常生效。
+ *     2) 不走 1.x /dynamic-schedule fallback — 写 2.0 失败就抛上去给调用方,
+ *        由 useChatAI 弹 toast "唤醒设置失败",不再悄悄回 1.x。
+ *     3) 直接走 ActiveMsgClient.scheduleCharacterTask,带 source='character' + reason;
+ *        worker onBeforeFire 据此拼专属提示词 (见 worker/amsg/src/index.ts 那个分支)。
+ *
+ *   暮色原本的设计意图:"schedule_next_wakeup 接 2.0 是一条独立的赛道",
+ *   不应跟 1.0 老 fallback 耦合,也不该被总开关管。这函数就是这个意图的接口层。
+ */
+export async function registerCharacterWakeup(
+  charId: string,
+  fireAt: number,
+  reason: string,
+  apiConfig?: { baseUrl: string; apiKey: string; model: string },
+): Promise<boolean> {
+  const [{ ActiveMsgClient }, ActiveMsgStore] = await Promise.all([
+    import('./activeMsgClient'),
+    import('./activeMsgStore'),
+  ]);
+
+  // 拿 workerUrl / masterKey — 跟 registerDynamicScheduleOnActiveMsg2 同样的前置,
+  // 不同的是这里不在 flag=false 时直接 return false (这是该接口的核心:不查 flag)。
+  const globalConfig = await ActiveMsgStore.getGlobalConfig().catch(() => null);
+  if (!globalConfig?.workerUrl?.startsWith('https://')) {
+    console.warn('[ProactivePush] registerCharacterWakeup: 2.0 workerUrl 未配置,无 worker 可写');
+    return false;
+  }
+
+  const baseConfig = globalConfig.amsgGlobalConfig ?? globalConfig;
+  const fireDate = new Date(fireAt);
+  const fireAtText = formatLocalDatetime(
+    fireDate,
+    globalConfig.amsgGlobalConfig?.tzId ?? globalConfig.tzId ?? '',
+  );
+
+  try {
+    await ActiveMsgClient.scheduleCharacterTask({
+      char: { id: String(charId), name: `动态-${String(charId).slice(0, 8)}` } as any,
+      config: { enabled: true } as any,
+      task: {
+        mode: 'prompted',
+        firstSendTime: fireAtText,
+        recurrenceType: 'none',
+        promptHint: reason,
+        // source='character' 是这套机制的核心标记,worker 据此切专属提示词
+        // (见 utils/activeMsgClient.ts:scheduleCharacterTask 的 task.source 字段,
+        //  以及 worker/amsg/src/index.ts onBeforeFire amsgSource 分支)。
+        // reason 也一并写进 task.metadata.amsgReason,onBeforeFire 时拼进 prompt。
+        source: 'character',
+        reason,
+      } as any,
+      userProfile: { name: '你' } as any,
+      groups: [],
+      realtimeConfig: baseConfig as any,
+      apiConfig: (apiConfig ?? { baseUrl: '', apiKey: '', model: '' }) as any,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[ProactivePush] registerCharacterWakeup 写任务失败:', e);
+    return false;
+  }
+}
+
+/**
  * 麦麦 2026-09-16：把 schedule_next_wakeup token 解析出的 "TA 给你排" 任务写到主动消息 2.0。
  *   走 ActiveMsgClient.scheduleCharacterTask 而不是老 1.x /dynamic-schedule —— 2.0 通道
  *   用 UnifiedPush + ntfy 推回手机，不依赖被后台切断的 WebSocket。

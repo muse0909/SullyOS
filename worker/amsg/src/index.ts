@@ -2015,27 +2015,19 @@ export const amsgHooks = {
     //   两套 taskInstruction — 角色自己排的（source='character'）跟用户手动排的提示语气截然不同：
     //     - source='manual'    → 中性：「这是一条定时任务到点了，按你设定的方向写内容」；
     //                            模板里沿用现有字符段的"任务指令"占位。
-    //     - source='character' → 主动视角：「这是你之前在 [时间] 用 schedule_next_wakeup 排的时间，
-    //                            你当时设定的理由是 [reason]。现在到点了，你记得想做什么吗？」；
+    //     - source='character' → 主动视角：暮色 2026-09-17 21:50 拍板文案：
+    //                            「这是你之前安排好的时间，你当时设定的原因是：[reason]。
+    //                              现在到点了，你想做什么？」；
     //                            把 amsgReason 一并塞 prompt，让角色知道这是 TA 自己定的。
     const rawTaskInstruction = taskMeta.amsgTaskInstruction as string;
     const taskSource = taskMeta.amsgSource as string | undefined;
     const taskReason = typeof taskMeta.amsgReason === 'string' ? taskMeta.amsgReason : '';
     let taskInstruction = rawTaskInstruction;
-    // 麦麦 2026-09-17 排查：主动消息 2.0 提示词路径定位 — 三条路径加不同前缀标记
-    //   【标记A-CHARACTER】= Worker 端 character 分支（江澈 schedule_next_wakeup 排的）
-    //   【标记B-MANUAL】   = Worker 端 manual/默认分支（用户手动建的，或 source 字段空）
-    //   【标记C-FRONTEND】 = 前端 1.0 fallback 路径（context/OSContext.tsx runProactive）
-    //   部署后测试触发，看收到哪个标记就知道走的是哪条路径；定位完再清掉标记。
     if (taskSource === 'character' && taskReason) {
-      // 麦麦 2026-09-16 plan step B：source='character' 切"主动视角" system hint ——
-      //   角色自己排的任务到点，告诉它这是 TA 当时定的、不是被动信号；
-      //   fireAt 用任务行的 next_send_at，格式化成角色自己的时区短时间，便于 LLM 拼接 context。
-      const fireAtMs = Date.parse(ctx.task.nextSendAt ?? '') || ctx.now.getTime();
-      const fireAtHuman = formatFireTimeShort(fireAtMs, { tzId: pack.tzId });
-      taskInstruction = `【标记A-CHARACTER】\n[主动消息触发 - 这是你之前在 ${fireAtHuman} 用 schedule_next_wakeup 排的时间。` +
-        ` 你当时设定的理由是："${taskReason}"。` +
-        ` 现在到点了，你记得想做什么吗？按你的角色设定和最近聊天决定行为。]`;
+      // 暮色 2026-09-17 21:50：source='character' 走专属提示词。
+      //   之前的【标记A-CHARACTER】和[主动消息触发 - ...]包裹是 9-17 上午定位用的，
+      //   暮色拍板现在用干净的版本，让角色直接根据 reason 决定说什么。
+      taskInstruction = `这是你之前安排好的时间，你当时设定的原因是：${taskReason}。现在到点了，你想做什么？`;
     } else {
       taskInstruction = `【标记B-MANUAL】\n${taskInstruction}`;
     }

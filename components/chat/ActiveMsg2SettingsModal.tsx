@@ -583,8 +583,16 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                         <div className="text-slate-400 mt-0.5 truncate">
                           {describeTaskProgress(t, knownRemoteUuids, now, remoteInfo?.status)} · {describeTaskMode(t)}
                           · {describeExpirePolicy(t.expirePolicy)}
-                          · {t.source === 'character' ? '角色创建' : '手动创建'}
+                          · {t.source === 'character' ? '角色自设' : '手动创建'}
                         </div>
+                        {/* 暮色 2026-09-17 21:50：source='character' 的任务额外显示 reason ——
+                            registerCharacterWakeup 把 reason 写进 task.promptHint (也作 worker
+                            amsgReason)，这里透传展示。触发时间在上面的 createTaskRow 已经显示。 */}
+                        {t.source === 'character' && t.promptHint ? (
+                          <div className="text-slate-500 mt-1 text-[11px] truncate">
+                            原因：{t.promptHint}
+                          </div>
+                        ) : null}
                         {missingRemote ? (
                           <div className="text-slate-400 mt-1 text-[11px]">⚠ 远端不存在（可能已发送或在别处取消）</div>
                         ) : null}

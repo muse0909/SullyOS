@@ -44,7 +44,10 @@ import { mcpToOpenAIToolResult } from '../utils/mcpResultConverter';
 import { mcpStorage } from '../utils/mcpStorage';
 // 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
 //   解析 [schedule_next_wakeup | 时间 | reason] token → 调 Worker /dynamic-schedule
-import { registerDynamicScheduleOnWorker } from '../utils/proactivePushConfig';
+// 暮色 2026-09-17 21:50：schedule_next_wakeup 第四模式 — 改走 registerCharacterWakeup，
+//   直接写主动消息 2.0 (source='character' + reason)，不走 1.0 老 fallback，不查 AMSG2_ENABLED。
+//   写入失败 useChatAI 弹 toast "唤醒设置失败"，由调用方明说，不再悄悄回 1.x。
+import { registerCharacterWakeup } from '../utils/proactivePushConfig';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -3717,14 +3720,21 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.warn(`⏰ [ScheduleNextWakeup] 时间已过期或无效: ${timeStr} → ${fireAt}`);
                             continue;
                         }
-                        // 调 dispatcher（2.0 amsg 优先，1.x fallback）—— fire-and-forget，不阻塞回复保存
-                        const ok = await registerDynamicScheduleOnWorker(
-                          char.id, fireAt, reason, userProfile?.id,
+                        // 暮色 2026-09-17 21:50：调 registerCharacterWakeup —— 直接写 2.0，
+                        //   完全不走 1.0 老 fallback，不查 AMSG2_ENABLED。
+                        //   apiConfig 透传（scheduleCharacterTask 内部 resolveApiConfig 要
+                        //   baseUrl/apiKey/model，传空配置会抛"缺少 API URL/Key/Model"）。
+                        const ok = await registerCharacterWakeup(
+                          char.id, fireAt, reason,
+                          {
+                            baseUrl: (effectiveApi as any).baseUrl || '',
+                            apiKey: (effectiveApi as any).apiKey || '',
+                            model: (effectiveApi as any).model || '',
+                          },
                         );
                         console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
                         if (ok) {
-                          // toast: 用户能看到"TA 给你排了 X 任务 · 时间" — 让暮色知道发生了什么。
-                          // fireAt 是 epoch ms，用本地时区短字符串展示就够。
+                          // 成功 toast：让暮色知道"TA 给你安排了一条"
                           const timeText = new Date(fireAt).toLocaleString('zh-CN', {
                             month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
                           });
@@ -3732,6 +3742,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             `TA 给你安排了一条 — ${reason || '提醒'} · ${timeText}`,
                             'info',
                           );
+                        } else {
+                          // 暮色 2026-09-17 21:50 拍板：写入失败明说，不再悄悄回 1.x。
+                          //   不带 error.message —— toast 文案按暮色要求就是"唤醒设置失败"。
+                          addToast('唤醒设置失败', 'error');
                         }
                     }
                 } catch (e) {

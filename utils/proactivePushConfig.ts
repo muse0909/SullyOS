@@ -299,7 +299,12 @@ export async function registerScheduleOnWorker(charId: string, intervalMs: numbe
  *   修：worker 端扫 dynamic 时**跳过 last_heartbeat 检查**（dynamic 一次性，无所谓心跳），
  *   触发后 broadcast 给所有 WS 连接 → APK KeepAliveService 能收到 proactive_message。
  */
-export async function registerDynamicScheduleOnWorker(charId: string, fireAt: number, reason: string, userId?: string): Promise<boolean> {
+export async function registerDynamicScheduleOnWorker(
+  charId: string, fireAt: number, reason: string, userId?: string,
+  // 麦麦 2026-09-17：主 API 配置透传 — schedule_next_wakeup 排任务时 scheduleCharacterTask 需要 baseUrl/apiKey/model
+  //   resolveApiConfig 在缺字段时会抛错，之前传空配置是 bug
+  apiConfig?: { baseUrl: string; apiKey: string; model: string },
+): Promise<boolean> {
   // 麦麦 2026-09-16：合并到 2.0 — 优先尝试主动消息 2.0 amsg 通道（UnifiedPush + ntfy 可
   //   靠），fallback 才走旧的 1.x /dynamic-schedule（KeepAliveService WebSocket 路径
   //   已被国产安卓/iOS 后台切断，老路径实际跑不通，但保留当 fallback 兜底）。
@@ -307,7 +312,7 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
   //   worker onBeforeFire 看到这个 source 会拼"主动视角"的 system hint + 收起
   //   cancel/renew/schedule 那批任务管理工具。
   try {
-    const ok = await registerDynamicScheduleOnActiveMsg2(charId, fireAt, reason, userId);
+    const ok = await registerDynamicScheduleOnActiveMsg2(charId, fireAt, reason, userId, apiConfig);
     if (ok) return true;
     console.warn('[ProactivePush] 2.0 通道没接上，回落 1.x /dynamic-schedule');
   } catch (e) {
@@ -316,6 +321,14 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
 
   // 1.x fallback：保留老逻辑不动
   const cfg = loadPushConfig();
+  // 麦麦 2026-09-17 修：1.0 总开关关了就别走 fallback —
+  //   暮色 14:22 / 15:48 反馈：总开关关了但 1.x 老路径仍写 D1 → cron 触发 → WS 广播 →
+  //   Android KeepAliveService → WebView JS → runProactive 写 1.0 老提示词（标记 C）
+  //   关了总开关就应当什么都不发生，不是"退回本地计时器"
+  if (!cfg.enabled) {
+    console.warn(`[ProactivePush] 1.0 已关闭，跳过 fallback（char=${charId}）`);
+    return false;
+  }
   // 不再要求 isPushConfigReady — 只需要 workerUrl
   if (!cfg.workerUrl.startsWith('https://')) {
     console.warn('[ProactivePush] /dynamic-schedule: workerUrl 未配置（VITE_PROACTIVE_WORKER_URL）');
@@ -365,6 +378,9 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
  */
 async function registerDynamicScheduleOnActiveMsg2(
   charId: string, fireAt: number, reason: string, userId?: string,
+  // 麦麦 2026-09-17：主 API 配置透传 — 来自 useChatAI 的 effectiveApi（角色级 API 优先解析后）
+  //   之前传空配置是 bug：scheduleCharacterTask 早期 resolveApiConfig 抛"缺少 API URL/Key/Model"
+  apiConfig?: { baseUrl: string; apiKey: string; model: string },
 ): Promise<boolean> {
   const fireDate = new Date(fireAt);
   // 延迟引入避免循环依赖 + 避免在 module 顶层引入 iDB / onMessage 等大块
@@ -385,6 +401,13 @@ async function registerDynamicScheduleOnActiveMsg2(
     name: userId ? `动态-${charIdStr.slice(0, 8)}` : charIdStr,
   };
   const baseConfig = globalConfig.amsgGlobalConfig ?? globalConfig;
+  // 麦麦 2026-09-17 修：主 API 配置从调用方传进来 — 没传时兜底用全局 chat 的 baseUrl/apiKey/model
+  //   （之前写死空配置 → scheduleCharacterTask 早期 resolveApiConfig 抛"缺少 API URL/Key/Model"）
+  const effectiveApiConfig = apiConfig ?? {
+    baseUrl: (baseConfig as any)?.amsgChatBaseUrl ?? '',
+    apiKey: (baseConfig as any)?.amsgChatApiKey ?? '',
+    model: (baseConfig as any)?.amsgChatModel ?? '',
+  };
   await ActiveMsgClient.scheduleCharacterTask({
     char: charStub as any,
     config: { enabled: true } as any,
@@ -401,7 +424,7 @@ async function registerDynamicScheduleOnActiveMsg2(
     userProfile: { name: userId ?? '你' } as any,
     groups: [],
     realtimeConfig: baseConfig as any,
-    apiConfig: { baseUrl: '', apiKey: '', model: '' } as any,
+    apiConfig: effectiveApiConfig as any,
   });
   return true;
 }

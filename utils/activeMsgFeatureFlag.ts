@@ -8,4 +8,4 @@
  * 改这一处 = 切换 1.0 / 2.0,不需要改 4 处调用点。
  * 配套 2.0 代码 / 配置 / 组件文件全部保留,只是不跑。
  */
-export const AMSG2_ENABLED = true;
+export const AMSG2_ENABLED = false;

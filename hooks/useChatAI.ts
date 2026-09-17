@@ -3718,16 +3718,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             continue;
                         }
                         // 调 dispatcher（2.0 amsg 优先，1.x fallback）—— fire-and-forget，不阻塞回复保存
-                        // 麦麦 2026-09-17：把 effectiveApi（角色级 API 优先解析后）透传 —
-                        //   scheduleCharacterTask 的 resolveApiConfig 要 baseUrl/apiKey/model，
-                        //   之前 registerDynamicScheduleOnWorker 内部写死空配置是 bug
                         const ok = await registerDynamicScheduleOnWorker(
                           char.id, fireAt, reason, userProfile?.id,
-                          {
-                            baseUrl: (effectiveApi as any).baseUrl || '',
-                            apiKey: (effectiveApi as any).apiKey || '',
-                            model: (effectiveApi as any).model || '',
-                          },
                         );
                         console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
                         if (ok) {

@@ -2022,15 +2022,22 @@ export const amsgHooks = {
     const taskSource = taskMeta.amsgSource as string | undefined;
     const taskReason = typeof taskMeta.amsgReason === 'string' ? taskMeta.amsgReason : '';
     let taskInstruction = rawTaskInstruction;
+    // 麦麦 2026-09-17 排查：主动消息 2.0 提示词路径定位 — 三条路径加不同前缀标记
+    //   【标记A-CHARACTER】= Worker 端 character 分支（江澈 schedule_next_wakeup 排的）
+    //   【标记B-MANUAL】   = Worker 端 manual/默认分支（用户手动建的，或 source 字段空）
+    //   【标记C-FRONTEND】 = 前端 1.0 fallback 路径（context/OSContext.tsx runProactive）
+    //   部署后测试触发，看收到哪个标记就知道走的是哪条路径；定位完再清掉标记。
     if (taskSource === 'character' && taskReason) {
       // 麦麦 2026-09-16 plan step B：source='character' 切"主动视角" system hint ——
       //   角色自己排的任务到点，告诉它这是 TA 当时定的、不是被动信号；
       //   fireAt 用任务行的 next_send_at，格式化成角色自己的时区短时间，便于 LLM 拼接 context。
       const fireAtMs = Date.parse(ctx.task.nextSendAt ?? '') || ctx.now.getTime();
       const fireAtHuman = formatFireTimeShort(fireAtMs, { tzId: pack.tzId });
-      taskInstruction = `[主动消息触发 - 这是你之前在 ${fireAtHuman} 用 schedule_next_wakeup 排的时间。` +
+      taskInstruction = `【标记A-CHARACTER】\n[主动消息触发 - 这是你之前在 ${fireAtHuman} 用 schedule_next_wakeup 排的时间。` +
         ` 你当时设定的理由是："${taskReason}"。` +
         ` 现在到点了，你记得想做什么吗？按你的角色设定和最近聊天决定行为。]`;
+    } else {
+      taskInstruction = `【标记B-MANUAL】\n${taskInstruction}`;
     }
     const prompt = renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
       selfLog,

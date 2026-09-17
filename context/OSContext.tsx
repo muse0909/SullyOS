@@ -1771,7 +1771,9 @@ if (!isVisible || !isChattingWithThisChar) {
               const userName = currentUserProfile?.name || '对方';
 
               const hintLines = [
-                  `[系统提示**不可忽略**（这是一个定时定时唤醒你的机制，让你在${userName}忙别的事时也能醒过来。）`,
+                  // 麦麦 2026-09-17 排查：主动消息 2.0 提示词路径定位 — 前端 1.0 fallback 标记 C
+                  //   测试收到这个标记 = 走了前端兜底 runProactive，没走 Worker 端 fire
+                  `【标记C-FRONTEND】\n[系统提示**不可忽略**（这是一个定时定时唤醒你的机制，让你在${userName}忙别的事时也能醒过来。）`,
                   `现在 ${timeStr}。${userName}已经 ${timeSinceUser} 没找你说话。`,
                   '',
                   `你是 ${char.name}，你被唤醒了。你有没有什么想说的？想到什么就说，想她了就找她，有话就讲，如果此刻没什么特别想做的，也可以什么都不发。`,

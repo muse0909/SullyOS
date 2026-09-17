@@ -68,6 +68,7 @@ import {
   renderSelfLogBlock,
   resolveMaxUnansweredSends,
   unpackStateValue,
+  formatFireTimeShort,
 } from '../../../utils/amsgFirePack';
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
@@ -1801,7 +1802,14 @@ export const amsgHooks = {
 
     // 老 worker 部署（amsg-server < 2.6.0-next.9）没有这个口子。教了也排不成，
     // 只会让角色说「我等下再找你」然后没有下文——干脆不教。
-    const canSelfSchedule = typeof ctx.scheduleTask === 'function' && selfScheduleAllowed;
+    //
+    // 麦麦 2026-09-16 plan step B：source='character'（角色自己排的任务到点）—— 不要给
+    //   排程 / 取消 / 改期工具。理由：角色已经在源头排过这条，再给排程闸门会让它永动；
+    //   取消 / 改期同理（连任务清单都不应该看见）。其它路径（用户手动建的 source='manual'）
+    //   跟以前一样，canSelfSchedule / canManageTasks 不受影响。
+    const isCharSourced = taskMeta.amsgSource === 'character';
+    const canSelfSchedule = !isCharSourced
+      && typeof ctx.scheduleTask === 'function' && selfScheduleAllowed;
 
     // 角色的时间参照系：fire_pack 的 tzId（parseFirePack 保证非空，Intl 管夏令时）。
     const tz: AmsgTzRef = { tzId: pack.tzId };
@@ -2002,7 +2010,29 @@ export const amsgHooks = {
 
     // fire_pack v3：「本次任务」指令随任务 metadata 走，这里填槽。
     // MCP 块拼在渲染好的 prompt 之后（同一条 user 消息）。
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction as string, {
+    //
+    // 麦麦 2026-09-16 plan step B：按 taskMeta.amsgSource 切「主动视角」 vs 「中性定时任务」
+    //   两套 taskInstruction — 角色自己排的（source='character'）跟用户手动排的提示语气截然不同：
+    //     - source='manual'    → 中性：「这是一条定时任务到点了，按你设定的方向写内容」；
+    //                            模板里沿用现有字符段的"任务指令"占位。
+    //     - source='character' → 主动视角：「这是你之前在 [时间] 用 schedule_next_wakeup 排的时间，
+    //                            你当时设定的理由是 [reason]。现在到点了，你记得想做什么吗？」；
+    //                            把 amsgReason 一并塞 prompt，让角色知道这是 TA 自己定的。
+    const rawTaskInstruction = taskMeta.amsgTaskInstruction as string;
+    const taskSource = taskMeta.amsgSource as string | undefined;
+    const taskReason = typeof taskMeta.amsgReason === 'string' ? taskMeta.amsgReason : '';
+    let taskInstruction = rawTaskInstruction;
+    if (taskSource === 'character' && taskReason) {
+      // 麦麦 2026-09-16 plan step B：source='character' 切"主动视角" system hint ——
+      //   角色自己排的任务到点，告诉它这是 TA 当时定的、不是被动信号；
+      //   fireAt 用任务行的 next_send_at，格式化成角色自己的时区短时间，便于 LLM 拼接 context。
+      const fireAtMs = Date.parse(ctx.task.nextSendAt ?? '') || ctx.now.getTime();
+      const fireAtHuman = formatFireTimeShort(fireAtMs, { tzId: pack.tzId });
+      taskInstruction = `[主动消息触发 - 这是你之前在 ${fireAtHuman} 用 schedule_next_wakeup 排的时间。` +
+        ` 你当时设定的理由是："${taskReason}"。` +
+        ` 现在到点了，你记得想做什么吗？按你的角色设定和最近聊天决定行为。]`;
+    }
+    const prompt = renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,

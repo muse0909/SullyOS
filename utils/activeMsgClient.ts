@@ -676,7 +676,7 @@ export const buildFirePack = async (
   },
 ): Promise<AmsgFirePack> => {
   const templateStub = opts?.templateStub === true;
-  const [{ lastUserMessageAt }, recentMessages, library, schedule] = await Promise.all([
+  const [{ lastUserMessageAt }, recentMessagesRaw, library, schedule] = await Promise.all([
     buildTimeGapHint(char.id),
     templateStub ? Promise.resolve([]) : loadCharacterContextMessages(char),
     // 表情库只喂系统提示词/近史渲染：占位模板路径整库都不用读（表情记录带图片数据，
@@ -692,6 +692,12 @@ export const buildFirePack = async (
         })
       : Promise.resolve(null),
   ]);
+  // 麦麦 2026-09-16：主动消息 2.0 请求体精简 —— 只带最近 100 条聊天记录，不用全量上下文。
+  //   100 条对角色 LLM 看上下文已经够（角色处在「主动聊天」场景，不需要联想检索）。
+  //   注意：loadCharacterContextMessages 已经是按角色活跃度 grep 出来的"上下文段"，所以 100
+  //   条里不会有从半年前翻出来的无关记录。100 的步长是按 /chat/completions 的上下文窗口 + token
+  //   成本权衡定的——超出之后角色多半已经在做"承接老话"而非"主动找人说话"。
+  const recentMessages = recentMessagesRaw.slice(-100);
   // 角色的时间参照系：开了自定义时区用角色的，没开用设备的。worker 渲染一切给角色看的
   // 时间（当前时间、日程日期、排程清单）都按它来。
   const charTz = resolveCharTimeZone(char);
@@ -774,13 +780,12 @@ export const buildFirePack = async (
     .map((message) => formatHistoryLine(message.role, message.content, char, userProfile))
     .join('\n\n');
 
-  // 记忆库里有哪些月份查得到 —— 提示词一直在教角色用 [[RECALL: 年-月]]，却没说过
-  // 哪些月份有东西。不报菜单的话它多半不查，直接凭空编一段「回忆」出来。
-  // 只写进下面这段主动消息自己的规则里，不动 chatPrompts 那条所有角色每轮都走的主链路。
-  const recallableMonths = listRecallableMonths(char.memories);
-  const recallHint = recallableMonths.length > 0
-    ? `- 你的记忆库里存着这些月份的经历：${recallableMonths.join('、')}。想聊起其中某段时，先输出 [[RECALL: 年-月]] 把细节取回来再写，别凭印象编。`
-    : null;
+  // 麦麦 2026-09-16：主动消息 2.0 不走向量记忆检索 —— 主动消息场景里角色不是在回答问题，
+  // 不需要联想检索 / 回溯细节。character 系统设定里有「你记得什么」的摘要，但不再教学
+  // `[[RECALL: 年-月]]` 这个会触发 fire-side 检索工具的指令。也保留 listRecallableMonths
+  // 调用等，按需要可直接回退。截 chat 到 100 条已经做在上面，跟 BP3 的近期剧情摘要一起凑合足够。
+  void listRecallableMonths; // 暂时不再用，但保留 import。
+  const recallHint: string | null = null;
 
   const template = templateStub ? AMSG2_INSTANT_STUB_TEMPLATE : [
     '你将代表下面这个角色，生成一条“主动发给用户”的私聊消息。',
@@ -2335,6 +2340,18 @@ export const ActiveMsgClient = {
       expirePolicy?: ActiveMsg2ExpirePolicy;
       /** 角色自己排的（工具桥传 true）。带上 metadata 标记，连发上限的到点兜底闸只拦它。 */
       selfScheduled?: boolean;
+      /**
+       * 任务来源：'manual' = 用户在 modal 手动建；'character' = 角色在聊天里用
+       * schedule_next_wakeup token 给自己排的（plan step B 合并接入 2.0）。worker
+       * onBeforeFire 按这个字段切 system hint：source='character' 拼「主动视角」，
+       * source='manual' 拼「中性定时任务」。省略 = 'manual'。
+       */
+      source?: 'manual' | 'character';
+      /**
+       * 仅 source='character' 时有意义：角色 token 里的 reason 字段，到点时 worker 拼进
+       * "你之前安排的理由是：[reason]" 那段提示词里。省略时自动从 promptHint 兜底。
+       */
+      reason?: string;
     };
     /** 编辑/续期时传旧任务 uuid：先取消它再新建（不传 = 纯新建）。 */
     replaceTaskUuid?: string;
@@ -2401,6 +2418,15 @@ export const ActiveMsgClient = {
         amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不带、不受连发上限管）。
         ...(task.selfScheduled ? { amsgSelfScheduled: true } : {}),
+        // 麦麦 2026-09-16 plan step B：任务来源字段，worker 据此切 system hint。
+        //   'character' = 角色在聊天里用 schedule_next_wakeup token 排的（plan step B）
+        //   'manual'    = 用户在任务编辑 modal 里手动建的（默认）
+        //   跟 amsgSelfScheduled 不冲突：amsgSelfScheduled 控「连发上限管不管它」，
+        //   amsgSource 控「system hint 用哪套语气 + 任务管理工具是否给角色」。
+        amsgSource: task.source ?? 'manual',
+        // 仅 source='character' 时有意义：worker 把这段拼进"你当时安排的理由是 [reason]"。
+        // 留空时 from promptHint 兜底，再空就用任务 ID 占位。
+        ...(task.reason ? { amsgReason: task.reason } : {}),
       },
     };
 

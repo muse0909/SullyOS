@@ -50,15 +50,36 @@ database_name = "sully-amsg2"
 [triggers]
 crons = ["* * * * *"]
 
+## Durable Object 绑定：INSTANT_TICK
+##   - 作用：即时对话（POST /instant-chat 回完 202 后的「起跳器」——它接下来用 alarm() 跑
+##     真正的 LLM 生成 + 推送回写，不占主请求生命周期；
+##     see worker/amsg/src/instantChat.ts 的 kickInstantTick + worker/amsg/src/index.ts 的
+##     InstantTickDO）
+##   - 这条 binding 之前没在 wrangler.toml 声明，CF 没创建 InstantTickDO 实例，
+##     env.INSTANT_TICK 永远 undefined → GET /config-check 的 instantTick=false，
+##     前端 resolveInstantChatBlocker 永远判 Worker太旧 → 即时对话按钮置灰。
+##
+##   - 不能同时加 [[migrations]] 段：CF 上已经有 InstantTickDO 类（migration tag
+##     "amsg-instant-tick-v1"，自更新路径之前已 apply 过），wrangler 4.x 看见新
+##     new_sqlite_classes 会报 10074 "Cannot apply new-sqlite-class migration to
+##     class that is already depended on by existing Durable Objects"。绑定的类
+##     在 CF 上已经存在，只加 binding 不写 migration，CF 默认沿用现存的 namespace，
+##     不会 recreate schema — 这是官方支持的迁移声明方式（见 wrangler 文档的
+##     "skip migration if class exists"）。
+[[durable_objects.bindings]]
+name = "INSTANT_TICK"
+class_name = "InstantTickDO"
+
 ## 非敏感环境变量（明文可放这里）。密钥类走 Secret。
 ##   - AMSG_SERVER_TOKEN：客户端鉴权 token（X-Client-Token header 传过来）
 ##     **变量名必须是 AMSG_SERVER_TOKEN（不是 SERVER_TOKEN）**——
 ##     Worker 代码读 env.AMSG_SERVER_TOKEN，wrangler.toml 写别的名字 env 读不到。
-##     留空 = 不校验（生产环境必须设强随机串）。
+##     CF 不允许 vars 和 secret 同名（[code 10053]）——
+##     AMSG_SERVER_TOKEN 只能在 wrangler secret put 通道写入，
+##     wrangler.toml 留空字符串会占 binding 名、阻塞 secret put。
 ##   - CORS_ALLOWED_ORIGIN：跨域白名单。填具体 origin（推荐），
 ##     留空则按请求 origin 回显（开发模式）。
 ##
 ## MASTER_KEY / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL 走 Secret
 [vars]
-AMSG_SERVER_TOKEN = ""
 CORS_ALLOWED_ORIGIN = "https://sully-os-git-preview-muse0909s-projects.vercel.app"

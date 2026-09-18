@@ -2,7 +2,7 @@
 // 3 入口：朋友圈 / 收藏 / 日记 + 齿轮 → 朋友圈设置页
 
 import React, { useState, useEffect } from 'react';
-import { CaretRight, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images, Envelope } from '@phosphor-icons/react';
+import { CaretRight, BookmarkSimple, Smiley, Notebook, Heart as HeartIcon, Images, Envelope, BookOpen } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID } from '../types';
 import { DB } from '../utils/db';
@@ -15,8 +15,10 @@ import XiaoZhiTiaoPage from './XiaoZhiTiaoPage';
 import MailboxPage from './MailboxPage';
 // 麦麦 2026-09-05：角色备忘录（江澈 9-5 指令）— 暮色只读
 import CharacterMemoPage from './CharacterMemoPage';
+// 麦麦 2026-09-18：共读（暮色+江澈一起读 txt 小说）
+import CoReadBookshelfPage from './CoReadBookshelfPage';
 
-type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao' | 'mailbox' | 'character-memo';
+type SubPage = 'list' | 'moments' | 'favorites' | 'moments-settings' | 'xiao-zhi-tiao' | 'mailbox' | 'character-memo' | 'co-read-bookshelf';
 
 const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addToast, characters } = useOS();
@@ -69,6 +71,11 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   // 子页：角色备忘录（2026-09-05：江澈 9-5 指令，暮色只读）
   if (subPage === 'character-memo') {
     return <CharacterMemoPage onBack={() => setSubPage('list')} />;
+  }
+
+  // 子页：共读书架（2026-09-18：暮色+江澈一起读 txt 小说）
+  if (subPage === 'co-read-bookshelf') {
+    return <CoReadBookshelfPage onBack={() => setSubPage('list')} />;
   }
 
   // 子页：朋友圈设置（暮色 2026-07-03 新增）
@@ -138,6 +145,10 @@ const DiscoverPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <div className="border-t border-slate-100" />
           {/* 麦麦 2026-09-05：角色备忘录入口 — 江澈 9-5 指令，暮色只读 */}
           <CharacterMemoEntry onOpen={() => setSubPage('character-memo')} />
+          <div className="border-t border-slate-100" />
+          {/* 麦麦 2026-09-18：共读入口 — 暮色+江澈一起读 txt 小说。
+              卡片显示"当前在读的书 + 进度"或"还没有开始读" */}
+          <CoReadEntry onOpen={() => setSubPage('co-read-bookshelf')} />
           <div className="border-t border-slate-100" />
           {/* 暮色 2026-08-22：日记入口（接通 AppID.Journal，跟相册/情侣空间同模式） */}
           <JournalEntry onClose={onClose} hasNew={hasNewDiary} />
@@ -255,6 +266,52 @@ const MailboxEntry: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
                 <Envelope size={16} weight="regular" className="text-indigo-500" />
             </div>
             <span className="flex-1 text-sm font-medium text-slate-800">信箱</span>
+            <CaretRight size={16} className="text-slate-300" />
+        </button>
+    );
+};
+
+// 麦麦 2026-09-18：共读入口
+//   显示"当前在读的书 + 进度"或"还没有开始读一本书"
+//   跟 MailboxEntry 同模式（自取数据,不依赖父组件）
+const CoReadEntry: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+    const [currentBookLabel, setCurrentBookLabel] = useState<string>('');
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const books = await DB.getCoReadBooks();
+                if (cancelled || books.length === 0) {
+                    if (!cancelled) setCurrentBookLabel('还没有开始读一本书');
+                    return;
+                }
+                // 最近读完 lastReadAt 最大的那本
+                const lastRead = books.reduce((a, b) => ((b.lastReadAt || 0) > (a.lastReadAt || 0) ? b : a));
+                const cur = (lastRead.currentChapter || 0) + 1;
+                const total = lastRead.totalChapters || lastRead.chapters?.length || 0;
+                setCurrentBookLabel(`当前《${lastRead.title}》第${cur}章/共${total}章`);
+            } catch (e) {
+                if (!cancelled) setCurrentBookLabel('');
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+    return (
+        <button
+            onClick={onOpen}
+            className="w-full flex items-center gap-3 px-4 py-4 active:bg-emerald-50 transition-colors text-left"
+        >
+            <div className="w-7 h-7 rounded-full bg-emerald-50 flex items-center justify-center">
+                <BookOpen size={16} weight="regular" className="text-emerald-600" />
+            </div>
+            <div className="flex-1 flex flex-col items-start min-w-0">
+                <span className="text-sm font-medium text-slate-800">共读</span>
+                {currentBookLabel && (
+                    <span className="text-[11px] text-slate-500 mt-0.5 truncate max-w-full">
+                        {currentBookLabel}
+                    </span>
+                )}
+            </div>
             <CaretRight size={16} className="text-slate-300" />
         </button>
     );

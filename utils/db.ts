@@ -30,10 +30,11 @@ const DB_NAME = 'AetherOS_Data';
 //   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
 //   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
 //   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
-// 麦麦 2026-09-18：共读功能新增 STORE_CO_READ_BOOKS (v75)
+// 麦麦 2026-09-18：共读功能新增 STORE_CO_READ_BOOKS (v75) + STORE_CO_READ_HELPER_LOGS (v76)
 //   暮色和江澈一起读的 txt 小说，每本存元数据 + 拆好的章节 + 当前进度
+//   帮工调用日志独立 store,工作台账本用得上
 //   跟 novels (基于小说创造虚拟角色) 是不同概念，必须独立 store
-const DB_VERSION = 75;
+const DB_VERSION = 76;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -68,6 +69,10 @@ const STORE_NOVELS = 'novels';
 //   每条记录 = 一本书：元数据（id/书名/作者/上传时间）+ 章节数组[{index, title, content}]
 //   + 阅读进度（currentChapter 当前章 / lastReadAt 最后读时间）
 const STORE_CO_READ_BOOKS = 'co_read_books';
+// 麦麦 2026-09-18 (v76)：帮工调用日志
+//   每次帮工 API 调用（拆章兜底等）记一笔：时间、书、tokens、估算费用、是否成功、错误信息
+//   工作台账本统计 + 显示每笔记录用
+const STORE_CO_READ_HELPER_LOGS = 'co_read_helper_logs';
 const STORE_BANK_TX = 'bank_transactions';
 const STORE_BANK_DATA = 'bank_data';
 const STORE_XHS_STOCK = 'xhs_stock';
@@ -117,6 +122,27 @@ export interface CoReadBook {
     chapterSplitMethod: 'regex-auto' | 'helper-llm' | 'fallback-chunks';
     fileSize: number;          // bytes
     primaryCharId: string;     // 默认 'active', 共读跟当前活跃角色
+}
+
+// 麦麦 2026-09-18 (v76)：帮工调用日志
+//   每次帮工 API 调用（拆章兜底）记一条
+//   type: 'chapter-split' 当前唯一
+//   success / error / durationMs 工作台统计用
+//   totalTokens / costUsd 由 helperLogger 按模型计费自动算
+export interface CoReadHelperLog {
+    id?: number;            // autoIncrement
+    timestamp: number;      // Date.now()
+    type: 'chapter-split';
+    bookTitle?: string;     // 关联到书,但不强求
+    method: 'helper-llm' | 'regex-auto' | 'fallback-chunks';
+    success: boolean;
+    durationMs: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    costUsd?: number;       // 估算
+    error?: string;
+    model?: string;
 }
 
 /**
@@ -481,6 +507,18 @@ export const openDB = (): Promise<IDBDatabase> => {
       //   不加 status / 时间 index，按 uploadTime desc 内存排即可（书的数量 < 100）
       if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) {
           db.createObjectStore(STORE_CO_READ_BOOKS, { keyPath: 'id' });
+      }
+
+      // 麦麦 2026-09-18：帮工调用日志 (v76)
+      //   autoIncrement id(每次调用新增一条)
+      //   加 bookTitle 索引:按书名查看
+      //   加 success 索引:失败记录快速拉
+      //   加 timestamp 索引:按时间范围查
+      if (!db.objectStoreNames.contains(STORE_CO_READ_HELPER_LOGS)) {
+          const logStore = db.createObjectStore(STORE_CO_READ_HELPER_LOGS, { keyPath: 'id', autoIncrement: true });
+          logStore.createIndex('bookTitle', 'bookTitle', { unique: false });
+          logStore.createIndex('success', 'success', { unique: false });
+          logStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
     };
   });
@@ -2480,6 +2518,66 @@ updateMessageMetadata: async (
   },
   // ============ 共读方法 end (v75) ============
 
+  // ============ 麦麦 2026-09-18 v76：帮工调用日志 ============
+  //   saveCoReadHelperLog: 每次帮工调用完记账
+  //   getCoReadHelperLogs: 拉全部日志(时间倒序)
+  //   getCoReadHelperLogsByBook: 拉某本的所有日志
+  //   clearCoReadHelperLogs: 清空全部(用户主动重置时)
+  //   工作台账本统计用 statsCoReadHelperLogs()
+
+  saveCoReadHelperLog: async (entry: Omit<CoReadHelperLog, 'id'>): Promise<number> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_HELPER_LOGS)) return -1;
+      return new Promise<number>((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_HELPER_LOGS, 'readwrite');
+          const req = tx.objectStore(STORE_CO_READ_HELPER_LOGS).add(entry);
+          req.onsuccess = () => resolve(req.result as number);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getCoReadHelperLogs: async (): Promise<CoReadHelperLog[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_HELPER_LOGS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_HELPER_LOGS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_HELPER_LOGS).getAll();
+          req.onsuccess = () => {
+              const all = (req.result || []) as CoReadHelperLog[];
+              all.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getCoReadHelperLogsByBook: async (bookTitle: string): Promise<CoReadHelperLog[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_HELPER_LOGS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_HELPER_LOGS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_HELPER_LOGS).index('bookTitle').getAll(bookTitle);
+          req.onsuccess = () => {
+              const all = (req.result || []) as CoReadHelperLog[];
+              all.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  clearCoReadHelperLogs: async (): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_HELPER_LOGS)) return;
+      const tx = db.transaction(STORE_CO_READ_HELPER_LOGS, 'readwrite');
+      tx.objectStore(STORE_CO_READ_HELPER_LOGS).clear();
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+  // ============ 帮工日志 API end (v76) ============
+
   // ============ 剧情模式 Story Theater (暮色 8-25) ============
   // 单人 RP:暮色就是暮色,Entry 只存 characterId 单值
   // 3 个 store:story_theaters(剧场存档)+ story_theater_presets(预设库)
@@ -2677,6 +2775,8 @@ updateMessageMetadata: async (
           getAllFromStore(STORE_NOVELS),
           // 麦麦 2026-09-18：共读书架
           getAllFromStore(STORE_CO_READ_BOOKS),
+          // 麦麦 2026-09-18：帮工调用日志
+          getAllFromStore(STORE_CO_READ_HELPER_LOGS),
           getAllFromStore(STORE_BANK_TX),
           getAllFromStore(STORE_BANK_DATA),
           getAllFromStore(STORE_XHS_ACTIVITIES),
@@ -2795,6 +2895,8 @@ updateMessageMetadata: async (
       'rp_api_configs', 'rp_global_defaults',
       // 麦麦 2026-09-18：共读书架 store（不然备份恢复会丢所有书）
       'co_read_books',
+      // 麦麦 2026-09-18：帮工调用日志
+      'co_read_helper_logs',
   ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');

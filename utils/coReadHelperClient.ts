@@ -9,6 +9,8 @@
 
 import type { CoReadHelperConfig, MainApiConfigForHelper } from './coReadHelperConfig';
 import { resolveHelperCallConfig } from './coReadHelperConfig';
+// 第 5 步:每次帮工调用自动记账(工作台统计用)
+import { startCoReadHelperLog } from './coReadHelperLogger';
 
 export interface CandidateLine {
   lineNo: number;
@@ -41,13 +43,23 @@ export async function callHelperForChapterTitles(
   mainApi: MainApiConfigForHelper | null,
 ): Promise<HelperCallResult> {
   const resolved = resolveHelperCallConfig(cfg, mainApi);
+  // 第 5 步:开账(startLog 拿 endLog 句柄,下面所有返回路径都要调 end)
+  const endLog = startCoReadHelperLog({
+    type: 'chapter-split',
+    bookTitle: '<批量拆章>', // 批量拆章一次性调用,不强绑到具体书(书架页会按 batch 重新记账)
+    model: resolved.model,
+  });
+
   if (!resolved.enabled) {
+    endLog({ ok: false, error: '帮工未启用' });
     return { ok: false, error: '帮工未启用' };
   }
   if (!resolved.baseUrl || !resolved.apiKey) {
+    endLog({ ok: false, error: '基础地址或接口密钥为空' });
     return { ok: false, error: '基础地址或接口密钥为空' };
   }
   if (candidates.length === 0) {
+    endLog({ ok: false, error: '没有候选标题行可分析' });
     return { ok: false, error: '没有候选标题行可分析' };
   }
 
@@ -89,31 +101,45 @@ export async function callHelperForChapterTitles(
       clearTimeout(timer);
       const text = await response.text();
       if (!response.ok) {
+        endLog({ ok: false, error: `HTTP ${response.status}` });
         return { ok: false, error: `帮工返回 ${response.status}: ${text.slice(0, 200)}`, rawResponse: text };
       }
       let data: any;
-      try { data = JSON.parse(text); } catch { return { ok: false, error: '帮工返回不是 JSON', rawResponse: text }; }
+      try { data = JSON.parse(text); } catch {
+        endLog({ ok: false, error: '非 JSON 响应' });
+        return { ok: false, error: '帮工返回不是 JSON', rawResponse: text };
+      }
       const content: string = data?.choices?.[0]?.message?.content || '';
       // 从回复里抽 JSON 数组
       const titleLineNos = extractJsonNumberArray(content);
+      const usage = data?.usage ? {
+        promptTokens: data.usage.prompt_tokens,
+        completionTokens: data.usage.completion_tokens,
+        totalTokens: data.usage.total_tokens,
+      } : undefined;
+      endLog({
+        ok: true,
+        promptTokens: usage?.promptTokens,
+        completionTokens: usage?.completionTokens,
+        totalTokens: usage?.totalTokens,
+      });
       return {
         ok: true,
         titleLineNos,
         rawResponse: content,
-        usage: data?.usage ? {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-        } : undefined,
+        usage,
       };
     }
     // Gemini 协议 — 暂用简化版,实际项目里可能走 generateContent
     clearTimeout(timer);
+    endLog({ ok: false, error: 'Gemini 暂未实现' });
     return { ok: false, error: `Gemini 协议暂未实现,请用 OpenAI 兼容协议(DeepSeek/MiniMax/OpenAI 等)` };
   } catch (e: any) {
     if (e?.name === 'AbortError') {
+      endLog({ ok: false, error: `超时(${cfg.timeoutMs}ms)` });
       return { ok: false, error: `帮工调用超时(${cfg.timeoutMs}ms)` };
     }
+    endLog({ ok: false, error: e?.message || String(e) });
     return { ok: false, error: e?.message || String(e) };
   }
 }

@@ -69,6 +69,11 @@ const MODE_OPTIONS = [
   { id: 'fixed', label: '固定', desc: '到点直接发你写好的内容' },
   { id: 'auto', label: '自动', desc: '用当前角色设定和聊天快照自己生成' },
   { id: 'prompted', label: '提示词', desc: '围绕你写的方向生成主动消息' },
+  // 暮色 2026-09-18 12:42：第四选项"角色自设" — 仅展示给用户看，让 ta 知道这种模式存在。
+  //   入口 disabled：schedule_next_wakeup 是麦麦在 chat 里解析 token 后调
+  //   registerCharacterWakeup 自动创建任务的，手动建任务会跟已经存在的 source='character'
+  //   任务产生归属歧义（标记/计费/防穿帮闸的语义不一样）。编辑/取消任务行还是照常。
+  { id: 'character', label: '角色自设', desc: '由角色在聊天里用 schedule_next_wakeup 排；不能手动创建。', disabled: true },
 ] as const;
 
 const RECURRENCE_OPTIONS = [
@@ -118,6 +123,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   // editingTaskUuid=null → 新建；非 null → 编辑该任务（保存时 replaceTaskUuid）。
   const [editingTaskUuid, setEditingTaskUuid] = useState<string | null>(null);
+  // expandedTaskUuid=null → 行折叠；非 null → 该任务行展开完整详情。
+  //   跟 editing 是独立两状态：expanded 只显示完整信息（不可改），editing 把任务灌进表单。
+  //   暮色 2026-09-18 12:42：列表只看一行根本看不出实际设置（reason/promptHint 都截断），
+  //   点 row 展开内联详情比弹窗顺。
+  const [expandedTaskUuid, setExpandedTaskUuid] = useState<string | null>(null);
   const [expirePolicy, setExpirePolicy] = useState<ActiveMsg2ExpirePolicy>('expire');
   // 远端对账底账：打开面板时拉一次全量任务，只留归属本角色的 uuid。null = 没对上账
   // （读失败/未拉完），此时不显示「远端不存在」徽标，免得半个清单误伤。
@@ -571,10 +581,22 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 // 远端记录的「上一次没发出去」——worker 只在失败时写、成功不清，
                 // 文案里带时间就不会把老记录读成「现在还坏着」。
                 const remoteErrorText = describeRemoteLastError(remoteInfo?.lastError, formatTaskTime);
+                const isExpanded = expandedTaskUuid === t.taskUuid;
+                const isEditing = editingTaskUuid === t.taskUuid;
+                // 编辑中的任务条用主题色描边；展开中用浅灰边，不再叠合编辑/普通两种样式。
+                const containerClass = isEditing
+                  ? 'border-violet-400 bg-violet-50'
+                  : isExpanded
+                    ? 'border-slate-300 bg-slate-50'
+                    : 'border-slate-200 bg-white';
                 return (
-                  <div key={t.taskUuid} className={`rounded-2xl border px-4 py-3 text-xs ${editingTaskUuid === t.taskUuid ? 'border-violet-400 bg-violet-50' : 'border-slate-200 bg-white'}`}>
+                  <div
+                    key={t.taskUuid}
+                    className={`rounded-2xl border px-4 py-3 text-xs cursor-pointer transition-colors ${containerClass}`}
+                    onClick={() => setExpandedTaskUuid(isExpanded ? null : t.taskUuid)}
+                  >
                     <div className="flex items-center justify-between">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="font-bold text-slate-700 truncate">
                           [{shortTaskId(t.taskUuid)}] {formatTaskTime(occurrenceMs ?? t.firstSendTime)} · {describeRecurrence(t.recurrenceType)}
                         </div>
@@ -585,29 +607,70 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                           · {describeExpirePolicy(t.expirePolicy)}
                           · {t.source === 'character' ? '角色自设' : '手动创建'}
                         </div>
-                        {/* 暮色 2026-09-17 21:50：source='character' 的任务额外显示 reason ——
-                            registerCharacterWakeup 把 reason 写进 task.promptHint (也作 worker
-                            amsgReason)，这里透传展示。触发时间在上面的 createTaskRow 已经显示。 */}
-                        {t.source === 'character' && t.promptHint ? (
+                        {/* source='character' 的任务在折叠态也显示一行 reason 摘要，
+                            完整内容在展开区看（避免长 reason 把摘要那行撑变形）。 */}
+                        {t.source === 'character' && t.promptHint && !isExpanded ? (
                           <div className="text-slate-500 mt-1 text-[11px] truncate">
                             原因：{t.promptHint}
                           </div>
                         ) : null}
-                        {missingRemote ? (
+                        {missingRemote && !isExpanded ? (
                           <div className="text-slate-400 mt-1 text-[11px]">⚠ 远端不存在（可能已发送或在别处取消）</div>
                         ) : null}
-                        {remoteErrorText ? (
-                          <div className="text-amber-600 mt-1 text-[11px]">⚠ {remoteErrorText}</div>
-                        ) : null}
-                        {t.lastError ? (
-                          <div className="text-red-500 mt-1 text-[11px]">{t.lastError}</div>
-                        ) : null}
                       </div>
-                      <div className="flex gap-2 shrink-0 ml-2">
+                      {/* 按钮区放右侧，stopPropagation 防止点按钮触发外层 row 的展开切换。 */}
+                      <div className="flex gap-2 shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => setEditingTaskUuid(t.taskUuid)} className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 font-bold">编辑</button>
                         <button onClick={() => void handleCancelTask(t)} className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-500 font-bold">取消</button>
                       </div>
                     </div>
+                    {/* 暮色 2026-09-18 12:42：点 row 展开完整详情。
+                        折叠态显示一行摘要 + 标签；展开态显示所有字段完整内容（不截断），
+                        加上远端错误、本地 lastError 等折叠态可能藏掉的信息。 */}
+                    {isExpanded ? (
+                      <div className="mt-3 pt-3 border-t border-slate-200 space-y-2 text-slate-600">
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">模式</div>
+                          <div className="text-slate-700 mt-0.5">
+                            {describeTaskMode(t)} · {describeRecurrence(t.recurrenceType)} · {describeExpirePolicy(t.expirePolicy)}
+                            {' · '}{t.source === 'character' ? '角色自设' : '手动创建'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">首次发送</div>
+                          <div className="text-slate-700 mt-0.5">{formatTaskTime(t.firstSendTime)}</div>
+                        </div>
+                        {t.userMessage ? (
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">固定消息内容</div>
+                            <div className="text-slate-700 mt-0.5 whitespace-pre-wrap break-words">{t.userMessage}</div>
+                          </div>
+                        ) : null}
+                        {t.promptHint ? (
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                              {t.source === 'character' ? '原因' : '额外提示词'}
+                            </div>
+                            <div className="text-slate-700 mt-0.5 whitespace-pre-wrap break-words">{t.promptHint}</div>
+                          </div>
+                        ) : null}
+                        {t.recurrenceType !== 'none' && occurrenceMs ? (
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">下次触发</div>
+                            <div className="text-slate-700 mt-0.5">{formatTaskTime(occurrenceMs)}</div>
+                          </div>
+                        ) : null}
+                        {missingRemote ? (
+                          <div className="text-slate-500 text-[11px]">⚠ 远端不存在（可能已发送或在别处取消）</div>
+                        ) : null}
+                        {remoteErrorText ? (
+                          <div className="text-amber-600 text-[11px]">⚠ {remoteErrorText}</div>
+                        ) : null}
+                        {t.lastError ? (
+                          <div className="text-red-500 text-[11px]">{t.lastError}</div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -627,20 +690,35 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 {editingTaskUuid ? '编辑任务' : '新建任务'}
               </label>
               <div className="space-y-2">
-                {MODE_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => {
-                      setMode(option.id);
-                      // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
-                      if (option.id === 'fixed') setExpirePolicy('force');
-                    }}
-                    className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${mode === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
-                  >
-                    <div className="font-bold">{option.label}</div>
-                    <div className={`text-xs mt-1 ${mode === option.id ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
-                  </button>
-                ))}
+                {MODE_OPTIONS.map((option) => {
+                  // 暮色 2026-09-18 12:42：character 选项 disabled，渲染时灰掉且不可点。
+                  //   用 'disabled' in option 而不是 option.disabled 是因为 TS union narrowing
+                  //   在 'as const' 数组里推不出来，统一用 'in' 判断避免类型报错。
+                  const isSelected = mode === option.id;
+                  const isDisabled = 'disabled' in option;
+                  return (
+                    <button
+                      key={option.id}
+                      disabled={isDisabled}
+                      onClick={() => {
+                        if (isDisabled) return;
+                        setMode(option.id);
+                        // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
+                        if (option.id === 'fixed') setExpirePolicy('force');
+                      }}
+                      className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${
+                        isDisabled
+                          ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200'
+                          : isSelected
+                            ? 'bg-violet-300 text-white border-violet-300'
+                            : 'bg-white border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      <div className="font-bold">{option.label}</div>
+                      <div className={`text-xs mt-1 ${isSelected ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

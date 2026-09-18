@@ -7,29 +7,58 @@
 //   - ⚙ 右下（步骤 4/5 接入帮工 API 配置 + 工作台账本）
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CaretLeft, Plus, Trash, BookOpen, CaretRight } from '@phosphor-icons/react';
+import { CaretLeft, Plus, Trash, BookOpen, CaretRight, Gear } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB, CoReadBook } from '../utils/db';
 import {
   detectFileEncoding,
   decodeByEncoding,
   splitIntoChapters,
+  extractTitleCandidates,
   type FileEncoding,
+  type SplitResult,
 } from '../utils/coReadChapterParser';
 // 第 3 步：全屏阅读器
 import CoReadReaderPage from './CoReadReaderPage';
+// 第 4 步：帮工 API 兜底
+import { loadHelperConfig, type MainApiConfigForHelper } from '../utils/coReadHelperConfig';
+import { callHelperForChapterTitles } from '../utils/coReadHelperClient';
+// 第 4 步：设置抽屉（步骤 4 接入 帮工 API / 步骤 5 接入 工作台账本）
+import CoReadSettingsDrawer from './CoReadSettingsDrawer';
+
+// 第 4 步：用帮工返回的章节标题行号,反向构建 chapters 数组
+//   titleLineNos = 标题所在的行号(0-based)，行号必须是升序的
+function buildChaptersByLineNos(text: string, titleLineNos: number[]): SplitResult {
+  const lines = text.split(/\r?\n/);
+  const sortedNo = Array.from(new Set(titleLineNos)).filter(n => n >= 0 && n < lines.length).sort((a, b) => a - b);
+  const chapters = sortedNo.map((lineNo, idx) => {
+    const title = (lines[lineNo] || '').trim() || `第 ${idx + 1} 部分`;
+    const startLine = lineNo + 1;
+    const endLine = idx + 1 < sortedNo.length ? sortedNo[idx + 1] : lines.length;
+    const content = lines.slice(startLine, endLine).join('\n').trim();
+    return {
+      index: idx,
+      title,
+      content,
+      charCount: content.length,
+    };
+  }).filter(c => c.content.length > 0);
+  return { method: 'helper-llm', chapters };
+}
 
 interface Props {
   onBack: () => void;
 }
 
 const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
-  const { addToast, activeCharacterId } = useOS();
+  const { addToast, activeCharacterId, apiConfig } = useOS();
   const [books, setBooks] = useState<CoReadBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   // 第 3 步:点"读"后切到全屏阅读器,用 activeBookId 标识
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  // 第 4 步:设置抽屉
+  const [showSettings, setShowSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -99,8 +128,43 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         setUploading(false);
         return;
       }
-      // 拆章
-      const splitResult = splitIntoChapters(text);
+      // 拆章 — 本地
+      let splitResult: SplitResult = splitIntoChapters(text);
+      let helperUsed = false;
+      let helperError: string | null = null;
+      // 第 4 步：如果本地拆出 < 2 章,启用帮工兜底
+      //   本地 regex 全部失败 或 fallback-chunks 都属于"本地不行"
+      if (splitResult.chapters.length < 2) {
+        const helperCfg = loadHelperConfig();
+        if (helperCfg.enabled) {
+          const mainApi: MainApiConfigForHelper | null = apiConfig
+            ? {
+                baseUrl: (apiConfig as any).baseUrl || '',
+                apiKey: (apiConfig as any).apiKey || '',
+                model: (apiConfig as any).model || '',
+                protocol: ((apiConfig as any).protocol === 'gemini' ? 'gemini' : 'openai'),
+              }
+            : null;
+          const candidates = extractTitleCandidates(text);
+          const totalLines = text.split(/\r?\n/).length;
+          if (candidates.length === 0) {
+            helperError = '没有候选标题行可分析';
+          } else {
+            addToast('本地拆不出,调帮工兜底…', 'info');
+            const helperRes = await callHelperForChapterTitles(candidates, totalLines, helperCfg, mainApi);
+            if (helperRes.ok && helperRes.titleLineNos && helperRes.titleLineNos.length >= 2) {
+              // 用帮工返回的行号重新切片
+              splitResult = buildChaptersByLineNos(text, helperRes.titleLineNos);
+              helperUsed = true;
+            } else {
+              helperError = helperRes.error || '帮工没认出章节';
+              addToast(`帮工失败:${helperError},用本地兜底切`, 'error');
+            }
+          }
+        } else {
+          addToast('本地正则没认出来,帮工 API 未启用,按 5000 字兜底切片', 'info');
+        }
+      }
       if (!splitResult.chapters || splitResult.chapters.length === 0) {
         addToast('拆章失败,书里没有任何内容', 'error');
         setUploading(false);
@@ -120,17 +184,16 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         chapters: splitResult.chapters,
         currentChapter: 0,
         fileEncoding: encoding as FileEncoding,
-        chapterSplitMethod: splitResult.method,
+        chapterSplitMethod: helperUsed ? 'helper-llm' : splitResult.method,
         fileSize: file.size,
         primaryCharId: activeCharacterId || 'active',
       };
       await DB.saveCoReadBook(book);
-      const methodLabel =
-        splitResult.method === 'regex-auto'
+      const methodLabel = helperUsed
+        ? '帮工识别'
+        : splitResult.method === 'regex-auto'
           ? `本地正则(${splitResult.matchedRule})`
-          : splitResult.method === 'fallback-chunks'
-          ? '按 5000 字兜底切片'
-          : '兜底';
+          : '按 5000 字兜底切片';
       addToast(`《${bookTitle}》已加入书架（${splitResult.chapters.length}章,${methodLabel}）`, 'success');
       await reload();
     } catch (err: any) {
@@ -278,10 +341,21 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         {/* 步骤 4/5 占位 */}
         {!loading && books.length > 0 && (
           <div className="mt-4 text-center text-[11px] text-slate-400">
-            ⚙ 帮工 API + 工作台账本 将于步骤 4/5 上线
+            长按下方 ⚙ 看帮工 API + 工作台账本
           </div>
         )}
       </div>
+
+      {/* 第 4 步:右下角浮动 ⚙ 按钮 — 弹出设置抽屉（帮工 API + 后续工作台） */}
+      <button
+        onClick={() => setShowSettings(true)}
+        className="absolute bottom-6 right-6 w-12 h-12 rounded-full bg-white shadow-lg shadow-slate-300/50 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform"
+        aria-label="设置"
+      >
+        <Gear size={20} weight="regular" />
+      </button>
+
+      <CoReadSettingsDrawer open={showSettings} onClose={() => setShowSettings(false)} activeTab="helper" />
     </div>
   );
 };

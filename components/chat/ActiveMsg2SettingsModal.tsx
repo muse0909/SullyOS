@@ -82,6 +82,16 @@ const RECURRENCE_OPTIONS = [
   { id: 'weekly', label: '每周' },
 ] as const;
 
+// 暮色 2026-09-18 12:59：首次发送时间的快捷预设 — 点 chip 直接设成「距现在 +N 分钟/小时」。
+//   这些是「首次触发」绝对时刻的快捷，**不**影响 repeat 间隔（amsg-server 库对循环间隔
+//   还是只支持 daily/weekly，循环的 X 小时版本来不及做；首次时间不受这个限制）。
+const FIRST_SEND_PRESETS = [
+  { label: '2 分钟后', offsetMs: 2 * 60_000 },
+  { label: '10 分钟后', offsetMs: 10 * 60_000 },
+  { label: '30 分钟后', offsetMs: 30 * 60_000 },
+  { label: '1 小时后', offsetMs: 60 * 60_000 },
+] as const;
+
 const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -724,6 +734,23 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">首次发送时间</label>
+              {/* 暮色 2026-09-18 12:59：首次发送时间快捷预设 — 4 个 chip 直接把 input 填到
+                  「距当前设备时间 +N 分钟/小时」的未来时间，省去滚日期选择器的步骤。
+                  受 amsg-server 限制只影响「首次触发」的绝对时刻，不影响 repeat 间隔。 */}
+              <div className="grid grid-cols-4 gap-2 mb-2">
+                {FIRST_SEND_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => setFirstSendTime(
+                      toDatetimeLocalValue(new Date(Date.now() + preset.offsetMs).toISOString())
+                    )}
+                    className="py-2 rounded-xl text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-violet-50 hover:border-violet-300 transition-all"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
               <input
                 type="datetime-local"
                 value={firstSendTime}

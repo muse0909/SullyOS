@@ -376,7 +376,16 @@ export async function registerCharacterWakeup(
   reason: string,
   apiConfig?: { baseUrl: string; apiKey: string; model: string },
 ): Promise<boolean> {
-  const [{ ActiveMsgClient }, ActiveMsgStore] = await Promise.all([
+  // 麦麦 2026-09-18 11:55 修：上次 commit 这里写错了 namespace 解构 —
+  //   `import('./activeMsgStore')` 返回的是 module namespace 对象（named exports 的容器），
+  //   上面没有 `getGlobalConfig` 属性，方法在 `ActiveMsgStore` 对象上。
+  //   旧写法 `const [, ActiveMsgStore] = await Promise.all([...import2])` 解出来的是
+  //   namespace，再调 namespace.getGlobalConfig 就报 "is not a function"。
+  //   改成显式 `{ ActiveMsgStore } = namespace`，named 绑到真对象上。
+  //   同款 latent bug 还在 utils/proactivePushConfig.ts:386 的 registerDynamicScheduleOnActiveMsg2，
+  //   那里没暴露是因为 AMSG2_ENABLED=false 时被 if(flag) 短路；本次按暮色 1.0 不动先不改，
+  //   留着下一轮问。
+  const [{ ActiveMsgClient }, { ActiveMsgStore }] = await Promise.all([
     import('./activeMsgClient'),
     import('./activeMsgStore'),
   ]);

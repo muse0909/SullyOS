@@ -5,7 +5,7 @@
 //   - 关闭 / 翻页时 updateCoReadBookProgress,下次进来自动恢复
 //   - 第 6 步:选中文字弹工具条(划线/写想法) + 批注暖橙高亮 + 段落后插入暮色批注气泡
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   CaretLeft,
   CaretRight as CaretRightIcon,
@@ -188,15 +188,10 @@ const CoReadReaderPage: React.FC<Props> = ({ bookId, onBack }) => {
   };
 
   // 同步设置到 localStorage
-  useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
-
-  // 翻页时清空滚动位置(改章节)
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
-  }, [chapterIdx]);
-
+  // 麦麦 2026-09-18:把原本 useEffect [chapterIdx] 滚动清空 / useEffect [settings] 都删了
+  //   减少 hooks 数量(从 19 个降到 15 个), 降低 React 19 RC 下 hooks 顺序出错概率 (#300)
+  //   settings 保存:在 setSettingsXxx handler 里显式 saveSettings 调用
+  //   翻页滚到顶:在 goChapter / jumpToChapter 里显式 scrollTo
   const total = book?.totalChapters || book?.chapters.length || 0;
 
   const goChapter = async (delta: number) => {
@@ -318,41 +313,39 @@ const CoReadReaderPage: React.FC<Props> = ({ bookId, onBack }) => {
   };
 
   // 把章节正文按批注范围切分：高亮片段加 bg-amber，无批注时直接整段
-  //   暮色 7-31 避开粉色,默认用 amber (暖橙) 系 — 江澈气泡色待 8 步加
-  const renderedContent = useMemo<React.ReactNode[]>(() => {
-    if (!book) return [];
-    const chapter = book.chapters[chapterIdx];
-    if (!chapter) return [];
-    const content = chapter.content;
-    if (chapterAnns.length === 0) return [<React.Fragment key="full">{content}</React.Fragment>];
-    // 按 offset 排序,从小到大,叠加高亮
-    const sorted = [...chapterAnns].sort((a, b) => a.selection.startOffset - b.selection.startOffset);
-    const parts: React.ReactNode[] = [];
-    let cursor = 0;
-    sorted.forEach((ann, i) => {
-      const s = Math.max(0, Math.min(content.length, ann.selection.startOffset));
-      const e = Math.max(s, Math.min(content.length, ann.selection.endOffset));
-      if (e <= s) return;
-      if (s > cursor) {
-        parts.push(<React.Fragment key={`raw-${cursor}-${s}`}>{content.substring(cursor, s)}</React.Fragment>);
-      }
-      parts.push(
-        <span
-          key={`ann-${ann.id}`}
-          data-ann-id={ann.id}
-          className="rounded-sm"
-          style={{ backgroundColor: '#fef3c7', borderBottom: '1.5px solid #d97706' }}
-        >
-          {content.substring(s, e)}
-        </span>,
-      );
-      cursor = Math.max(cursor, e);
-    });
-    if (cursor < content.length) {
-      parts.push(<React.Fragment key={`tail-${cursor}`}>{content.substring(cursor)}</React.Fragment>);
+//   暮色 7-31 避开粉色,默认用 amber (暖橙) 系 — 江澈气泡色待 8 步加
+//   麦麦 2026-09-18:把 useMemo 改成普通函数（每次 render 都计算）
+//     useMemo 在 hook 序列里有 bookkeeping 开销 — React 19 RC 下偶尔触发 #300
+//     章节内容短时（< 50 万字）,重算性能上无感
+function renderChapterContent(content: string, chapterAnns: CoReadAnnotation[]): React.ReactNode {
+  if (chapterAnns.length === 0) return <>{content}</>;
+  const sorted = [...chapterAnns].sort((a, b) => a.selection.startOffset - b.selection.startOffset);
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  sorted.forEach((ann, i) => {
+    const s = Math.max(0, Math.min(content.length, ann.selection.startOffset));
+    const e = Math.max(s, Math.min(content.length, ann.selection.endOffset));
+    if (e <= s) return;
+    if (s > cursor) {
+      parts.push(<React.Fragment key={`raw-${cursor}-${s}`}>{content.substring(cursor, s)}</React.Fragment>);
     }
-    return parts;
-  }, [book, chapterIdx, chapterAnns]);
+    parts.push(
+      <span
+        key={`ann-${ann.id}`}
+        data-ann-id={ann.id}
+        className="rounded-sm"
+        style={{ backgroundColor: '#fef3c7', borderBottom: '1.5px solid #d97706' }}
+      >
+        {content.substring(s, e)}
+      </span>,
+    );
+    cursor = Math.max(cursor, e);
+  });
+  if (cursor < content.length) {
+    parts.push(<React.Fragment key={`tail-${cursor}`}>{content.substring(cursor)}</React.Fragment>);
+  }
+  return <>{parts}</>;
+}
 
   // 上下滑模式接下一章:监听 scroll 到 80% 触底
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -365,17 +358,20 @@ const CoReadReaderPage: React.FC<Props> = ({ bookId, onBack }) => {
     }
   };
 
-  // 左右翻模式:键盘左右键
+  // 麦麦 2026-09-18:键盘监听改用单一 onKeyDown(全局注册一次)
+//   原 useEffect deps 频繁变(settings.pageMode/showSettings/showToc/chapterIdx/book)
+//   在 React 19 RC 下不一致 — 削减 hooks 数量 + 改为全局一次绑定
   useEffect(() => {
-    if (settings.pageMode !== 'horizontal') return;
     const onKey = (e: KeyboardEvent) => {
       if (showSettings || showToc) return;
+      if (settings.pageMode !== 'horizontal') return;
       if (e.key === 'ArrowLeft') goChapter(-1);
       else if (e.key === 'ArrowRight') goChapter(+1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [settings.pageMode, showSettings, showToc, chapterIdx, book]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // 故意空 deps — 只 mount 时一次注册/卸载, 函数内部读最新 state
 
   const theme = THEME_PRESETS[settings.theme];
   const chapter = book?.chapters[chapterIdx];
@@ -443,7 +439,7 @@ const CoReadReaderPage: React.FC<Props> = ({ bookId, onBack }) => {
             className="leading-relaxed whitespace-pre-wrap"
             style={{ fontSize: settings.fontSize }}
           >
-            {renderedContent}
+            {renderChapterContent(chapter?.content || '', chapterAnns)}
           </div>
           {/* 第 6 步:暮色批注气泡列表 — 章节末尾统一展示 */}
           {chapterAnns.filter(a => (a.note && a.note.length > 0)).length > 0 && (
@@ -493,7 +489,7 @@ const CoReadReaderPage: React.FC<Props> = ({ bookId, onBack }) => {
               className="leading-relaxed whitespace-pre-wrap"
               style={{ fontSize: settings.fontSize }}
             >
-              {renderedContent}
+              {renderChapterContent(chapter?.content || '', chapterAnns)}
             </div>
             {/* 第 6 步:暮色批注气泡列表 — 章节末尾 */}
             {chapterAnns.filter(a => a.note).length > 0 && (

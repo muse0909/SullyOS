@@ -232,6 +232,14 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
           <CaretLeft size={18} weight="regular" />
         </button>
         <h1 className="text-base font-semibold text-slate-800 tracking-wide">共读书架</h1>
+        {/* 暮色 2026-09-18 反馈: ⚙ 从右下浮动移到顶栏 +号 旁边,避免被遮 */}
+        <button
+          onClick={() => setShowSettings(true)}
+          className="w-9 h-9 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 active:scale-95 transition-transform"
+          aria-label="设置"
+        >
+          <Gear size={18} weight="regular" />
+        </button>
         <button
           onClick={handleUploadClick}
           disabled={uploading}
@@ -346,14 +354,7 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         )}
       </div>
 
-      {/* 第 4 步:右下角浮动 ⚙ 按钮 — 弹出设置抽屉（帮工 API + 后续工作台） */}
-      <button
-        onClick={() => setShowSettings(true)}
-        className="absolute bottom-6 right-6 w-12 h-12 rounded-full bg-white shadow-lg shadow-slate-300/50 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform"
-        aria-label="设置"
-      >
-        <Gear size={20} weight="regular" />
-      </button>
+      {/* 第 4 步:⚙ 已移到顶栏(暮色 9-18 反馈被底下挡住) — 这里不再有浮动按钮 */}
 
       <CoReadSettingsDrawer open={showSettings} onClose={() => setShowSettings(false)} activeTab="helper" />
     </div>

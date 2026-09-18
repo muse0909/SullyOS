@@ -15,6 +15,10 @@ import { isScheduleFeatureOn } from './scheduleGenerator';
 import { nowInTimeZone, resolveCharTimeZone, tzLabel } from './timezone';
 // 暮色 8-25：信箱（双向信件）system prompt 注入 + 读信上下文拼接
 import { getCharInbox, getLetters } from './mailboxStorage';
+// 麦麦 2026-09-18：共读（暮色+江澈一起读 txt）system prompt 注入 — 路线 C
+//   暮色发消息时 → Chat LLM 自动看到暮色在读什么 + 暮色最近的批注
+//   LLM 自主判断"暮色这消息跟书有没有关",有就聊剧情,没有就回到日常
+import { buildCoReadLightBlock } from './coReadAiContext';
 import { getRecentPosts, MomentPost } from './momentsStorage';
 // 暮色 2026-08-07：朋友圈 awareness 收窄到"只带新发朋友圈"
 import { getNewPostsForAwareness, markMomentsSeen } from './momentsAwarenessState';
@@ -1074,6 +1078,7 @@ ${!isPureMode && isXiaoZhiTiaoEnabled() ? `${[
  `}` : ''}
 
 ${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
+${!isPureMode ? await buildCoReadLightBlock(char.id) : ''}
 
 `;
 

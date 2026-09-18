@@ -16,6 +16,8 @@ import {
   splitIntoChapters,
   type FileEncoding,
 } from '../utils/coReadChapterParser';
+// 第 3 步：全屏阅读器
+import CoReadReaderPage from './CoReadReaderPage';
 
 interface Props {
   onBack: () => void;
@@ -26,6 +28,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
   const [books, setBooks] = useState<CoReadBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  // 第 3 步:点"读"后切到全屏阅读器,用 activeBookId 标识
+  const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -44,6 +48,21 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
   useEffect(() => {
     reload();
   }, []);
+
+  // 第 3 步:点"读"后切到全屏阅读器
+  if (activeBookId) {
+    return (
+      <CoReadReaderPage
+        bookId={activeBookId}
+        onBack={() => {
+          setActiveBookId(null);
+          // 下一帧再 reload,等当前 render 撤掉 reader 后再拉
+          setTimeout(reload, 0);
+        }}
+      />
+    );
+  }
+
 
   const lastReadBook = useMemo(() => {
     if (books.length === 0) return null;
@@ -134,8 +153,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
   };
 
   const handleContinueRead = (book: CoReadBook) => {
-    // 步骤 3 接入阅读器——现在先给个提示
-    addToast(`全屏阅读器还没做完（第 3 步）,《${book.title}》暂不能读`, 'info');
+    // 第 3 步：切到全屏阅读器
+    setActiveBookId(book.id);
   };
 
   return (

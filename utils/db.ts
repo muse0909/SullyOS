@@ -30,7 +30,10 @@ const DB_NAME = 'AetherOS_Data';
 //   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
 //   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
 //   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
-const DB_VERSION = 74;
+// 麦麦 2026-09-18：共读功能新增 STORE_CO_READ_BOOKS (v75)
+//   暮色和江澈一起读的 txt 小说，每本存元数据 + 拆好的章节 + 当前进度
+//   跟 novels (基于小说创造虚拟角色) 是不同概念，必须独立 store
+const DB_VERSION = 75;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -60,7 +63,11 @@ const STORE_SOCIAL_POSTS = 'social_posts';
 const STORE_COURSES = 'courses';
 const STORE_GAMES = 'games';
 const STORE_WORLDBOOKS = 'worldbooks'; 
-const STORE_NOVELS = 'novels'; 
+const STORE_NOVELS = 'novels';
+// 麦麦 2026-09-18：共读书架 — 暮色和江澈一起读的 txt 小说
+//   每条记录 = 一本书：元数据（id/书名/作者/上传时间）+ 章节数组[{index, title, content}]
+//   + 阅读进度（currentChapter 当前章 / lastReadAt 最后读时间）
+const STORE_CO_READ_BOOKS = 'co_read_books';
 const STORE_BANK_TX = 'bank_transactions';
 const STORE_BANK_DATA = 'bank_data';
 const STORE_XHS_STOCK = 'xhs_stock';
@@ -87,6 +94,29 @@ export interface ScheduledMessage {
     content: string;
     dueAt: number;
     createdAt: number;
+}
+
+// 麦麦 2026-09-18：共读一本书
+//   暮色上传 txt → 拆好章存进来 → 暮色翻页阅读
+//   primaryCharId 留扩展（目前暮色+江澈），后续可多角色共读
+export interface CoReadBook {
+    id: string;
+    title: string;
+    author: string;
+    uploadTime: number;        // Date.now() 上传时刻
+    lastReadAt: number;        // Date.now() 最后翻开时刻
+    totalChapters: number;     // chapters.length, 冗余便于 UI 直接读
+    chapters: Array<{
+        index: number;         // 0-based
+        title: string;
+        content: string;       // 整章原文, 不切片
+        charCount: number;     // content.length, 便于排序/统计
+    }>;
+    currentChapter: number;   // 当前章节 index (0-based)
+    fileEncoding: 'utf-8' | 'utf-16' | 'gbk';
+    chapterSplitMethod: 'regex-auto' | 'helper-llm' | 'fallback-chunks';
+    fileSize: number;          // bytes
+    primaryCharId: string;     // 默认 'active', 共读跟当前活跃角色
 }
 
 /**
@@ -445,6 +475,12 @@ export const openDB = (): Promise<IDBDatabase> => {
           mbStore.createIndex('fromUser', 'fromUser', { unique: false });
           mbStore.createIndex('status', 'status', { unique: false });
           mbStore.createIndex('deliverAt', 'deliverAt', { unique: false });
+      }
+      // 麦麦 2026-09-18：共读书架 (v75)
+      //   不加 charId index，因为共读目前只针对当前活跃角色，未来要支持多角色再加
+      //   不加 status / 时间 index，按 uploadTime desc 内存排即可（书的数量 < 100）
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) {
+          db.createObjectStore(STORE_CO_READ_BOOKS, { keyPath: 'id' });
       }
     };
   });
@@ -2362,6 +2398,88 @@ updateMessageMetadata: async (
   },
   // ============ 信箱方法 end ============
 
+  // ============ 麦麦 2026-09-18：共读功能（暮色+江澈一起读 txt 小说）============
+  // 共读一本书：暮色翻页看书 + 划线做批注 + 在聊天里跟江澈聊剧情
+  // 字段：
+  //   id (key)
+  //   title / author
+  //   uploadTime / lastReadAt
+  //   totalChapters (chapters.length 也行,冗余便于 UI 直接读)
+  //   chapters: [{ index, title, content, charCount }] (index 0-based)
+  //   currentChapter: 当前读到的章节 index (0-based)
+  //   fileEncoding: 'utf-8' | 'utf-16' | 'gbk' (上传时识别结果,UI 显示用)
+  //   chapterSplitMethod: 'regex-auto' | 'helper-llm' | 'fallback-chunks'
+  //     拆章用了哪种 — 工作台账本里用得上
+  //   fileSize (bytes,5MB 限制用得上)
+  //   primaryCharId: 默认江澈,未来支持多角色用
+  //   暮色读时不跟 chapterSlice 切:整章都在 chapters[i].content 里
+  //   AI 上下文注入时按段落切 (步骤 7+10 实现)
+
+  /** 取所有共读书,按 uploadTime desc */
+  getCoReadBooks: async (): Promise<CoReadBook[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_BOOKS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_BOOKS).getAll();
+          req.onsuccess = () => {
+              const all = (req.result || []) as CoReadBook[];
+              all.sort((a, b) => (b.uploadTime || 0) - (a.uploadTime || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  /** 按 id 取单本 */
+  getCoReadBook: async (id: string): Promise<CoReadBook | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) return null;
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_BOOKS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_BOOKS).get(id);
+          req.onsuccess = () => resolve((req.result || null) as CoReadBook | null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  /** 存一本书（新增或更新） */
+  saveCoReadBook: async (book: CoReadBook): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) return;
+      const tx = db.transaction(STORE_CO_READ_BOOKS, 'readwrite');
+      tx.objectStore(STORE_CO_READ_BOOKS).put(book);
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  /** 删除一本书 */
+  deleteCoReadBook: async (id: string): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) return;
+      const tx = db.transaction(STORE_CO_READ_BOOKS, 'readwrite');
+      tx.objectStore(STORE_CO_READ_BOOKS).delete(id);
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  /** 只更新"当前章节"——翻页时调，节省写入整本书 IO */
+  updateCoReadBookProgress: async (id: string, currentChapter: number): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_BOOKS)) return;
+      const book = await DB.getCoReadBook(id);
+      if (!book) return;
+      const safeIdx = Math.max(0, Math.min(currentChapter, Math.max(0, (book.totalChapters || book.chapters.length) - 1)));
+      book.currentChapter = safeIdx;
+      book.lastReadAt = Date.now();
+      await DB.saveCoReadBook(book);
+  },
+  // ============ 共读方法 end (v75) ============
+
   // ============ 剧情模式 Story Theater (暮色 8-25) ============
   // 单人 RP:暮色就是暮色,Entry 只存 characterId 单值
   // 3 个 store:story_theaters(剧场存档)+ story_theater_presets(预设库)
@@ -2557,6 +2675,8 @@ updateMessageMetadata: async (
           getAllFromStore(STORE_GAMES),
           getAllFromStore(STORE_WORLDBOOKS),
           getAllFromStore(STORE_NOVELS),
+          // 麦麦 2026-09-18：共读书架
+          getAllFromStore(STORE_CO_READ_BOOKS),
           getAllFromStore(STORE_BANK_TX),
           getAllFromStore(STORE_BANK_DATA),
           getAllFromStore(STORE_XHS_ACTIVITIES),
@@ -2673,6 +2793,8 @@ updateMessageMetadata: async (
       'character_memos', 'character_status_panels',
       'story_theaters', 'story_theater_presets', 'scene_templates',
       'rp_api_configs', 'rp_global_defaults',
+      // 麦麦 2026-09-18：共读书架 store（不然备份恢复会丢所有书）
+      'co_read_books',
   ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');

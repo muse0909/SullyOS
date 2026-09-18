@@ -30,11 +30,13 @@ const DB_NAME = 'AetherOS_Data';
 //   但 v70/v71 没清 IDB 里的旧 'status' region entries，暮色 IDB 残留导致新代码 byRegion['status'].push 崩
 //   暮色 9-6 12:24 网页端报错 "Cannot read properties of undefined (reading 'push')" — 根因）
 //   v72 升级时遍历 STORE_CHARACTER_MEMOS 删 region='status' 的旧 entries
-// 麦麦 2026-09-18：共读功能新增 STORE_CO_READ_BOOKS (v75) + STORE_CO_READ_HELPER_LOGS (v76)
+// 麦麦 2026-09-18：共读功能新增
+//   STORE_CO_READ_BOOKS (v75) + STORE_CO_READ_HELPER_LOGS (v76) + STORE_CO_READ_ANNOTATIONS (v77)
 //   暮色和江澈一起读的 txt 小说，每本存元数据 + 拆好的章节 + 当前进度
 //   帮工调用日志独立 store,工作台账本用得上
+//   批注独立 store(每条 = 一次划线/想法,可关联到书 + chapterIndex + 文本范围)
 //   跟 novels (基于小说创造虚拟角色) 是不同概念，必须独立 store
-const DB_VERSION = 76;
+const DB_VERSION = 77;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -73,6 +75,9 @@ const STORE_CO_READ_BOOKS = 'co_read_books';
 //   每次帮工 API 调用（拆章兜底等）记一笔：时间、书、tokens、估算费用、是否成功、错误信息
 //   工作台账本统计 + 显示每笔记录用
 const STORE_CO_READ_HELPER_LOGS = 'co_read_helper_logs';
+// 麦麦 2026-09-18 (v77)：批注独立 store — 跟 helper_logs/books 分离
+//   批注可能很多(每读一本书几十条),独立存便于按 chapterIndex/bookId 查
+const STORE_CO_READ_ANNOTATIONS = 'co_read_annotations';
 const STORE_BANK_TX = 'bank_transactions';
 const STORE_BANK_DATA = 'bank_data';
 const STORE_XHS_STOCK = 'xhs_stock';
@@ -143,6 +148,33 @@ export interface CoReadHelperLog {
     costUsd?: number;       // 估算
     error?: string;
     model?: string;
+}
+
+// 麦麦 2026-09-18 (v77)：批注（暮色在章节里划线/写想法）
+//   id: 'ann_<uuid>' 字符串主键（跟 books 同款,字符串易生成）
+//   author: 当前永远 'user'（暮色）；后续要支持多角色再看
+//   chapterIndex: 标哪一章
+//   selection: 划线范围(text + startOffset/endOffset,从章节 content 字符串里切)
+//   note: 暮色写的话（可空,只划线时为空）
+//   type: 'highlight'（只划线高亮）/ 'note'（带想法的批注）/ 'both'（未来扩展）
+//   color: 'amber'（暮色暖橙, 7-31 不要粉色避开）/ 后续加更多色系
+//   aiReacted: 江澈在聊天里提过这条批注后置 true（路线 C 用来"已回应 vs 未回应"标记）
+export interface CoReadAnnotation {
+    id: string;
+    bookId: string;
+    chapterIndex: number;
+    author: 'user' | 'char';
+    selection: {
+        text: string;
+        startOffset: number;        // 章节 content 字符串里的起点
+        endOffset: number;          // 章节 content 字符串里的终点
+    };
+    note: string;                  // 暮色写的想法（type='highlight' 时可空字符串）
+    type: 'highlight' | 'note';
+    color: 'amber' | 'emerald' | 'blue' | 'gray';
+    createdAt: number;             // Date.now()
+    aiReacted: boolean;            // 江澈聊天里提过 → true
+    aiReactedInMessageId?: string; // 提过这条批注的那条江澈消息 id（可选,便于回查）
 }
 
 /**
@@ -519,6 +551,15 @@ export const openDB = (): Promise<IDBDatabase> => {
           logStore.createIndex('bookTitle', 'bookTitle', { unique: false });
           logStore.createIndex('success', 'success', { unique: false });
           logStore.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+      // 麦麦 2026-09-18：批注 (v77)
+      //   按 bookId / chapterIndex 索引(快速拉"当前章节的所有批注")
+      //   按 createdAt 索引(按时间排序) — 路线 C 把最近批注塞上下文用
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) {
+          const annStore = db.createObjectStore(STORE_CO_READ_ANNOTATIONS, { keyPath: 'id' });
+          annStore.createIndex('bookId', 'bookId', { unique: false });
+          annStore.createIndex('chapterIndex', 'chapterIndex', { unique: false });
+          annStore.createIndex('createdAt', 'createdAt', { unique: false });
       }
     };
   });
@@ -2578,6 +2619,98 @@ updateMessageMetadata: async (
   },
   // ============ 帮工日志 API end (v76) ============
 
+  // ============ 麦麦 2026-09-18 v77：批注（暮色划线/写想法）============
+  //   数据独立 — 不塞进 CoReadBook 里（书很大,频繁更新会触发整本重写）
+  //   路线 C 用法：暮色发消息时 → 拉最近 N 条批注 + 当前章节正文一起塞上下文
+  saveCoReadAnnotation: async (ann: CoReadAnnotation): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return;
+      const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readwrite');
+      tx.objectStore(STORE_CO_READ_ANNOTATIONS).put(ann);
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  getCoReadAnnotations: async (): Promise<CoReadAnnotation[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_ANNOTATIONS).getAll();
+          req.onsuccess = () => {
+              const all = (req.result || []) as CoReadAnnotation[];
+              all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getCoReadAnnotationsByBook: async (bookId: string): Promise<CoReadAnnotation[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readonly');
+          const req = tx.objectStore(STORE_CO_READ_ANNOTATIONS).index('bookId').getAll(bookId);
+          req.onsuccess = () => {
+              const all = (req.result || []) as CoReadAnnotation[];
+              all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getCoReadAnnotationsByChapter: async (bookId: string, chapterIndex: number): Promise<CoReadAnnotation[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readonly');
+          const idx = tx.objectStore(STORE_CO_READ_ANNOTATIONS).index('bookId');
+          const req = idx.getAll(bookId);
+          req.onsuccess = () => {
+              const all = ((req.result || []) as CoReadAnnotation[])
+                  .filter(a => a.chapterIndex === chapterIndex);
+              all.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+              resolve(all);
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  deleteCoReadAnnotation: async (id: string): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return;
+      const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readwrite');
+      tx.objectStore(STORE_CO_READ_ANNOTATIONS).delete(id);
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  markCoReadAnnotationReacted: async (id: string, messageId?: string): Promise<void> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_CO_READ_ANNOTATIONS)) return;
+      const tx = db.transaction(STORE_CO_READ_ANNOTATIONS, 'readwrite');
+      const store = tx.objectStore(STORE_CO_READ_ANNOTATIONS);
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+          const ann = getReq.result as CoReadAnnotation | undefined;
+          if (!ann) return;
+          ann.aiReacted = true;
+          ann.aiReactedInMessageId = messageId;
+          store.put(ann);
+      };
+      await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+  // ============ 批注 API end (v77) ============
+
   // ============ 剧情模式 Story Theater (暮色 8-25) ============
   // 单人 RP:暮色就是暮色,Entry 只存 characterId 单值
   // 3 个 store:story_theaters(剧场存档)+ story_theater_presets(预设库)
@@ -2777,6 +2910,8 @@ updateMessageMetadata: async (
           getAllFromStore(STORE_CO_READ_BOOKS),
           // 麦麦 2026-09-18：帮工调用日志
           getAllFromStore(STORE_CO_READ_HELPER_LOGS),
+          // 麦麦 2026-09-18：批注
+          getAllFromStore(STORE_CO_READ_ANNOTATIONS),
           getAllFromStore(STORE_BANK_TX),
           getAllFromStore(STORE_BANK_DATA),
           getAllFromStore(STORE_XHS_ACTIVITIES),
@@ -2897,6 +3032,8 @@ updateMessageMetadata: async (
       'co_read_books',
       // 麦麦 2026-09-18：帮工调用日志
       'co_read_helper_logs',
+      // 麦麦 2026-09-18：批注
+      'co_read_annotations',
   ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');

@@ -1,11 +1,19 @@
-// CoReadSettingsDrawer — 共读设置抽屉（书架页 ⚙ 弹出）
-// 麦麦 2026-09-18 重写:帮工 API Tab 改用 ChatSettingsDrawer 角色独立 API 同款样式
-//   Tab 1 帮工 API — emerald-50 圆角卡 + 预设胶囊（直接显示主 API 现有预设）+ 协议切换 + URL/Key/Model 输入
-//                    顶部加一个"当前主 API"状态卡(暮色 9-18 反馈原来不显示主 API 预设)
-//   Tab 2 工作台账本 — 步骤 5:总调用/总 tokens/估算花费 + 失败重试
+// CoReadSettingsDrawer — 共读设置抽屉（书架页顶栏 ⚙ 弹出）
+// 麦麦 2026-09-18 重写:帮工 API Tab 改成跟 ChatSettingsDrawer 角色独立 API 段同款样式
+//   暮色反馈 16:59:
+//     - 之前显示了主 API + 我自己的预设列表(胶囊组), 太杂
+//     - 暮色要: 只显示"主 API 的预设"(也就是主 API 当前值)
+//     - 跟图二 ChatSettingsDrawer 角色独立 API 段同款 emerald 圆角卡 + 协议切换
+//     - Gemini 预设点着没反应(我之前的实现 bug)
+//
+// 设计:
+//   - emerald-50/80 圆角卡 (跟角色 API 同款)
+//   - 协议切换 (OpenAI 兼容 / Gemini) — Gemini 用蓝点提示(选了走 Gemini URL+key)
+//   - URL / Key / Model 输入框 + 同步主 API 按钮
+//   - 顶部一个 sky-50 状态卡: 当前主 API 的预览(基础地址/密钥脱敏/模型/协议), 一目了然
 
 import React, { useEffect, useState } from 'react';
-import { X as CloseIcon, Eye as EyeIcon, EyeSlash as EyeSlashIcon } from '@phosphor-icons/react';
+import { X as CloseIcon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import {
   loadHelperConfig,
@@ -27,10 +35,8 @@ interface Props {
   onTabChange?: (tab: 'helper' | 'workbench') => void;
 }
 
-const STORAGE_KEY = 'co_read_helper_config_v1';
-
 const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: externalTab, onTabChange }) => {
-  const { apiConfig, apiPresets = [], addToast } = useOS();
+  const { apiConfig, addToast } = useOS();
   const [tab, setTab] = useState<'helper' | 'workbench'>(externalTab || 'helper');
   const [cfg, setCfg] = useState<CoReadHelperConfig>(() => loadHelperConfig());
   const [showKey, setShowKey] = useState(false);
@@ -74,21 +80,30 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
     }
   };
 
-  // 选用预设 — 把 preset 的 baseUrl/apiKey/model 复制进 cfg
-  const handlePickPreset = (preset: typeof apiPresets[number]) => {
-    const c: any = preset.config || {};
+  // 同步主 API — 把 chat apiConfig 的字段填进 cfg
+  const handleSyncFromMain = () => {
+    if (!apiConfig || !(apiConfig as any).baseUrl || !(apiConfig as any).apiKey) {
+      addToast('主 API 还没配,先去 Chat 设置里填', 'error');
+      return;
+    }
     setCfg((cur) => ({
       ...cur,
       inheritFromMain: true,
-      baseUrl: c.baseUrl || cur.baseUrl,
-      apiKey: c.apiKey || cur.apiKey,
-      model: c.model || cur.model,
-      protocol: c.protocol || 'openai',
+      baseUrl: (apiConfig as any).baseUrl,
+      apiKey: (apiConfig as any).apiKey,
+      model: cur.model || (apiConfig as any).model || 'deepseek-chat',
+      protocol: (apiConfig as any).protocol || 'openai',
     }));
-    addToast(`已选用预设「${preset.name}」`, 'success');
+    addToast('已同步主 API 字段', 'success');
   };
 
   if (!open) return null;
+
+  // 主 API 预览字符串
+  const mainHost = (apiConfig as any)?.baseUrl ? ((apiConfig as any).baseUrl as string).replace(/^(https?:\/\/[^\/]+).*/, '$1') : '未配置';
+  const mainKey = (apiConfig as any)?.apiKey ? `${(apiConfig as any).apiKey.slice(0, 6)}…${(apiConfig as any).apiKey.slice(-4)}` : '—';
+  const mainModel = (apiConfig as any)?.model || '—';
+  const mainProto = (apiConfig as any)?.protocol || 'openai';
 
   return (
     <div className="absolute inset-0 z-50" onClick={onClose}>
@@ -121,22 +136,18 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
         {/* Tab 内容 */}
         {tab === 'helper' && (
           <div className="p-4 space-y-4">
-            {/* === 当前主 API 状态卡（暮色 9-18:现在直接显示主 API 预设） === */}
+            {/* === 📡 当前主 API 预览（sky-50） === */}
             <section className="bg-sky-50/80 rounded-2xl p-3 border border-sky-100/80">
               <div className="text-[10px] font-bold text-sky-600 uppercase tracking-widest mb-1.5 pl-1">📡 当前主 API（Chat 用）</div>
-              {apiConfig?.baseUrl ? (
-                <div className="text-[11px] text-slate-700 space-y-0.5">
-                  <div>基础地址:<span className="font-mono">{(apiConfig as any).baseUrl.replace(/^(https?:\/\/[^\/]+).*/, '$1')}</span></div>
-                  <div>接口密钥:<span className="font-mono">{(apiConfig as any).apiKey ? `${(apiConfig as any).apiKey.slice(0, 6)}…${(apiConfig as any).apiKey.slice(-4)}` : '未配置'}</span></div>
-                  <div>模型:<span className="font-mono">{(apiConfig as any).model || '未配置'}</span></div>
-                  <div>协议:<span className="font-mono">{(apiConfig as any).protocol || 'openai'}</span></div>
-                </div>
-              ) : (
-                <div className="text-[11px] text-rose-500">主 API 还没配置,先去 Chat 设置页填</div>
-              )}
+              <div className="text-[11px] text-slate-700 space-y-0.5">
+                <div>基础地址:<span className="font-mono">{mainHost}</span></div>
+                <div>接口密钥:<span className="font-mono">{mainKey}</span></div>
+                <div>模型:<span className="font-mono">{mainModel}</span></div>
+                <div>协议:<span className="font-mono">{mainProto}</span></div>
+              </div>
             </section>
 
-            {/* === 总开关 === */}
+            {/* === 帮工 API 同步开关：标明默认行为 === */}
             <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
               <div className="flex items-start justify-between">
                 <div className="flex-1 pr-3">
@@ -149,131 +160,103 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
                   onClick={() => setCfg((c) => ({ ...c, enabled: !c.enabled }))}
                   className={`shrink-0 w-11 h-6 rounded-full transition-colors ${cfg.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
                 >
-                  <div
-                    className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${cfg.enabled ? 'translate-x-5' : 'translate-x-0.5'}`}
-                  />
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${cfg.enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
             </section>
 
-            {/* === 协议切换（参考 ChatSettingsDrawer 角色独立 API 段） === */}
+            {/* === 协议切换 + URL/Key/Model 输入（跟图二角色 API 同款 emerald 圆角卡） === */}
             <section className="pt-2 border-t border-slate-100">
-              <div className="text-[11px] font-bold text-slate-500 mb-2 mt-2">🔌 协议</div>
-              <div className="bg-slate-50/60 rounded-2xl p-1 flex gap-1 border border-slate-200/50">
-                {(['openai', 'gemini'] as const).map((p) => {
-                  const labelMap = { openai: 'OpenAI 兼容', gemini: 'Gemini' } as const;
-                  const colorMap = { openai: '#10b981', gemini: '#0ea5e9' } as const;
-                  const active = cfg.protocol === p;
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setCfg((c) => ({ ...c, protocol: p }))}
-                      className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
-                        style={active ? { background: colorMap[p] } : {}}
-                      ></span>
-                      {labelMap[p]}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+              <div className="text-[11px] font-bold text-slate-500 mb-2 mt-2">🔌 这个帮工的 API</div>
+              <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">
+                留空就用全局 API 设置。设了的话,帮工独立走自己的通道（不影响 Chat 用量）。
+              </p>
 
-            {/* === 我的预设 胶囊（暮色要的"主 API 预设直接选"） === */}
-            <section className="pt-2 border-t border-slate-100">
-              <div className="text-[11px] font-bold text-slate-500 mb-2 mt-2">📚 我的预设</div>
-              {apiPresets.length === 0 ? (
-                <p className="text-[10px] text-slate-400 px-1 leading-relaxed">主 API 还没保存预设。去 Chat 设置页加几个,这里就能直接选。</p>
-              ) : (
-                <div className="flex gap-2 flex-wrap">
-                  {apiPresets.map((preset) => {
-                    const c: any = preset.config || {};
-                    const host = (c.baseUrl || '').replace(/^(https?:\/\/[^\/]+).*/, '$1');
-                    const active =
-                      cfg.inheritFromMain &&
-                      cfg.baseUrl === c.baseUrl &&
-                      cfg.apiKey === c.apiKey &&
-                      cfg.model === c.model &&
-                      cfg.protocol === (c.protocol || 'openai');
+              <div className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
+                {/* 协议切换胶囊 — 修暮色反馈的 Gemini 点着没反应 */}
+                <div className="bg-slate-50/60 rounded-2xl p-1 flex gap-1 border border-slate-200/50">
+                  {(['openai', 'gemini'] as const).map((p) => {
+                    const labelMap = { openai: 'OpenAI', gemini: 'Gemini' } as const;
+                    const colorMap = { openai: '#10b981', gemini: '#0ea5e9' } as const;
+                    const active = cfg.protocol === p;
                     return (
                       <button
-                        key={preset.id}
+                        key={p}
                         type="button"
-                        onClick={() => handlePickPreset(preset)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] transition-all ${active ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95'}`}
+                        onClick={() => setCfg((c) => ({ ...c, protocol: p }))}
+                        className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-500 active:bg-white/40'}`}
                       >
-                        <span>{preset.name}</span>
-                        <span className={`text-[9px] ${active ? 'text-white/80' : 'text-slate-400'}`}>{host}</span>
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
+                          style={active ? { background: colorMap[p] } : {}}
+                        />
+                        {labelMap[p]}
                       </button>
                     );
                   })}
                 </div>
-              )}
-              {apiPresets.length > 0 && (
-                <p className="text-[10px] text-slate-400 px-1 mt-2 leading-relaxed">
-                  点胶囊就复制这套预设的 baseUrl + 接口密钥 + 模型。帮工独立用 key,不消耗 Chat 通道。
-                </p>
-              )}
-            </section>
 
-            {/* === URL / Key / Model 输入 === */}
-            <section className="pt-2 border-t border-slate-100 space-y-3 mt-3">
-              <div>
-                <div className="flex justify-between items-end mb-1 pl-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">URL</label>
-                  <button
-                    onClick={() => setCfg((c) => ({ ...c, baseUrl: (apiConfig as any).baseUrl || '', inheritFromMain: true }))}
-                    className="text-[10px] text-emerald-600 hover:text-emerald-700"
-                  >
-                    同步主 API
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  value={cfg.baseUrl}
-                  onChange={(e) => setCfg((c) => ({ ...c, baseUrl: e.target.value }))}
-                  placeholder="https://api.deepseek.com/v1"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Key</label>
-                <div className="relative">
+                {/* URL */}
+                <div>
+                  <div className="flex justify-between items-end mb-1 pl-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">URL</label>
+                    <button onClick={handleSyncFromMain} className="text-[10px] text-emerald-600 hover:text-emerald-700">
+                      同步主 API
+                    </button>
+                  </div>
                   <input
-                    type={showKey ? 'text' : 'password'}
-                    value={cfg.apiKey}
-                    onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))}
-                    placeholder="sk-…"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-16 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                    type="text"
+                    value={cfg.baseUrl}
+                    onChange={(e) => setCfg((c) => ({ ...c, baseUrl: e.target.value }))}
+                    placeholder="https://api.deepseek.com/v1"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
                   />
-                  <button onClick={() => setShowKey((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5">
-                    {showKey ? '隐藏' : '显示'}
-                  </button>
                 </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">模型</label>
-                <input
-                  type="text"
-                  value={cfg.model}
-                  onChange={(e) => setCfg((c) => ({ ...c, model: e.target.value }))}
-                  placeholder="deepseek-chat"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                />
-                <div className="text-[10px] text-slate-400 mt-1">推荐 deepseek-chat / DeepSeek-V3 / MiniMax-Text-01 等,中文拆章准确</div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">超时 (毫秒)</label>
-                <input
-                  type="number"
-                  min={5000}
-                  max={120000}
-                  value={cfg.timeoutMs}
-                  onChange={(e) => setCfg((c) => ({ ...c, timeoutMs: parseInt(e.target.value, 10) || 30000 }))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                />
+
+                {/* Key */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Key</label>
+                  <div className="relative">
+                    <input
+                      type={showKey ? 'text' : 'password'}
+                      value={cfg.apiKey}
+                      onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))}
+                      placeholder="sk-…"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-16 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                    />
+                    <button onClick={() => setShowKey((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5">
+                      {showKey ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Model */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">模型</label>
+                  <input
+                    type="text"
+                    value={cfg.model}
+                    onChange={(e) => setCfg((c) => ({ ...c, model: e.target.value }))}
+                    placeholder="deepseek-chat"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                  />
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    推荐 deepseek-chat / DeepSeek-V3 / MiniMax-Text-01 等,中文拆章准确
+                  </div>
+                </div>
+
+                {/* 超时 */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">超时 (毫秒)</label>
+                  <input
+                    type="number"
+                    min={5000}
+                    max={120000}
+                    value={cfg.timeoutMs}
+                    onChange={(e) => setCfg((c) => ({ ...c, timeoutMs: parseInt(e.target.value, 10) || 30000 }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
+                  />
+                </div>
               </div>
             </section>
 

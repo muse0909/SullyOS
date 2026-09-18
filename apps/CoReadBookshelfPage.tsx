@@ -222,8 +222,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
 
   return (
     <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
-      {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between px-2 py-3 bg-white/60 backdrop-blur shrink-0">
+      {/* 顶部工具栏 — 暮色 9-18 反馈: ⚙ 和 + 紧贴在一起(没空隙) */}
+      <div className="flex items-center px-2 py-3 bg-white/60 backdrop-blur shrink-0">
         <button
           onClick={onBack}
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition-transform"
@@ -231,8 +231,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         >
           <CaretLeft size={18} weight="regular" />
         </button>
-        <h1 className="text-base font-semibold text-slate-800 tracking-wide">共读书架</h1>
-        {/* 暮色 2026-09-18 反馈: ⚙ 从右下浮动移到顶栏 +号 旁边,避免被遮 */}
+        <h1 className="flex-1 text-base font-semibold text-slate-800 tracking-wide text-center">共读书架</h1>
+        {/* ⚙ 和 + 紧贴一起,在右侧 */}
         <button
           onClick={() => setShowSettings(true)}
           className="w-9 h-9 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 active:scale-95 transition-transform"

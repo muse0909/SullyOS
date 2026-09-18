@@ -1,16 +1,13 @@
 // CoReadSettingsDrawer — 共读设置抽屉（书架页顶栏 ⚙ 弹出）
-// 麦麦 2026-09-18 重写:帮工 API Tab 改成跟 ChatSettingsDrawer 角色独立 API 段同款样式
-//   暮色反馈 16:59:
-//     - 之前显示了主 API + 我自己的预设列表(胶囊组), 太杂
-//     - 暮色要: 只显示"主 API 的预设"(也就是主 API 当前值)
-//     - 跟图二 ChatSettingsDrawer 角色独立 API 段同款 emerald 圆角卡 + 协议切换
-//     - Gemini 预设点着没反应(我之前的实现 bug)
+// 麦麦 2026-09-18 17:40 重做"我的预设"段:
+//   暮色反馈 17:18:"API样式对了,但预设又没有了"
+//   暮色想要的"预设"是指 ChatSettingsDrawer 角色独立 API 段那种"我的预设"胶囊组(主 API 已存的预设)
+//   我之前误删,现在加上:
+//     - 跟角色 API 完全一样:"📚 我的预设" 胶囊组(从 mainApi apiPresets 数组拉)
+//     - 点胶囊直接把 baseUrl/apiKey/model 填进 cfg
+//     - 用户当前选中的胶囊用 emerald-500 高亮
 //
-// 设计:
-//   - emerald-50/80 圆角卡 (跟角色 API 同款)
-//   - 协议切换 (OpenAI 兼容 / Gemini) — Gemini 用蓝点提示(选了走 Gemini URL+key)
-//   - URL / Key / Model 输入框 + 同步主 API 按钮
-//   - 顶部一个 sky-50 状态卡: 当前主 API 的预览(基础地址/密钥脱敏/模型/协议), 一目了然
+//   协议切换 / 顶部主 API 状态卡 / emerald-50 圆角卡 → 跟之前一样保留
 
 import React, { useEffect, useState } from 'react';
 import { X as CloseIcon } from '@phosphor-icons/react';
@@ -36,7 +33,7 @@ interface Props {
 }
 
 const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: externalTab, onTabChange }) => {
-  const { apiConfig, addToast } = useOS();
+  const { apiConfig, apiPresets = [], addToast } = useOS();
   const [tab, setTab] = useState<'helper' | 'workbench'>(externalTab || 'helper');
   const [cfg, setCfg] = useState<CoReadHelperConfig>(() => loadHelperConfig());
   const [showKey, setShowKey] = useState(false);
@@ -95,6 +92,22 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
       protocol: (apiConfig as any).protocol || 'openai',
     }));
     addToast('已同步主 API 字段', 'success');
+  };
+
+  // 选用预设(跟 ChatSettingsDrawer 角色独立 API 的 onLoadPreset 同模式)
+  //   用预设的 baseUrl/apiKey/model/protocol 填进 cfg
+  const handlePickPreset = (preset: typeof apiPresets[number]) => {
+    const c: any = preset.config || {};
+    const proto = (c.protocol || 'openai') as 'openai' | 'gemini';
+    setCfg((cur) => ({
+      ...cur,
+      inheritFromMain: true,
+      baseUrl: c.baseUrl || cur.baseUrl,
+      apiKey: c.apiKey || cur.apiKey,
+      model: cur.model || c.model || 'deepseek-chat',
+      protocol: proto,
+    }));
+    addToast(`已选用「${preset.name}」`, 'success');
   };
 
   if (!open) return null;
@@ -195,6 +208,37 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
                     );
                   })}
                 </div>
+
+                {/* 📚 我的预设（暮色 17:18 反馈要的"主 API 预设" — 跟 ChatSettingsDrawer 角色 API 段同款） */}
+                {apiPresets.length > 0 && (
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">📚 我的预设</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {apiPresets.map((preset) => {
+                        const c: any = preset.config || {};
+                        const proto = (c.protocol || 'openai') as 'openai' | 'gemini';
+                        const active =
+                          cfg.baseUrl === c.baseUrl &&
+                          cfg.apiKey === c.apiKey &&
+                          cfg.protocol === proto;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => handlePickPreset(preset)}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] transition-all ${active ? 'bg-emerald-500 text-white shadow-sm' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 active:scale-95'}`}
+                          >
+                            <span className="font-medium">{preset.name}</span>
+                            <span className={`text-[9px] ${active ? 'text-white/80' : 'text-slate-400'}`}>{proto}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-slate-400 px-1 mt-1.5 leading-relaxed">
+                      点胶囊直接复制这套预设的 baseUrl + 接口密钥 + 模型。帮工独立用 key,不消耗 Chat 通道。
+                    </p>
+                  </div>
+                )}
 
                 {/* URL */}
                 <div>

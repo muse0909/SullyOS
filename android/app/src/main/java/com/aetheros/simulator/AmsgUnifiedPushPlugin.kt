@@ -95,7 +95,8 @@ class AmsgUnifiedPushPlugin : Plugin() {
      */
     override fun load() {
         super.load()
-        registerPushReceiver()
+        // 暮色 2026-09-19 13:50 临时注释：registerPushReceiver 让 Android 14 上锁屏卡死？
+        // registerPushReceiver()
     }
 
     override fun handleOnDestroy() {
@@ -199,17 +200,20 @@ class AmsgUnifiedPushPlugin : Plugin() {
             val vapidPublicKeyFromWorker = call.getString("vapidPublicKey", null)
             // worker 给我们传过来的 VAPID 公钥先记一下（虽然 UnifiedPush 客户端用的是自己的，
             // 但前端拿到 subscription.endpoint 会去 worker 验证时用 worker 公钥）
+            Log.i(TAG, "register 入参 vapidPublicKeyFromWorker.length=${vapidPublicKeyFromWorker?.length ?: 0}")
             if (!vapidPublicKeyFromWorker.isNullOrEmpty()) {
-                val sp = context.getSharedPreferences(VAPID_PREFS, android.content.Context.MODE_PRIVATE)
+                val sp = context.getSharedPreferences(VAPID_PREFS, Context.MODE_PRIVATE)
                 sp.edit().putString("workerVapidPublicKey", vapidPublicKeyFromWorker).apply()
             }
 
             val ourVapid = ensureOrGenerateVapidKey()
             val instance = INSTANCE
+            Log.i(TAG, "register 用 client vapid (${ourVapid.take(20)}...) + instance=$instance")
 
             // 提示用户允许 / 选 distributor
             // tryUseCurrentOrDefaultDistributor 会启动一个 translucent activity
             UnifiedPush.tryUseCurrentOrDefaultDistributor(context) { success ->
+                Log.i(TAG, "tryUseCurrentOrDefaultDistributor callback success=$success")
                 if (!success) {
                     call.reject("未检测到 UnifiedPush distributor。请先安装并打开 ntfy 的无 Firebase 版本。")
                     return@tryUseCurrentOrDefaultDistributor
@@ -222,6 +226,7 @@ class AmsgUnifiedPushPlugin : Plugin() {
                         "拾光机主动消息 2.0",
                         ourVapid
                     )
+                    Log.i(TAG, "UnifiedPush.register() 已调, 等 distributor 回调 onNewEndpoint")
                     val ret = JSObject()
                     ret.put("pending", true)
                     call.resolve(ret)

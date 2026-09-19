@@ -109,11 +109,10 @@ KeepAlive.init().then(() => {
   ProactiveChat.resume();
   ProactiveDiary.resume();
   void ActiveMsgRuntime.init();
-  // 麦麦 2026-09-19：启动时调一次 initUnifiedPushRuntime()
-  //   - 注册 pushReceived listener (实时: UnifiedPushService.onMessage → broadcast → receiver → JS)
-  //   - 注册 notificationTapped listener (用户点通知跳到对应角色 chat)
-  //   - drain 上次没拉走的 SP 里缓存的 push (app 被杀重启后补漏)
-  void initUnifiedPushRuntime();
+  // 暮色 2026-09-19 13:50 临时回退：initUnifiedPushRuntime 让 Capacitor 调 plugin.load()
+  //   里的 registerReceiver，Android 14 上似乎触发 bridge 卡死导致锁屏页进不去。
+  //   注释掉以验证锁屏卡死根因。registerReceiver 也同时在 AmsgUnifiedPushPlugin.kt 里注释。
+  // void initUnifiedPushRuntime();
   // Record every wake the SW reports so the diagnostic panel can show "last received".
   installWakeListener();
 });

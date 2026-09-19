@@ -90,7 +90,12 @@ export const ensureUnifiedPushSubscription = async (
   }
 
   await NativeUnifiedPush.register({ vapidPublicKey });
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  // 暮色 2026-09-19 14:18 修：60 次 250ms = 15s 太短。
+  //   SDK register() 后链路: 创建 endpoint(网络) → 通知 distributor → distributor 通知 SDK →
+  //   SDK bind 我们的 PushService → onNewEndpoint 写 SP. 这一路跨进程跨网络,
+  //   distributor 处理慢 / bind service 启动慢都可能让 15s 不够。
+  //   提到 180 次 250ms = 45s. 但加了 lastError 早返回, 真实失败不会等满。
+  for (let attempt = 0; attempt < 180; attempt += 1) {
     const status = await NativeUnifiedPush.getStatus();
     const subscription = status.subscription;
     if (
@@ -101,11 +106,15 @@ export const ensureUnifiedPushSubscription = async (
     ) {
       return { endpoint: subscription.endpoint, keys: subscription.keys };
     }
-    if (status.lastError) throw new Error(`UnifiedPush 注册失败：${status.lastError}`);
+    if (status.lastError) {
+      // UnifiedPushService.onNewEndpoint 在 endpoint 为空 / 写失败时会写 lastError,
+      // 这里直接抛带原因的错, 比超时报错更具体。
+      throw new Error(`UnifiedPush 注册失败：${status.lastError}`);
+    }
     await delay(250);
   }
 
-  throw new Error('UnifiedPush 注册超时。请确认 ntfy 已打开并允许它在后台运行。');
+  throw new Error('UnifiedPush 注册超时（45s）。请确认 ntfy 已打开并允许它在后台运行。');
 };
 
 export const readUnifiedPushSubscription = async () =>

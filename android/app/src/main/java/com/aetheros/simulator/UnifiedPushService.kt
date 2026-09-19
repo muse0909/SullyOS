@@ -104,16 +104,37 @@ class UnifiedPushService : PushService() {
      * 收到推送时（消息已是 RFC8291 解密后的明文）。
      */
     override fun onNewEndpoint(endpoint: org.unifiedpush.android.connector.data.PushEndpoint, instance: String) {
-        val url = endpoint.url
-        Log.i(TAG, "新 endpoint (instance=$instance): ${url.take(60)}...")
-        val sp = getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
-        sp.edit()
-            .putString("endpoint", url)
-            .putString("instance", instance)
-            .putString("publicKey", endpoint.pubKeySet?.pubKey ?: "")
-            .putString("auth", endpoint.pubKeySet?.auth ?: "")
-            .remove("lastError")
-            .apply()
+        // 暮色 2026-09-19 14:18 修：之前用 .apply() 异步写, 如果 SDK 紧接着调下一个
+        //   service callback 把进程卡住 (Android 14 上偶发), apply 可能没刷盘就被丢。
+        //   改 .commit() 同步写, 一次几十毫秒, 不会卡 UI 主线程 (onNewEndpoint 在主线程)。
+        //   同步写保证 endpoint 落地后, 下一帧 getStatus 立刻能读到。
+        try {
+            val url = endpoint.url
+            Log.i(TAG, "onNewEndpoint 被调 (instance=$instance, url=${url.take(80)})")
+            if (url.isNullOrEmpty()) {
+                Log.e(TAG, "onNewEndpoint 拿到空 url, 写 lastError 让前端能看到")
+                getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
+                    .edit().putString("lastError", "ENDPOINT_URL_EMPTY")
+                    .commit()
+                return
+            }
+            getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
+                .edit()
+                .putString("endpoint", url)
+                .putString("instance", instance)
+                .putString("publicKey", endpoint.pubKeySet?.pubKey ?: "")
+                .putString("auth", endpoint.pubKeySet?.auth ?: "")
+                .remove("lastError")
+                .commit()
+            Log.i(TAG, "onNewEndpoint 写 endpoint 完成 (urlLen=${url.length})")
+        } catch (e: Throwable) {
+            Log.e(TAG, "onNewEndpoint 抛错 (但 SDK 不会 retry, 这次注册就废了)", e)
+            try {
+                getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
+                    .edit().putString("lastError", "ON_NEW_ENDPOINT_FAILED: ${e.javaClass.simpleName}: ${e.message?.take(80)}")
+                    .commit()
+            } catch (_: Throwable) { /* 兜底 */ }
+        }
     }
 
     /**

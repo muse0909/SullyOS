@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { App as CapacitorApp } from '@capacitor/app';
 import App from './App';
 import { ActiveMsgRuntime } from './utils/activeMsgRuntime';
+// 麦麦 2026-09-19：UnifiedPush 端到端补完整 — initUnifiedPushRuntime 之前没人调，
+//   导致 UnifiedPushService 缓存到 SP 的推送永远不被前端 drain (进而 ingest)。
+import { initUnifiedPushRuntime } from './utils/unifiedPushRuntime';
 import { KeepAlive } from './utils/keepAlive';
 import { ProactiveChat } from './utils/proactiveChat';
 import { ProactiveDiary } from './utils/proactiveDiary';
@@ -106,6 +109,11 @@ KeepAlive.init().then(() => {
   ProactiveChat.resume();
   ProactiveDiary.resume();
   void ActiveMsgRuntime.init();
+  // 麦麦 2026-09-19：启动时调一次 initUnifiedPushRuntime()
+  //   - 注册 pushReceived listener (实时: UnifiedPushService.onMessage → broadcast → receiver → JS)
+  //   - 注册 notificationTapped listener (用户点通知跳到对应角色 chat)
+  //   - drain 上次没拉走的 SP 里缓存的 push (app 被杀重启后补漏)
+  void initUnifiedPushRuntime();
   // Record every wake the SW reports so the diagnostic panel can show "last received".
   installWakeListener();
 });

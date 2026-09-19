@@ -1,16 +1,22 @@
 package com.aetheros.simulator
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.PushService
 
 /**
- * 拾光机 主动消息 2.0 后台推送 — UnifiedPush Service 端（2026-09-15 麦麦加）
+ * 拾光机 主动消息 2.0 后台推送 — UnifiedPush Service 端（2026-09-15 麦麦加，09-19 补完整）
  *
  * UnifiedPush android-connector 3.0.0 的现代 API 是 PushService 不是 MessagingReceiver：
  *   1. ntfy 发 broadcast 给我们 app
@@ -21,8 +27,19 @@ import org.unifiedpush.android.connector.PushService
  * 上一版用的 MessagingReceiver（UnifiedPushReceiver.kt）错的：SDK 的 receiver 被我们的
  * intent-filter 抢占了，SDK 那个根本不运行，所以事件没人转发。现在改用 PushService 模式。
  *
- * 消息持久化跟之前的 Receiver 版一样：用 SharedPreferences（unifiedpush_pending_msgs_v1）
- * 缓存。AmsgUnifiedPushPlugin.drainPendingPushes() 会拉走。
+ * **2026-09-19 麦麦补** — 把这条路径补到跟 1.0 KeepAliveService.showProactiveNotification
+ * 一样完整。之前 onMessage 只调 appendPendingMessage 缓存到 SP + notifyAmsg2PushReceived
+ * 占位空实现，导致 (1) 通知栏不弹 (2) Chat 不自动刷新 — 前端 ingest 链路根本启动
+ * (initUnifiedPushRuntime 在项目里从未被调过)。
+ *
+ * 现在 onMessage 三件事一起做：
+ *   1) 弹系统通知：解析 payload → NotificationCompat.Builder → NotificationManager.notify()
+ *   2) 派发给前端 JS：通过 broadcast intent 触发 AmsgUnifiedPushPlugin 内部的 receiver，
+ *      receiver 调 notifyListeners('pushReceived', ...) → JS addListener('pushReceived')
+ *      → ingestNativeAmsgPayload → saveInboxMessage → flushInboxToChat → 派 active-msg-received
+ *      → OSContext setLastMsgTimestamp → Chat.tsx useEffect reloadMessages
+ *   3) 缓存到 SP 兜底：app 不在前台 / plugin receiver 没注册时，重启后 initUnifiedPushRuntime
+ *      drain 出来补上
  */
 class UnifiedPushService : PushService() {
 
@@ -34,12 +51,21 @@ class UnifiedPushService : PushService() {
         const val LAUNCH_PAYLOAD_KEY = "payload"
         const val MAX_PENDING = 100
 
+        // 通知 channel (Android 8+ 必须 channel，name 用户在系统设置能看到)
+        const val NOTIFICATION_CHANNEL_ID = "amsg2_unifiedpush_v1"
+        const val NOTIFICATION_CHANNEL_NAME = "主动消息 2.0"
+
+        // 内部 broadcast — AmsgUnifiedPushPlugin 的 receiver 监听这个 action。
+        // 用 application 包内限定 setPackage，防外部触发。
+        const val ACTION_PUSH_DELIVERED = "com.aetheros.simulator.AMSG2_PUSH_DELIVERED"
+        const val EXTRA_PAYLOAD = "payload"
+
         /**
          * 追加一条 pending 消息到 SharedPreferences。
          * 在 Service 里调 + 也给可能外部调（兜底）。
          */
-        fun appendPendingMessage(context: android.content.Context, payload: String) {
-            val prefs = context.getSharedPreferences(PENDING_PREFS, android.content.Context.MODE_PRIVATE)
+        fun appendPendingMessage(context: Context, payload: String) {
+            val prefs = context.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE)
             val raw = prefs.getString(PENDING_KEY, "[]") ?: "[]"
             val arr = try {
                 JSONArray(raw)
@@ -59,11 +85,18 @@ class UnifiedPushService : PushService() {
             Log.i(TAG, "已缓存 1 条 UP 消息（队列 ${arr.length()}）")
         }
 
-        fun consumeLaunchPayload(context: android.content.Context): String? {
-            val prefs = context.getSharedPreferences(LAUNCH_PAYLOAD_PREFS, android.content.Context.MODE_PRIVATE)
+        fun consumeLaunchPayload(context: Context): String? {
+            val prefs = context.getSharedPreferences(LAUNCH_PAYLOAD_PREFS, Context.MODE_PRIVATE)
             val value = prefs.getString(LAUNCH_PAYLOAD_KEY, null)
             if (value != null) prefs.edit().remove(LAUNCH_PAYLOAD_KEY).apply()
             return value
+        }
+
+        // 通知 ID 哈希，跟 KeepAliveService.notificationIdHash 用同一份算法。
+        // 同一 char+msgId 不重弹。
+        fun notificationIdHash(messageId: String, charId: String): Int {
+            val key = if (messageId.isNotEmpty()) messageId else charId
+            return Math.abs(key.hashCode())
         }
     }
 
@@ -73,7 +106,7 @@ class UnifiedPushService : PushService() {
     override fun onNewEndpoint(endpoint: org.unifiedpush.android.connector.data.PushEndpoint, instance: String) {
         val url = endpoint.url
         Log.i(TAG, "新 endpoint (instance=$instance): ${url.take(60)}...")
-        val sp = getSharedPreferences("unifiedpush_endpoint_v1", android.content.Context.MODE_PRIVATE)
+        val sp = getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
         sp.edit()
             .putString("endpoint", url)
             .putString("instance", instance)
@@ -81,20 +114,60 @@ class UnifiedPushService : PushService() {
             .putString("auth", endpoint.pubKeySet?.auth ?: "")
             .remove("lastError")
             .apply()
-        // endpoint 改变就是注册成功，唤醒 WakeLock 让 plugin 的 15s 轮询尽快拿到
-        // （plugin 实际上在 250ms 间隔轮询，不用额外动作）
     }
 
     /**
-     * 收到推送消息。
+     * 收到推送消息 — 2026-09-19 改：
+     *   1) 解析 payload → 拿 title/body/charId/messageId
+     *   2) 弹系统通知（Android 8+ 创建专属 channel）
+     *   3) sendBroadcast 给 plugin 的 receiver → notifyListeners('pushReceived', JSObject)
+     *   4) 缓存到 SP 兜底（plugin receiver 没注册时下次启动 drain）
      */
     override fun onMessage(message: org.unifiedpush.android.connector.data.PushMessage, instance: String) {
         try {
             val bytes = message.content
             val payload = String(bytes, Charsets.UTF_8)
+
+            // 1) 先弹通知 — 不等 JS 端，慢路径也能落通知栏。
+            //    payload 长这样 (worker/amsg/src/agentic.ts buildScheduledPush)：
+            //      { messageKind:'content', messageType, source:'scheduled',
+            //        message, title, contactName, avatarUrl,
+            //        messageSubtype:'chat', taskId, metadata:{charId, charName, ...},
+            //        notification:{title, body} }
+            try {
+                val obj = JSONObject(payload)
+                val meta = obj.optJSONObject("metadata")
+                val charId = meta?.optString("charId") ?: ""
+                val messageId = obj.optString("messageId").ifEmpty {
+                    "${charId}-${System.currentTimeMillis()}"
+                }
+                // title 优先级：contactName > metadata.charName > notification.title > "主动消息"
+                val title = obj.optString("contactName").ifEmpty {
+                    meta?.optString("charName") ?: obj.optString("title")
+                }.ifEmpty { "主动消息" }
+                // body 优先级：message > notification.body > body
+                val body = obj.optString("message").ifEmpty {
+                    obj.optJSONObject("notification")?.optString("body") ?: obj.optString("body")
+                }
+                if (body.isNotEmpty()) {
+                    showProactiveNotification(title, body, charId, messageId)
+                }
+            } catch (e: Exception) {
+                // payload 不是 JSON 或字段缺失 — 弹个原始字符串进去
+                Log.w(TAG, "payload 解析失败，按原文弹通知", e)
+                showProactiveNotification(
+                    "主动消息",
+                    payload.take(120),
+                    "",
+                    System.currentTimeMillis().toString(),
+                )
+            }
+
+            // 2) sendBroadcast 给 plugin 的 receiver — 触发 JS 端 ingest 链路（关键 UI 自动刷新）
+            deliverPushToPlugin(payload)
+
+            // 3) 缓存到 SP 兜底 — app 没启动 / receiver 没注册时这条 pending 等下次启动 drain
             appendPendingMessage(applicationContext, payload)
-            // 也调 plugin 的 notifyListeners（plugin 在 bridge 拿到 pushReceived 事件）
-            notifyAmsg2PushReceived(payload)
         } catch (e: Exception) {
             Log.e(TAG, "处理推送消息失败", e)
         }
@@ -105,7 +178,7 @@ class UnifiedPushService : PushService() {
      */
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
         Log.w(TAG, "注册失败 (instance=$instance): $reason")
-        val sp = getSharedPreferences("unifiedpush_endpoint_v1", android.content.Context.MODE_PRIVATE)
+        val sp = getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
         sp.edit()
             .putString("lastError", reason.name)
             .apply()
@@ -116,7 +189,7 @@ class UnifiedPushService : PushService() {
      */
     override fun onUnregistered(instance: String) {
         Log.i(TAG, "已注销 (instance=$instance)")
-        val sp = getSharedPreferences("unifiedpush_endpoint_v1", android.content.Context.MODE_PRIVATE)
+        val sp = getSharedPreferences("unifiedpush_endpoint_v1", Context.MODE_PRIVATE)
         sp.edit()
             .remove("endpoint")
             .putString("lastError", "UNREGISTERED")
@@ -124,17 +197,84 @@ class UnifiedPushService : PushService() {
     }
 
     /**
-     * 通知 AmsgUnifiedPushPlugin 收到推送（让前端实时收到 pushReceived 事件）。
-     * 在 Service 里拿不到 Capacitor plugin 实例，所以通过 SharedPreferences 共享状态——
-     * 实际通知走 plugin 端的 drainPendingPushes 轮询，drain 时它自己 notifyListeners。
+     * 弹系统通知。跟 KeepAliveService.showProactiveNotification 是同一种通知（标题+正文+小图标+点开回 App），
+     * 但走 UnifiedPushService 自身系统 channel "amsg2_unifiedpush_v1"，跟 1.0 老通道区分。
      */
-    private fun notifyAmsg2PushReceived(payload: String) {
-        // 留空 — 真正的事件分发在 plugin.drainPendingPushes 里。
-        // 如果你看到这里想要主动 emitJS，可改成：
-        //   val bridge = (applicationContext as? BridgeActivity)?.bridge ?: return
-        //   bridge.getPlugin("AmsgUnifiedPush")?.notifyListeners("pushReceived", JSObject().put("payload", payload))
-        // ——但 BridgeActivity 不一定能从 Service 里拿，所以这里保守用轮询方案。
-        Log.d(TAG, "pushReceived 缓存好（payload 头 ${payload.take(40)}）")
+    private fun showProactiveNotification(
+        title: String,
+        body: String,
+        charId: String,
+        messageId: String,
+    ) {
+        try {
+            ensureNotificationChannel()
+            // 点击通知 → 拉起 MainActivity（launcher intent）
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            val pi = if (launchIntent != null) {
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            } else null
+
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(applicationInfo.icon)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+
+            val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notifId = notificationIdHash(messageId, charId)
+            mgr.notify(notifId, notification)
+            Log.i(TAG, "弹 UP 通知 id=$notifId char=$charId msgId=$messageId title=$title bodyLen=${body.length}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "showProactiveNotification 失败", t)
+        }
+    }
+
+    /**
+     * Android 8+ 必须先建 channel，channel id 在 app 里复用同一个 OK。
+     */
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (mgr.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            NOTIFICATION_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "主动消息 2.0 通过 UnifiedPush 通道到达的系统通知。"
+            enableVibration(true)
+        }
+        mgr.createNotificationChannel(channel)
+    }
+
+    /**
+     * 用 broadcast 通知 AmsgUnifiedPushPlugin 收到推送。
+     * plugin 在 load() 里注册 receiver，receiver 调 notifyListeners('pushReceived', ...) 派给 JS。
+     *
+     * 之前这函数是空实现，注释说"分发靠 plugin 端 drain 轮询" — 但前端 initUnifiedPushRuntime
+     * 从未调用过，drain 永不启动，所以是两条断路。现在的写法走 sendBroadcast 实时触发，
+     * app 在前台时 receiver 一定已注册；后台时 receiver 可能未注册，但 SP 缓存兜底——
+     * 重启后 initUnifiedPushRuntime 拉走。
+     */
+    private fun deliverPushToPlugin(payload: String) {
+        try {
+            val intent = Intent(ACTION_PUSH_DELIVERED).apply {
+                putExtra(EXTRA_PAYLOAD, payload)
+                setPackage(packageName)
+            }
+            applicationContext.sendBroadcast(intent)
+            Log.d(TAG, "sendBroadcast action=$ACTION_PUSH_DELIVERED payloadLen=${payload.length}")
+        } catch (e: Exception) {
+            Log.w(TAG, "sendBroadcast 失败", e)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)

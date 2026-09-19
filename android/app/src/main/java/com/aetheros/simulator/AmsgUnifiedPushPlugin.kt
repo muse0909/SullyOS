@@ -1,5 +1,10 @@
 package com.aetheros.simulator
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import com.getcapacitor.JSObject
@@ -50,6 +55,78 @@ class AmsgUnifiedPushPlugin : Plugin() {
         const val PENDING_PREFS = UnifiedPushService.PENDING_PREFS
         const val PENDING_KEY = UnifiedPushService.PENDING_KEY
         const val INSTANCE = "amsg2_main"
+    }
+
+    /**
+     * 麦麦 2026-09-19：补 2.0 UnifiedPush 端到端链路 —
+     *   UnifiedPushService.onMessage 解析 payload 后，
+     *     1) 自己弹通知（系统通知栏，那条已修）
+     *     2) sendBroadcast(ACTION_PUSH_DELIVERED) 让本 receiver 收到
+     *   receiver 在收到后调 notifyListeners('pushReceived', JSObject) 派给 JS 端。
+     *   JS 端 utils/unifiedPushRuntime.ts addListener('pushReceived') 已经定义好——
+     *   缺的就是这条 broadcast→receiver→notifyListeners 直达通道。
+     *
+     * 之前 receiver 不存在，注释说"分发靠 drain 轮询"但前端 initUnifiedPushRuntime
+     * 从未被调过。补这个 receiver 等于把桥架上：app 在前台时 (plugin 必然已 load)，
+     * receiver 一定已注册；后台时 receiver 没注册时退路是 SP 缓存 + 下次启动 drain。
+     */
+    private val pushReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            val action = intent?.action
+            if (action != UnifiedPushService.ACTION_PUSH_DELIVERED) return
+            val payload = intent.getStringExtra(UnifiedPushService.EXTRA_PAYLOAD) ?: return
+            try {
+                val jsObj = JSObject()
+                jsObj.put("payload", payload)
+                jsObj.put("receivedAt", System.currentTimeMillis())
+                notifyListeners("pushReceived", jsObj)
+                Log.i(TAG, "pushReceived 派发到 JS（payload 头 ${payload.take(40)}）")
+            } catch (e: Exception) {
+                Log.e(TAG, "notifyListeners pushReceived 失败", e)
+            }
+        }
+    }
+
+    private var pushReceiverRegistered = false
+
+    /**
+     * Capacitor 在 plugin 挂载时调 load()，仅在 Activity 起来时跑一次。
+     * Activity 跨前后台切换一般不会重跑 load，receiver 一次性注册、跨前后台复用。
+     */
+    override fun load() {
+        super.load()
+        registerPushReceiver()
+    }
+
+    override fun handleOnDestroy() {
+        try {
+            if (pushReceiverRegistered) {
+                context.unregisterReceiver(pushReceiver)
+                pushReceiverRegistered = false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "unregisterReceiver 失败", e)
+        }
+        super.handleOnDestroy()
+    }
+
+    private fun registerPushReceiver() {
+        if (pushReceiverRegistered) return
+        try {
+            val filter = IntentFilter(UnifiedPushService.ACTION_PUSH_DELIVERED)
+            // Android 13+ 强制要求 RECEIVER_EXPORTED 或 RECEIVER_NOT_EXPORTED flag
+            // service 在我们 app 内，所以 NOT_EXPORTED 就够，外部 app 发不进来。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(pushReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(pushReceiver, filter)
+            }
+            pushReceiverRegistered = true
+            Log.i(TAG, "pushReceiver 已注册（监听 ${UnifiedPushService.ACTION_PUSH_DELIVERED}）")
+        } catch (e: Exception) {
+            Log.w(TAG, "registerReceiver 失败", e)
+        }
     }
 
     /**

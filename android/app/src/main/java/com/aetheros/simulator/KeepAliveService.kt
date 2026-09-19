@@ -708,11 +708,17 @@ class KeepAliveService : Service() {
         Log.i("PROACTIVE", "BG_TRIGGER_EVALJS ts=${System.currentTimeMillis()} char=$characterId scheduleType=$scheduleType")
 
         // 4) 30s 超时：到点如果 pendingProactive 还在 → 降级
+        // 麦麦 2026-09-19 22:30：timeout 时不立即 remove pending，让后续 JS callback 仍能找到
+        //   bg 触发 LLM + saveMessage 可能 > 30s（logcat 21:50:41 验证过：21:50:11 timeout 弹占位，
+        //   21:50:41 JS callback 才到，pending 已 remove 导致 JS_CALLBACK_LATE drop）
+        //   改后：timeout 弹占位通知（同 notificationId），pending 留在 map 里，JS callback 到达时
+        //   handleJsProactiveResult 用 firstOrNull { charId == charId } 找 pending →
+        //   showProactiveNotification(content=preview) 覆盖占位通知 → 用户最终看到真实内容
         val requestId = messageId.ifEmpty { "${characterId}_${ts}" }
         val timeoutRunnable = Runnable {
-            val pending = pendingProactive.remove(requestId)
+            val pending = pendingProactive[requestId]
             if (pending != null) {
-                Log.w("PROACTIVE", "BG_TRIGGER_TIMEOUT ts=${System.currentTimeMillis()} char=$characterId scheduleType=${pending.scheduleType} — 30s no JS callback, fallback to placeholder")
+                Log.w("PROACTIVE", "BG_TRIGGER_TIMEOUT ts=${System.currentTimeMillis()} char=$characterId scheduleType=${pending.scheduleType} — 30s no JS callback, show placeholder (pending kept for late JS callback)")
                 showProactiveNotification(
                     pending.charId,
                     content.ifEmpty { pending.charId },

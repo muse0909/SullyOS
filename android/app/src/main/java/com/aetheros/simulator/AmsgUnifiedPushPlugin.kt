@@ -151,20 +151,28 @@ class AmsgUnifiedPushPlugin : Plugin() {
             val lastError = sp.getString("lastError", null)
 
             val vapidSp = context.getSharedPreferences(VAPID_PREFS, android.content.Context.MODE_PRIVATE)
-            val vapidPublicKey = vapidSp.getString(VAPID_PUBLIC_KEY, null)
+            // 麦麦 2026-09-19 13:08 修：subscription.vapidPublicKey 跟前端比对用的入参是 worker
+            //   公钥（utils/unifiedPushPlugin.ts:100 subscription.vapidPublicKey === vapidPublicKey）。
+            //   之前这里读 client 自己生成的公钥（VAPID_PUBLIC_KEY 字段），跟 worker 公钥永远不等，
+            //   导致 ensureUnifiedPushSubscription 60 次轮询全失败 → "UnifiedPush 注册超时"。
+            //   改读 register() 时存的 workerVapidPublicKey，无则 fallback client 公钥（兼容老数据）。
+            val workerVapidPublicKey = vapidSp.getString("workerVapidPublicKey", null)
+                ?: vapidSp.getString(VAPID_PUBLIC_KEY, null)
 
-            if (endpoint != null && vapidPublicKey != null) {
+            if (endpoint != null && workerVapidPublicKey != null) {
                 val sub = JSObject()
                 sub.put("endpoint", endpoint)
                 val keys = JSObject()
                 // UnifiedPush 协议不用 p256dh/auth（distributor 已经替我们做了 RFC8291 加密）
-                // 但前端代码统一用 Web Push Subscription 形态，这里塞占位字段保接口形状
-                keys.put("p256dh", vapidPublicKey)
+                // 但前端代码统一用 Web Push Subscription 形态，这里塞占位字段保接口形状。
+                // p256dh 也跟着改成 worker 公钥 —— 跟 subscription.vapidPublicKey 同源，
+                // 避免下次有人改成读 p256dh 字段时再撞同一个 bug。
+                keys.put("p256dh", workerVapidPublicKey)
                 keys.put("auth", "")
                 sub.put("keys", keys)
                 sub.put("distributor", ret.getString("distributor") ?: "")
                 sub.put("temporary", false)
-                sub.put("vapidPublicKey", vapidPublicKey)
+                sub.put("vapidPublicKey", workerVapidPublicKey)
                 ret.put("subscription", sub)
             } else {
                 ret.put("subscription", null)

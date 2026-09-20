@@ -39,6 +39,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [writingStyle, setWritingStyle] = useState<string>(template.writingStyle);
     // 暮色 8-26:RP 设置里"整个剧场的默认 API"在新建时继承(可被单剧场 ⚙ 弹窗覆盖)
     const [apiConfigId, setApiConfigId] = useState<string | undefined>(undefined);
+    // 暮色 9-20:单剧场是否生成开场(undefined = 走全局默认;true/false = 显式覆盖)
+    const [openingEnabled, setOpeningEnabled] = useState<boolean | undefined>(undefined);
     const [submitting, setSubmitting] = useState(false);
 
     // 暮色 8-26 17:00:文风 / 默认 API / 默认前提 从全局默认继承
@@ -51,6 +53,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
             if (defaults.defaultPremise && !customPremise) {
                 setCustomPremise(defaults.defaultPremise);
             }
+            // 暮色 9-20:开场开关默认从全局继承(默认开)
+            if (defaults.openingEnabled !== undefined) setOpeningEnabled(defaults.openingEnabled);
         });
     }, []);
 
@@ -88,6 +92,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 premise: customPremise.trim(),
                 writingStyle: writingStyle.trim(),
                 apiConfigId,  // 暮色 8-26:RP 设置里的默认 API 继承过来
+                openingEnabled,  // 暮色 9-20:开场开关(从全局默认继承,可被 checkbox 覆盖)
                 // 暮色 8-26 简化:其他字段(RP 角色指令/叙事参数/生成参数/解锁提示词/状态栏)不写到 Entry,
                 // session 进站时从 RPGlobalDefaults 注入;单剧场在 ⚙ 弹窗覆盖时再写到 Entry。
             });
@@ -243,6 +248,44 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                     onBlur={e => { e.currentTarget.style.borderColor = 'rgba(170,140,210,0.3)'; }}
                     placeholder="不选预设 = 默认质感(不注入文风指令,主模型自己拿捏)。也可手写或点上面 6 个预设。"
                 />
+
+                {/* 暮色 9-20:单剧场覆盖 — 是否生成开场
+                    undefined = 走全局默认(默认开);勾选 = 强制关掉(这次不生成) */}
+                <button
+                    type="button"
+                    onClick={() => {
+                        // 三态切换:undefined → false → true → undefined(回到全局默认)
+                        if (openingEnabled === undefined) setOpeningEnabled(false);
+                        else if (openingEnabled === false) setOpeningEnabled(true);
+                        else setOpeningEnabled(undefined);
+                    }}
+                    className="mt-3 w-full flex items-center gap-2.5 rounded-2xl px-3.5 py-2.5 active:scale-[0.98] transition-all text-left"
+                    style={{
+                        background: openingEnabled === false ? 'rgba(255,255,255,0.45)' : 'rgba(167,139,250,0.1)',
+                        border: openingEnabled === false ? '1px solid rgba(170,140,210,0.3)' : '1.5px solid #a78bfa',
+                    }}
+                    title="点切换:跟随默认 / 这次不生成 / 这次强制生成"
+                >
+                    <div
+                        className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+                        style={{
+                            background: openingEnabled === false ? 'white' : '#7c3aed',
+                            border: openingEnabled === false ? '1.5px solid rgba(150,120,190,0.4)' : 'none',
+                        }}
+                    >
+                        {openingEnabled !== false && (
+                            <Check size={11} weight="bold" style={{ color: 'white' }} />
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-bold" style={{ color: '#4a3a6a' }}>这次不自动生成开场</div>
+                        <div className="text-[10px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            {openingEnabled === undefined && '跟随全局默认(开)'}
+                            {openingEnabled === false && '✓ 已关闭,进剧场后是空态'}
+                            {openingEnabled === true && '已开启,忽略全局默认'}
+                        </div>
+                    </div>
+                </button>
 
                 {/* 暮色 8-26 简化:角色指令 / 叙事参数 / 生成参数 / 作者注释 / 状态栏 / 解锁提示词 / API
                     全部移到 RP 设置(齿轮里)→ 默认配置。中间页只剩场景信息 + 备选前提 + 自定义前提 + 文风。 */}

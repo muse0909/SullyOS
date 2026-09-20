@@ -3057,6 +3057,10 @@ export interface StoryTheaterEntry {
     /** 暮色 8-26:角色指令 / RP System Prompt — 用户在中间页/session 弹窗里填的总行为指令
      *  buildRPSystemPrompt 注入到预留的 __RP_INJECTION_POINT__ 位置,空就不注入 */
     rpInstructions?: string;
+    /** 暮色 9-20:开剧场后是否自动调用模型生成开场
+     *   - undefined = 走 RPGlobalDefaults 默认(默认 true)
+     *   - true / false = 单剧场显式覆盖 */
+    openingEnabled?: boolean;
     /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
     generationParams?: {
         temperature: number;
@@ -3217,6 +3221,8 @@ export interface RPGlobalDefaults {
     tensionLevel?: TensionLevel;                    // 场景张力默认
     rpInstructions?: string;                        // RP 总指令默认
     jailbreakPrompt?: string;                       // 解锁提示词默认
+    /** 暮色 9-20:新剧场默认是否自动生成开场(true = 开,undefined = 默认开) */
+    openingEnabled?: boolean;
     authorNote?: string;                            // 作者注释默认(不写也行,这里留着)
     generationParams?: {                            // 生成参数 5 字段
         temperature: number;

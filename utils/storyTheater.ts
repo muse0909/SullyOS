@@ -31,6 +31,7 @@ import {
     buildCommentPrompt,
     buildMergeSummaryPrompt,
     buildRPSystemPrompt,
+    buildOpeningPrompt,    // 暮色 9-20:开场生成 prompt
 } from './storyTheater/prompts';
 import { ContextBuilder } from './context';
 
@@ -72,6 +73,8 @@ export const normalizeStoryTheater = (
         characterId: entry.characterId,
         writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
         summary: entry.summary,
+        // 暮色 9-20:开场开关(undefined 保持,不强行赋默认值,SceneConfigPage 写入时已设)
+        openingEnabled: entry.openingEnabled,
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
     };
@@ -692,6 +695,8 @@ export function createEntryFromSceneTemplate(args: {
     tensionLevel?: 'natural' | 'warm' | 'intense';
     // 暮色 8-26:角色指令 / RP System Prompt
     rpInstructions?: string;
+    // 暮色 9-20:开剧场后是否自动生成开场(undefined = 走全局默认,true = 强制生成,false = 强制不生成)
+    openingEnabled?: boolean;
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -702,6 +707,8 @@ export function createEntryFromSceneTemplate(args: {
         writingStyle: args.writingStyle,
         characterId: args.characterId,
         writesToCharacterMemory: true,
+        // 暮色 9-20:开场开关(显式写进 entry,后续读 entry 知道是否生成)
+        openingEnabled: args.openingEnabled,
         generation: args.generation,                                     // 暮色 8-25 老字段保留
         generationParams: args.generationParams,                          // 暮色 8-25 第二批 + 第七批加 presencePenalty
         apiConfigId: args.apiConfigId,                                    // 暮色 8-25 第六步第一批
@@ -997,6 +1004,48 @@ export function lengthPresetToMaxTokens(preset: 'short' | 'medium' | 'long' | un
     if (preset === 'medium') return 4096;
     if (preset === 'long') return 8192;
     return undefined;   // 让 buildRPGenerationBody fallback
+}
+
+/* ─── 暮色 9-20:开剧场自动生成开场(流式) ──────────────── */
+
+/**
+ * 开场生成 — 暮色 9-20
+ * 进 session 时如果 entry.openingEnabled != false,就调这个流式跑一次
+ *   - 复用 callMainLLMStream(协议 fallback 在它内部处理)
+ *   - user message 用 buildOpeningPrompt 的输出(system prompt 仍走 buildRPSystemPrompt)
+ *   - 返回完整累积内容(包含 [正文] + 可选 [meta])— 让调用方解析 + 存 messages
+ *
+ * 调用方负责:
+ *   - 流式 chunk 给 UI 打字机展示
+ *   - 完整内容存 messages(role='assistant', metadata={role:'opening', storyStatus})
+ */
+export async function* generateOpening(args: {
+    char: CharacterProfile;
+    userProfile?: UserProfile | null;
+    entry: StoryTheaterEntry;
+    sceneTags?: string[];
+    apiConfig: APIConfig;
+}): AsyncGenerator<string, void, void> {
+    const { char, userProfile, entry, sceneTags, apiConfig } = args;
+    // 拿场景标签(从模板里拿)— SceneConfigPage 没传 sceneTags 时为空,prompt 自己处理空场景
+    const openingUserMsg = buildOpeningPrompt({
+        charName: char.name,
+        userName: userProfile?.name || '暮色',
+        premise: entry.premise,
+        writingStyle: entry.writingStyle,
+        sceneTags,
+    });
+
+    // 调用主 LLM 流式 — user message 就是 opening prompt 输出
+    for await (const chunk of callMainLLMStream({
+        char,
+        userProfile,
+        entry,
+        history: [{ role: 'user', content: openingUserMsg }],
+        apiConfig,
+    })) {
+        yield chunk;
+    }
 }
 
 /** 流式主 LLM(openai 协议) — 暮色 8-25 第六步第一批

@@ -285,6 +285,34 @@ const RPApiSettingsPage: React.FC<Props> = ({ onClose }) => {
                             {/* 暮色 8-26 17:45:'当前配置'已挪到 API 设置 section 里(同虚线框),这里不再重复显示
                                 从默认前提开始 */}
 
+                            {/* 0. 暮色 9-20:开剧场自动生成开场 — 全局默认开关(默认开) */}
+                            <Field label="自动生成开场" hint="建完剧场进 Session 时,自动按前提 + 文风 + 角色人设调模型写一段开场(200-600 字 + 结尾演员 os)。关掉就走原来空态流程。">
+                                <button
+                                    type="button"
+                                    onClick={() => setDraftDefaults({ ...draftDefaults, openingEnabled: !(draftDefaults.openingEnabled !== false) })}
+                                    className="mt-1.5 w-full flex items-center gap-2.5 rounded-xl px-3 py-2 active:scale-[0.98] transition-all text-left"
+                                    style={{
+                                        background: draftDefaults.openingEnabled !== false ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.55)',
+                                        border: draftDefaults.openingEnabled !== false ? '1.5px solid #a78bfa' : '1px solid rgba(170,140,210,0.3)',
+                                    }}
+                                >
+                                    <div
+                                        className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+                                        style={{
+                                            background: draftDefaults.openingEnabled !== false ? '#7c3aed' : 'white',
+                                            border: draftDefaults.openingEnabled !== false ? 'none' : '1.5px solid rgba(150,120,190,0.4)',
+                                        }}
+                                    >
+                                        {draftDefaults.openingEnabled !== false && <Check size={11} weight="bold" style={{ color: 'white' }} />}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="text-[12px] font-bold" style={{ color: '#4a3a6a' }}>
+                                            {draftDefaults.openingEnabled !== false ? '新剧场自动生成开场' : '不生成开场(走空态)'}
+                                        </div>
+                                    </div>
+                                </button>
+                            </Field>
+
                             {/* 1. 默认前提(暮色 8-26 17:00) — 新建剧场时填入,用户进中间页后可改/选备选前提覆盖 */}
                             <Field label="默认前提" hint="新建剧场的默认前提;空 = 用户自己写">
                                 <textarea

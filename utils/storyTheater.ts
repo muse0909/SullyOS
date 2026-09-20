@@ -73,9 +73,10 @@ export const normalizeStoryTheater = (
         characterId: entry.characterId,
         writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
         summary: entry.summary,
-        // 暮色 9-20:开场开关 + 已处理标记(undefined 保持,不强行赋默认值)
+        // 暮色 9-20:开场开关 + 已处理标记 + 上次同步消息数(undefined 保持,不强行赋默认值)
         openingEnabled: entry.openingEnabled,
         openingResolved: entry.openingResolved,
+        lastSyncedMessageCount: entry.lastSyncedMessageCount,
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
     };
@@ -370,8 +371,20 @@ export async function syncStoryToMainMemory(
     const charId = entry.characterId;
     const userName = deps.userProfile?.name || '暮色';
 
+    // 暮色 9-20 第二轮:先拿全部 messages,判断"上次同步后有没有新消息"
+    //   - 没新内容(只生成了开场/或根本没开过剧场)→ 跳过整个同步,不发任何消息/不写记忆
+    //   - 新消息数 = currentTotal - lastSyncedMessageCount
+    const allMessages = await getSessionMessages(entry.id);
+    const currentTotal = allMessages.length;
+    const lastSynced = entry.lastSyncedMessageCount || 0;
+    const newMessageCount = currentTotal - lastSynced;
+    if (newMessageCount <= 0) {
+        deps.addToast?.('没有新对话,跳过同步', 'info');
+        return result;
+    }
+
     // 1. 拿最近 5 轮原文(给 prompt 喂)
-    const recent = (await getSessionMessages(entry.id)).slice(-KEEP_RECENT);
+    const recent = allMessages.slice(-KEEP_RECENT);
     if (recent.length === 0) {
         deps.addToast?.('没有对话内容,跳过同步', 'info');
         return result;
@@ -456,6 +469,23 @@ export async function syncStoryToMainMemory(
             console.warn('[storyTheater] sync: chat message write failed:', e);
             deps.addToast?.('观后感发到聊天框失败', 'error');
         }
+    }
+
+    // 暮色 9-20 第二轮:同步成功后,写回 lastSyncedMessageCount,下次退出时算新消息数
+    //   - 注意:只统计有"互动"的消息(不含开场)— 跟开场不算互动的拍板一致
+    //   - 用 allMessages(已加载)过滤 metadata.role !== 'opening'
+    try {
+        const interactionCount = allMessages.filter(m => (m.metadata as any)?.role !== 'opening').length;
+        if (interactionCount > (entry.lastSyncedMessageCount || 0)) {
+            const updatedEntry: StoryTheaterEntry = {
+                ...entry,
+                lastSyncedMessageCount: interactionCount,
+                updatedAt: Date.now(),
+            };
+            await DB.saveStoryTheater(updatedEntry);
+        }
+    } catch (e) {
+        console.warn('[storyTheater] sync: lastSyncedMessageCount write failed:', e);
     }
 
     return result;

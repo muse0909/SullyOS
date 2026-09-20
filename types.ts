@@ -3064,6 +3064,10 @@ export interface StoryTheaterEntry {
     /** 暮色 9-20:开场是否已处理过(成功存了 messages / 失败用户选了手动开始)
      *   防止「失败 → 手动开始 → 下次进 session 又触发开场」的死循环 */
     openingResolved?: boolean;
+    /** 暮色 9-20 第二轮:上次退出同步时 messages 表的总消息数
+     *   下次退出时算"新消息数 = current - lastSyncedMessageCount",≤ 0 跳过同步
+     *   防止「开了剧场没说话就退出」也触发同步(只生成了开场不算互动) */
+    lastSyncedMessageCount?: number;
     /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
     generationParams?: {
         temperature: number;

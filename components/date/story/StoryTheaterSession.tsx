@@ -327,6 +327,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 userProfile,
                 addToast,
             });
+            // 暮色 9-20 第二轮:sync 内部会写回 lastSyncedMessageCount,这里重新读 entry 让父组件更新
+            const refreshed = await DB.getStoryTheaters();
+            const updated = refreshed.find(e => e.id === entry.id);
+            if (updated) {
+                setEntry(updated);
+                onUpdateEntry(updated);
+            }
         } catch (e) {
             console.error('[StoryTheater] sync failed:', e);
             addToast?.('同步失败,但剧场已保存', 'error');
@@ -334,7 +341,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
             setSyncing(false);
             onExit();
         }
-    }, [syncing, entry, memoryPalaceConfig, apiConfig, char, userProfile, addToast, onExit]);
+    }, [syncing, entry, memoryPalaceConfig, apiConfig, char, userProfile, addToast, onExit, onUpdateEntry]);
 
     // 暮色 8-26 反馈:之前只改 SceneConfigPage + RPApiSettingsPage 改 Portal,
     // 漏了 StoryTheaterSession — 它跟列表页是 h-full w-full relative 兄弟节点,
@@ -366,15 +373,26 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                             <span className="text-[10px]" style={{ color: '#715d99' }}>整理</span>
                         </div>
                     )}
-                    {/* 暮色 9-20:开场中 spinner — 复用 summarizing 那块的样式 */}
-                    {openingPhase === 'streaming' && (
-                        <div className="absolute right-16 flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: 'rgba(167,139,250,0.15)' }}>
-                            <SpinnerGap size={12} className="animate-spin" style={{ color: '#7c3aed' }} />
-                            <span className="text-[10px]" style={{ color: '#715d99' }}>开场中...</span>
-                        </div>
-                    )}
+                    {/* 暮色 9-20 第二轮:开场中 spinner 挪到屏幕中间(全屏 loading)
+                        顶栏右侧不再显示开场中 spinner — 移走,改在全屏中间显示 */}
                 </div>
             </div>
+
+            {/* 暮色 9-20 第二轮:全屏开场中 loading(屏幕中间)— openingPhase === 'streaming' 时显示
+                半透明紫背景 + 大圆 spinner + "开场中..." 文字在屏幕正中间 */}
+            {openingPhase === 'streaming' && (
+                <div className="absolute inset-0 z-40 flex items-center justify-center animate-fade-in pointer-events-none"
+                     style={{ background: 'rgba(247, 243, 251, 0.7)' }}>
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-20 h-20 rounded-full flex items-center justify-center"
+                             style={{ background: 'rgba(167, 139, 250, 0.18)', border: '2px solid rgba(167, 139, 250, 0.5)' }}>
+                            <SpinnerGap size={36} className="animate-spin" style={{ color: '#7c3aed' }} />
+                        </div>
+                        <div className="text-[15px] font-bold tracking-wider" style={{ color: '#715d99' }}>开场中...</div>
+                        <div className="text-[10px]" style={{ color: 'rgba(150, 120, 190, 0.65)' }}>{char.name} 正在铺场景</div>
+                    </div>
+                </div>
+            )}
 
             {/* 消息流 */}
             <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-4 py-4 no-scrollbar">

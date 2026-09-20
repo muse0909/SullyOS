@@ -33,6 +33,7 @@ import {
     callMainLLMStream,
     getResolvedRPApiConfig,
     bumpMessageCount,
+    generateOpening,    // 暮色 9-20:开场生成
     KEEP_RECENT,
 } from '../../../utils/storyTheater';
 import { buildRPSystemPrompt, formatUserLayersForLLM, parseUserInputToLayers } from '../../../utils/storyTheater/prompts';
@@ -40,6 +41,7 @@ import { SELECT_THEME } from './storyTheme';
 import StoryStatusPanel from './StoryStatusPanel';
 import EntryEditModal from './EntryEditModal';
 import QuickPhrasesModal from './QuickPhrasesModal';
+import Modal from '../../os/Modal';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryStatusSnapshot, UserProfile } from '../../../types';
 import type { MemoryPalaceGlobalConfig } from '../../../context/OSContext';
 import type { APIConfig } from '../../../types';
@@ -66,6 +68,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     // 暮色 8-25 第六步第一批:打字机效果 — 流式累积的临时内容
     const [streamingContent, setStreamingContent] = useState<string>('');
     const [isStreaming, setIsStreaming] = useState(false);
+    // 暮色 9-20:开场生成阶段
+    //   - 'idle'      = 没在生成(默认,或用户跳过了)
+    //   - 'streaming' = 正在流式跑
+    //   - 'done'      = 开场已存进 messages
+    //   - 'failed'    = 生成失败,弹 modal 等用户决定
+    const [openingPhase, setOpeningPhase] = useState<'idle' | 'streaming' | 'done' | 'failed'>('idle');
+    const [openingError, setOpeningError] = useState<string>('');
     const scrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -88,6 +97,98 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     }, [entry.id]);
 
     useEffect(() => { void reload(); }, [reload]);
+
+    // 暮色 9-20:开场生成 — 进 session 时,如果 entry.openingEnabled != false,就自动跑一次
+    //   - 流式累积到 streamingContent(复用打字机效果)
+    //   - 完成后存 messages(metadata={role:'opening', storyStatus}),跟普通 assistant 同款解析
+    //   - 失败:openingPhase='failed',弹 modal(下方)
+    //   - 跳过条件:
+    //       · openingEnabled === false(中间页勾了"这次不生成")
+    //       · openingResolved === true(已处理过 — 成功存了 / 失败用户选了手动开始)
+    //       · 已有 messages(重入已有对话,跟 openingResolved 同效但更轻)
+    const runOpening = useCallback(async () => {
+        // 跳过条件
+        if (entry.openingEnabled === false) return;
+        if (entry.openingResolved) return;  // 已处理过(成功存了 / 选了手动开始),不再触发
+        const existing = await getSessionMessages(entry.id);
+        if (existing.length > 0) return;  // 已有对话,不需要开场
+
+        setOpeningPhase('streaming');
+        setOpeningError('');
+        setIsStreaming(true);
+        setStreamingContent('');
+
+        let accumulated = '';
+        try {
+            for await (const chunk of generateOpening({
+                char,
+                userProfile,
+                entry,
+                sceneTags: [],  // 暮色 9-20:sceneTags 暂时不传(中间页没存),prompt 内部空场景 graceful
+                apiConfig,
+            })) {
+                accumulated += chunk;
+                setStreamingContent(accumulated);
+            }
+        } catch (e: any) {
+            console.error('[StoryTheater] opening generation failed:', e);
+            setOpeningError(e?.message || String(e));
+            setOpeningPhase('failed');
+            setIsStreaming(false);
+            setStreamingContent('');
+            return;
+        }
+
+        if (accumulated) {
+            // 跟普通 assistant 同款:解析状态栏(完整内容),存 messages
+            const { status, body } = parseStatusFromReply(accumulated);
+            // 暮色 9-20:metadata 加 role:'opening' 标记(摘要触发不排除,只是标记)
+            await appendSessionMessage(
+                entry.id,
+                'assistant',
+                body,
+                { role: 'opening', ...(status ? { storyStatus: status } : {}) },
+            );
+            // 暮色 9-20 第二轮:成功后标记 openingResolved=true,下次进 session 不再触发
+            const afterBump = await bumpMessageCount(entry.id, entry);
+            const afterEntry: StoryTheaterEntry = { ...afterBump, openingResolved: true, updatedAt: Date.now() };
+            await DB.saveStoryTheater(afterEntry);
+            setEntry(afterEntry);
+            onUpdateEntry(afterEntry);
+            await reload();
+        }
+        setIsStreaming(false);
+        setStreamingContent('');
+        setOpeningPhase('done');
+    }, [entry, char, userProfile, apiConfig, reload, onUpdateEntry]);
+
+    // 暮色 9-20:开场 useEffect — 只在 entry.id 变化时跑一次(进 session 触发)
+    useEffect(() => {
+        void runOpening();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [entry.id]);
+
+    // 暮色 9-20:regenOpening — 点 modal 的"重新生成开场"时调
+    //   - 清掉 openingError(失败标记)
+    //   - 不清 messages(开场失败时根本没存)— 直接重跑 runOpening
+    const regenOpening = useCallback(() => {
+        setOpeningError('');
+        setOpeningPhase('idle');
+        void runOpening();
+    }, [runOpening]);
+
+    // 暮色 9-20:跳过开场 — 点 modal 的"手动开始"时调
+    //   - 清掉错误标记,解锁输入框,进空态流程
+    //   - 暮色 9-20 第二轮:同时标记 entry.openingResolved=true 持久化,
+    //     避免下次进 session 又触发开场(失败死循环)
+    const skipOpening = useCallback(async () => {
+        setOpeningError('');
+        setOpeningPhase('idle');
+        const updated: StoryTheaterEntry = { ...entry, openingResolved: true, updatedAt: Date.now() };
+        await DB.saveStoryTheater(updated);
+        setEntry(updated);
+        onUpdateEntry(updated);
+    }, [entry, onUpdateEntry]);
 
     // 滚到底
     useEffect(() => {
@@ -265,6 +366,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                             <span className="text-[10px]" style={{ color: '#715d99' }}>整理</span>
                         </div>
                     )}
+                    {/* 暮色 9-20:开场中 spinner — 复用 summarizing 那块的样式 */}
+                    {openingPhase === 'streaming' && (
+                        <div className="absolute right-16 flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: 'rgba(167,139,250,0.15)' }}>
+                            <SpinnerGap size={12} className="animate-spin" style={{ color: '#7c3aed' }} />
+                            <span className="text-[10px]" style={{ color: '#715d99' }}>开场中...</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -345,7 +453,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         }}
                         placeholder='写点什么...'
                         rows={2}
-                        disabled={sending}
+                        disabled={sending || openingPhase === 'streaming' || openingPhase === 'failed'}
                         className="flex-1 px-3.5 py-2.5 rounded-2xl text-[13px] resize-none focus:outline-none disabled:opacity-50"
                         style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(170,140,210,0.3)', color: '#1f2937', maxHeight: 120 }}
                         onFocus={e => { e.currentTarget.style.borderColor = '#a78bfa'; }}
@@ -353,7 +461,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                     />
                     <button
                         onClick={() => void handleSend()}
-                        disabled={!input.trim() || sending}
+                        disabled={!input.trim() || sending || openingPhase === 'streaming' || openingPhase === 'failed'}
                         className="w-11 h-11 rounded-full flex items-center justify-center active:scale-90 transition-all disabled:opacity-30"
                         style={{ background: 'linear-gradient(135deg,#a78bfa,#7c3aed)', color: 'white', boxShadow: '0 4px 14px rgba(124,58,237,0.3)' }}
                     >
@@ -402,6 +510,35 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                         onUpdateEntry(updated);
                     }}
                 />
+            )}
+
+            {/* 暮色 9-20:开场生成失败 modal — 含"重新生成开场"+"手动开始"两个按钮
+                暮色 9-20 第二轮:右上角加 X 关闭按钮(箭头指的位置)— 调 onClose=skipOpening */}
+            {openingPhase === 'failed' && (
+                <Modal isOpen onClose={skipOpening} showCloseButton title="开场生成失败" footer={
+                    <div className="flex gap-3 w-full">
+                        <button
+                            onClick={skipOpening}
+                            className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold active:scale-95 transition-all"
+                        >
+                            手动开始
+                        </button>
+                        <button
+                            onClick={() => void regenOpening()}
+                            className="flex-1 py-3 rounded-2xl text-white font-bold active:scale-95 transition-all"
+                            style={{ background: 'linear-gradient(135deg,#a78bfa,#7c3aed)', boxShadow: '0 4px 14px rgba(124,58,237,0.3)' }}
+                        >
+                            重新生成开场
+                        </button>
+                    </div>
+                }>
+                    <div className="text-center text-slate-600 text-sm py-4 px-1">
+                        <div className="mb-2">{openingError}</div>
+                        <div className="text-xs text-slate-400 mt-2 leading-relaxed">
+                            可能是网络问题、模型 key 失效、或者 PVP 高峰期抢资源
+                        </div>
+                    </div>
+                </Modal>
             )}
 
             {/* 暮色 8-26 17:00:快捷键 modal(共享 localStorage 短语)— 选短语时插入到输入框 */}

@@ -2299,6 +2299,11 @@ if (!isVisible || !isChattingWithThisChar) {
                   proactiveBackgroundTriggerRef.current = false;
                   if (wasBg) {
                       console.log(`🔔 [Proactive/BgTrigger] WebView generated content for ${char.name} (background), forwarding to Service`);
+                      // 麦麦 2026-09-19 22:30：bg 触发补 setLastMsgTimestamp
+                      //   bgProactiveReady 只通知 Service 弹系统通知，不触发 chat UI 刷新机制
+                      //   复用 OSContext:1401 那条 lastMsgTimestamp 链路 → Chat.tsx:1049 useEffect 触发 reloadMessages
+                      //   不派发 proactive-message-sent（会重复弹通知 + setUnreadMessages + addToast）
+                      setLastMsgTimestamp(Date.now());
                       window.dispatchEvent(new CustomEvent('sullyos:bgProactiveReady', {
                           detail: { charId, charName: char.name, body: preview, triggerSource: 'background_service' }
                       }));

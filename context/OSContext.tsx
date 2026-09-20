@@ -611,7 +611,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [discoverUnread, setDiscoverUnread] = useState<{ momentsNew: number; diaryNew: number; xztVisibleUnread: number }>({ momentsNew: 0, diaryNew: 0, xztVisibleUnread: 0 });
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
-  const [isLocked, setIsLocked] = useState(true);
+  const [isLocked, setIsLocked] = useState(false);
   
   const getRealTime = (): VirtualTime => {
       const now = new Date();

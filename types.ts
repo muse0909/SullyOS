@@ -3061,6 +3061,9 @@ export interface StoryTheaterEntry {
      *   - undefined = 走 RPGlobalDefaults 默认(默认 true)
      *   - true / false = 单剧场显式覆盖 */
     openingEnabled?: boolean;
+    /** 暮色 9-20:开场是否已处理过(成功存了 messages / 失败用户选了手动开始)
+     *   防止「失败 → 手动开始 → 下次进 session 又触发开场」的死循环 */
+    openingResolved?: boolean;
     /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
     generationParams?: {
         temperature: number;

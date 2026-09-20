@@ -73,8 +73,9 @@ export const normalizeStoryTheater = (
         characterId: entry.characterId,
         writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
         summary: entry.summary,
-        // 暮色 9-20:开场开关(undefined 保持,不强行赋默认值,SceneConfigPage 写入时已设)
+        // 暮色 9-20:开场开关 + 已处理标记(undefined 保持,不强行赋默认值)
         openingEnabled: entry.openingEnabled,
+        openingResolved: entry.openingResolved,
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
     };

@@ -102,12 +102,16 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     //   - 流式累积到 streamingContent(复用打字机效果)
     //   - 完成后存 messages(metadata={role:'opening', storyStatus}),跟普通 assistant 同款解析
     //   - 失败:openingPhase='failed',弹 modal(下方)
-    //   - 跳过条件:openingEnabled === false / 已有 messages(重入不重复生成)
+    //   - 跳过条件:
+    //       · openingEnabled === false(中间页勾了"这次不生成")
+    //       · openingResolved === true(已处理过 — 成功存了 / 失败用户选了手动开始)
+    //       · 已有 messages(重入已有对话,跟 openingResolved 同效但更轻)
     const runOpening = useCallback(async () => {
         // 跳过条件
         if (entry.openingEnabled === false) return;
+        if (entry.openingResolved) return;  // 已处理过(成功存了 / 选了手动开始),不再触发
         const existing = await getSessionMessages(entry.id);
-        if (existing.length > 0) return;  // 已经有消息(开场或之前互动),不重复生成
+        if (existing.length > 0) return;  // 已有对话,不需要开场
 
         setOpeningPhase('streaming');
         setOpeningError('');
@@ -145,7 +149,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 body,
                 { role: 'opening', ...(status ? { storyStatus: status } : {}) },
             );
-            const afterEntry = await bumpMessageCount(entry.id, entry);
+            // 暮色 9-20 第二轮:成功后标记 openingResolved=true,下次进 session 不再触发
+            const afterBump = await bumpMessageCount(entry.id, entry);
+            const afterEntry: StoryTheaterEntry = { ...afterBump, openingResolved: true, updatedAt: Date.now() };
+            await DB.saveStoryTheater(afterEntry);
             setEntry(afterEntry);
             onUpdateEntry(afterEntry);
             await reload();
@@ -172,10 +179,16 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
 
     // 暮色 9-20:跳过开场 — 点 modal 的"手动开始"时调
     //   - 清掉错误标记,解锁输入框,进空态流程
-    const skipOpening = useCallback(() => {
+    //   - 暮色 9-20 第二轮:同时标记 entry.openingResolved=true 持久化,
+    //     避免下次进 session 又触发开场(失败死循环)
+    const skipOpening = useCallback(async () => {
         setOpeningError('');
         setOpeningPhase('idle');
-    }, []);
+        const updated: StoryTheaterEntry = { ...entry, openingResolved: true, updatedAt: Date.now() };
+        await DB.saveStoryTheater(updated);
+        setEntry(updated);
+        onUpdateEntry(updated);
+    }, [entry, onUpdateEntry]);
 
     // 滚到底
     useEffect(() => {

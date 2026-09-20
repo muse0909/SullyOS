@@ -379,10 +379,11 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
             </div>
 
             {/* 暮色 9-20 第二轮:全屏开场中 loading(屏幕中间)— openingPhase === 'streaming' 时显示
-                半透明紫背景 + 大圆 spinner + "开场中..." 文字在屏幕正中间 */}
+                半透明紫背景 + 大圆 spinner + "开场中..." 文字在屏幕正中间
+                暮色 9-21 第三轮:z 提到 50 盖住底下空态字 + 背景加浓(0.7 → 0.92)— 空态字也隐藏了 */}
             {openingPhase === 'streaming' && (
-                <div className="absolute inset-0 z-40 flex items-center justify-center animate-fade-in pointer-events-none"
-                     style={{ background: 'rgba(247, 243, 251, 0.7)' }}>
+                <div className="absolute inset-0 z-50 flex items-center justify-center animate-fade-in pointer-events-none"
+                     style={{ background: 'rgba(247, 243, 251, 0.92)' }}>
                     <div className="flex flex-col items-center gap-4">
                         <div className="w-20 h-20 rounded-full flex items-center justify-center"
                              style={{ background: 'rgba(167, 139, 250, 0.18)', border: '2px solid rgba(167, 139, 250, 0.5)' }}>
@@ -396,7 +397,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
 
             {/* 消息流 */}
             <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-4 py-4 no-scrollbar">
-                {messages.length === 0 ? (
+                {/* 暮色 9-21 第三轮:开场中/失败时空态字隐藏(loading 层和空态字叠在一起两个都看不清) */}
+                {messages.length === 0 && openingPhase !== 'streaming' && openingPhase !== 'failed' ? (
                     <div className="h-full flex flex-col items-center justify-center text-center px-6">
                         <BookOpen size={36} weight="light" style={{ color: '#a78bfa', marginBottom: 12 }} />
                         <div className="text-[14px] font-bold mb-1" style={{ color: '#715d99' }}>开始一场 RP</div>

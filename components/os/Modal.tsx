@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { X } from '@phosphor-icons/react';
 
 interface ModalProps {
     isOpen: boolean;
@@ -20,9 +21,16 @@ interface ModalProps {
      *   - 例子：ApiQuickFloat 面板是 z-[110]，内部 Modal 要传 120
      */
     zIndex?: number;
+    /**
+     * 暮色 9-20:是否在 modal 卡片右上角显示 X 关闭按钮(默认 false)
+     *   - true 时点 X = 调 onClose(跟点遮罩一致)
+     *   - 之前 modal 只能点遮罩/底部"关闭"按钮关,部分场景用户找不到关的地方
+     *   - 触发场景:开场生成失败 modal 等「需要明确关闭入口」的弹窗
+     */
+    showCloseButton?: boolean;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer, adaptiveHeight = true, zIndex = 100 }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer, adaptiveHeight = true, zIndex = 100, showCloseButton = false }) => {
     if (!isOpen) return null;
 
     const cardHeightClass = adaptiveHeight ? 'max-h-[80vh]' : 'h-[80vh]';
@@ -35,6 +43,17 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer,
         <div className="fixed inset-0 flex items-center justify-center p-6 animate-fade-in" style={{ zIndex }}>
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
             <div className={`relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up ${cardHeightClass} flex flex-col`}>
+                {/* 暮色 9-20:右上角 X 关闭按钮(可选)— 点 X = 调 onClose,跟点遮罩一致 */}
+                {showCloseButton && (
+                    <button
+                        onClick={onClose}
+                        className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition-all z-10"
+                        style={{ background: 'rgba(0,0,0,0.05)', color: '#64748b' }}
+                        title="关闭"
+                    >
+                        <X size={16} weight="bold" />
+                    </button>
+                )}
                 <div className="px-6 pt-6 pb-2 shrink-0">
                     <h3 className="text-lg font-bold text-slate-800 text-center">{title}</h3>
                 </div>

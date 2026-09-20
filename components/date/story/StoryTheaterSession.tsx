@@ -512,9 +512,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                 />
             )}
 
-            {/* 暮色 9-20:开场生成失败 modal — 含"重新生成开场"+"手动开始"两个按钮 */}
+            {/* 暮色 9-20:开场生成失败 modal — 含"重新生成开场"+"手动开始"两个按钮
+                暮色 9-20 第二轮:右上角加 X 关闭按钮(箭头指的位置)— 调 onClose=skipOpening */}
             {openingPhase === 'failed' && (
-                <Modal isOpen onClose={skipOpening} title="开场生成失败" footer={
+                <Modal isOpen onClose={skipOpening} showCloseButton title="开场生成失败" footer={
                     <div className="flex gap-3 w-full">
                         <button
                             onClick={skipOpening}

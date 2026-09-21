@@ -458,11 +458,13 @@ export async function syncStoryToMainMemory(
     }
 
     // 2. 用 entry.summary.narrative 或临时生成
+    //   暮色 9-21 第四轮(方案 A):不再调 lightLLM 生成"观后感"commentLine — 那个会让角色"接着演"
+    //   只生成剧情总结 narrativeForComment,写到剧情记忆卡片里
     let narrativeForComment = entry.summary?.narrative || '';
     if (!narrativeForComment) {
         // 没有累积摘要时,临时调一次 lightLLM 整理全部最近
         try {
-            deps.addToast?.('正在生成观后感...', 'info');
+            deps.addToast?.('正在整理剧情摘要...', 'info');
             narrativeForComment = await callLightLLM(
                 buildBatchSummaryPrompt({
                     charName: deps.char.name,
@@ -476,23 +478,6 @@ export async function syncStoryToMainMemory(
             console.warn('[storyTheater] sync: batch summary failed:', e);
             narrativeForComment = `(剧情「${entry.title}」: ${recent.length} 条对话,摘要失败)`;
         }
-    }
-
-    // 3. 生成 comment
-    let commentLine = '';
-    try {
-        commentLine = (await callLightLLM(
-            buildCommentPrompt({
-                charName: deps.char.name,
-                premise: entry.premise,
-                narrative: narrativeForComment,
-                recentMessages: recent.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-            }),
-            deps,
-        )).trim();
-    } catch (e) {
-        console.warn('[storyTheater] sync: comment generation failed:', e);
-        commentLine = `刚和「${userName}」在「${entry.title}」里玩了一场,挺有意思的。`;
     }
 
     // 4. 写 memory_node
@@ -521,16 +506,14 @@ export async function syncStoryToMainMemory(
     }
 
     // 5. 暮色 9-21 第四轮(方案 A):写剧情记忆卡片到主聊天
-    //   - 不再发"接着演"的消息(去掉旧 step 5 的观后感)
-    //   - 改成生成剧情总结,写到主聊天(charId = 角色真实 ID)
-    //   - type 保持 'text' 兼容所有渲染,metadata.isStoryTheaterMemory = true 让 ChatApp 识别折叠
-    //   - 主聊天 ChatApp 识别这个标记,渲染成折叠"剧情记忆"卡片(不污染聊天流)
+    //   - 不再发"接着演"的消息(去掉旧观后感)
+    //   - 直接写剧情总结,charId = 角色真实 ID
+    //   - type 保持 'text' 兼容现有渲染,metadata.isStoryTheaterMemory = true 让 ChatApp 识别折叠
+    //   - ChatApp 渲染部分下轮再做(目前 ChatApp 不识别标记,会显示成普通文字)
     //   - 角色下次主聊天时,这段记忆会通过记忆宫殿 inject 到 prompt,自动"知道"剧场玩了什么
     if (narrativeForComment) {
         try {
-            const memoryText = commentLine
-                ? `${commentLine}\n\n${narrativeForComment}`
-                : narrativeForComment;
+            const memoryText = narrativeForComment;
             await DB.saveMessage({
                 charId,
                 role: 'assistant',

@@ -41,6 +41,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
     const [apiConfigId, setApiConfigId] = useState<string | undefined>(undefined);
     // 暮色 9-20:单剧场是否生成开场(undefined = 走全局默认;true/false = 显式覆盖)
     const [openingEnabled, setOpeningEnabled] = useState<boolean | undefined>(undefined);
+    // 暮色 9-21 第三轮:单剧场是否注入主聊天最近 50 条聊天记录
+    const [injectChatHistory, setInjectChatHistory] = useState<boolean | undefined>(undefined);
     const [submitting, setSubmitting] = useState(false);
 
     // 暮色 8-26 17:00:文风 / 默认 API / 默认前提 从全局默认继承
@@ -55,6 +57,8 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
             }
             // 暮色 9-20:开场开关默认从全局继承(默认开)
             if (defaults.openingEnabled !== undefined) setOpeningEnabled(defaults.openingEnabled);
+            // 暮色 9-21 第三轮:注入聊天记录默认从全局继承(默认开)
+            if (defaults.injectChatHistory !== undefined) setInjectChatHistory(defaults.injectChatHistory);
         });
     }, []);
 
@@ -93,6 +97,7 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                 writingStyle: writingStyle.trim(),
                 apiConfigId,  // 暮色 8-26:RP 设置里的默认 API 继承过来
                 openingEnabled,  // 暮色 9-20:开场开关(从全局默认继承,可被 checkbox 覆盖)
+                injectChatHistory,  // 暮色 9-21 第三轮:注入聊天记录(从全局默认继承)
                 // 暮色 8-26 简化:其他字段(RP 角色指令/叙事参数/生成参数/解锁提示词/状态栏)不写到 Entry,
                 // session 进站时从 RPGlobalDefaults 注入;单剧场在 ⚙ 弹窗覆盖时再写到 Entry。
             });
@@ -280,6 +285,39 @@ const SceneConfigPage: React.FC<Props> = ({ template, onCancel, onConfirm }) => 
                             {openingEnabled === false
                                 ? '已关闭,进剧场时不生成开场白,不调用模型'
                                 : '跟随默认(开),进剧场调用模型,生成开场白'}
+                        </div>
+                    </div>
+                </button>
+
+                {/* 暮色 9-21 第三轮:注入主聊天最近 50 条聊天记录
+                    两态(打钩=注入,不打钩=不注入)— 跟开场开关同款风格 */}
+                <button
+                    type="button"
+                    onClick={() => setInjectChatHistory(injectChatHistory === false ? undefined : false)}
+                    className="mt-3 w-full flex items-center gap-2.5 rounded-2xl px-3.5 py-2.5 active:scale-[0.98] transition-all text-left"
+                    style={{
+                        background: injectChatHistory === false ? 'rgba(255,255,255,0.45)' : 'rgba(167,139,250,0.1)',
+                        border: injectChatHistory === false ? '1px solid rgba(170,140,210,0.3)' : '1.5px solid #a78bfa',
+                    }}
+                    title={injectChatHistory === false ? '点切换为跟随默认(开)' : '点切换为这次不注入聊天记录'}
+                >
+                    <div
+                        className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+                        style={{
+                            background: injectChatHistory === false ? '#7c3aed' : 'white',
+                            border: injectChatHistory === false ? 'none' : '1.5px solid rgba(150,120,190,0.4)',
+                        }}
+                    >
+                        {injectChatHistory === false && (
+                            <Check size={11} weight="bold" style={{ color: 'white' }} />
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-bold" style={{ color: '#4a3a6a' }}>注入主聊天中最近 50 条聊天记录</div>
+                        <div className="text-[10px] mt-0.5" style={{ color: 'rgba(150,120,190,0.7)' }}>
+                            {injectChatHistory === false
+                                ? '已关闭,角色不知道开剧场前聊过什么'
+                                : '跟随默认(开),角色知道开剧场前聊过什么(仅注入这一次)'}
                         </div>
                     </div>
                 </button>

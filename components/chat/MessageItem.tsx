@@ -7,7 +7,7 @@ import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
 import { createPortal } from 'react-dom';
 import { useOS } from '../../context/OSContext';
-import { Heart as HeartIcon } from '@phosphor-icons/react';
+import { Heart as HeartIcon, CaretDown, FilmReel } from '@phosphor-icons/react';
 
 
 // --- 主动消息思维链折叠显示 ---
@@ -37,6 +37,77 @@ const ThoughtFold: React.FC<{ thought: string }> = ({ thought }) => {
         </div>
     );
 };
+
+// --- 暮色 9-21 第五轮:剧情剧院记忆卡片 ---
+//   - 退出剧场后,sync 写到主聊天的剧情记忆卡片(metadata.isStoryTheaterMemory)
+//   - 暮色要"主聊天里干干净净不出现'接着演'那种消息" — 改成折叠卡片,默认折叠
+//   - 浅紫马卡龙外框(跟 StoryStatusPanel 状态栏同款):rgba(167,139,250,0.1) + border 0.3
+//   - 卡片标题:🎬 「{theaterTitle}」的回忆
+//   - 展开后显示角色第一人称回忆内容(200-500 字)
+const StoryTheaterMemoryCard: React.FC<{
+    theaterTitle: string;
+    content: string;
+    generatedAt?: number;
+}> = ({ theaterTitle, content, generatedAt }) => {
+    const [expanded, setExpanded] = useState(false);
+    if (!content) return null;
+    const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
+    return (
+        <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+                background: 'rgba(167,139,250,0.1)',
+                border: '1px solid rgba(167,139,250,0.3)',
+            }}
+        >
+            <button
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setExpanded(v => !v); }}
+                className="w-full flex items-center gap-2 px-3 py-2 active:scale-[0.99] transition-all select-none"
+            >
+                <FilmReel size={13} weight="fill" style={{ color: '#7c3aed', flexShrink: 0 }} />
+                <span className="text-[11px] font-bold tracking-wider flex-1 text-left" style={{ color: '#715d99' }}>
+                    {theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆'}
+                </span>
+                {timeText && (
+                    <span className="text-[9px]" style={{ color: 'rgba(113,93,153,0.6)' }}>
+                        {timeText}
+                    </span>
+                )}
+                <CaretDown
+                    size={10} weight="bold"
+                    style={{
+                        color: 'rgba(113,93,153,0.7)',
+                        transition: 'transform 200ms',
+                        transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                        flexShrink: 0,
+                    }}
+                />
+            </button>
+            {expanded && (
+                <div
+                    className="px-3 pb-2.5 pt-1 text-[12px] leading-relaxed whitespace-pre-wrap break-words border-t animate-fade-in"
+                    style={{
+                        borderColor: 'rgba(167,139,250,0.2)',
+                        color: '#4a3a6a',
+                    }}
+                >
+                    {content}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 暮色 9-21 第五轮:简单的相对时间格式化(给剧场记忆卡片用)
+function formatRelativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return '刚刚';
+    if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
+    if (diff < 604800_000) return `${Math.floor(diff / 86400_000)} 天前`;
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 
 // --- Forward Card with expand/collapse ---
@@ -1638,6 +1709,22 @@ const MessageItem = React.memo(({
 
     // Voice-only messages (no display text, only voice bar): skip bubble styling
     const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+
+    // 暮色 9-21 第五轮:剧情剧院记忆卡片 — 退出剧场后 sync 写到主聊天的剧情总结
+    //   - metadata.isStoryTheaterMemory = true 标记(utils/storyTheater.ts syncStoryToMainMemory 写入)
+    //   - 主聊天里渲染成淡紫折叠卡片(默认折叠),不走普通气泡样式
+    //   - 让角色下次聊天时能看到这段回忆(主聊天历史会带),用户看到是干净的折叠卡片
+    const isStoryTheaterMemory = !isUser && (m as any).metadata?.isStoryTheaterMemory === true;
+    if (isStoryTheaterMemory && displayContent) {
+        const memoryMeta = (m as any).metadata || {};
+        return commonLayout(
+            <StoryTheaterMemoryCard
+                theaterTitle={memoryMeta.theaterTitle || ''}
+                content={displayContent}
+                generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+            />
+        );
+    }
 
     return commonLayout(
         <div className={isVoiceOnlyMsg

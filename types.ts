@@ -3064,6 +3064,15 @@ export interface StoryTheaterEntry {
     /** 暮色 9-20:开场是否已处理过(成功存了 messages / 失败用户选了手动开始)
      *   防止「失败 → 手动开始 → 下次进 session 又触发开场」的死循环 */
     openingResolved?: boolean;
+    /** 暮色 9-20 第二轮:上次退出同步时 messages 表的总消息数
+     *   下次退出时算"新消息数 = current - lastSyncedMessageCount",≤ 0 跳过同步
+     *   防止「开了剧场没说话就退出」也触发同步(只生成了开场不算互动) */
+    lastSyncedMessageCount?: number;
+    /** 暮色 9-21 第三轮:建剧场时是否注入主聊天最近 50 条聊天记录
+     *   - undefined = 走 RPGlobalDefaults 默认(默认 true)
+     *   - true / false = 单剧场显式覆盖
+     *   - 只注入一次,作为开场 context,不每轮注入 */
+    injectChatHistory?: boolean;
     /** 暮色 8-25 第二批:D) 完整生成参数(temperature + maxTokens + topP + frequencyPenalty)— 老 generation fallback */
     generationParams?: {
         temperature: number;
@@ -3141,14 +3150,27 @@ export interface StorySessionSummary {
  *   - 字段都自由字符串(不做枚举),prompt 引导风格
  */
 export interface StoryStatusSnapshot {
-    surface: {
-        emotion: string;    // 例:'心动' / '故作镇定' / '有点慌'
-        action: string;     // 例:'微微低头' / '攥紧裙边' / '挤出一个笑'
+    // 暮色 9-21 第三轮:状态栏 5 维度(替代之前的 surface/deep,保留兼容老消息)
+    statusBar?: {
+        time: string;       // 🏮时间 — 当前剧情时间
+        location: string;   // ⛰️地点 — 当前剧情地点
+        clothing: string;   // 👔衣着 — 角色当前衣着
+        relation: string;   // 💞关系 — 与用户的关系
+        event: string;      // 📜事件 — 当前剧情事件
     };
-    deep: {
-        realEmotion: string; // 例:'紧张' / '想靠近但不敢' / '其实很担心你'
-        thought: string;    // 例:'该不该告诉他那件事'
+    /** 暮色 9-21 第三轮:皮下层 — AI 演员自己的吐槽/感触(替代之前的 deep) */
+    subOs?: string;
+    // 暮色 8-25 第四步:老格式(保留兼容老消息)
+    surface?: {
+        emotion: string;
+        action: string;
     };
+    deep?: {
+        realEmotion: string;
+        thought: string;
+    };
+    /** 暮色 8-25 第二批:自定义状态变量追踪 */
+    variables?: Record<string, string>;
 }
 
 /**
@@ -3226,6 +3248,8 @@ export interface RPGlobalDefaults {
     jailbreakPrompt?: string;                       // 解锁提示词默认
     /** 暮色 9-20:新剧场默认是否自动生成开场(true = 开,undefined = 默认开) */
     openingEnabled?: boolean;
+    /** 暮色 9-21 第三轮:建剧场时默认是否注入主聊天最近 50 条聊天记录(true = 开) */
+    injectChatHistory?: boolean;
     authorNote?: string;                            // 作者注释默认(不写也行,这里留着)
     generationParams?: {                            // 生成参数 5 字段
         temperature: number;

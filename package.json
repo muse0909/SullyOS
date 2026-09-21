@@ -17,6 +17,7 @@
     "deploy:worker:amsg": "npm run build:worker:amsg && npx wrangler deploy"
   },
   "dependencies": {
+    "@capacitor-community/media": "^6.0.0",
     "@capacitor/android": "^6.0.0",
     "@capacitor/app": "^6.0.0",
     "@capacitor/core": "^6.0.0",

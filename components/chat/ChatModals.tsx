@@ -253,10 +253,36 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
         const handleSaveImageMessage = async () => {
         if (!selectedMessage?.content) return;
-
-        await saveRemoteImage(selectedMessage.content);
-
         setModalType('none');
+
+        try {
+            const result = await saveRemoteImage(selectedMessage.content);
+            // 暮色 9-21 第五轮:保存图片直接写入相册,给用户 toast 提示
+            //   - native 平台:saveRemoteImage 走 Media.savePhoto(不再弹分享框)
+            //     - 成功 → toast \"已保存到相册\"
+            //     - 失败 → toast 错误原因
+            //   - web 平台:web-download / web-share 成功也提示一下,失败让用户看到重试选项
+            if (result.ok) {
+                if (result.mode === 'native-saved') {
+                    addToast('已保存到相册', 'success');
+                } else if (result.mode === 'web-download') {
+                    addToast('已下载', 'success');
+                } else if (result.mode === 'web-share') {
+                    addToast('已分享', 'success');
+                }
+            } else {
+                if (result.reason === 'save_failed') {
+                    addToast('保存到相册失败,请检查相册权限', 'error');
+                } else if (result.reason === 'fetch_failed') {
+                    addToast('图片获取失败,请重试', 'error');
+                } else {
+                    addToast('保存失败', 'error');
+                }
+            }
+        } catch (e: any) {
+            console.error('[ChatModals] handleSaveImageMessage failed:', e);
+            addToast(`保存失败: ${e?.message || '未知错误'}`, 'error');
+        }
     };
 
     return (

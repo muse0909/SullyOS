@@ -87,6 +87,10 @@ const StoryTheaterMemoryCard: React.FC<{
                 <div
                     className="px-3 pb-2.5 pt-1 text-[12px] leading-relaxed whitespace-pre-wrap break-words border-t animate-fade-in"
                     style={{
+                        // 暮色 9-21 第五轮:展开内容区改膜玻璃效果(透明度 80% = alpha 0.2)
+                        background: 'rgba(255,255,255,0.2)',
+                        backdropFilter: 'blur(20px) saturate(1.6)',
+                        WebkitBackdropFilter: 'blur(20px) saturate(1.6)',
                         borderColor: 'rgba(167,139,250,0.2)',
                         color: '#4a3a6a',
                     }}

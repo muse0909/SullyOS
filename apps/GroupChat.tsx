@@ -331,17 +331,36 @@ const GroupChat: React.FC = () => {
 
     const handleSaveImageMessage = async () => {
         if (!selectedMessage?.content) return;
-
-        const result = await saveRemoteImage(selectedMessage.content);
-
-        if (result.ok) {
-            addToast(result.mode === 'native-share' ? '已打开系统保存面板' : '图片已开始保存', 'success');
-        } else {
-            addToast('已打开原图，请长按保存', 'info');
-        }
-
         setModalType('none');
         setSelectedMessage(null);
+
+        try {
+            const result = await saveRemoteImage(selectedMessage.content);
+            // 暮色 9-21 第五轮:保存图片直接写入相册(不再弹分享框)
+            //   - native-saved → 已保存到相册
+            //   - web-download / web-share → 仍走浏览器下载/分享
+            //   - 失败 → 友好提示
+            if (result.ok) {
+                if (result.mode === 'native-saved') {
+                    addToast('已保存到相册', 'success');
+                } else if (result.mode === 'web-download') {
+                    addToast('已下载', 'success');
+                } else if (result.mode === 'web-share') {
+                    addToast('已分享', 'success');
+                }
+            } else {
+                if (result.reason === 'save_failed') {
+                    addToast('保存到相册失败,请检查相册权限', 'error');
+                } else if (result.reason === 'fetch_failed') {
+                    addToast('图片获取失败,请重试', 'error');
+                } else {
+                    addToast('已打开原图,请长按保存', 'info');
+                }
+            }
+        } catch (e: any) {
+            console.error('[GroupChat] handleSaveImageMessage failed:', e);
+            addToast(`保存失败: ${e?.message || '未知错误'}`, 'error');
+        }
     };
 
     const handleEnterSelectionMode = () => {

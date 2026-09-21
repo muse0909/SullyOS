@@ -268,9 +268,18 @@ function parseStatusBar(raw: string): StoryStatusSnapshot['statusBar'] | null {
     const fields: Record<string, string> = {};
     const lines = raw.split('\n');
     for (const line of lines) {
-        // 匹配 emoji + 字段名 + 冒号(中英文) + 值
-        // 例:🏮时间：xxx / 🏮时间:xxx / 时间：xxx(兼容没 emoji)
-        const m = line.match(/^[🏮⛰️👔💞📜]?\s*(时间|地点|衣着|关系|事件)\s*[:：]\s*(.+?)\s*$/);
+        // 暮色 9-21 关键 bug 修复:之前用字符类 [🏮⛰️👔💞📜] 但 ECMAScript 字符类
+        //   只匹配 emoji 的第一个 UTF-16 code unit(surrogate pair 的前一半),不匹配
+        //   整个 emoji。导致带 emoji 前缀的状态栏行永远不匹配,状态栏一直是 null,
+        //   气泡里就显示不出来。
+        // 改用 alternation (?:🏮|⛰️|👔|💞|📜)? + u flag,才能正确匹配完整 emoji。
+        //   - 🏮 = 时间(灯笼)
+        //   - ⛰️ = 地点(山,带变体选择器 FE0F)
+        //   - 👔 = 衣着
+        //   - 💞 = 关系(心心)
+        //   - 📜 = 事件(卷轴)
+        // 兼容:没 emoji / 中英文冒号都匹配
+        const m = line.match(/^(?:🏮|⛰️|👔|💞|📜)?\s*(时间|地点|衣着|关系|事件)\s*[:：]\s*(.+?)\s*$/u);
         if (m) {
             fields[m[1]] = m[2].trim();
         }

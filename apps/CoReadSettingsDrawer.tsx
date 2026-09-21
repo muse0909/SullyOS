@@ -9,9 +9,10 @@
 //
 //   协议切换 / 顶部主 API 状态卡 / emerald-50 圆角卡 → 跟之前一样保留
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X as CloseIcon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
+import Modal from '../components/os/Modal';
 import {
   loadHelperConfig,
   saveHelperConfig,
@@ -32,8 +33,82 @@ interface Props {
   onTabChange?: (tab: 'helper' | 'workbench') => void;
 }
 
+// 🛟 麦麦 2026-09-21：预设胶囊样式照搬主 API 设置（components/chat/ChatSettingsDrawer.tsx:18-81 PerCharPresetChip）
+//   - 只显示名字，不显示协议名
+//   - active 态 emerald-100，hover emerald-200 边框
+//   - 长按 500ms 删除 + 右键菜单删除（跟主 API 一致）
+//   - 因为预设可能很多（截图里 20+），按主 API 同款 11px 粗体紧凑胶囊
+const PRESET_LONG_PRESS_MS = 500;
+const HelperPresetChip: React.FC<{
+  preset: { id: string; name: string };
+  active: boolean;
+  proto: string;
+  activeUrl?: string;
+  onLoad: () => void;
+  onRequestDelete: () => void;
+}> = ({ preset, active, proto, activeUrl, onLoad, onRequestDelete }) => {
+  const timerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+  const [pressing, setPressing] = useState(false);
+
+  const clearPress = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPressing(false);
+  }, []);
+
+  const handlePointerDown = useCallback(() => {
+    clearPress();
+    longPressedRef.current = false;
+    setPressing(true);
+    timerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      setPressing(false);
+      onRequestDelete();
+    }, PRESET_LONG_PRESS_MS);
+  }, [clearPress, onRequestDelete]);
+
+  const handleClick = useCallback(() => {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    onLoad();
+  }, [onLoad]);
+
+  useEffect(() => () => clearPress(), [clearPress]);
+
+  return (
+    <button
+      type="button"
+      title={`${proto} · ${activeUrl || ''} · 点击加载，长按删除`}
+      onPointerDown={handlePointerDown}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onRequestDelete();
+      }}
+      onClick={handleClick}
+      className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all cursor-pointer ${
+        active
+          ? 'bg-emerald-100 border-emerald-300 text-emerald-700'
+          : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'
+      } ${pressing ? 'scale-[0.98]' : ''}`}
+    >
+      {preset.name}
+    </button>
+  );
+};
+
 const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: externalTab, onTabChange }) => {
-  const { apiConfig, apiPresets = [], addToast } = useOS();
+  const { apiConfig, apiPresets = [], addToast, removeApiPreset } = useOS();
+  // 🛟 麦麦 2026-09-21：共读只显示主聊天预设 — 跟 Chat.tsx:237 / Like520Event.tsx:3537 同款过滤
+  const mainPresets = apiPresets.filter((p: any) => !p.kind || p.kind === 'main');
+  const [presetPendingDelete, setPresetPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<'helper' | 'workbench'>(externalTab || 'helper');
   const [cfg, setCfg] = useState<CoReadHelperConfig>(() => loadHelperConfig());
   const [showKey, setShowKey] = useState(false);
@@ -65,6 +140,13 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
     const d = resetHelperConfig();
     setCfg(d);
     addToast('已重置', 'info');
+  };
+  // 🛟 麦麦 2026-09-21：长按预设胶囊 → 弹确认 → 删全局预设（与 ChatSettingsDrawer 长按删除同模式）
+  const handleConfirmDeletePreset = () => {
+    if (!presetPendingDelete) return;
+    removeApiPreset(presetPendingDelete.id);
+    addToast(`已删除预设「${presetPendingDelete.name}」`, 'success');
+    setPresetPendingDelete(null);
   };
   const handleClearLogs = async () => {
     if (!window.confirm('清空所有帮工日志？此操作不可撤销。')) return;
@@ -209,33 +291,38 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
                   })}
                 </div>
 
-                {/* 📚 我的预设（暮色 17:18 反馈要的"主 API 预设" — 跟 ChatSettingsDrawer 角色 API 段同款） */}
-                {apiPresets.length > 0 && (
+                {/* 📚 我的预设（暮色 21:22 反馈：只显示主聊天预设 + 胶囊样式照搬主 API 设置） */}
+                {mainPresets.length > 0 && (
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">📚 我的预设</label>
                     <div className="flex gap-2 flex-wrap">
-                      {apiPresets.map((preset) => {
+                      {mainPresets.map((preset) => {
+                        // 麦麦 2026-09-21：active 判断按 protocol 选对应那组字段（修 Gemini 预设漏判 bug — 跟 ChatSettingsDrawer.tsx:381-391 同款）
                         const c: any = preset.config || {};
                         const proto = (c.protocol || 'openai') as 'openai' | 'gemini';
+                        const presetUrl = proto === 'gemini' ? (c.geminiBaseUrl || c.baseUrl) : c.baseUrl;
+                        const presetKey = proto === 'gemini' ? (c.geminiApiKey || c.apiKey) : c.apiKey;
+                        const presetModel = proto === 'gemini' ? (c.geminiModel || c.model) : c.model;
                         const active =
-                          cfg.baseUrl === c.baseUrl &&
-                          cfg.apiKey === c.apiKey &&
-                          cfg.protocol === proto;
+                          cfg.protocol === proto &&
+                          cfg.baseUrl === presetUrl &&
+                          cfg.apiKey === presetKey &&
+                          cfg.model === presetModel;
                         return (
-                          <button
+                          <HelperPresetChip
                             key={preset.id}
-                            type="button"
-                            onClick={() => handlePickPreset(preset)}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] transition-all ${active ? 'bg-emerald-500 text-white shadow-sm' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 active:scale-95'}`}
-                          >
-                            <span className="font-medium">{preset.name}</span>
-                            <span className={`text-[9px] ${active ? 'text-white/80' : 'text-slate-400'}`}>{proto}</span>
-                          </button>
+                            preset={preset}
+                            active={active}
+                            proto={proto}
+                            activeUrl={presetUrl}
+                            onLoad={() => handlePickPreset(preset)}
+                            onRequestDelete={() => setPresetPendingDelete({ id: preset.id, name: preset.name })}
+                          />
                         );
                       })}
                     </div>
                     <p className="text-[10px] text-slate-400 px-1 mt-1.5 leading-relaxed">
-                      点胶囊直接复制这套预设的 baseUrl + 接口密钥 + 模型。帮工独立用 key,不消耗 Chat 通道。
+                      点胶囊直接复制这套预设的 baseUrl + 接口密钥 + 模型。长按胶囊可删除。帮工独立用 key,不消耗 Chat 通道。
                     </p>
                   </div>
                 )}
@@ -393,6 +480,37 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
           </div>
         )}
       </div>
+
+      {/* 🛟 麦麦 2026-09-21：长按预设胶囊 → 删除确认（跟 ChatSettingsDrawer 同款 Modal） */}
+      <Modal
+        isOpen={!!presetPendingDelete}
+        title="删除预设"
+        onClose={() => setPresetPendingDelete(null)}
+        zIndex={220}
+        footer={
+          <div className="w-full grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setPresetPendingDelete(null)}
+              className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleConfirmDeletePreset}
+              className="w-full py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+            >
+              删除
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-slate-700 leading-relaxed">
+          确认删除预设 <span className="font-bold text-slate-900">「{presetPendingDelete?.name}」</span> 吗？
+        </p>
+        <p className="text-xs text-slate-500 leading-relaxed mt-2">
+          这个预设会从全局预设列表里移除,删除后无法恢复。
+        </p>
+      </Modal>
     </div>
   );
 };

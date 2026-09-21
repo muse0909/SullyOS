@@ -1,7 +1,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
+import { Media } from '@capacitor-community/media';
 
 export const processImage = (file: File, options?: { maxWidth?: number, quality?: number, forceJpeg?: boolean, skipCompression?: boolean }): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -110,14 +110,19 @@ const blobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, rej
 });
 
 type SaveRemoteImageResult =
-    | { ok: true; mode: 'native-share' | 'web-download' | 'web-share' }
-    | { ok: false; reason: 'fetch_failed' | 'share_failed' | 'open_failed' };
+    | { ok: true; mode: 'native-saved' | 'web-download' | 'web-share' }
+    | { ok: false; reason: 'fetch_failed' | 'save_failed' | 'share_failed' | 'open_failed' };
 
 export async function saveRemoteImage(url: string, fileName?: string): Promise<SaveRemoteImageResult> {
     const ext = getExtFromUrl(url);
     const finalFileName = fileName || `image_${Date.now()}.${ext}`;
 
     if (Capacitor.isNativePlatform()) {
+        // 暮色 9-21 第五轮:不再调 Share.share 弹分享框,直接写入相册
+        //   - 用 @capacitor-community/media 插件的 Media.savePhoto
+        //   - 先 fetch 拿到图片 → 写临时文件到 Cache → Media.savePhoto({ path: 临时文件路径 })
+        //   - 保存成功 → toast \"已保存到相册\";失败 → toast 错误原因
+        //   - 整个替换掉 Share.share 调用
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`http_${res.status}`);
@@ -129,13 +134,14 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
                 directory: Directory.Cache,
             });
             const uri = await Filesystem.getUri({ directory: Directory.Cache, path: finalFileName });
-            await Share.share({
-                title: '保存图片',
-                files: [uri.uri],
-            });
-            return { ok: true, mode: 'native-share' };
-        } catch {
-            return { ok: false, reason: 'fetch_failed' };
+            // Media.savePhoto 在 Android 上调用 MediaStore 让系统相册识别
+            //   需要相册权限(WRITE_EXTERNAL_STORAGE Android <= 28,Android >= 29 用 scoped storage)
+            //   Capacitor Media 插件内部处理权限请求
+            await Media.savePhoto({ path: uri.uri });
+            return { ok: true, mode: 'native-saved' };
+        } catch (e) {
+            console.warn('[saveRemoteImage] save photo to album failed:', e);
+            return { ok: false, reason: 'save_failed' };
         }
     }
 

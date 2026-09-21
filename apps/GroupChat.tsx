@@ -350,7 +350,15 @@ const GroupChat: React.FC = () => {
                 }
             } else {
                 if (result.reason === 'save_failed') {
-                    addToast('保存到相册失败,请检查相册权限', 'error');
+                    // 暮色 9-21 第七轮:显示真实错误原因,方便排查
+                    const detail = (result as any).detail || '';
+                    if (detail === 'no_album_available') {
+                        addToast('没有可用相册,请先在系统相册创建一个', 'error');
+                    } else if (detail.includes('permission') || detail.includes('denied')) {
+                        addToast(`相册权限被拒: ${detail}`, 'error');
+                    } else {
+                        addToast(`保存失败: ${detail || '未知错误'}`, 'error');
+                    }
                 } else if (result.reason === 'fetch_failed') {
                     addToast('图片获取失败,请重试', 'error');
                 } else {

@@ -118,9 +118,12 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
     const finalFileName = fileName || `image_${Date.now()}.${ext}`;
 
     if (Capacitor.isNativePlatform()) {
-        // 暮色 9-21 第五轮:不再调 Share.share 弹分享框,直接写入相册
+        // 暮色 9-21 第五轮 + 第六轮:不再调 Share.share 弹分享框,直接写入相册
         //   - 用 @capacitor-community/media 插件的 Media.savePhoto
-        //   - 先 fetch 拿到图片 → 写临时文件到 Cache → Media.savePhoto({ path: 临时文件路径 })
+        //   - 先 fetch 拿到图片 → 写临时文件到 Cache
+        //   - **重要**:savePhoto 必须传 albumIdentifier(系统相册某个目录的绝对路径)
+        //     不传直接 reject "Album identifier required"。需要先 getAlbums() 拿列表
+        //   - 取第一个 album(通常是默认相机相册)的 identifier
         //   - 保存成功 → toast \"已保存到相册\";失败 → toast 错误原因
         //   - 整个替换掉 Share.share 调用
         try {
@@ -134,14 +137,26 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
                 directory: Directory.Cache,
             });
             const uri = await Filesystem.getUri({ directory: Directory.Cache, path: finalFileName });
-            // Media.savePhoto 在 Android 上调用 MediaStore 让系统相册识别
-            //   需要相册权限(WRITE_EXTERNAL_STORAGE Android <= 28,Android >= 29 用 scoped storage)
-            //   Capacitor Media 插件内部处理权限请求
-            await Media.savePhoto({ path: uri.uri });
+
+            // 暮色 9-21 第七轮关键修复:savePhoto 必须传 albumIdentifier
+            //   先 getAlbums() 拿到系统相册列表,取第一个(通常是默认相册 Pictures)
+            //   getAlbums 本身需要 READ 权限(Android 13+ READ_MEDIA_IMAGES)
+            //   没有权限时插件会自动 requestAllPermissions 弹窗,用户授权后才能拿到列表
+            const albumsResult = await Media.getAlbums();
+            const albums = (albumsResult as any).albums || [];
+            if (albums.length === 0) {
+                throw new Error('no_album_available');
+            }
+            const albumIdentifier = albums[0].identifier as string;
+
+            await Media.savePhoto({ path: uri.uri, albumIdentifier });
             return { ok: true, mode: 'native-saved' };
-        } catch (e) {
-            console.warn('[saveRemoteImage] save photo to album failed:', e);
-            return { ok: false, reason: 'save_failed' };
+        } catch (e: any) {
+            // 暮色 9-21 第七轮改进:把真实错误原因传给 UI,不再统一显示"检查相册权限"
+            //   - 用户能看到具体是"没相册"还是"权限被拒"还是其他
+            const errMsg = e?.message || String(e) || 'unknown';
+            console.warn('[saveRemoteImage] save photo to album failed:', errMsg);
+            return { ok: false, reason: 'save_failed', detail: errMsg };
         }
     }
 

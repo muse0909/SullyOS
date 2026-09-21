@@ -75,6 +75,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     //   - 'failed'    = 生成失败,弹 modal 等用户决定
     const [openingPhase, setOpeningPhase] = useState<'idle' | 'streaming' | 'done' | 'failed'>('idle');
     const [openingError, setOpeningError] = useState<string>('');
+    // 暮色 9-21 第三轮:再次进剧场,弹窗询问"要不要注入主聊天最近 50 条聊天记录"
+    //   - undefined = 还没决定(弹窗打开状态)
+    //   - true/false = 用户在弹窗里选了
+    const [injectChatPromptOpen, setInjectChatPromptOpen] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -163,10 +167,49 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     }, [entry, char, userProfile, apiConfig, reload, onUpdateEntry]);
 
     // 暮色 9-20:开场 useEffect — 只在 entry.id 变化时跑一次(进 session 触发)
+    // 暮色 9-21 第三轮:再次进已有剧场时,弹窗询问"要不要注入主聊天最近 50 条聊天记录"
+    //   - 已有开场或对话 → 弹窗
+    //   - 新剧场(empty) → 走中间页 checkbox,这里不弹窗
     useEffect(() => {
-        void runOpening();
+        void (async () => {
+            // 检查是否已有对话(开场或用户消息)
+            const existing = await getSessionMessages(entry.id);
+            const hasContent = existing.length > 0;
+            // 已有内容 + entry.injectChatHistory 没设 → 弹窗询问
+            if (hasContent && entry.injectChatHistory === undefined) {
+                setInjectChatPromptOpen(true);
+            } else {
+                void runOpening();
+            }
+        })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [entry.id]);
+
+    // 暮色 9-21 第三轮:再次进剧场弹窗的"注入/不注入"回调
+    //   - 选择后立即调 runOpening(覆盖 injectChatHistory 用本地 state)
+    const handleInjectChoice = useCallback(async (inject: boolean) => {
+        setInjectChatPromptOpen(false);
+        // 写回 entry.injectChatHistory(下次进剧场不会再弹)
+        const updated: StoryTheaterEntry = { ...entry, injectChatHistory: inject, updatedAt: Date.now() };
+        await DB.saveStoryTheater(updated);
+        setEntry(updated);
+        onUpdateEntry(updated);
+        // 跑开场(用 entry.injectChatHistory = inject)
+        void runOpening();
+    }, [entry, onUpdateEntry, runOpening]);
+
+    // 暮色 9-21 第三轮:用户消息解析 — 拆出 [皮下] 标记
+    //   - 文本中包含 "[皮下]" → 之前的是正文,之后的是皮下
+    //   - 没包含 → 整个文本当正文
+    //   - 皮下存到 metadata.userSubOs(消息气泡渲染时折叠显示)
+    function parseUserInputWithSubOs(text: string): { content: string; userSubOs?: string } {
+        const marker = '[皮下]';
+        const idx = text.indexOf(marker);
+        if (idx === -1) return { content: text };
+        const content = text.slice(0, idx).trim();
+        const userSubOs = text.slice(idx + marker.length).trim();
+        return { content, userSubOs: userSubOs || undefined };
+    }
 
     // 暮色 9-20:regenOpening — 点 modal 的"重新生成开场"时调
     //   - 清掉 openingError(失败标记)
@@ -202,8 +245,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
         setInput('');
         setSending(true);
 
-        // 1. 追加 user 消息(存原文,保留用户的 * " ( 标记)+ 消息数 +1
-        await appendSessionMessage(entry.id, 'user', text);
+        // 1. 追加 user 消息(暮色 9-21 第三轮:解析 [皮下] 标记 — 拆成正文 + metadata.userSubOs)
+        const userLayerResult = parseUserInputWithSubOs(text);
+        await appendSessionMessage(
+            entry.id,
+            'user',
+            userLayerResult.content,
+            userLayerResult.userSubOs ? { userSubOs: userLayerResult.userSubOs } : undefined,
+        );
         const afterUserEntry = await bumpMessageCount(entry.id, entry);
         setEntry(afterUserEntry);
         onUpdateEntry(afterUserEntry);
@@ -568,6 +617,35 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
                     onSelect={insertQuickPhrase}
                 />
             )}
+
+            {/* 暮色 9-21 第三轮:再次进剧场弹窗 — 询问"要不要注入主聊天最近 50 条聊天记录"
+                按钮:「注入」「不注入」(默认按钮是「不注入」) */}
+            {injectChatPromptOpen && (
+                <Modal isOpen onClose={() => handleInjectChoice(false)} title="要不要注入主聊天中最近 50 条聊天记录？" footer={
+                    <div className="flex gap-3 w-full">
+                        <button
+                            onClick={() => handleInjectChoice(false)}
+                            className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold active:scale-95 transition-all"
+                        >
+                            不注入
+                        </button>
+                        <button
+                            onClick={() => handleInjectChoice(true)}
+                            className="flex-1 py-3 rounded-2xl text-white font-bold active:scale-95 transition-all"
+                            style={{ background: 'linear-gradient(135deg,#a78bfa,#7c3aed)', boxShadow: '0 4px 14px rgba(124,58,237,0.3)' }}
+                        >
+                            注入
+                        </button>
+                    </div>
+                }>
+                    <div className="text-center text-slate-600 text-sm py-4 px-1">
+                        <div className="mb-2">注入后角色能知道你们在主聊天中最后聊了什么,不注入则接着剧情继续。</div>
+                        <div className="text-xs text-slate-400 mt-2 leading-relaxed">
+                            上次玩到一半停了,隔了几天接着玩,推荐注入让角色接上之前的话题。
+                        </div>
+                    </div>
+                </Modal>
+            )}
         </div>,
         document.body
     );
@@ -581,27 +659,53 @@ const MessageBubble: React.FC<{
     userName: string;
 }> = ({ message, status, charName, userName }) => {
     const isUser = message.role === 'user';
+    // 暮色 9-21 第三轮:用户皮下层 — metadata.userSubOs
+    const userSubOs = (message.metadata as any)?.userSubOs as string | undefined;
+    const [userSubExpanded, setUserSubExpanded] = useState(false);
     return (
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-            <div
-                className="max-w-[78%] px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap"
-                style={{
-                    background: isUser
-                        ? 'linear-gradient(135deg,#a78bfa,#7c3aed)'
-                        : 'rgba(255,255,255,0.85)',
-                    color: isUser ? 'white' : '#1f2937',
-                    border: isUser ? 'none' : '1px solid rgba(170,140,210,0.25)',
-                    boxShadow: isUser ? '0 4px 12px rgba(124,58,237,0.2)' : '0 2px 8px rgba(150,120,200,0.1)',
-                    borderTopRightRadius: isUser ? 4 : undefined,
-                    borderTopLeftRadius: isUser ? undefined : 4,
-                }}
-            >
-                <div className="text-[9px] mb-1 font-bold tracking-wider" style={{ color: isUser ? 'rgba(255,255,255,0.7)' : 'rgba(150,120,190,0.7)' }}>
-                    {isUser ? userName : charName}
+            <div className="flex flex-col max-w-[78%]">
+                <div
+                    className="px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap"
+                    style={{
+                        background: isUser
+                            ? 'linear-gradient(135deg,#a78bfa,#7c3aed)'
+                            : 'rgba(255,255,255,0.85)',
+                        color: isUser ? 'white' : '#1f2937',
+                        border: isUser ? 'none' : '1px solid rgba(170,140,210,0.25)',
+                        boxShadow: isUser ? '0 4px 12px rgba(124,58,237,0.2)' : '0 2px 8px rgba(150,120,200,0.1)',
+                        borderTopRightRadius: isUser ? 4 : undefined,
+                        borderTopLeftRadius: isUser ? undefined : 4,
+                    }}
+                >
+                    <div className="text-[9px] mb-1 font-bold tracking-wider" style={{ color: isUser ? 'rgba(255,255,255,0.7)' : 'rgba(150,120,190,0.7)' }}>
+                        {isUser ? userName : charName}
+                    </div>
+                    {message.content}
                 </div>
-                {message.content}
-                {/* 状态栏 — 只在 assistant 消息下显示,且 status 非空 */}
+                {/* 状态栏 + 皮下 — 只在 assistant 消息下显示 */}
                 {!isUser && <StoryStatusPanel status={status} charName={charName} />}
+                {/* 暮色 9-21 第三轮:用户皮下层 — 折叠卡片放在用户消息下方 */}
+                {isUser && userSubOs && (
+                    <button
+                        onClick={() => setUserSubExpanded(v => !v)}
+                        className="self-end mt-1.5 flex items-center gap-1 text-[10px] tracking-wider font-bold active:scale-95 transition-all"
+                        style={{ color: 'rgba(124,58,237,0.7)' }}
+                    >
+                        <span>皮下</span>
+                        <span style={{ display: 'inline-block', transform: userSubExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 200ms' }}>▾</span>
+                    </button>
+                )}
+                {isUser && userSubOs && userSubExpanded && (
+                    <div className="self-end mt-1.5 px-2.5 py-1.5 rounded-xl text-[10px] leading-relaxed max-w-full text-right"
+                         style={{
+                             background: 'rgba(167,139,250,0.1)',
+                             border: '1px solid rgba(167,139,250,0.25)',
+                             color: '#715d99',
+                         }}>
+                        {userSubOs}
+                    </div>
+                )}
             </div>
         </div>
     );

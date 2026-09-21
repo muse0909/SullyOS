@@ -73,10 +73,11 @@ export const normalizeStoryTheater = (
         characterId: entry.characterId,
         writesToCharacterMemory: entry.writesToCharacterMemory ?? true,
         summary: entry.summary,
-        // 暮色 9-20:开场开关 + 已处理标记 + 上次同步消息数(undefined 保持,不强行赋默认值)
+        // 暮色 9-20:开场开关 + 已处理标记 + 上次同步消息数 + 注入聊天记录开关
         openingEnabled: entry.openingEnabled,
         openingResolved: entry.openingResolved,
         lastSyncedMessageCount: entry.lastSyncedMessageCount,
+        injectChatHistory: entry.injectChatHistory,
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
     };
@@ -109,14 +110,23 @@ export async function appendSessionMessage(
     });
 }
 
-/* ─── LLM 回复解析:状态栏 + 正文(暮色 8-25 第四步) ── */
+/* ─── LLM 回复解析:状态栏 + 皮下 + 正文(暮色 9-21 第三轮重做) ── */
 
 /**
- * 解析 LLM 回复,拆出 status(表层/底层)和 body(正文)
- * 暮色 8-25:fallback 要稳 — 格式不严格时整段当 body,不报错不吞消息
- *   - 完整 3 段 → 解析出 status + body
- *   - 部分 tag(只有 [表层] 或 [底层] 或 [正文]) → 能解析多少算多少,剩下当 body
- *   - 0 tag → 整段当 body,status = null
+ * 暮色 9-21 第三轮:新输出格式
+ *   [正文]  → 戏里角色在说话、做动作、心理
+ *   [状态]  → 5 维度(时间 / 地点 / 衣着 / 关系 / 事件)
+ *   [皮下]  → AI 演员自己的 os(每轮都要写)
+ *
+ * 老格式(暮色 8-25 第四步,保留兼容):
+ *   [表层] emotion=xxx action=yyy
+ *   [底层] realEmotion=xxx thought=xxx
+ *   [正文]
+ *
+ * Fallback 要稳:格式不严格时整段当 body,不报错不吞消息
+ *   - 完整 → 解析出 body + statusBar + subOs
+ *   - 部分 → 能解析多少算多少
+ *   - 0 tag → 整段当 body,其他都是 null
  */
 export function parseStatusFromReply(rawContent: string): {
     status: StoryStatusSnapshot | null;
@@ -124,72 +134,80 @@ export function parseStatusFromReply(rawContent: string): {
 } {
     const lines = rawContent.split('\n');
 
+    let bodyLines: string[] = [];
+    let statusBarLines: string[] = [];
+    let subOsLines: string[] = [];
+    let variables: Record<string, string> = {};
+
+    // 老格式兼容字段
     let surfaceEmotion: string | null = null;
     let surfaceAction: string | null = null;
     let deepEmotion: string | null = null;
     let deepThought: string | null = null;
-    let bodyLines: string[] = [];
-    let variables: Record<string, string> = {};
-    let inBody = false;
-    let inStatus = false;
+
+    let section: 'none' | 'body' | 'statusBar' | 'subOs' | 'oldStatus' = 'none';
     let foundAnyTag = false;
 
-    for (const line of lines) {
-        // [表层] emotion=xxx action=yyy — action 后面允许带空格+自由文字
-        const surfaceMatch = line.match(/^\[表层\]\s*emotion=(\S+)\s+action=(.+?)\s*$/);
-        // [底层] realEmotion=xxx thought=xxx
-        const deepMatch = line.match(/^\[底层\]\s*realEmotion=(\S+)\s+thought=(.+?)\s*$/);
-        // [正文] 后面跟正文
-        const bodyMatch = line.match(/^\[正文\]\s*(.*)$/);
-        // 暮色 8-25 第二批:[状态] 变量名=值 变量名=值 — 暮色自定义变量追踪
-        const statusMatch = line.match(/^\[状态\]\s*(.+?)\s*$/);
+    const flushBody = () => {
+        // bodyLines.trim 之后保留换行结构
+    };
 
+    for (const line of lines) {
+        // 暮色 9-21 第三轮:新格式标记
+        if (/^\[正文\]\s*$/.test(line) || /^\[正文\]\s+\S/.test(line)) {
+            foundAnyTag = true;
+            section = 'body';
+            // [正文] 后面的同行内容也算正文
+            const inline = line.replace(/^\[正文\]\s*/, '').trim();
+            if (inline) bodyLines.push(inline);
+            continue;
+        }
+        if (/^\[状态\]\s*$/.test(line)) {
+            foundAnyTag = true;
+            section = 'statusBar';
+            continue;
+        }
+        if (/^\[皮下\]\s*$/.test(line)) {
+            foundAnyTag = true;
+            section = 'subOs';
+            continue;
+        }
+
+        // 暮色 8-25 老格式标记(保留兼容)
+        const surfaceMatch = line.match(/^\[表层\]\s*emotion=(\S+)\s+action=(.+?)\s*$/);
         if (surfaceMatch) {
             foundAnyTag = true;
             surfaceEmotion = surfaceMatch[1].trim();
             surfaceAction = surfaceMatch[2].trim();
             continue;
         }
+        const deepMatch = line.match(/^\[底层\]\s*realEmotion=(\S+)\s+thought=(.+?)\s*$/);
         if (deepMatch) {
             foundAnyTag = true;
             deepEmotion = deepMatch[1].trim();
             deepThought = deepMatch[2].trim();
             continue;
         }
-        if (bodyMatch) {
+        // 老格式 [状态] 变量名=值(暮色自定义变量追踪,只在新格式外作为 fallback)
+        const oldStatusMatch = line.match(/^\[状态\]\s*(.+?)\s*$/);
+        if (oldStatusMatch && section === 'body') {
             foundAnyTag = true;
-            inBody = true;
-            inStatus = false;
-            const rest = bodyMatch[1];
-            if (rest) bodyLines.push(rest);
-            continue;
-        }
-        if (statusMatch && inBody) {
-            // [状态] 行:在 [正文] 之后,解析 变量名=值 键值对
-            foundAnyTag = true;
-            inStatus = true;
-            const pairs = statusMatch[1].trim();
-            // 匹配 name=value 对(支持中文变量名,值可能含空格但不能含 =)
-            const regex = /([^\s=]+)=([^\s=]+(?:\s+[^\s=]+)*?)(?=\s+[^\s=]+=|$)/g;
-            let m;
-            while ((m = regex.exec(pairs)) !== null) {
-                variables[m[1]] = m[2];
-            }
-            // 简化版:按空格分隔然后找 = 位置
-            const simple: Record<string, string> = {};
+            const pairs = oldStatusMatch[1].trim();
             pairs.split(/\s+/).forEach(p => {
                 const idx = p.indexOf('=');
-                if (idx > 0) simple[p.slice(0, idx)] = p.slice(idx + 1);
+                if (idx > 0) variables[p.slice(0, idx)] = p.slice(idx + 1);
             });
-            // 合并(简单版覆盖复杂版)
-            variables = { ...variables, ...simple };
             continue;
         }
-        if (inBody && !inStatus) {
-            // [正文] 之后到 [状态] 之前的行都算正文
+
+        // 按当前段累积内容
+        if (section === 'body') {
             bodyLines.push(line);
+        } else if (section === 'statusBar') {
+            statusBarLines.push(line);
+        } else if (section === 'subOs') {
+            subOsLines.push(line);
         }
-        // 暮色 8-25 第二批:[状态] 之后到文本末尾的内容如果有,忽略(不展示)
     }
 
     // 0 tag → 整段 fallback
@@ -197,31 +215,78 @@ export function parseStatusFromReply(rawContent: string): {
         return { status: null, body: rawContent };
     }
 
-    // 部分 tag 但 [正文] 缺 → 把所有非 tag 行拼起来当 body
-    if (bodyLines.length === 0) {
-        const bodyFallback = lines
-            .filter(l => !/^\[(表层|底层|正文|状态)\]/.test(l))
+    // body 兜底:解析出来空的话用原文(不可能发生,但安全)
+    let body = bodyLines.join('\n').trim();
+    if (!body) {
+        body = lines
+            .filter(l => !/^\[(正文|状态|皮下|表层|底层)\]/.test(l.trim()))
             .join('\n')
-            .trim();
-        if (bodyFallback) bodyLines = [bodyFallback];
+            .trim() || rawContent;
     }
 
-    // 拼 status — surface + deep + variables(变量可选)
-    const baseStatus: { surface: { emotion: string; action: string }; deep: { realEmotion: string; thought: string } } | null =
-        (surfaceEmotion && surfaceAction && deepEmotion && deepThought)
-            ? {
-                  surface: { emotion: surfaceEmotion, action: surfaceAction },
-                  deep: { realEmotion: deepEmotion, thought: deepThought },
-              }
-            : null;
-    const status: StoryStatusSnapshot | null = baseStatus
-        ? (Object.keys(variables).length > 0 ? { ...baseStatus, variables } : baseStatus)
-        : null;
+    // 解析状态栏 5 维度
+    const statusBarRaw = statusBarLines.join('\n').trim();
+    const statusBar = parseStatusBar(statusBarRaw);
 
-    // body 兜底:解析出来空的话用原文(不可能发生,但安全)
-    const body = bodyLines.join('\n').trim() || rawContent;
+    // 解析皮下层
+    const subOs = subOsLines.join('\n').trim();
+
+    // 拼 status(暮色 9-21 第三轮:优先新格式 statusBar + subOs;老格式 fallback 用 surface/deep)
+    let status: StoryStatusSnapshot | null = null;
+
+    if (statusBar || subOs) {
+        status = {
+            ...(statusBar ? { statusBar } : {}),
+            ...(subOs ? { subOs } : {}),
+            ...(Object.keys(variables).length > 0 ? { variables } : {}),
+        };
+    } else if (surfaceEmotion && surfaceAction && deepEmotion && deepThought) {
+        // 老格式 fallback(保留兼容)
+        const baseStatus = {
+            surface: { emotion: surfaceEmotion, action: surfaceAction },
+            deep: { realEmotion: deepEmotion, thought: deepThought },
+        };
+        status = Object.keys(variables).length > 0 ? { ...baseStatus, variables } : baseStatus;
+    }
 
     return { status, body };
+}
+
+/**
+ * 暮色 9-21 第三轮:解析状态栏 5 维度
+ * 输入格式(每行一个):
+ *   🏮时间：xxx
+ *   ⛰️地点：xxx
+ *   👔衣着：xxx
+ *   💞关系：xxx
+ * 📜事件：xxx
+ * 支持 emoji 后空格 + 中文冒号":"或英文冒号":"
+ * 解析不出来字段留空字符串(状态栏 UI 会显示空)
+ */
+function parseStatusBar(raw: string): StoryStatusSnapshot['statusBar'] | null {
+    if (!raw.trim()) return null;
+    const fields: Record<string, string> = {};
+    const lines = raw.split('\n');
+    for (const line of lines) {
+        // 匹配 emoji + 字段名 + 冒号(中英文) + 值
+        // 例:🏮时间：xxx / 🏮时间:xxx / 时间：xxx(兼容没 emoji)
+        const m = line.match(/^[🏮⛰️👔💞📜]?\s*(时间|地点|衣着|关系|事件)\s*[:：]\s*(.+?)\s*$/);
+        if (m) {
+            fields[m[1]] = m[2].trim();
+        }
+    }
+    const result = {
+        time: fields['时间'] || '',
+        location: fields['地点'] || '',
+        clothing: fields['衣着'] || '',
+        relation: fields['关系'] || '',
+        event: fields['事件'] || '',
+    };
+    // 5 个维度全空 → 返回 null(避免空对象污染)
+    if (!result.time && !result.location && !result.clothing && !result.relation && !result.event) {
+        return null;
+    }
+    return result;
 }
 
 /* ─── lightLLM 调用(简易 openai 协议,后续再加 claude/gemini) ── */
@@ -728,6 +793,8 @@ export function createEntryFromSceneTemplate(args: {
     rpInstructions?: string;
     // 暮色 9-20:开剧场后是否自动生成开场(undefined = 走全局默认,true = 强制生成,false = 强制不生成)
     openingEnabled?: boolean;
+    // 暮色 9-21 第三轮:建剧场时是否注入主聊天最近 50 条聊天记录
+    injectChatHistory?: boolean;
     now?: number;
 }): StoryTheaterEntry {
     const now = args.now ?? Date.now();
@@ -740,6 +807,8 @@ export function createEntryFromSceneTemplate(args: {
         writesToCharacterMemory: true,
         // 暮色 9-20:开场开关(显式写进 entry,后续读 entry 知道是否生成)
         openingEnabled: args.openingEnabled,
+        // 暮色 9-21 第三轮:注入聊天记录开关(显式写进 entry,开场时用)
+        injectChatHistory: args.injectChatHistory,
         generation: args.generation,                                     // 暮色 8-25 老字段保留
         generationParams: args.generationParams,                          // 暮色 8-25 第二批 + 第七批加 presencePenalty
         apiConfigId: args.apiConfigId,                                    // 暮色 8-25 第六步第一批
@@ -1058,6 +1127,26 @@ export async function* generateOpening(args: {
     apiConfig: APIConfig;
 }): AsyncGenerator<string, void, void> {
     const { char, userProfile, entry, sceneTags, apiConfig } = args;
+
+    // 暮色 9-21 第三轮:如果 entry.injectChatHistory 不为 false,从主聊天取最近 50 条
+    // 拼到开场提示词里(类似陪伴模式 peek 的 [最近记录] context)
+    let chatHistoryContext: string | undefined;
+    if (entry.injectChatHistory !== false) {
+        try {
+            const recent = await DB.getMessagesByCharId(entry.characterId, false);
+            const slice = recent.slice(-50);
+            if (slice.length > 0) {
+                const lines = slice.map(m => {
+                    const who = m.role === 'user' ? (userProfile?.name || '暮色') : char.name;
+                    return `${who}: ${m.content.replace(/\n+/g, ' ').slice(0, 200)}`;
+                }).join('\n');
+                chatHistoryContext = `【你们之前在主聊天中最后聊过的内容(供参考,不要直接复述)】\n${lines}`;
+            }
+        } catch (e) {
+            console.warn('[storyTheater] injectChatHistory: fetch failed', e);
+        }
+    }
+
     // 拿场景标签(从模板里拿)— SceneConfigPage 没传 sceneTags 时为空,prompt 自己处理空场景
     const openingUserMsg = buildOpeningPrompt({
         charName: char.name,
@@ -1065,6 +1154,7 @@ export async function* generateOpening(args: {
         premise: entry.premise,
         writingStyle: entry.writingStyle,
         sceneTags,
+        chatHistoryContext,
     });
 
     // 调用主 LLM 流式 — user message 就是 opening prompt 输出

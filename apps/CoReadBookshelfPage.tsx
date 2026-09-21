@@ -78,7 +78,16 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
     reload();
   }, []);
 
-  // 第 3 步:点"读"后切到全屏阅读器
+  // 🛟 麦麦 2026-09-21 修复 React #300:
+  //   useMemo 必须放在所有 early return 之前 — 否则点"读"切换到 CoReadReaderPage 时
+  //   hooks 数量从 8 减到 7，React 抛 "Rendered fewer hooks than expected"。
+  //   (跟 Chat.tsx 早 9-06 那次同款坑)
+  const lastReadBook = useMemo(() => {
+    if (books.length === 0) return null;
+    return books.reduce((a, b) => ((b.lastReadAt || 0) > (a.lastReadAt || 0) ? b : a));
+  }, [books]);
+
+  // 第 3 步:点"读"后切到全屏阅读器（必须放所有 hooks 之后）
   if (activeBookId) {
     return (
       <CoReadReaderPage
@@ -91,12 +100,6 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
       />
     );
   }
-
-
-  const lastReadBook = useMemo(() => {
-    if (books.length === 0) return null;
-    return books.reduce((a, b) => ((b.lastReadAt || 0) > (a.lastReadAt || 0) ? b : a));
-  }, [books]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();

@@ -56,27 +56,31 @@ const StoryTheaterMemoryCard: React.FC<{
         <div
             className="rounded-2xl overflow-hidden"
             style={{
-                background: 'rgba(167,139,250,0.1)',
-                border: '1px solid rgba(167,139,250,0.3)',
+                // 暮色 9-21 第六轮:外框也改膜玻璃效果(跟展开的内容区一致),整体颜色再浅一点
+                //   之前紫色底 rgba(167,139,250,0.1) 太显眼,改成白半透明膜玻璃
+                background: 'rgba(255,255,255,0.15)',
+                backdropFilter: 'blur(20px) saturate(1.6)',
+                WebkitBackdropFilter: 'blur(20px) saturate(1.6)',
+                border: '1px solid rgba(167,139,250,0.2)',
             }}
         >
             <button
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); setExpanded(v => !v); }}
                 className="w-full flex items-center gap-2 px-3 py-2 active:scale-[0.99] transition-all select-none"
             >
-                <FilmReel size={13} weight="fill" style={{ color: '#7c3aed', flexShrink: 0 }} />
-                <span className="text-[11px] font-bold tracking-wider flex-1 text-left" style={{ color: '#715d99' }}>
+                <FilmReel size={13} weight="fill" style={{ color: '#a78bfa', flexShrink: 0 }} />
+                <span className="text-[11px] font-bold tracking-wider flex-1 text-left" style={{ color: '#8b7aaa' }}>
                     {theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆'}
                 </span>
                 {timeText && (
-                    <span className="text-[9px]" style={{ color: 'rgba(113,93,153,0.6)' }}>
+                    <span className="text-[9px]" style={{ color: 'rgba(139,122,170,0.55)' }}>
                         {timeText}
                     </span>
                 )}
                 <CaretDown
                     size={10} weight="bold"
                     style={{
-                        color: 'rgba(113,93,153,0.7)',
+                        color: 'rgba(139,122,170,0.6)',
                         transition: 'transform 200ms',
                         transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
                         flexShrink: 0,
@@ -91,8 +95,8 @@ const StoryTheaterMemoryCard: React.FC<{
                         background: 'rgba(255,255,255,0.2)',
                         backdropFilter: 'blur(20px) saturate(1.6)',
                         WebkitBackdropFilter: 'blur(20px) saturate(1.6)',
-                        borderColor: 'rgba(167,139,250,0.2)',
-                        color: '#4a3a6a',
+                        borderColor: 'rgba(167,139,250,0.18)',
+                        color: '#6a5a8a',
                     }}
                 >
                     {content}

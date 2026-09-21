@@ -1,14 +1,16 @@
 /**
- * 剧情模式状态栏 + 皮下 — 暮色 9-21 第三轮重做
+ * 剧情模式状态栏 + 皮下 — 暮色 9-21 第四轮重做
  *
- * 暮色 9-21 第三轮:
- *   - 拆成两个独立折叠卡片:"状态栏"(5 维度) + "皮下"
+ * 暮色 9-21 第四轮:
+ *   - 状态栏 + 皮下都放进气泡内(不再气泡外单独放)
+ *   - 两块都是浅紫色框(跟之前"表层"那种样式)
+ *   - 默认折叠(点开才展开)
  *   - 状态栏 5 维度:时间 / 地点 / 衣着 / 关系 / 事件
- *   - 默认折叠(用户点开才展开)
- *   - 老格式(surface/deep)保留兼容 — 老消息仍能显示
  *
  * 暮色 8-25 第二批:
  *   - 自定义状态变量(有就显示,在状态栏下方)
+ *
+ * 老格式(surface/deep)保留兼容
  */
 
 import React, { useState } from 'react';
@@ -24,48 +26,44 @@ const StoryStatusPanel: React.FC<Props> = ({ status, charName }) => {
     const [barExpanded, setBarExpanded] = useState(false);
     const [subExpanded, setSubExpanded] = useState(false);
 
-    // 没 status → 不显示(LLM fallback 时正常)
+    // 没 status → 不显示
     if (!status) return null;
 
     const hasStatusBar = !!status.statusBar;
     const hasSubOs = !!status.subOs;
     const hasVariables = status.variables && Object.keys(status.variables).length > 0;
-    // 老格式兼容
     const hasLegacy = !!(status.surface && status.deep);
 
-    // 全部为空 → 不显示(空 fallback)
+    // 全部为空 → 不显示
     if (!hasStatusBar && !hasSubOs && !hasVariables && !hasLegacy) return null;
 
     return (
-        <div className="mt-1.5 select-none">
-            {/* === 状态栏卡片 === */}
+        <div className="mt-1.5 select-none space-y-1">
+            {/* === 状态栏卡片(浅紫色框,默认折叠)== = */}
             {(hasStatusBar || hasLegacy) && (
-                <div className="mt-1">
+                <div className="rounded-xl overflow-hidden"
+                     style={{
+                         background: 'linear-gradient(135deg,rgba(167,139,250,0.15),rgba(124,58,237,0.08))',
+                         border: '1px solid rgba(167,139,250,0.3)',
+                     }}>
                     <button
                         onClick={(e) => { e.stopPropagation(); setBarExpanded(v => !v); }}
-                        className="flex items-center gap-1 text-[10px] tracking-wider font-bold active:scale-95 transition-all"
-                        style={{ color: 'rgba(124,58,237,0.7)' }}
+                        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 active:scale-[0.99] transition-all"
                     >
-                        <Article size={10} weight="fill" />
-                        <span>状态栏</span>
+                        <Sparkle size={10} weight="fill" style={{ color: '#7c3aed' }} />
+                        <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>状态栏</span>
                         <CaretDown
                             size={9} weight="bold"
                             style={{
+                                color: 'rgba(150,120,190,0.7)',
                                 transition: 'transform 200ms',
                                 transform: barExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
                             }}
                         />
                     </button>
                     {barExpanded && (
-                        <div
-                            className="mt-1.5 px-2.5 py-2 rounded-xl text-[10px] leading-relaxed space-y-1 animate-fade-in"
-                            style={{
-                                background: 'linear-gradient(135deg,rgba(167,139,250,0.15),rgba(124,58,237,0.08))',
-                                border: '1px solid rgba(167,139,250,0.25)',
-                                color: '#4a3a6a',
-                            }}
-                            onClick={e => e.stopPropagation()}
-                        >
+                        <div className="px-2.5 pb-2 pt-0.5 text-[10px] leading-relaxed space-y-1 animate-fade-in"
+                             onClick={e => e.stopPropagation()}>
                             {hasStatusBar ? (
                                 <>
                                     <StatusBarRow icon={<Clock size={11} weight="fill" />} label="时间" value={status.statusBar!.time} />
@@ -75,7 +73,6 @@ const StoryStatusPanel: React.FC<Props> = ({ status, charName }) => {
                                     <StatusBarRow icon={<Article size={11} weight="fill" />} label="事件" value={status.statusBar!.event} />
                                 </>
                             ) : hasLegacy && status.surface && status.deep ? (
-                                // 老格式 fallback
                                 <>
                                     <div><span style={{ color: 'rgba(150,120,190,0.7)' }}>情绪:</span> {status.surface.emotion}</div>
                                     <div><span style={{ color: 'rgba(150,120,190,0.7)' }}>动作:</span> {status.surface.action}</div>
@@ -96,34 +93,32 @@ const StoryStatusPanel: React.FC<Props> = ({ status, charName }) => {
                 </div>
             )}
 
-            {/* === 皮下卡片(独立折叠)== = */}
+            {/* === 皮下卡片(浅紫色框,默认折叠)== = */}
             {hasSubOs && (
-                <div className="mt-1.5">
+                <div className="rounded-xl overflow-hidden"
+                     style={{
+                         background: 'rgba(167,139,250,0.08)',
+                         border: '1px solid rgba(167,139,250,0.25)',
+                     }}>
                     <button
                         onClick={(e) => { e.stopPropagation(); setSubExpanded(v => !v); }}
-                        className="flex items-center gap-1 text-[10px] tracking-wider font-bold active:scale-95 transition-all"
-                        style={{ color: 'rgba(100,100,120,0.7)' }}
+                        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 active:scale-[0.99] transition-all"
                     >
-                        <MaskHappy size={10} weight="fill" />
-                        <span>皮下</span>
+                        <MaskHappy size={10} weight="fill" style={{ color: '#7c3aed' }} />
+                        <span className="text-[10px] font-bold tracking-wider" style={{ color: '#715d99' }}>皮下</span>
                         <CaretDown
                             size={9} weight="bold"
                             style={{
+                                color: 'rgba(150,120,190,0.7)',
                                 transition: 'transform 200ms',
                                 transform: subExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
                             }}
                         />
                     </button>
                     {subExpanded && (
-                        <div
-                            className="mt-1.5 px-2.5 py-2 rounded-xl text-[10px] leading-relaxed animate-fade-in"
-                            style={{
-                                background: 'rgba(100,100,120,0.08)',
-                                border: '1px solid rgba(100,100,120,0.18)',
-                                color: '#3a3a4a',
-                            }}
-                            onClick={e => e.stopPropagation()}
-                        >
+                        <div className="px-2.5 pb-2 pt-0.5 text-[10px] leading-relaxed animate-fade-in"
+                             style={{ color: '#3a3a4a' }}
+                             onClick={e => e.stopPropagation()}>
                             {status.subOs}
                         </div>
                     )}

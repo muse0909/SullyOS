@@ -19,7 +19,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, GearSix, TextT } from '@phosphor-icons/react';
+import { ArrowLeft, PaperPlaneTilt, SpinnerGap, BookOpen, GearSix, TextT, CaretDown, MaskHappy } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import { DB } from '../../../utils/db';
 import { safeFetchJson } from '../../../utils/safeApi';
@@ -167,16 +167,17 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
     }, [entry, char, userProfile, apiConfig, reload, onUpdateEntry]);
 
     // 暮色 9-20:开场 useEffect — 只在 entry.id 变化时跑一次(进 session 触发)
-    // 暮色 9-21 第三轮:再次进已有剧场时,弹窗询问"要不要注入主聊天最近 50 条聊天记录"
-    //   - 已有开场或对话 → 弹窗
-    //   - 新剧场(empty) → 走中间页 checkbox,这里不弹窗
+    // 暮色 9-21 第四轮:再次进剧场,每次都弹窗询问"要不要注入主聊天最近 50 条聊天记录"
+    //   - 暮色 9-21 第三轮原本是"已设过就不弹窗"
+    //   - 暮色 9-21 第四轮改成"每次都弹"——不管之前是否选过,每次都重新问
+    //   - 选完后写回 entry.injectChatHistory 但**不**作为"下次不再弹"的依据
+    //   - 选完后立即调 runOpening(用本次的选择作为开场 context)
     useEffect(() => {
         void (async () => {
-            // 检查是否已有对话(开场或用户消息)
             const existing = await getSessionMessages(entry.id);
             const hasContent = existing.length > 0;
-            // 已有内容 + entry.injectChatHistory 没设 → 弹窗询问
-            if (hasContent && entry.injectChatHistory === undefined) {
+            // 暮色 9-21 第四轮:有对话每次都弹(不管 entry.injectChatHistory 是否设过)
+            if (hasContent) {
                 setInjectChatPromptOpen(true);
             } else {
                 void runOpening();
@@ -292,10 +293,20 @@ const StoryTheaterSession: React.FC<Props> = ({ entry: initialEntry, onExit, onU
             const recent = allMsgs.slice(-KEEP_RECENT);
 
             // 暮色 8-25 第四步:用户消息按层格式化(标记转块)
+            // 暮色 9-21 第四轮:用户皮下(metadata.userSubOs)也要发给 LLM,让角色知道用户的吐槽
+            //   - 格式:`(正文)\n\n[用户皮下]:(皮下内容)` 或仅 `[用户皮下]:(皮下内容)`
             const historyForLLM = recent.map(m => {
                 if (m.role === 'user') {
                     const layers = parseUserInputToLayers(m.content);
-                    return { role: 'user' as const, content: formatUserLayersForLLM(layers) };
+                    const formatted = formatUserLayersForLLM(layers);
+                    const userSubOs = (m.metadata as any)?.userSubOs as string | undefined;
+                    if (userSubOs) {
+                        const combined = formatted
+                            ? `${formatted}\n\n[用户皮下]:${userSubOs}`
+                            : `[用户皮下]:${userSubOs}`;
+                        return { role: 'user' as const, content: combined };
+                    }
+                    return { role: 'user' as const, content: formatted };
                 }
                 return { role: m.role as 'user' | 'assistant', content: m.content };
             });
@@ -666,7 +677,7 @@ const MessageBubble: React.FC<{
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
             <div className="flex flex-col max-w-[78%]">
                 <div
-                    className="px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap"
+                    className="px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed"
                     style={{
                         background: isUser
                             ? 'linear-gradient(135deg,#a78bfa,#7c3aed)'
@@ -681,31 +692,41 @@ const MessageBubble: React.FC<{
                     <div className="text-[9px] mb-1 font-bold tracking-wider" style={{ color: isUser ? 'rgba(255,255,255,0.7)' : 'rgba(150,120,190,0.7)' }}>
                         {isUser ? userName : charName}
                     </div>
-                    {message.content}
+                    {/* 内容 + 状态栏/皮下都放进同一个气泡里(暮色 9-21 第四轮:不再放到气泡外) */}
+                    <div className="whitespace-pre-wrap">{message.content}</div>
+                    {/* 状态栏 + 皮下 — 暮色 9-21 第四轮:放进气泡内,两块浅紫色框,默认折叠 */}
+                    {!isUser && <StoryStatusPanel status={status} charName={charName} />}
+                    {/* 暮色 9-21 第三轮:用户皮下层 — 也放进气泡内 */}
+                    {isUser && userSubOs && (
+                        <div
+                            className="mt-2 rounded-xl overflow-hidden cursor-pointer"
+                            style={{
+                                background: 'rgba(255,255,255,0.15)',
+                                border: '1px solid rgba(255,255,255,0.3)',
+                            }}
+                            onClick={() => setUserSubExpanded(v => !v)}
+                        >
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+                                <MaskHappy size={10} weight="fill" style={{ color: 'rgba(255,255,255,0.85)' }} />
+                                <span className="text-[10px] font-bold tracking-wider" style={{ color: 'rgba(255,255,255,0.85)' }}>皮下</span>
+                                <CaretDown
+                                    size={9} weight="bold"
+                                    style={{
+                                        color: 'rgba(255,255,255,0.7)',
+                                        transition: 'transform 200ms',
+                                        transform: userSubExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                    }}
+                                />
+                            </div>
+                            {userSubExpanded && (
+                                <div className="px-2.5 pb-2 pt-0.5 text-[10px] leading-relaxed animate-fade-in"
+                                     style={{ color: 'rgba(255,255,255,0.9)' }}>
+                                    {userSubOs}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
-                {/* 状态栏 + 皮下 — 只在 assistant 消息下显示 */}
-                {!isUser && <StoryStatusPanel status={status} charName={charName} />}
-                {/* 暮色 9-21 第三轮:用户皮下层 — 折叠卡片放在用户消息下方 */}
-                {isUser && userSubOs && (
-                    <button
-                        onClick={() => setUserSubExpanded(v => !v)}
-                        className="self-end mt-1.5 flex items-center gap-1 text-[10px] tracking-wider font-bold active:scale-95 transition-all"
-                        style={{ color: 'rgba(124,58,237,0.7)' }}
-                    >
-                        <span>皮下</span>
-                        <span style={{ display: 'inline-block', transform: userSubExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 200ms' }}>▾</span>
-                    </button>
-                )}
-                {isUser && userSubOs && userSubExpanded && (
-                    <div className="self-end mt-1.5 px-2.5 py-1.5 rounded-xl text-[10px] leading-relaxed max-w-full text-right"
-                         style={{
-                             background: 'rgba(167,139,250,0.1)',
-                             border: '1px solid rgba(167,139,250,0.25)',
-                             color: '#715d99',
-                         }}>
-                        {userSubOs}
-                    </div>
-                )}
             </div>
         </div>
     );

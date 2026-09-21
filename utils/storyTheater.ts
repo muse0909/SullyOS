@@ -436,19 +436,21 @@ export async function syncStoryToMainMemory(
     const charId = entry.characterId;
     const userName = deps.userProfile?.name || '暮色';
 
-    // 暮色 9-20 第二轮:先拿全部 messages,判断"上次同步后有没有新消息"
-    //   - 没新内容(只生成了开场/或根本没开过剧场)→ 跳过整个同步,不发任何消息/不写记忆
-    //   - 新消息数 = currentTotal - lastSyncedMessageCount
+    // 暮色 9-20 第二轮 + 9-21 第三轮修正:两边都用 interactionCount(不含开场)做判断
+    //   - 开场不算互动(暮色原话"开场不算互动")
+    //   - 上次同步时 interactionCount 是过滤掉 opening 的数量
+    //   - 这次再算 interactionCount,差值 ≤ 0 → 跳过
+    //   - 修前 bug:currentTotal 含开场(1),lastSynced 不含开场(0),差值 = 1 > 0 → 重复触发
     const allMessages = await getSessionMessages(entry.id);
-    const currentTotal = allMessages.length;
+    const interactionCount = allMessages.filter(m => (m.metadata as any)?.role !== 'opening').length;
     const lastSynced = entry.lastSyncedMessageCount || 0;
-    const newMessageCount = currentTotal - lastSynced;
-    if (newMessageCount <= 0) {
+    const newInteractionCount = interactionCount - lastSynced;
+    if (newInteractionCount <= 0) {
         deps.addToast?.('没有新对话,跳过同步', 'info');
         return result;
     }
 
-    // 1. 拿最近 5 轮原文(给 prompt 喂)
+    // 1. 拿最近 5 轮原文(给 prompt 喂)— 含开场(开场也算"之前发生了什么"用于 prompt context)
     const recent = allMessages.slice(-KEEP_RECENT);
     if (recent.length === 0) {
         deps.addToast?.('没有对话内容,跳过同步', 'info');
@@ -518,21 +520,34 @@ export async function syncStoryToMainMemory(
         }
     }
 
-    // 5. 发 comment 到聊天框(用角色真实 charId,role = 'assistant')
-    if (commentLine) {
+    // 5. 暮色 9-21 第四轮(方案 A):写剧情记忆卡片到主聊天
+    //   - 不再发"接着演"的消息(去掉旧 step 5 的观后感)
+    //   - 改成生成剧情总结,写到主聊天(charId = 角色真实 ID)
+    //   - type 保持 'text' 兼容所有渲染,metadata.isStoryTheaterMemory = true 让 ChatApp 识别折叠
+    //   - 主聊天 ChatApp 识别这个标记,渲染成折叠"剧情记忆"卡片(不污染聊天流)
+    //   - 角色下次主聊天时,这段记忆会通过记忆宫殿 inject 到 prompt,自动"知道"剧场玩了什么
+    if (narrativeForComment) {
         try {
+            const memoryText = commentLine
+                ? `${commentLine}\n\n${narrativeForComment}`
+                : narrativeForComment;
             await DB.saveMessage({
-                charId,                          // 角色真实 ID,不是 storyTheater 线程
+                charId,
                 role: 'assistant',
-                type: 'text',
-                content: commentLine,
-                metadata: { source: 'story-theater', entryId: entry.id, theaterTitle: entry.title },
+                type: 'text',  // 保持 text 兼容现有渲染,ChatApp 检查 isStoryTheaterMemory 标记折叠
+                content: memoryText,
+                metadata: {
+                    isStoryTheaterMemory: true,  // 暮色 9-21 第四轮:剧情记忆卡片标记
+                    entryId: entry.id,
+                    theaterTitle: entry.title,
+                    generatedAt: Date.now(),
+                },
             });
-            result.commentWritten = true;
-            deps.addToast?.(`已写进记忆宫殿 + 观后感发到聊天框`, 'success');
+            result.commentWritten = true;  // 兼容旧字段名(实际是写记忆卡片)
+            deps.addToast?.(`已写进记忆宫殿 + 剧情记忆卡片发到聊天框`, 'success');
         } catch (e) {
-            console.warn('[storyTheater] sync: chat message write failed:', e);
-            deps.addToast?.('观后感发到聊天框失败', 'error');
+            console.warn('[storyTheater] sync: memory card write failed:', e);
+            deps.addToast?.('剧情记忆卡片写入失败', 'error');
         }
     }
 

@@ -96,4 +96,18 @@
          用途：Doze 模式下系统可能断长连接 WebSocket；加白名单后 Doze 不影响本 app
          暮色 9-3 反馈明确要求"电池优化提示"——设置页会引导用户开启 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- 暮色 9-21 第六轮：保存图片直接写入相册（@capacitor-community/media）
+         这两个权限是 MediaPlugin 的 Capacitor 插件要求，不声明的话：
+         - 系统相册权限分类里不会出现拾光机（用户看不到）
+         - 插件内部 getPermissionState 永远返回 DENIED
+         - requestAllPermissions 也找不到对应权限就直接拒绝
+         所以必须先在 manifest 声明,系统才会显示 + 允许运行时弹窗请求授权
+         分版本声明:
+         - READ_EXTERNAL_STORAGE + WRITE_EXTERNAL_STORAGE:Android <= 12(API <= 32)
+         - WRITE_EXTERNAL_STORAGE 在 Android 10+(API 29+)用 scoped storage,不需要
+         - READ_MEDIA_IMAGES:Android 13+(API >= 33)替代 READ_EXTERNAL_STORAGE -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 </manifest>

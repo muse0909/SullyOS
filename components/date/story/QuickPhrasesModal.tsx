@@ -122,17 +122,19 @@ const QuickPhrasesModal: React.FC<Props> = ({ onClose, onSelect }) => {
                 </div>
 
                 {/* 暮色 9-21 第三轮:内置"皮下"预设模板(固定不可删)— 用户点了插入到输入框
-                    文本含 [皮下] 标记,StoryTheaterSession 会自动拆出 */}
+                    暮色 9-21 第五轮反馈修复:之前 onClick 注入 '[皮下]\n（用你自己的口吻吐槽这一轮剧情）',
+                    但\"用你自己的口吻吐槽...\"是给 LLM 看的引导语,不是用户要写的实际内容。
+                    现在只注入 '[皮下]\n',光标停在 [皮下] 后,让用户自己写吐槽。 */}
                 <div className="flex-1 overflow-y-auto no-scrollbar px-5 pb-3 space-y-2">
                     {/* 皮下预设(固定) */}
                     <div
-                        onClick={() => handleSelect('[皮下]\n（用你自己的口吻吐槽这一轮剧情）')}
+                        onClick={() => handleSelect('[皮下]\n')}
                         className="flex items-center gap-2 rounded-xl px-3 py-2.5 active:scale-[0.98] transition-all cursor-pointer"
                         style={{ background: 'rgba(167,139,250,0.1)', border: '1.5px solid #a78bfa' }}
                         title="插入皮下预设(暮色 9-21 第三轮内置)"
                     >
                         <span className="flex-1 text-left text-[12.5px] leading-relaxed whitespace-pre-wrap" style={{ color: '#4a3a6a' }}>
-                            [皮下]{'\n'}（用你自己的口吻吐槽这一轮剧情）
+                            [皮下]{'\n'}（写下你想吐槽的）
                         </span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(124,58,237,0.15)', color: '#715d99' }}>内置</span>
                     </div>

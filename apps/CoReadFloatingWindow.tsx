@@ -30,8 +30,8 @@ const THEME_STORAGE_KEY = 'co_read_floating_theme_v1';
 
 type SizeMode = 'small' | 'medium' | 'large';
 // 🛟 暮色 2026-09-22：3 档宽度统一（保持对称感），高度才分档
-//   暮色 20:16 反馈 440 在小屏有点宽 → 360 → 暮色 20:23 反馈 360 右边空 → 改 400
-const FLOATING_WIDTH = 400;
+//   暮色反馈: 440 太宽 → 360 → 400 右边空 → 改 420
+const FLOATING_WIDTH = 420;
 const SIZE_HEIGHT: Record<SizeMode, number> = {
   small: 240,
   medium: 420,

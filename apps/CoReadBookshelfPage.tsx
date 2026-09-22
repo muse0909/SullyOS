@@ -7,7 +7,7 @@
 //   - ⚙ 右下（步骤 4/5 接入帮工 API 配置 + 工作台账本）
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CaretLeft, Plus, Trash, BookOpen, CaretRight, Gear } from '@phosphor-icons/react';
+import { CaretLeft, Plus, Trash, BookOpen, CaretRight, Gear, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB, CoReadBook } from '../utils/db';
 import {
@@ -17,6 +17,7 @@ import {
   extractTitleCandidates,
   type FileEncoding,
   type SplitResult,
+  type ParsedChapter,
 } from '../utils/coReadChapterParser';
 // 第 3 步：全屏阅读器
 import CoReadReaderPage from './CoReadReaderPage';
@@ -46,6 +47,23 @@ function buildChaptersByLineNos(text: string, titleLineNos: number[]): SplitResu
   return { method: 'helper-llm', chapters };
 }
 
+// 🛟 麦麦 2026-09-22：上传预览状态（暮色原话「想要拆分时手动调帮工」）
+//   - 上传完先进入预览,用户看本地拆出的章节标题
+//   - 觉得不对 → 点「用帮工重拆」调帮工 → 重新显示拆出结果
+//   - 不像拆 → 点「当作整本读」存为 1 章
+//   - 觉得对 → 点「保存这 N 章」直接存
+interface UploadPreviewState {
+  fileName: string;
+  fileSize: number;
+  text: string;
+  encoding: FileEncoding;
+  chapters: ParsedChapter[];
+  splitMethod: 'regex-auto' | 'helper-llm' | 'fallback-chunks';
+  matchedRule?: string;
+  loading: boolean;
+  helperError: string | null;
+}
+
 interface Props {
   onBack: () => void;
 }
@@ -59,6 +77,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   // 第 4 步:设置抽屉
   const [showSettings, setShowSettings] = useState(false);
+  // 🛟 麦麦 2026-09-22：上传预览状态 — 上传完进预览,用户点保存/重拆/当整本读
+  const [preview, setPreview] = useState<UploadPreviewState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -131,79 +151,145 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
         setUploading(false);
         return;
       }
-      // 拆章 — 本地
-      let splitResult: SplitResult = splitIntoChapters(text);
-      let helperUsed = false;
-      let helperError: string | null = null;
-      // 第 4 步：如果本地拆出 < 2 章,启用帮工兜底
-      //   本地 regex 全部失败 或 fallback-chunks 都属于"本地不行"
-      if (splitResult.chapters.length < 2) {
-        const helperCfg = loadHelperConfig();
-        if (helperCfg.enabled) {
-          const mainApi: MainApiConfigForHelper | null = apiConfig
-            ? {
-                baseUrl: (apiConfig as any).baseUrl || '',
-                apiKey: (apiConfig as any).apiKey || '',
-                model: (apiConfig as any).model || '',
-                protocol: ((apiConfig as any).protocol === 'gemini' ? 'gemini' : 'openai'),
-              }
-            : null;
-          const candidates = extractTitleCandidates(text);
-          const totalLines = text.split(/\r?\n/).length;
-          if (candidates.length === 0) {
-            helperError = '没有候选标题行可分析';
-          } else {
-            addToast('本地拆不出,调帮工兜底…', 'info');
-            const helperRes = await callHelperForChapterTitles(candidates, totalLines, helperCfg, mainApi);
-            if (helperRes.ok && helperRes.titleLineNos && helperRes.titleLineNos.length >= 2) {
-              // 用帮工返回的行号重新切片
-              splitResult = buildChaptersByLineNos(text, helperRes.titleLineNos);
-              helperUsed = true;
-            } else {
-              helperError = helperRes.error || '帮工没认出章节';
-              addToast(`帮工失败:${helperError},用本地兜底切`, 'error');
-            }
-          }
-        } else {
-          addToast('本地正则没认出来,帮工 API 未启用,按 5000 字兜底切片', 'info');
-        }
-      }
-      if (!splitResult.chapters || splitResult.chapters.length === 0) {
-        addToast('拆章失败,书里没有任何内容', 'error');
-        setUploading(false);
-        return;
-      }
-      // 推断书名 = 文件名去后缀；作者暂留空,后续可改进 (步骤 5 后,工作台里允许编辑)
+      // 🛟 麦麦 2026-09-22：本地拆章后进预览（不再自动调帮工）
+      //   暮色原话:本地拆得不对就手动调帮工,不是本地拆不出才调
+      const splitResult = splitIntoChapters(text);
       const rawTitle = file.name.replace(/\.txt$/i, '').trim();
       const bookTitle = rawTitle || '未命名';
-      // 找作者行（首段"作者: ..."或"作者 XXX"格式）— 太复杂,先空着
-      const book: CoReadBook = {
-        id: `coread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        title: bookTitle,
-        author: '',
-        uploadTime: Date.now(),
-        lastReadAt: 0,
-        totalChapters: splitResult.chapters.length,
-        chapters: splitResult.chapters,
-        currentChapter: 0,
-        fileEncoding: encoding as FileEncoding,
-        chapterSplitMethod: helperUsed ? 'helper-llm' : splitResult.method,
+      setPreview({
+        fileName: bookTitle,
         fileSize: file.size,
-        primaryCharId: activeCharacterId || 'active',
-      };
-      await DB.saveCoReadBook(book);
-      const methodLabel = helperUsed
-        ? '帮工识别'
-        : splitResult.method === 'regex-auto'
-          ? `本地正则(${splitResult.matchedRule})`
-          : '按 5000 字兜底切片';
-      addToast(`《${bookTitle}》已加入书架（${splitResult.chapters.length}章,${methodLabel}）`, 'success');
-      await reload();
+        text,
+        encoding: encoding as FileEncoding,
+        chapters: splitResult.chapters,
+        splitMethod: splitResult.method,
+        matchedRule: splitResult.matchedRule,
+        loading: false,
+        helperError: null,
+      });
     } catch (err: any) {
       console.error('[coread] upload error:', err);
       addToast(`上传失败:${err?.message || err}`, 'error');
     } finally {
       setUploading(false);
+    }
+  };
+
+  // 🛟 麦麦 2026-09-22：预览里「保存这 N 章」 — 把当前 preview.chapters 存为 book
+  const handlePreviewSave = async () => {
+    if (!preview) return;
+    const chapters = preview.chapters;
+    if (chapters.length === 0) {
+      addToast('当前预览里没章节,先调帮工或选当整本读', 'error');
+      return;
+    }
+    const book: CoReadBook = {
+      id: `coread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      title: preview.fileName,
+      author: '',
+      uploadTime: Date.now(),
+      lastReadAt: 0,
+      totalChapters: chapters.length,
+      chapters,
+      currentChapter: 0,
+      fileEncoding: preview.encoding,
+      chapterSplitMethod: preview.splitMethod,
+      fileSize: preview.fileSize,
+      primaryCharId: activeCharacterId || 'active',
+    };
+    try {
+      await DB.saveCoReadBook(book);
+      const methodLabel = preview.splitMethod === 'helper-llm'
+        ? '帮工识别'
+        : preview.splitMethod === 'fallback-chunks'
+          ? '按 5000 字兜底切片'
+          : preview.matchedRule
+            ? `本地正则(${preview.matchedRule})`
+            : '本地兜底';
+      addToast(`《${preview.fileName}》已加入书架（${chapters.length}章,${methodLabel}）`, 'success');
+      setPreview(null);
+      await reload();
+    } catch (e: any) {
+      addToast(`保存失败:${e?.message || e}`, 'error');
+    }
+  };
+
+  // 🛟 麦麦 2026-09-22：预览里「当作整本读」 — 把整个 txt 存为 1 章
+  const handlePreviewSaveAsWhole = async () => {
+    if (!preview) return;
+    const wholeBook: CoReadBook = {
+      id: `coread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      title: preview.fileName,
+      author: '',
+      uploadTime: Date.now(),
+      lastReadAt: 0,
+      totalChapters: 1,
+      chapters: [{
+        index: 0,
+        title: preview.fileName,
+        content: preview.text.trim(),
+        charCount: preview.text.trim().length,
+      }],
+      currentChapter: 0,
+      fileEncoding: preview.encoding,
+      chapterSplitMethod: preview.splitMethod,
+      fileSize: preview.fileSize,
+      primaryCharId: activeCharacterId || 'active',
+    };
+    try {
+      await DB.saveCoReadBook(wholeBook);
+      addToast(`《${preview.fileName}》已按整本加入书架（1 章）`, 'success');
+      setPreview(null);
+      await reload();
+    } catch (e: any) {
+      addToast(`保存失败:${e?.message || e}`, 'error');
+    }
+  };
+
+  // 🛟 麦麦 2026-09-22：预览里「用帮工重拆」 — 调帮工更新 preview.chapters
+  const handlePreviewReSplit = async () => {
+    if (!preview || preview.loading) return;
+    const helperCfg = loadHelperConfig();
+    if (!helperCfg.enabled) {
+      addToast('帮工 API 没启用,先去共读设置里开', 'error');
+      return;
+    }
+    setPreview((cur) => cur ? { ...cur, loading: true, helperError: null } : cur);
+    try {
+      const mainApi: MainApiConfigForHelper | null = apiConfig
+        ? {
+            baseUrl: (apiConfig as any).baseUrl || '',
+            apiKey: (apiConfig as any).apiKey || '',
+            model: (apiConfig as any).model || '',
+            protocol: ((apiConfig as any).protocol === 'gemini' ? 'gemini' : 'openai'),
+          }
+        : null;
+      const candidates = extractTitleCandidates(preview.text);
+      const totalLines = preview.text.split(/\r?\n/).length;
+      if (candidates.length === 0) {
+        setPreview((cur) => cur ? { ...cur, loading: false, helperError: '没有候选标题行可分析' } : cur);
+        addToast('这本书里找不到疑似标题的行', 'error');
+        return;
+      }
+      const helperRes = await callHelperForChapterTitles(candidates, totalLines, helperCfg, mainApi);
+      if (helperRes.ok && helperRes.titleLineNos && helperRes.titleLineNos.length >= 2) {
+        const rebuilt = buildChaptersByLineNos(preview.text, helperRes.titleLineNos);
+        setPreview((cur) => cur ? {
+          ...cur,
+          loading: false,
+          helperError: null,
+          chapters: rebuilt.chapters,
+          splitMethod: 'helper-llm',
+          matchedRule: undefined,
+        } : cur);
+        addToast(`帮工识别出 ${rebuilt.chapters.length} 章`, 'success');
+      } else {
+        setPreview((cur) => cur ? { ...cur, loading: false, helperError: helperRes.error || '帮工没认出章节' } : cur);
+        addToast(`帮工失败:${helperRes.error || '没认出章节'}`, 'error');
+      }
+    } catch (e: any) {
+      setPreview((cur) => cur ? { ...cur, loading: false, helperError: e?.message || String(e) } : cur);
+      addToast(`帮工调用出错:${e?.message || e}`, 'error');
     }
   };
 
@@ -360,6 +446,120 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
       {/* 第 4 步:⚙ 已移到顶栏(暮色 9-18 反馈被底下挡住) — 这里不再有浮动按钮 */}
 
       <CoReadSettingsDrawer open={showSettings} onClose={() => setShowSettings(false)} activeTab="helper" />
+
+      {/* 🛟 麦麦 2026-09-22：上传预览 modal（暮色 12:57 决定 — 本地拆得对就保存,不对手动调帮工,不像拆就当整本读） */}
+      {preview && (
+        <div className="absolute inset-0 z-50" onClick={() => !preview.loading && setPreview(null)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="absolute inset-3 sm:inset-6 bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 顶部 */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
+              <div className="min-w-0 flex-1 pr-3">
+                <div className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">上传预览</div>
+                <div className="text-base font-semibold text-slate-800 truncate">《{preview.fileName}》</div>
+              </div>
+              <button
+                onClick={() => setPreview(null)}
+                disabled={preview.loading}
+                className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 active:scale-95 transition-all disabled:opacity-40"
+                aria-label="关闭预览"
+              >
+                <X size={16} weight="regular" />
+              </button>
+            </div>
+
+            {/* 主体 */}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {preview.chapters.length >= 2 ? (
+                <>
+                  <div className="text-[11px] uppercase tracking-wider text-slate-400 font-bold mb-2">
+                    本地拆出 {preview.chapters.length} 章
+                    {preview.splitMethod === 'helper-llm'
+                      ? ' · 帮工识别'
+                      : preview.splitMethod === 'fallback-chunks'
+                        ? ' · 按 5000 字兜底切片'
+                        : preview.matchedRule
+                          ? ` · 本地正则（${preview.matchedRule}）`
+                          : ''}
+                  </div>
+                  <div className="space-y-1">
+                    {preview.chapters.map((c) => (
+                      <div key={c.index} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 text-sm">
+                        <span className="text-slate-400 text-xs shrink-0 w-8">{c.index + 1}</span>
+                        <span className="flex-1 text-slate-700 truncate">{c.title || `第 ${c.index + 1} 部分`}</span>
+                        <span className="text-[10px] text-slate-400 shrink-0">{Math.round((c.charCount || 0) / 500) || 1}′</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[11px] uppercase tracking-wider text-slate-400 font-bold mb-2">
+                    没识别出章节标记,整本可读
+                  </div>
+                  <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 rounded-2xl p-4 max-h-96 overflow-y-auto">
+                    {preview.text.slice(0, 1200)}
+                    {preview.text.length > 1200 && <span className="text-slate-400">...（后续 {preview.text.length - 1200} 字省略）</span>}
+                  </div>
+                </>
+              )}
+              {preview.helperError && (
+                <div className="mt-3 text-xs text-rose-500 bg-rose-50 rounded-xl px-3 py-2 border border-rose-100">
+                  帮工出错:{preview.helperError}
+                </div>
+              )}
+              {preview.loading && (
+                <div className="mt-3 flex items-center justify-center gap-2 text-xs text-emerald-600">
+                  <div className="w-4 h-4 border-2 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
+                  帮工识别中...
+                </div>
+              )}
+            </div>
+
+            {/* 底部按钮 */}
+            <div className="border-t border-slate-100 px-5 py-4 shrink-0 space-y-2">
+              <div className="flex gap-2">
+                {preview.chapters.length >= 2 ? (
+                  <button
+                    onClick={handlePreviewSave}
+                    disabled={preview.loading}
+                    className="flex-1 py-3 text-sm font-bold rounded-2xl bg-emerald-500 text-white shadow-sm active:scale-95 transition-transform disabled:opacity-40"
+                  >
+                    保存这 {preview.chapters.length} 章
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePreviewSaveAsWhole}
+                    disabled={preview.loading}
+                    className="flex-1 py-3 text-sm font-bold rounded-2xl bg-emerald-500 text-white shadow-sm active:scale-95 transition-transform disabled:opacity-40"
+                  >
+                    当作整本读
+                  </button>
+                )}
+                <button
+                  onClick={handlePreviewReSplit}
+                  disabled={preview.loading}
+                  className="px-4 py-3 text-sm font-bold rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  {preview.splitMethod === 'helper-llm' ? '再用帮工' : '用帮工重拆'}
+                </button>
+              </div>
+              {preview.chapters.length >= 2 && (
+                <button
+                  onClick={handlePreviewSaveAsWhole}
+                  disabled={preview.loading}
+                  className="w-full py-2.5 text-[11px] text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-40"
+                >
+                  拆得不对?当作整本读
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

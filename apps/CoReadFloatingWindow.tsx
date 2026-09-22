@@ -8,7 +8,7 @@
 //   - 每章只发一次（内部维护 sentChapters Set）
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { CaretLeft, CaretRight, X, ArrowsOutSimple, ArrowsInSimple } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, X } from '@phosphor-icons/react';
 import { createPortal } from 'react-dom';
 import { DB, CoReadBook, CoReadAnnotation } from '../utils/db';
 
@@ -231,7 +231,7 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
       }}
       className="rounded-2xl shadow-2xl border border-white/30 flex flex-col overflow-hidden animate-slide-up select-none"
     >
-      {/* 顶部（拖把 + 章节标题 + 关闭） */}
+      {/* 顶部（拖把 + 章节标题 + 关闭） — 暮色 9-22 反馈：4 个按钮挤右上，改成只留关闭 */}
       <div
         className="flex items-center justify-between px-3 py-2 shrink-0"
         style={{ backgroundColor: t.bg, borderBottom: `1px solid ${t.sub}22`, cursor: 'grab' }}
@@ -245,26 +245,13 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
             第 {chapterIndex + 1} 章 · {chapter.title || '无标题'}
           </div>
         </div>
-        {/* 调高度按钮 */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            // 三档循环: small → medium → large → small
-            setSize((cur) => cur === 'small' ? 'medium' : cur === 'medium' ? 'large' : 'small');
-          }}
-          className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all mr-1"
-          style={{ color: t.sub, backgroundColor: `${t.sub}15` }}
-          aria-label="切换浮窗大小"
-          title="切换浮窗大小（小/中/大）"
-        >
-          {size === 'large' ? <ArrowsInSimple size={12} weight="bold" /> : <ArrowsOutSimple size={12} weight="bold" />}
-        </button>
+        {/* 关闭按钮（右上唯一按钮 — 其他控件挪到底部） */}
         <button
           onClick={(e) => {
             e.stopPropagation();
             onClose();
           }}
-          className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all"
+          className="w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all shrink-0"
           style={{ color: t.sub, backgroundColor: `${t.sub}15` }}
           aria-label="关闭浮窗"
         >
@@ -283,54 +270,64 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
         </div>
       </div>
 
-      {/* 底部翻页 */}
+      {/* 底部 — 字号/主题/大小（左侧）+ 翻页（右侧），暮色 9-22 反馈把右上 4 个按钮分散到这里 */}
       <div
-        className="flex items-center justify-between px-3 py-2 shrink-0 text-[11px]"
+        className="flex items-center justify-between gap-2 px-3 py-2 shrink-0 text-[11px]"
         style={{ backgroundColor: t.bg, borderTop: `1px solid ${t.sub}22`, color: t.sub }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <button
-          onClick={() => goChapter(-1)}
-          disabled={chapterIndex === 0}
-          className="px-2 py-1 disabled:opacity-30 active:scale-95 transition-transform font-bold"
-        >
-          ‹ 上一章
-        </button>
-        <span className="font-mono">第 {chapterIndex + 1} 章 / 共 {total} 章</span>
-        <button
-          onClick={() => goChapter(+1)}
-          disabled={chapterIndex === total - 1}
-          className="px-2 py-1 disabled:opacity-30 active:scale-95 transition-transform font-bold"
-        >
-          下一章 ›
-        </button>
-      </div>
-
-      {/* 字号 + 主题（在标题栏角落小按钮：tap 切换） */}
-      <div
-        className="absolute top-1 right-16 flex gap-1"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={() => {
-            const idx = FONT_SIZE_OPTIONS.indexOf(fontSize);
-            const next = FONT_SIZE_OPTIONS[(idx + 1) % FONT_SIZE_OPTIONS.length];
-            setFontSize(next);
-          }}
-          className="w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center"
-          style={{ color: t.sub, backgroundColor: `${t.sub}10` }}
-          title={`字号 ${fontSize}px（点切换）`}
-        >
-          A
-        </button>
-        <button
-          onClick={() => setTheme((cur) => cur === 'day' ? 'sepia' : cur === 'sepia' ? 'night' : 'day')}
-          className="w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center"
-          style={{ color: t.sub, backgroundColor: `${t.sub}10` }}
-          title={`主题 ${theme}（点切换）`}
-        >
-          ☀
-        </button>
+        {/* 左侧：字号 + 主题 + 大小 */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              const idx = FONT_SIZE_OPTIONS.indexOf(fontSize);
+              const next = FONT_SIZE_OPTIONS[(idx + 1) % FONT_SIZE_OPTIONS.length];
+              setFontSize(next);
+            }}
+            className="px-2 py-1 rounded-md active:scale-95 transition-transform font-bold"
+            style={{ backgroundColor: `${t.sub}15` }}
+            title={`字号 ${fontSize}px（点切换 14/16/18/20）`}
+          >
+            A {fontSize}
+          </button>
+          <button
+            onClick={() => setTheme((cur) => cur === 'day' ? 'sepia' : cur === 'sepia' ? 'night' : 'day')}
+            className="px-2 py-1 rounded-md active:scale-95 transition-transform font-bold"
+            style={{ backgroundColor: `${t.sub}15` }}
+            title={`主题 ${theme === 'day' ? '日间' : theme === 'sepia' ? '护眼' : '夜间'}（点切换）`}
+          >
+            ☀ {theme === 'day' ? '日' : theme === 'sepia' ? '护' : '夜'}
+          </button>
+          <button
+            onClick={() => {
+              // 三档循环: small → medium → large → small
+              setSize((cur) => cur === 'small' ? 'medium' : cur === 'medium' ? 'large' : 'small');
+            }}
+            className="px-2 py-1 rounded-md active:scale-95 transition-transform font-bold"
+            style={{ backgroundColor: `${t.sub}15` }}
+            title="浮窗大小（小/中/大循环切换）"
+          >
+            {size === 'small' ? '⤡ 小' : size === 'medium' ? '⤡ 中' : '⤢ 大'}
+          </button>
+        </div>
+        {/* 右侧：翻页 */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => goChapter(-1)}
+            disabled={chapterIndex === 0}
+            className="px-2 py-1 disabled:opacity-30 active:scale-95 transition-transform font-bold"
+          >
+            ‹ 上一章
+          </button>
+          <span className="font-mono px-1">第 {chapterIndex + 1} / 共 {total}</span>
+          <button
+            onClick={() => goChapter(+1)}
+            disabled={chapterIndex === total - 1}
+            className="px-2 py-1 disabled:opacity-30 active:scale-95 transition-transform font-bold"
+          >
+            下一章 ›
+          </button>
+        </div>
       </div>
     </div>,
     document.body

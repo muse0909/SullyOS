@@ -1,10 +1,10 @@
 // utils/coReadChapterParser.ts
 // 麦麦 2026-09-18：共读 txt 解析工具
 //   - encoding 识别（UTF-8 / UTF-16 LE/BE / GBK），中文 txt 不怕乱码
-//   - 7-8 种本地正则拆章（命中数最多的胜出）
+//   - 7 种本地正则拆章（命中数最多的胜出）
 //   - 兜底按 5000 字切片（章节数 = 1 时 fallback）
-//   - 步骤 4 帮工 API 兜底：在本地所有正则都不命中 / 命中的章节数 < 预期时
-//     把"疑似标题的短行 + 行号"发给帮工，帮工返回真标题行号列表
+//   - 步骤 4 帮工 API 兜底：暮色 2026-09-22 决定改成手动触发——本地拆出结果由用户预览确认
+//     需要时手动点「用帮工重拆」才调帮工
 
 // ─── 编码识别 ────────────────────────────────────
 
@@ -144,22 +144,7 @@ const CHAPTER_RULES: Rule[] = [
       return null;
     },
   },
-  // 7. 编号格式 "1 标题" / "0001 标题" / "001. 标题"
-  //   必须纯数字开头且后面是空格或 .——避免与正文中的"今天天气..."冲突
-  {
-    name: 'numbered',
-    test: (line) => {
-      const m = line.match(/^[ \t　]*(\d{1,5})[ \t　.．、:：]+(.+?)$/);
-      if (!m) return null;
-      const num = parseInt(m[1], 10);
-      if (isNaN(num) || num < 1 || num > 9999) return null;
-      const title = m[2].trim();
-      // 标题不能太长（避免误把段落当标题）
-      if (title.length > 60) return null;
-      return title;
-    },
-  },
-  // 8. 连载编号 "0001 01 标题" 这种格式
+  // 7. 连载编号 "0001 01 标题" 这种格式
   //   必须两段都是数字 + 第三段是中文 (>= 2 个汉字)
   {
     name: 'serial-num',
@@ -179,8 +164,8 @@ const CHAPTER_RULES: Rule[] = [
  *   2) 都不行（< 2 章）→ 兜底按 5000 字切片，标题"第X部分"
  *
  * 注意：本函数是"纯本地"的——不需要 AI。
- *   步骤 4 在"帮工 API 设置"开启后,主流程会先调本函数；
- *   本函数返回章节数 < 期望阈值（如 5）时才会调用帮工。
+ *   暮色 2026-09-22：帮工改成手动触发——上传后进预览界面，用户看拆出结果
+ *   不满意才手动点「用帮工重拆」。本函数不再自动触发帮工。
  */
 export function splitIntoChapters(text: string): SplitResult {
   const lines = text.split(/\r?\n/);

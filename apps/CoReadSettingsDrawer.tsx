@@ -9,9 +9,10 @@
 //
 //   协议切换 / 顶部主 API 状态卡 / emerald-50 圆角卡 → 跟之前一样保留
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X as CloseIcon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
+import Modal from '../components/os/Modal';
 import {
   loadHelperConfig,
   saveHelperConfig,
@@ -32,11 +33,84 @@ interface Props {
   onTabChange?: (tab: 'helper' | 'workbench') => void;
 }
 
+// 🛟 麦麦 2026-09-21：预设胶囊样式照搬主 API 设置（components/chat/ChatSettingsDrawer.tsx:18-81 PerCharPresetChip）
+//   - 只显示名字，不显示协议名
+//   - active 态 emerald-100，hover emerald-200 边框
+//   - 长按 500ms 删除 + 右键菜单删除（跟主 API 一致）
+//   - 因为预设可能很多（截图里 20+），按主 API 同款 11px 粗体紧凑胶囊
+const PRESET_LONG_PRESS_MS = 500;
+const HelperPresetChip: React.FC<{
+  preset: { id: string; name: string };
+  active: boolean;
+  proto: string;
+  activeUrl?: string;
+  onLoad: () => void;
+  onRequestDelete: () => void;
+}> = ({ preset, active, proto, activeUrl, onLoad, onRequestDelete }) => {
+  const timerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+  const [pressing, setPressing] = useState(false);
+
+  const clearPress = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPressing(false);
+  }, []);
+
+  const handlePointerDown = useCallback(() => {
+    clearPress();
+    longPressedRef.current = false;
+    setPressing(true);
+    timerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      setPressing(false);
+      onRequestDelete();
+    }, PRESET_LONG_PRESS_MS);
+  }, [clearPress, onRequestDelete]);
+
+  const handleClick = useCallback(() => {
+    if (longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
+    onLoad();
+  }, [onLoad]);
+
+  useEffect(() => () => clearPress(), [clearPress]);
+
+  return (
+    <button
+      type="button"
+      title={`${proto} · ${activeUrl || ''} · 点击加载，长按删除`}
+      onPointerDown={handlePointerDown}
+      onPointerUp={clearPress}
+      onPointerLeave={clearPress}
+      onPointerCancel={clearPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onRequestDelete();
+      }}
+      onClick={handleClick}
+      className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition-all cursor-pointer ${
+        active
+          ? 'bg-emerald-100 border-emerald-300 text-emerald-700'
+          : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-200'
+      } ${pressing ? 'scale-[0.98]' : ''}`}
+    >
+      {preset.name}
+    </button>
+  );
+};
+
 const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: externalTab, onTabChange }) => {
-  const { apiConfig, apiPresets = [], addToast } = useOS();
+  const { apiPresets = [], addToast, removeApiPreset } = useOS();
+  // 🛟 麦麦 2026-09-21：共读只显示主聊天预设 — 跟 Chat.tsx:237 / Like520Event.tsx:3537 同款过滤
+  const mainPresets = apiPresets.filter((p: any) => !p.kind || p.kind === 'main');
+  const [presetPendingDelete, setPresetPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<'helper' | 'workbench'>(externalTab || 'helper');
   const [cfg, setCfg] = useState<CoReadHelperConfig>(() => loadHelperConfig());
-  const [showKey, setShowKey] = useState(false);
 
   useEffect(() => {
     if (externalTab) setTab(externalTab);
@@ -66,6 +140,13 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
     setCfg(d);
     addToast('已重置', 'info');
   };
+  // 🛟 麦麦 2026-09-21：长按预设胶囊 → 弹确认 → 删全局预设（与 ChatSettingsDrawer 长按删除同模式）
+  const handleConfirmDeletePreset = () => {
+    if (!presetPendingDelete) return;
+    removeApiPreset(presetPendingDelete.id);
+    addToast(`已删除预设「${presetPendingDelete.name}」`, 'success');
+    setPresetPendingDelete(null);
+  };
   const handleClearLogs = async () => {
     if (!window.confirm('清空所有帮工日志？此操作不可撤销。')) return;
     try {
@@ -77,46 +158,44 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
     }
   };
 
-  // 同步主 API — 把 chat apiConfig 的字段填进 cfg
-  const handleSyncFromMain = () => {
-    if (!apiConfig || !(apiConfig as any).baseUrl || !(apiConfig as any).apiKey) {
-      addToast('主 API 还没配,先去 Chat 设置里填', 'error');
-      return;
-    }
-    setCfg((cur) => ({
-      ...cur,
-      inheritFromMain: true,
-      baseUrl: (apiConfig as any).baseUrl,
-      apiKey: (apiConfig as any).apiKey,
-      model: cur.model || (apiConfig as any).model || 'deepseek-chat',
-      protocol: (apiConfig as any).protocol || 'openai',
-    }));
-    addToast('已同步主 API 字段', 'success');
-  };
-
-  // 选用预设(跟 ChatSettingsDrawer 角色独立 API 的 onLoadPreset 同模式)
-  //   用预设的 baseUrl/apiKey/model/protocol 填进 cfg
+  // 选用预设 — 暮色 2026-09-21 反馈 4：按 protocol 分支读对应那组字段（修 Gemini 预设 URL/Key/Model 全是 OpenAI 那组的 bug）
+  //   跟 apps/Chat.tsx:334-351 handleLoadPresetIntoPerChar 同款逻辑
   const handlePickPreset = (preset: typeof apiPresets[number]) => {
     const c: any = preset.config || {};
-    const proto = (c.protocol || 'openai') as 'openai' | 'gemini';
-    setCfg((cur) => ({
-      ...cur,
-      inheritFromMain: true,
-      baseUrl: c.baseUrl || cur.baseUrl,
-      apiKey: c.apiKey || cur.apiKey,
-      model: cur.model || c.model || 'deepseek-chat',
-      protocol: proto,
-    }));
+    const loadedProto = (c.protocol || 'openai') as 'openai' | 'gemini';
+    if (loadedProto === 'gemini') {
+      setCfg((cur) => ({
+        ...cur,
+        inheritFromMain: true,
+        protocol: 'gemini',
+        baseUrl: c.geminiBaseUrl || c.baseUrl || '',
+        apiKey: c.geminiApiKey || c.apiKey || '',
+        model: c.geminiModel || c.model || '',
+      }));
+    } else {
+      setCfg((cur) => ({
+        ...cur,
+        inheritFromMain: true,
+        protocol: 'openai',
+        baseUrl: c.baseUrl || '',
+        apiKey: c.apiKey || '',
+        model: c.model || '',
+      }));
+    }
     addToast(`已选用「${preset.name}」`, 'success');
   };
 
   if (!open) return null;
 
-  // 主 API 预览字符串
-  const mainHost = (apiConfig as any)?.baseUrl ? ((apiConfig as any).baseUrl as string).replace(/^(https?:\/\/[^\/]+).*/, '$1') : '未配置';
-  const mainKey = (apiConfig as any)?.apiKey ? `${(apiConfig as any).apiKey.slice(0, 6)}…${(apiConfig as any).apiKey.slice(-4)}` : '—';
-  const mainModel = (apiConfig as any)?.model || '—';
-  const mainProto = (apiConfig as any)?.protocol || 'openai';
+  // 🛟 麦麦 2026-09-21：当前使用哪个 API — 根据 cfg 状态匹配预设，没匹配上显示「独立配置」
+  const matchedPreset = mainPresets.find((p: any) => {
+    const c = p.config || {};
+    const pProto = c.protocol || 'openai';
+    const pUrl = pProto === 'gemini' ? (c.geminiBaseUrl || c.baseUrl) : c.baseUrl;
+    const pKey = pProto === 'gemini' ? (c.geminiApiKey || c.apiKey) : c.apiKey;
+    const pModel = pProto === 'gemini' ? (c.geminiModel || c.model) : c.model;
+    return cfg.protocol === pProto && cfg.baseUrl === pUrl && cfg.apiKey === pKey && cfg.model === pModel;
+  });
 
   return (
     <div className="absolute inset-0 z-50" onClick={onClose}>
@@ -149,17 +228,6 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
         {/* Tab 内容 */}
         {tab === 'helper' && (
           <div className="p-4 space-y-4">
-            {/* === 📡 当前主 API 预览（sky-50） === */}
-            <section className="bg-sky-50/80 rounded-2xl p-3 border border-sky-100/80">
-              <div className="text-[10px] font-bold text-sky-600 uppercase tracking-widest mb-1.5 pl-1">📡 当前主 API（Chat 用）</div>
-              <div className="text-[11px] text-slate-700 space-y-0.5">
-                <div>基础地址:<span className="font-mono">{mainHost}</span></div>
-                <div>接口密钥:<span className="font-mono">{mainKey}</span></div>
-                <div>模型:<span className="font-mono">{mainModel}</span></div>
-                <div>协议:<span className="font-mono">{mainProto}</span></div>
-              </div>
-            </section>
-
             {/* === 帮工 API 同步开关：标明默认行为 === */}
             <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
               <div className="flex items-start justify-between">
@@ -178,7 +246,7 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
               </div>
             </section>
 
-            {/* === 协议切换 + URL/Key/Model 输入（跟图二角色 API 同款 emerald 圆角卡） === */}
+            {/* === 协议切换 + 我的预设 + 当前使用显示（emerald 圆角卡） === */}
             <section className="pt-2 border-t border-slate-100">
               <div className="text-[11px] font-bold text-slate-500 mb-2 mt-2">🔌 这个帮工的 API</div>
               <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">
@@ -186,6 +254,11 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
               </p>
 
               <div className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
+                {/* 🛟 麦麦 2026-09-21：当前使用哪个 API — 根据 cfg 状态匹配预设，没匹配上显示「独立配置」 */}
+                <div className="text-[10px] text-slate-500 px-1 leading-relaxed">
+                  当前使用：<span className="font-bold text-emerald-700">{matchedPreset?.name || '独立配置'}</span> · {cfg.model || '—'}
+                </div>
+
                 {/* 协议切换胶囊 — 修暮色反馈的 Gemini 点着没反应 */}
                 <div className="bg-slate-50/60 rounded-2xl p-1 flex gap-1 border border-slate-200/50">
                   {(['openai', 'gemini'] as const).map((p) => {
@@ -209,98 +282,44 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
                   })}
                 </div>
 
-                {/* 📚 我的预设（暮色 17:18 反馈要的"主 API 预设" — 跟 ChatSettingsDrawer 角色 API 段同款） */}
-                {apiPresets.length > 0 && (
+                {/* 📚 我的预设（暮色 21:22 反馈：只显示主聊天预设 + 胶囊样式照搬主 API 设置） */}
+                {mainPresets.length > 0 && (
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">📚 我的预设</label>
                     <div className="flex gap-2 flex-wrap">
-                      {apiPresets.map((preset) => {
+                      {mainPresets.map((preset) => {
+                        // 麦麦 2026-09-21：active 判断按 protocol 选对应那组字段（修 Gemini 预设漏判 bug — 跟 ChatSettingsDrawer.tsx:381-391 同款）
                         const c: any = preset.config || {};
                         const proto = (c.protocol || 'openai') as 'openai' | 'gemini';
+                        const presetUrl = proto === 'gemini' ? (c.geminiBaseUrl || c.baseUrl) : c.baseUrl;
+                        const presetKey = proto === 'gemini' ? (c.geminiApiKey || c.apiKey) : c.apiKey;
+                        const presetModel = proto === 'gemini' ? (c.geminiModel || c.model) : c.model;
                         const active =
-                          cfg.baseUrl === c.baseUrl &&
-                          cfg.apiKey === c.apiKey &&
-                          cfg.protocol === proto;
+                          cfg.protocol === proto &&
+                          cfg.baseUrl === presetUrl &&
+                          cfg.apiKey === presetKey &&
+                          cfg.model === presetModel;
                         return (
-                          <button
+                          <HelperPresetChip
                             key={preset.id}
-                            type="button"
-                            onClick={() => handlePickPreset(preset)}
-                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] transition-all ${active ? 'bg-emerald-500 text-white shadow-sm' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 active:scale-95'}`}
-                          >
-                            <span className="font-medium">{preset.name}</span>
-                            <span className={`text-[9px] ${active ? 'text-white/80' : 'text-slate-400'}`}>{proto}</span>
-                          </button>
+                            preset={preset}
+                            active={active}
+                            proto={proto}
+                            activeUrl={presetUrl}
+                            onLoad={() => handlePickPreset(preset)}
+                            onRequestDelete={() => setPresetPendingDelete({ id: preset.id, name: preset.name })}
+                          />
                         );
                       })}
                     </div>
                     <p className="text-[10px] text-slate-400 px-1 mt-1.5 leading-relaxed">
-                      点胶囊直接复制这套预设的 baseUrl + 接口密钥 + 模型。帮工独立用 key,不消耗 Chat 通道。
+                      点胶囊直接复制这套预设的 baseUrl + 接口密钥 + 模型。长按胶囊可删除。帮工独立用 key,不消耗 Chat 通道。
                     </p>
                   </div>
                 )}
 
-                {/* URL */}
-                <div>
-                  <div className="flex justify-between items-end mb-1 pl-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">URL</label>
-                    <button onClick={handleSyncFromMain} className="text-[10px] text-emerald-600 hover:text-emerald-700">
-                      同步主 API
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={cfg.baseUrl}
-                    onChange={(e) => setCfg((c) => ({ ...c, baseUrl: e.target.value }))}
-                    placeholder="https://api.deepseek.com/v1"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                  />
-                </div>
-
-                {/* Key */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">Key</label>
-                  <div className="relative">
-                    <input
-                      type={showKey ? 'text' : 'password'}
-                      value={cfg.apiKey}
-                      onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))}
-                      placeholder="sk-…"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-16 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                    />
-                    <button onClick={() => setShowKey((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-bold px-2 py-0.5">
-                      {showKey ? '隐藏' : '显示'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Model */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">模型</label>
-                  <input
-                    type="text"
-                    value={cfg.model}
-                    onChange={(e) => setCfg((c) => ({ ...c, model: e.target.value }))}
-                    placeholder="deepseek-chat"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                  />
-                  <div className="text-[10px] text-slate-400 mt-1">
-                    推荐 deepseek-chat / DeepSeek-V3 / MiniMax-Text-01 等,中文拆章准确
-                  </div>
-                </div>
-
-                {/* 超时 */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block pl-1">超时 (毫秒)</label>
-                  <input
-                    type="number"
-                    min={5000}
-                    max={120000}
-                    value={cfg.timeoutMs}
-                    onChange={(e) => setCfg((c) => ({ ...c, timeoutMs: parseInt(e.target.value, 10) || 30000 }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:border-emerald-300 outline-none transition-all"
-                  />
-                </div>
+                {/* 🛟 麦麦 2026-09-21：URL/Key/Model/超时 输入框全删 — 共读帮工配置改用预设 + 协议切换管理，
+                    字段值仍由 cfg 保留（点预设时填进去，调 helper 用到），只是不再让用户手敲。 */}
               </div>
             </section>
 
@@ -393,6 +412,37 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
           </div>
         )}
       </div>
+
+      {/* 🛟 麦麦 2026-09-21：长按预设胶囊 → 删除确认（跟 ChatSettingsDrawer 同款 Modal） */}
+      <Modal
+        isOpen={!!presetPendingDelete}
+        title="删除预设"
+        onClose={() => setPresetPendingDelete(null)}
+        zIndex={220}
+        footer={
+          <div className="w-full grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setPresetPendingDelete(null)}
+              className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-full active:scale-95 transition-all"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleConfirmDeletePreset}
+              className="w-full py-3 bg-red-500 text-white font-bold rounded-full active:scale-95 transition-all"
+            >
+              删除
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-slate-700 leading-relaxed">
+          确认删除预设 <span className="font-bold text-slate-900">「{presetPendingDelete?.name}」</span> 吗？
+        </p>
+        <p className="text-xs text-slate-500 leading-relaxed mt-2">
+          这个预设会从全局预设列表里移除,删除后无法恢复。
+        </p>
+      </Modal>
     </div>
   );
 };

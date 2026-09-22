@@ -519,8 +519,8 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
               )}
             </div>
 
-            {/* 底部按钮 */}
-            <div className="border-t border-slate-100 px-5 py-4 shrink-0 space-y-2">
+            {/* 底部按钮 — 3 个并排（暮色 9-22 反馈：当作整本读不再放第二行） */}
+            <div className="border-t border-slate-100 px-5 py-4 shrink-0">
               <div className="flex gap-2">
                 {preview.chapters.length >= 2 ? (
                   <button
@@ -542,20 +542,20 @@ const CoReadBookshelfPage: React.FC<Props> = ({ onBack }) => {
                 <button
                   onClick={handlePreviewReSplit}
                   disabled={preview.loading}
-                  className="px-4 py-3 text-sm font-bold rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform disabled:opacity-40"
+                  className="flex-1 py-3 text-[11px] font-bold rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform disabled:opacity-40"
                 >
                   {preview.splitMethod === 'helper-llm' ? '再用帮工' : '用帮工重拆'}
                 </button>
+                {preview.chapters.length >= 2 && (
+                  <button
+                    onClick={handlePreviewSaveAsWhole}
+                    disabled={preview.loading}
+                    className="flex-1 py-3 text-[11px] font-bold rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform disabled:opacity-40"
+                  >
+                    当作整本读
+                  </button>
+                )}
               </div>
-              {preview.chapters.length >= 2 && (
-                <button
-                  onClick={handlePreviewSaveAsWhole}
-                  disabled={preview.loading}
-                  className="w-full py-2.5 text-[11px] text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-40"
-                >
-                  拆得不对?当作整本读
-                </button>
-              )}
             </div>
           </div>
         </div>

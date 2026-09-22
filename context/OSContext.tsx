@@ -262,6 +262,11 @@ interface OSContextType {
   realtimeConfig: RealtimeConfig;
   updateRealtimeConfig: (updates: Partial<RealtimeConfig>) => void;
 
+  // 🛟 麦麦 2026-09-22：共读浮窗 session 开关 — Chat.tsx 浮窗挂载时打开,关闭时关掉
+  //   路线 C 据此判断要不要把章节正文塞进系统提示
+  coReadSessionActive: boolean;
+  setCoReadSessionActive: (v: boolean) => void;
+
   // 记忆宫殿全局配置（所有角色共用）
   memoryPalaceConfig: MemoryPalaceGlobalConfig;
   updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
@@ -716,6 +721,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
+  // 🛟 麦麦 2026-09-22：共读浮窗挂载状态 — 暮色要"浮窗开着 = 江澈能看到共读，浮窗关 = 看不到"
+  //   Chat.tsx 里的浮窗挂上 → true，关 → false
+  const [coReadSessionActive, setCoReadSessionActive] = useState(false);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
   const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
     try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
@@ -4615,6 +4623,8 @@ if (!isVisible || !isChattingWithThisChar) {
     removeApiPreset,
     realtimeConfig,
     updateRealtimeConfig,
+    coReadSessionActive,
+    setCoReadSessionActive,
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
     syncEmotionApiToAllCharacters,

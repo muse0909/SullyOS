@@ -633,6 +633,9 @@ interface UseChatAIProps {
     onImageBedWarning?: (msg: string) => void;
     // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数（每次成功放歌 +1）
     updateUserProfile?: (updates: Partial<UserProfile>) => void;
+    // 🛟 麦麦 2026-09-22：暮色原话"浮窗开 = 江澈看到共读，浮窗关 = 看不到"
+    //   Chat.tsx 里的浮窗挂上 → true；关掉 → false；buildSystemPrompt 据此决定是否注入章节
+    coReadActive?: boolean;
 }
 
 export const useChatAI = ({
@@ -652,6 +655,7 @@ export const useChatAI = ({
     onImageBedWarning,
     // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌的每日次数计数
     updateUserProfile,
+    coReadActive,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -946,6 +950,8 @@ export const useChatAI = ({
                 // 暮色 2026-08-05：isProactive=false（正常聊天不带真实世界感知）
                 //   主动消息 / 早晚推送走 OSContext.runProactive 路径，isProactive=true
                 false,
+                // 🛟 麦麦 2026-09-22：共读开关 — 浮窗挂着 true（注入章节），关掉 false（不注入）
+                coReadActive,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {

@@ -67,7 +67,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -187,6 +187,10 @@ const Chat: React.FC = () => {
     // 🛟 麦麦 2026-09-22：共读浮窗状态 — showCoReadPicker 控制"选书"弹层；activeCoRead 控制浮窗
     const [showCoReadPicker, setShowCoReadPicker] = useState(false);
     const [activeCoRead, setActiveCoRead] = useState<{ book: CoReadBook; chapterIndex: number } | null>(null);
+    // 🛟 浮窗挂载同步共读开关 — 浮窗挂上 → 注入章节正文；关掉 → 不注入
+    useEffect(() => {
+        setCoReadSessionActive(activeCoRead !== null);
+    }, [activeCoRead]);
 
     // 🛟 人格抢救 Modal：角色被"情感型 0.3"默认值卡住时，进聊天强制弹窗重跑一次检测
     type PersonalityRescueState =
@@ -464,6 +468,7 @@ const Chat: React.FC = () => {
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
         updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
+        coReadActive: coReadSessionActive, // 🛟 麦麦 2026-09-22：浮窗挂上 true，关掉 false
     });
 
     // 暮色 2026-08-24 12:45 删：MCP 工具调用灰色小气泡的渲染

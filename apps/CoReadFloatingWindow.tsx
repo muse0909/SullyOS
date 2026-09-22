@@ -81,12 +81,25 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
   const [chapterIndex, setChapterIndex] = useState(initialChapter);
   // 🛟 麦麦 2026-09-22：每章只发一次 — 维护已发过的章节集合
   const sentChaptersRef = useRef<Set<number>>(new Set());
-  // 🛟 浮窗挂载时立即给江澈发一次当前章节（暮色"邀请共读"那一下）
+  // 🛟 暮色 19:00 反馈：浮窗打开不自动发，加按钮手动触发"邀请共读"那一下
+  const [hasSentInitial, setHasSentInitial] = useState(false);
+  // 🛟 暮色 19:00 反馈：每次进同一章 — 浮窗挂载时从 IDB 重读最新 currentChapter 校正
   useEffect(() => {
-    if (sentChaptersRef.current.has(initialChapter)) return;
-    sentChaptersRef.current.add(initialChapter);
-    const chapter = book.chapters[initialChapter];
-    if (chapter) onSendChapter(initialChapter);
+    let cancelled = false;
+    (async () => {
+      try {
+        const fresh = await DB.getCoReadBook(book.id);
+        if (cancelled || !fresh) return;
+        const freshChapter = Math.max(0, Math.min((fresh.totalChapters || fresh.chapters.length) - 1, fresh.currentChapter || 0));
+        if (freshChapter !== chapterIndex) {
+          setChapterIndex(freshChapter);
+          onChapterChange(freshChapter);
+        }
+      } catch (e) {
+        console.warn('[co-read-float] refresh book position failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []); // 仅挂载时跑一次
   // 浮窗拖动 — 复用 ApiQuickFloat 的 onPointerDown/Move/Up 模式
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -239,6 +252,23 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
             第 {chapterIndex + 1} 章 · {chapter.title || '无标题'}
           </div>
         </div>
+        {/* 5 个按钮并排：📤 发送 / A 字号 / ☀ 主题 / ⤡ 大小 / X 关闭 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            // 暮色 19:00：浮窗打开不自动发，加按钮手动触发"邀请共读"
+            // 每章一次：sentChaptersRef 已经记录当前章节的话，重复点不会再发（避免 spam）
+            if (sentChaptersRef.current.has(chapterIndex)) return;
+            sentChaptersRef.current.add(chapterIndex);
+            setHasSentInitial(true);
+            onSendChapter(chapterIndex);
+          }}
+          className={`px-2 py-1 rounded-md active:scale-95 transition-transform font-bold text-[11px] shrink-0 ${hasSentInitial ? 'opacity-50' : ''}`}
+          style={{ color: hasSentInitial ? t.sub : '#10b981', backgroundColor: hasSentInitial ? `${t.sub}15` : '#10b98122' }}
+          title={hasSentInitial ? '已发送邀请（点可重发）' : '发给江澈这一章（每章一次）'}
+        >
+          📤 {hasSentInitial ? '已发' : '发送'}
+        </button>
         {/* 4 个按钮并排：A 字号 / ☀ 主题 / ⤡ 大小 / X 关闭 */}
         <button
           onClick={(e) => {

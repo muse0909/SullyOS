@@ -1,11 +1,14 @@
 import ThinkingBubble from "../components/chat/ThinkingBubble";
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { DB } from '../utils/db';
+import { DB, CoReadBook } from '../utils/db';
 // 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
 import { phoneUsage } from '../utils/phoneUsage';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
+// 🛟 麦麦 2026-09-22：共读浮窗（暮色点 + 号里"共读"→ 选书 → 浮窗 + 自动发章节内容给江澈）
+import CoReadFloatingBookshelf from './CoReadFloatingBookshelf';
+import CoReadFloatingWindow from './CoReadFloatingWindow';
 
 /**
  * Module-level 一起听通知去重集合
@@ -181,6 +184,9 @@ const Chat: React.FC = () => {
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
+    // 🛟 麦麦 2026-09-22：共读浮窗状态 — showCoReadPicker 控制"选书"弹层；activeCoRead 控制浮窗
+    const [showCoReadPicker, setShowCoReadPicker] = useState(false);
+    const [activeCoRead, setActiveCoRead] = useState<{ book: CoReadBook; chapterIndex: number } | null>(null);
 
     // 🛟 人格抢救 Modal：角色被"情感型 0.3"默认值卡住时，进聊天强制弹窗重跑一次检测
     type PersonalityRescueState =
@@ -1535,6 +1541,11 @@ const Chat: React.FC = () => {
                 addToast(next ? 'HTML 模式已开启' : 'HTML 模式已关闭', next ? 'success' : 'info');
                 break;
             }
+            case 'co-read':
+                // 🛟 麦麦 2026-09-22：暮色点 + 号里「共读」→ 打开迷你书架选择器
+                setShowPanel('none');
+                setShowCoReadPicker(true);
+                break;
             case 'html-mode-settings': {
                 // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
                 if (!char) break;
@@ -3607,6 +3618,38 @@ if (keepN > 0) {
                     )}
                 </div>
             </Modal>
+
+            {/* 🛟 麦麦 2026-09-22：共读迷你书架选择器（暮色点 + 号里"共读"触发） */}
+            {showCoReadPicker && (
+                <CoReadFloatingBookshelf
+                    onClose={() => setShowCoReadPicker(false)}
+                    onPick={(book) => {
+                        setShowCoReadPicker(false);
+                        // 默认从 currentChapter 开始读，进度跟全屏阅读器一致
+                        setActiveCoRead({ book, chapterIndex: book.currentChapter || 0 });
+                    }}
+                />
+            )}
+
+            {/* 🛟 麦麦 2026-09-22：共读浮窗 — 跟全屏阅读器一样渲染章节，但带拖动 + 高度三档 */}
+            {activeCoRead && (
+                <CoReadFloatingWindow
+                    book={activeCoRead.book}
+                    initialChapter={activeCoRead.chapterIndex}
+                    onClose={() => setActiveCoRead(null)}
+                    onChapterChange={(chapterIndex) => {
+                        setActiveCoRead((cur) => cur ? { ...cur, chapterIndex } : cur);
+                    }}
+                    onSendChapter={(chapterIndex, content) => {
+                        // 🛟 自动发章节内容给江澈（每章只一次 — 在 CoReadFloatingWindow 内部去重）
+                        const book = activeCoRead.book;
+                        const chapter = book.chapters[chapterIndex];
+                        if (!chapter) return;
+                        const msg = `[共读] 暮色邀请 ${char?.name || '你'} 共读《${book.title}》第 ${chapterIndex + 1} 章《${chapter.title || '无标题'}》\n\n${content}`;
+                        handleSendText(msg, 'text');
+                    }}
+                />
+            )}
         </div>
     );
 };

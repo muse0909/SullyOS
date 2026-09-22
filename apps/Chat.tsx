@@ -1,11 +1,14 @@
 import ThinkingBubble from "../components/chat/ThinkingBubble";
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { DB } from '../utils/db';
+import { DB, CoReadBook } from '../utils/db';
 // 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
 import { phoneUsage } from '../utils/phoneUsage';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
+// 🛟 麦麦 2026-09-22：共读浮窗（暮色点 + 号里"共读"→ 选书 → 浮窗 + 自动发章节内容给江澈）
+import CoReadFloatingBookshelf from './CoReadFloatingBookshelf';
+import CoReadFloatingWindow from './CoReadFloatingWindow';
 
 /**
  * Module-level 一起听通知去重集合
@@ -64,7 +67,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -181,6 +184,13 @@ const Chat: React.FC = () => {
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
+    // 🛟 麦麦 2026-09-22：共读浮窗状态 — showCoReadPicker 控制"选书"弹层；activeCoRead 控制浮窗
+    const [showCoReadPicker, setShowCoReadPicker] = useState(false);
+    const [activeCoRead, setActiveCoRead] = useState<{ book: CoReadBook; chapterIndex: number } | null>(null);
+    // 🛟 浮窗挂载同步共读开关 — 浮窗挂上 → 注入章节正文；关掉 → 不注入
+    useEffect(() => {
+        setCoReadSessionActive(activeCoRead !== null);
+    }, [activeCoRead]);
 
     // 🛟 人格抢救 Modal：角色被"情感型 0.3"默认值卡住时，进聊天强制弹窗重跑一次检测
     type PersonalityRescueState =
@@ -458,6 +468,7 @@ const Chat: React.FC = () => {
         updateCharacter,
         onImageBedWarning: pushImageBedWarning,
         updateUserProfile,  // 暮色 2026-08-01：用于持久化音乐 AI 主动放歌每日次数
+        coReadActive: coReadSessionActive, // 🛟 麦麦 2026-09-22：浮窗挂上 true，关掉 false
     });
 
     // 暮色 2026-08-24 12:45 删：MCP 工具调用灰色小气泡的渲染
@@ -1392,6 +1403,47 @@ const Chat: React.FC = () => {
         // Manual trigger only: Removed auto triggerAI call
     };
 
+    // 🛟 麦麦 2026-09-22：共读浮窗翻页时自动发的章节消息
+    //   暮色 14:51 反馈两件事:
+    //   1) 章节正文不要发在聊天框里(太长),只发个简短 hint(metadata.coReadHint=true 标记)
+    //   2) 必须调 triggerAI 让江澈回应,否则日志没调用
+    //   章节正文通过 system 上下文注入(路线 C 已有)— 翻页先 updateCoReadBookProgress,
+    //   triggerAI 时 buildCoReadLightBlock 自动读到新章节的 currentChapter + 章节正文
+    const handleFloatingSendChapter = async (chapterIndex: number) => {
+        const book = activeCoRead?.book;
+        if (!char || !book) return;
+        const chapter = book.chapters[chapterIndex];
+        if (!chapter) return;
+
+        // 1. 聊天框只显示个简短 hint(正文不放在这里)
+        const hintText = `📖 共读《${book.title}》第 ${chapterIndex + 1} 章《${chapter.title || '无标题'}》`;
+        const msgPayload: any = {
+            charId: char.id,
+            role: 'user',
+            type: 'text',
+            content: hintText,
+            metadata: {
+                coReadHint: true,
+                coReadBookId: book.id,
+                coReadChapterIndex: chapterIndex,
+                coReadChapterTitle: chapter.title || '',
+            },
+        };
+
+        try {
+            await DB.saveMessage(msgPayload);
+            // 2. 同步 IDB 的 currentChapter + lastReadAt → 路线 C 上下文能读到新章节
+            await DB.updateCoReadBookProgress(book.id, chapterIndex);
+            // 3. reload 让消息出现在聊天框
+            await reloadMessages(visibleCountRef.current);
+            // 4. 调 triggerAI 让江澈回应(显式触发,因为 handleSendText 不会自动调)
+            const newMsgs: Message[] = [...safeMessages, { ...msgPayload, id: Date.now() } as Message];
+            triggerAI(newMsgs);
+        } catch (e: any) {
+            console.error('[co-read] send chapter hint failed:', e?.message || e);
+        }
+    };
+
     const handleReroll = async () => {
         if (isTyping || safeMessages.length === 0) return;
 
@@ -1535,6 +1587,11 @@ const Chat: React.FC = () => {
                 addToast(next ? 'HTML 模式已开启' : 'HTML 模式已关闭', next ? 'success' : 'info');
                 break;
             }
+            case 'co-read':
+                // 🛟 麦麦 2026-09-22：暮色点 + 号里「共读」→ 打开迷你书架选择器
+                setShowPanel('none');
+                setShowCoReadPicker(true);
+                break;
             case 'html-mode-settings': {
                 // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
                 if (!char) break;
@@ -3607,6 +3664,31 @@ if (keepN > 0) {
                     )}
                 </div>
             </Modal>
+
+            {/* 🛟 麦麦 2026-09-22：共读迷你书架选择器（暮色点 + 号里"共读"触发） */}
+            {showCoReadPicker && (
+                <CoReadFloatingBookshelf
+                    onClose={() => setShowCoReadPicker(false)}
+                    onPick={(book) => {
+                        setShowCoReadPicker(false);
+                        // 默认从 currentChapter 开始读，进度跟全屏阅读器一致
+                        setActiveCoRead({ book, chapterIndex: book.currentChapter || 0 });
+                    }}
+                />
+            )}
+
+            {/* 🛟 麦麦 2026-09-22：共读浮窗 — 跟全屏阅读器一样渲染章节，但带拖动 + 高度三档 */}
+            {activeCoRead && (
+                <CoReadFloatingWindow
+                    book={activeCoRead.book}
+                    initialChapter={activeCoRead.chapterIndex}
+                    onClose={() => setActiveCoRead(null)}
+                    onChapterChange={(chapterIndex) => {
+                        setActiveCoRead((cur) => cur ? { ...cur, chapterIndex } : cur);
+                    }}
+                    onSendChapter={handleFloatingSendChapter}
+                />
+            )}
         </div>
     );
 };

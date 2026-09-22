@@ -153,7 +153,10 @@ export function buildCoReadSystemBlock(state: ActiveCoReadState | null): string 
  * 暴露这个是为了让"暮色点开聊天窗口但还没发消息时,江澈主动消息能感知"也能继续用
  *   buildCoReadSystemBlock 已经覆盖
  */
-export async function buildCoReadLightBlock(activeCharId: string | undefined): Promise<string> {
+export async function buildCoReadLightBlock(activeCharId: string | undefined, coReadActive: boolean = true): Promise<string> {
+  // 🛟 麦麦 2026-09-22：暮色原话"浮窗开着 = 注入，浮窗关了 = 不注入"
+  //   Chat.tsx 里的浮窗挂上 → coReadActive=true;关掉 → false;此时返回空串，不注入章节正文
+  if (!coReadActive) return '';
   const state = await getActiveCoReadState(activeCharId);
   return buildCoReadSystemBlock(state);
 }

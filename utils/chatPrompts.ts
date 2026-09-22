@@ -221,6 +221,9 @@ export const ChatPrompts = {
         // 麦麦 2026-09-12：22 个新文件传 { forFirePack: true } / { useVisionDescriptions: ... }
         // 这种对象形式（旧版只接布尔）。这里兼容两种。
         isProactive?: boolean | { forFirePack?: boolean; useVisionDescriptions?: boolean },
+        // 🛟 麦麦 2026-09-22：暮色原话"浮窗开着 = 江澈看到共读，浮窗关 = 看不到"
+        //   Chat.tsx 里的浮窗挂上 → true;关掉 → false;Chat 那边传进来控制章节正文注入
+        coReadActive?: boolean,
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -1078,7 +1081,7 @@ ${!isPureMode && isXiaoZhiTiaoEnabled() ? `${[
  `}` : ''}
 
 ${!isPureMode ? await buildMailboxPrompt(char.id, char.name) : ''}
-${!isPureMode ? await buildCoReadLightBlock(char.id) : ''}
+${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : ''}
 
 `;
 

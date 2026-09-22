@@ -17,7 +17,9 @@ interface Props {
   initialChapter: number;
   onClose: () => void;
   onChapterChange: (chapterIndex: number) => void;
-  onSendChapter: (chapterIndex: number, content: string) => void;
+  // 🛟 暮色 2026-09-22 反馈：不再传章节正文 — 正文只塞到 system 上下文(路线 C),
+  //   聊天框只发简短 hint;onSendChapter 只传章节号
+  onSendChapter: (chapterIndex: number) => void;
 }
 
 // 🛟 麦麦 2026-09-22：高度三档 + 位置都存 localStorage（用户调过一次记住）
@@ -87,7 +89,7 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
     if (sentChaptersRef.current.has(initialChapter)) return;
     sentChaptersRef.current.add(initialChapter);
     const chapter = book.chapters[initialChapter];
-    if (chapter) onSendChapter(initialChapter, chapter.content || '');
+    if (chapter) onSendChapter(initialChapter);
   }, []); // 仅挂载时跑一次
   // 浮窗拖动 — 复用 ApiQuickFloat 的 onPointerDown/Move/Up 模式
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -174,7 +176,7 @@ const CoReadFloatingWindow: React.FC<Props> = ({ book, initialChapter, onClose, 
     if (!sentChaptersRef.current.has(next)) {
       sentChaptersRef.current.add(next);
       const chapter = book.chapters[next];
-      onSendChapter(next, chapter?.content || '');
+      onSendChapter(next);
     }
   }, [book, chapterIndex, onChapterChange, onSendChapter]);
 

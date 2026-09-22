@@ -1398,6 +1398,47 @@ const Chat: React.FC = () => {
         // Manual trigger only: Removed auto triggerAI call
     };
 
+    // 🛟 麦麦 2026-09-22：共读浮窗翻页时自动发的章节消息
+    //   暮色 14:51 反馈两件事:
+    //   1) 章节正文不要发在聊天框里(太长),只发个简短 hint(metadata.coReadHint=true 标记)
+    //   2) 必须调 triggerAI 让江澈回应,否则日志没调用
+    //   章节正文通过 system 上下文注入(路线 C 已有)— 翻页先 updateCoReadBookProgress,
+    //   triggerAI 时 buildCoReadLightBlock 自动读到新章节的 currentChapter + 章节正文
+    const handleFloatingSendChapter = async (chapterIndex: number) => {
+        const book = activeCoRead?.book;
+        if (!char || !book) return;
+        const chapter = book.chapters[chapterIndex];
+        if (!chapter) return;
+
+        // 1. 聊天框只显示个简短 hint(正文不放在这里)
+        const hintText = `📖 共读《${book.title}》第 ${chapterIndex + 1} 章《${chapter.title || '无标题'}》`;
+        const msgPayload: any = {
+            charId: char.id,
+            role: 'user',
+            type: 'text',
+            content: hintText,
+            metadata: {
+                coReadHint: true,
+                coReadBookId: book.id,
+                coReadChapterIndex: chapterIndex,
+                coReadChapterTitle: chapter.title || '',
+            },
+        };
+
+        try {
+            await DB.saveMessage(msgPayload);
+            // 2. 同步 IDB 的 currentChapter + lastReadAt → 路线 C 上下文能读到新章节
+            await DB.updateCoReadBookProgress(book.id, chapterIndex);
+            // 3. reload 让消息出现在聊天框
+            await reloadMessages(visibleCountRef.current);
+            // 4. 调 triggerAI 让江澈回应(显式触发,因为 handleSendText 不会自动调)
+            const newMsgs: Message[] = [...safeMessages, { ...msgPayload, id: Date.now() } as Message];
+            triggerAI(newMsgs);
+        } catch (e: any) {
+            console.error('[co-read] send chapter hint failed:', e?.message || e);
+        }
+    };
+
     const handleReroll = async () => {
         if (isTyping || safeMessages.length === 0) return;
 
@@ -3640,14 +3681,7 @@ if (keepN > 0) {
                     onChapterChange={(chapterIndex) => {
                         setActiveCoRead((cur) => cur ? { ...cur, chapterIndex } : cur);
                     }}
-                    onSendChapter={(chapterIndex, content) => {
-                        // 🛟 自动发章节内容给江澈（每章只一次 — 在 CoReadFloatingWindow 内部去重）
-                        const book = activeCoRead.book;
-                        const chapter = book.chapters[chapterIndex];
-                        if (!chapter) return;
-                        const msg = `[共读] 暮色邀请 ${char?.name || '你'} 共读《${book.title}》第 ${chapterIndex + 1} 章《${chapter.title || '无标题'}》\n\n${content}`;
-                        handleSendText(msg, 'text');
-                    }}
+                    onSendChapter={handleFloatingSendChapter}
                 />
             )}
         </div>

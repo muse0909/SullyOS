@@ -256,7 +256,7 @@ const CoReadSettingsDrawer: React.FC<Props> = ({ open, onClose, activeTab: exter
               <div className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
                 {/* 🛟 麦麦 2026-09-21：当前使用哪个 API — 根据 cfg 状态匹配预设，没匹配上显示「独立配置」 */}
                 <div className="text-[10px] text-slate-500 px-1 leading-relaxed">
-                  当前使用：<span className="font-bold text-emerald-700">{matchedPreset?.name || '独立配置'}</span> · {cfg.protocol}
+                  当前使用：<span className="font-bold text-emerald-700">{matchedPreset?.name || '独立配置'}</span> · {cfg.model || '—'}
                 </div>
 
                 {/* 协议切换胶囊 — 修暮色反馈的 Gemini 点着没反应 */}

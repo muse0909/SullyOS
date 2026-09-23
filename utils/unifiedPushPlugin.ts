@@ -95,7 +95,8 @@ export const ensureUnifiedPushSubscription = async (
   //   SDK bind 我们的 PushService → onNewEndpoint 写 SP. 这一路跨进程跨网络,
   //   distributor 处理慢 / bind service 启动慢都可能让 15s 不够。
   //   提到 180 次 250ms = 45s. 但加了 lastError 早返回, 真实失败不会等满。
-  for (let attempt = 0; attempt < 180; attempt += 1) {
+  // 暮色 2026-09-23 21:34：先改回 60 次 15s 加快诊断轮询，定位完成再恢复 45s
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     const status = await NativeUnifiedPush.getStatus();
     const subscription = status.subscription;
     // 麦麦 2026-09-23 21:07 修：去掉 subscription.keys?.auth 判断。
@@ -103,12 +104,24 @@ export const ensureUnifiedPushSubscription = async (
     //   故意把 auth 写成空字符串保接口形状，但空串在 JS 里 falsy → 条件永远不通过 → 45s 假超时。
     //   logcat 验证：onNewEndpoint 21:04:11.913 已写 endpoint 完成，前端就是读不到。
     //   其他 3 项保留(endpoint 有 / p256dh 有 / vapidPublicKey 跟 worker 公钥匹配)。
+    // 暮色 2026-09-23 21:34：临时加诊断日志，打印每一项是否满足（不打印 auth 内容，只打是否空）
+    const hasSub = !!subscription;
+    const hasEndpoint = !!(subscription?.endpoint);
+    const hasP256dh = !!(subscription?.keys?.p256dh);
+    const authIsEmpty = !(subscription?.keys?.auth); // 不打印内容，只打"是否为空"
+    const subVapidPresent = !!subscription?.vapidPublicKey;
+    const vapidMatches = subscription?.vapidPublicKey === vapidPublicKey;
     if (
       subscription?.endpoint
       && subscription.keys?.p256dh
       && subscription.vapidPublicKey === vapidPublicKey
     ) {
+      console.log(`[UnifiedPushDiag] 轮询命中 attempt=${attempt + 1} sub=${hasSub} endpoint=${hasEndpoint} p256dh=${hasP256dh} authIsEmpty=${authIsEmpty} subVapid=${subVapidPresent} vapidMatch=${vapidMatches}`);
       return { endpoint: subscription.endpoint, keys: subscription.keys };
+    }
+    // 每 5 次打一次诊断日志，避免刷屏
+    if ((attempt + 1) % 5 === 0 || attempt === 0) {
+      console.log(`[UnifiedPushDiag] 轮询中 attempt=${attempt + 1} sub=${hasSub} endpoint=${hasEndpoint} p256dh=${hasP256dh} authIsEmpty=${authIsEmpty} subVapid=${subVapidPresent} vapidMatch=${vapidMatches}`);
     }
     if (status.lastError) {
       // UnifiedPushService.onNewEndpoint 在 endpoint 为空 / 写失败时会写 lastError,
@@ -118,7 +131,12 @@ export const ensureUnifiedPushSubscription = async (
     await delay(250);
   }
 
-  throw new Error('UnifiedPush 注册超时（45s）。请确认 ntfy 已打开并允许它在后台运行。');
+  // 暮色 2026-09-23 21:34：最终失败时也打诊断日志
+  // (在实际穷诊断前先获取一次状态用于报告)
+  const finalStatus = await NativeUnifiedPush.getStatus();
+  const finalSub = finalStatus.subscription;
+  console.log(`[UnifiedPushDiag] 最终失败 60 次 15s 跑完 sub=${!!finalSub} endpoint=${!!finalSub?.endpoint} p256dh=${!!finalSub?.keys?.p256dh} authIsEmpty=${!finalSub?.keys?.auth} subVapid=${!!finalSub?.vapidPublicKey} vapidMatch=${finalSub?.vapidPublicKey === vapidPublicKey}`);
+  throw new Error('UnifiedPush 注册超时（15s）。请确认 ntfy 已打开并允许它在后台运行。');
 };
 
 export const readUnifiedPushSubscription = async () =>

@@ -15,4 +15,4 @@
  *   理由：开关只管自动模式 (proactiveChat 接入) 和事件通道 (OSContext)；
  *   角色自己安排的唤醒属于"角色行为"，即使总开关关了也该照常生效。
  */
-export const AMSG2_ENABLED = false;
+export const AMSG2_ENABLED = true;

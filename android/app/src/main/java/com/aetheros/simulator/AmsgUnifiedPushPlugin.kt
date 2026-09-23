@@ -96,7 +96,8 @@ class AmsgUnifiedPushPlugin : Plugin() {
     override fun load() {
         super.load()
         // 暮色 2026-09-19 13:50 临时注释：registerPushReceiver 让 Android 14 上锁屏卡死？
-        // registerPushReceiver()
+        //   暮色 2026-09-23 19:57：根因是 isLocked 默认值（4ce687fa 已改回 false），注释恢复。
+        registerPushReceiver()
     }
 
     override fun handleOnDestroy() {

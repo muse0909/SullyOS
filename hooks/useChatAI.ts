@@ -44,11 +44,10 @@ import { mcpToOpenAIToolResult } from '../utils/mcpResultConverter';
 import { mcpStorage } from '../utils/mcpStorage';
 // 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
 //   解析 [schedule_next_wakeup | 时间 | reason] token → 调 Worker /dynamic-schedule
-// 暮色 2026-09-19 21:10：恢复 a112d086 时行为 — 改走 registerDynamicScheduleOnWorker，
-//   让 1.0 dispatcher 走自己的 1.x fallback（写 1.0 worker D1 schedules 表 → cron →
-//   WebSocket → Android KeepAliveService → 主动消息/通知）。registerCharacterWakeup
-//   仍保留在 utils/proactivePushConfig.ts（不要删除任何 2.0 代码），但这里不再调它。
-import { registerDynamicScheduleOnWorker } from '../utils/proactivePushConfig';
+// 暮色 2026-09-17 21:50：schedule_next_wakeup 第四模式 — 独立接口 registerCharacterWakeup
+//   直接写主动消息 2.0 (source='character' + reason)，不走 1.0 老 fallback，不查 AMSG2_ENABLED。
+// 暮色 2026-09-23 19:57：正式接管，2.0 成为 schedule_next_wakeup 唯一主链路（不再走 1.0）。
+import { registerCharacterWakeup } from '../utils/proactivePushConfig';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -3727,13 +3726,21 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.warn(`⏰ [ScheduleNextWakeup] 时间已过期或无效: ${timeStr} → ${fireAt}`);
                             continue;
                         }
-                        // 暮色 2026-09-19 21:10：恢复 a112d086 时的调用 — 老 dispatcher
-                        //   内部 try 2.0 通道（AMSG2_ENABLED=false 时短路），落 1.x /dynamic-schedule
-                        //   → 1.0 老 worker D1 schedules 表 → cron → WebSocket → Android
-                        //   KeepAliveService.showProactiveNotification → 系统通知栏。
-                        //   写入成功才 toast，失败静默（a112d086 行为），解析失败单独 warn。
-                        const ok = await registerDynamicScheduleOnWorker(
-                          char.id, fireAt, reason, userProfile?.id,
+                        // 暮色 2026-09-23 19:57：2.0 接管 schedule_next_wakeup。
+                        //   调 registerCharacterWakeup → ActiveMsgClient.scheduleCharacterTask
+                        //   → 2.0 worker D1 → cron → UnifiedPush/ntfy → 手机系统推送 → 通知栏。
+                        //   不再走 1.0 老 fallback（AMSG2_ENABLED=true 后 dispatcher 也不落 1.x）。
+                        //   apiConfig 透传当前角色/全局的 baseUrl/apiKey/model（到点 worker 跑 LLM 用）。
+                        //   写入成功才 toast（d27d7f34 行为：失败静默），解析失败单独 warn。
+                        const ok = await registerCharacterWakeup(
+                          char.id,
+                          fireAt,
+                          reason,
+                          {
+                            baseUrl: (effectiveApi as any).baseUrl || '',
+                            apiKey: (effectiveApi as any).apiKey || '',
+                            model: (effectiveApi as any).model || '',
+                          },
                         );
                         console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
                         if (ok) {

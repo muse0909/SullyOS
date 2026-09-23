@@ -98,10 +98,14 @@ export const ensureUnifiedPushSubscription = async (
   for (let attempt = 0; attempt < 180; attempt += 1) {
     const status = await NativeUnifiedPush.getStatus();
     const subscription = status.subscription;
+    // 麦麦 2026-09-23 21:07 修：去掉 subscription.keys?.auth 判断。
+    //   UnifiedPush 协议不需要 RFC8291 的客户端 auth 字段，Android 端 AmsgUnifiedPushPlugin.kt:173
+    //   故意把 auth 写成空字符串保接口形状，但空串在 JS 里 falsy → 条件永远不通过 → 45s 假超时。
+    //   logcat 验证：onNewEndpoint 21:04:11.913 已写 endpoint 完成，前端就是读不到。
+    //   其他 3 项保留(endpoint 有 / p256dh 有 / vapidPublicKey 跟 worker 公钥匹配)。
     if (
       subscription?.endpoint
       && subscription.keys?.p256dh
-      && subscription.keys?.auth
       && subscription.vapidPublicKey === vapidPublicKey
     ) {
       return { endpoint: subscription.endpoint, keys: subscription.keys };

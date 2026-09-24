@@ -45,7 +45,8 @@ export type AmsgDiagStage =
   // 麦麦 2026-09-24 v2：调查后两次任务来源的临时节点
   | 'wakeup-trigger-start'       // triggerAI 入口：写 triggerId + callSite
   | 'wakeup-aicontent-snapshot'  // 每次 aiContent = data.choices[0].message.content 重赋值后写一次
-  | 'wakeup-token-parse-skip';   // 60 秒同 (charId,fireAt,reason) 内存 ring 命中跳过时写
+  | 'wakeup-token-parse-skip'    // 60 秒同 (charId,fireAt,reason) 内存 ring 命中跳过时写
+  | 'wakeup-dedup-skip-local';   // 麦麦 2026-09-24 v3：A 严格入口闸 — 同角色已有 source='character' pending 时拒绝新建
 
 export interface AmsgDiagEntry {
   ts: string;

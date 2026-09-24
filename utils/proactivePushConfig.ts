@@ -14,7 +14,7 @@
 import { amsgDiag } from './amsgDiag';
 // 麦麦 2026-09-24：把角色自排的 2.0 任务同步到本地 char.activeMsg2Config.tasks
 //   需要 ActiveMsg2TaskRecord 类型 + applyScheduledTask/pruneStaleTasks 工具。
-import { applyScheduledTask, pruneStaleTasks } from './amsg2Tasks';
+import { applyScheduledTask, pruneStaleTasks, isPendingTask } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord, CharacterProfile } from '../types';
 
 /**
@@ -558,6 +558,35 @@ export async function registerCharacterWakeup(
     //   注：本接口的旧注释写过「不查 flag」 — 那是 AMSG2_ENABLED 那个全局 flag，角色级
     //   enabled 是用户主权，性质不同（暮色 9-24 拍板）。
     const charEnabled = (storedChar?.activeMsg2Config?.enabled === true);
+
+    // 麦麦 2026-09-24 v3：A 严格入口闸 — 同角色已有未触发的 source='character' 任务时拒绝新建（暮色 9-24 23:09 拍板）
+    //   理由：prompt chatPrompts.ts:308 承诺"新的回复会覆盖之前未触发的 dynamic（同一角色只有 1 条 dynamic 在册）"。
+    //     老实现让 LLM 自己克制，但 9-24 触发 AI 的连排两条任务就是 LLM 反复思考的结果 —— 不靠 LLM 自己克制。
+    //   闸条件：本地 activeMsg2Config.tasks 里 source='character' + status='scheduled' + 触发点未过，等于同角色还有未消费 dynamic。
+    //   命中 → 静默拒绝 + 写一条 wakeup-dedup-skip-local 诊断 + 不调 scheduleCharacterTask + 不写本地账。
+    //   不影响用户主动发消息路径：handleSendText 先 cancelCharacterWakeups → 闸空了 → 下一条自然放行。
+    //   不影响 schedule_active_message 工具调用：本接口只服务 schedule_next_wakeup token 路径，工具路径独立（amsg2ToolBridge.ts）。
+    const existingPendingCharacterWakeups = (storedChar?.activeMsg2Config?.tasks ?? []).filter(
+      (t) => t.source === 'character' && t.status === 'scheduled' && isPendingTask(t, Date.now())
+    );
+    if (existingPendingCharacterWakeups.length > 0) {
+      const existingFireAts = existingPendingCharacterWakeups.map((t) => {
+        const tFirstSend = (t as any).firstSendTime;
+        return typeof tFirstSend === 'string' ? tFirstSend : '?';
+      }).join(' / ');
+      amsgDiag({
+        stage: 'wakeup-dedup-skip-local',
+        charId: String(charId),
+        fireAt,
+        reason,
+        source: 'character',
+        ok: false,
+        error: `入口闸：同角色已有 ${existingPendingCharacterWakeups.length} 条未触发的 source='character' wakeup（firstSendTime=${existingFireAts}），本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}" 一律拒绝。prompt 承诺"新覆盖旧"在这里硬约束实现。`,
+      });
+      console.warn(`⏰ [ScheduleNextWakeup] 入口闸拒绝：char=${charId} 已有 ${existingPendingCharacterWakeups.length} 条未触发的 character wakeup,本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}"`);
+      return false;
+    }
+
     const result = await ActiveMsgClient.scheduleCharacterTask({
       char: charStub,
       config: activeMsg2Config,

@@ -3704,6 +3704,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     const matches = aiContent.matchAll(
                         /\[schedule_next_wakeup\s*\|\s*([\d\-:\s]+?)\s*\|\s*reason:\s*([^\]]+?)\s*\]/g
                     );
+                    // 麦麦 2026-09-24 15:45：60 秒内同妻 (charId, fireAt, reason) 只调一次。
+                    //   起因：旧实现 matchAll 解析后会在循环里逐个 token 调 registerCharacterWakeup,
+                    //   LLM 一次回复里偶尔会把同一个 token 重复写两遍（整段复读、末尾补充时粘错），
+                    //   就连发两条相同任务，云端 D1 也按 scheduleCharacterTask 一次写一条。
+                    //   60 秒的窗口够盖住一次「整段复读」，又不会误伤「隔几分钟想再提醒一次」的合法重排。
+                    //   同一对 (fireAt, reason) 还可能从多轮上下文带到不同 LLM 回复里再排一次,
+                    //   超过 60 秒就让它走（跨轮改意是合法变更）。
+                    const dedupWindow = new Map<string, number>(); // key=charId|fireAt|reason, value=ms
+                    const dedupCutoffMs = 60_000;
                     for (const m of matches) {
                         const timeStr = m[1].trim();
                         const reason = m[2].trim();
@@ -3728,6 +3737,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             console.warn(`⏰ [ScheduleNextWakeup] 时间已过期或无效: ${timeStr} → ${fireAt}`);
                             continue;
                         }
+                        const dedupKey = `${char.id}|${fireAt}|${reason}`;
+                        const lastAt = dedupWindow.get(dedupKey);
+                        if (lastAt && Date.now() - lastAt < dedupCutoffMs) {
+                            console.log(`⏰ [ScheduleNextWakeup] 重复 token 跳过: fireAt=${new Date(fireAt).toISOString()} reason="${reason}"`);
+                            continue;
+                        }
+                        dedupWindow.set(dedupKey, Date.now());
                         // 暮色 2026-09-23 19:57：2.0 接管 schedule_next_wakeup。
                         //   调 registerCharacterWakeup → ActiveMsgClient.scheduleCharacterTask
                         //   → 2.0 worker D1 → cron → UnifiedPush/ntfy → 手机系统推送 → 通知栏。

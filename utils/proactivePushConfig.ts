@@ -433,9 +433,22 @@ export async function registerCharacterWakeup(
   );
 
   try {
+    // 麦麦 2026-09-24 15:30：把角色级副 API 一并传进排程接口
+    //   老实现把 config 写成 { enabled: true } as any，下游 scheduleCharacterTask → resolveApiConfig
+    //   看到 config.useSecondaryApi 为 undefined / config.secondaryApi 为 undefined，结果不管角色
+    //   有没有单独配 API，都回落到调用方给的 apiConfig（这一路上 apiConfig 也被简化成 baseUrl/apiKey/model
+    //   三件套）。这跟 1.0 那套「副 API > 角色 API > 主 API」优先级完全对不上 — 角色单独配的
+    //   API 永远是凭据走，1.0 跑得好好的那一档到 2.0 就被吞了。
+    //   修法：把 useChatAI 传进来的 effectiveApi + 角色 char.activeMsg2Config 一起交给客户端排程入口，
+    //   resolveApiConfig 看到 useSecondaryApi=true 时拿配置里的 secondaryApi，否则走 effectiveApi。
+    //   拿不到角色 config 时（测试 / 老 caller）退化成 enabled-only，行为同旧版。
+    const charStub = { id: String(charId), name: `动态-${String(charId).slice(0, 8)}` } as any;
+    const { DB } = await import('./db');
+    const storedChar = await DB.getCharacter(charStub.id).catch(() => null);
+    const activeMsg2Config = storedChar?.activeMsg2Config ?? { enabled: true } as any;
     await ActiveMsgClient.scheduleCharacterTask({
-      char: { id: String(charId), name: `动态-${String(charId).slice(0, 8)}` } as any,
-      config: { enabled: true } as any,
+      char: charStub,
+      config: activeMsg2Config,
       task: {
         mode: 'prompted',
         firstSendTime: fireAtText,

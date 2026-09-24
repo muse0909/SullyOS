@@ -93,9 +93,10 @@ export const describeExpirePolicy = (policy: ActiveMsg2ExpirePolicy): string =>
 export const describeTaskMode = (
   task: { mode: ActiveMsg2Mode; promptHint?: string },
 ): string => {
+  const hint = task.promptHint?.trim();
   if (task.mode === 'fixed') return '固定消息';
-  if (task.mode === 'prompted') return `提示方向「${task.promptHint || ''}」`;
-  return task.promptHint ? `自动（灵感：${task.promptHint}）` : '自动';
+  if (task.mode === 'prompted') return hint ? `提示方向「${hint}」` : '提示方向未取回（旧任务）';
+  return hint ? `自动（灵感：${hint}）` : '自动';
 };
 
 /**

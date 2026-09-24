@@ -22,14 +22,6 @@ import {
 } from '../../utils/instantPushClient';
 import { generateClientToken } from '../../utils/vapidGen';
 import { loadPushVapid, savePushVapid } from '../../utils/pushVapid';
-// 麦麦 2026-09-23 22:50：诊断日志 — 主动消息 2.0 全链路 viewer
-import {
-  formatFullAmsgDiagLog,
-  readAllAmsgDiag,
-  clearAmsgDiag,
-  type AmsgDiagEntry,
-} from '../../utils/amsgDiag';
-import { AmsgDiagLogViewer } from './AmsgDiagLogViewer';
 import {
   attachUpdateCapability,
   provisionAmsgBackend,
@@ -225,8 +217,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   // 体检摆在最上面，但默认收着：装好之后它天天是「都正常」，摊开占掉半屏。
   // 标题那一行已经把结论说了，要看是哪一项才需要点开。
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  // 麦麦 2026-09-23 22:50：诊断日志 — 节点 1-12 的 page + Android 合并 trace
-  const [diagLogOpen, setDiagLogOpen] = useState(false);
 
   const [workerOutdated, setWorkerOutdated] = useState(false);
   /**
@@ -1011,27 +1001,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           </div>
         ) : null}
 
-        {/* 麦麦 2026-09-23 22:50：诊断日志入口 — 12 个节点全链路 trace，page + Android 合并 */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-bold text-slate-700 text-sm">诊断日志</div>
-              <p className="text-[11px] leading-relaxed text-slate-500 mt-1">
-                记录 11 个节点的事件（token 解析 → Worker 写任务 → Android 收推送 → 写聊天记录 → 系统通知）。
-                仅记 stage / msgId / taskId / charId / 时间，<b className="text-slate-700">不记 API Key / endpoint 全文 / 消息内容</b>。
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setDiagLogOpen(true)}
-              className="shrink-0 px-3 py-1.5 text-[11px] rounded-xl font-bold bg-white border border-slate-200 text-slate-600 active:scale-95 transition-transform"
-            >
-              查看日志
-            </button>
-          </div>
-        </div>
+        {/* 麦麦 2026-09-24 13:48：诊断日志入口已迁到角色级弹窗（components/chat/ActiveMsg2SettingsModal）。
+            此处保留注释作为锚点 — 暮色要求全局弹窗不要再有诊断入口。 */}
 
-        {/* 正常情况下两道双向门会拦住「两个都开」，能走到这儿全是脏配置遗留。
+        {/* 正常情况下两道双向门会拦住「两个都开》，能走到这儿全是脏配置遗留。
             脏配置照样会让聊天悄悄走 Instant，2.0 挂在本地那条路上的东西全静默失效——
             没有报错也没有提示，只会表现成「这功能怎么不响」，这张卡就是收拾它的入口。 */}
         {instantOn ? (
@@ -1754,11 +1727,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         </div>
       </div>
     </Modal>
-    {/* 麦麦 2026-09-23 22:50：诊断日志 viewer — 独立 Modal，列 200 条 trace / 筛选 / 复制 / 清空 */}
-    <AmsgDiagLogViewer
-      isOpen={diagLogOpen}
-      onClose={() => setDiagLogOpen(false)}
-    />
+    {/* 麦麦 2026-09-24 13:48：诊断日志 viewer 已迁到角色级弹窗（components/chat/ActiveMsg2SettingsModal）。
+        此处保留注释作为锚点 — 暮色要求全局弹窗不要再有诊断入口。 */}
     {/* 摆在 Modal 外面：它自己是全屏 fixed 定位，放进面板里会被面板的动画容器框住。 */}
     <ConfirmDialog
       isOpen={pauseConfirmOpen}

@@ -14,7 +14,7 @@ import {
 } from '../../types';
 import { ActiveMsgClient, getDefaultActiveMsgFirstSendTime } from '../../utils/activeMsgClient';
 import { ActiveMsgStore } from '../../utils/activeMsgStore';
-import { type AmsgLastSkip, DEFAULT_MAX_UNANSWERED_SENDS, describeLastSkip } from '../../utils/amsgFirePack';
+import { type AmsgLastSkip, DEFAULT_MAX_UNANSWERED_SENDS, AMSG_LAST_SKIP_KEY, amsgStateNamespace, describeLastSkip } from '../../utils/amsgFirePack';
 import { isInstantChatReady } from '../../utils/amsgInstantChat';
 import { syncAmsgLlmCredentials } from '../../utils/amsgStateSync';
 import { buildUserCancelledNotices } from '../../utils/amsg2TaskContext';
@@ -42,6 +42,8 @@ import {
   shortTaskId,
   toDatetimeLocalValue,
 } from '../../utils/amsg2Tasks';
+// 麦麦 2026-09-24 13:48：诊断日志 viewer（从全局弹窗迁过来的）
+import { AmsgDiagLogViewer } from '../settings/AmsgDiagLogViewer';
 
 interface ActiveMsg2SettingsModalProps {
   isOpen: boolean;
@@ -138,6 +140,8 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   //   暮色 2026-09-18 12:42：列表只看一行根本看不出实际设置（reason/promptHint 都截断），
   //   点 row 展开内联详情比弹窗顺。
   const [expandedTaskUuid, setExpandedTaskUuid] = useState<string | null>(null);
+  // 麦麦 2026-09-24 13:48：诊断日志 viewer 开关（从全局弹窗迁过来的唯一入口）
+  const [diagLogOpen, setDiagLogOpen] = useState(false);
   const [expirePolicy, setExpirePolicy] = useState<ActiveMsg2ExpirePolicy>('expire');
   // 远端对账底账：打开面板时拉一次全量任务，只留归属本角色的 uuid。null = 没对上账
   // （读失败/未拉完），此时不显示「远端不存在」徽标，免得半个清单误伤。
@@ -506,13 +510,31 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     }
   };
 
+  const handleDismissLastSkip = async () => {
+    setLastSkip(null);
+    try {
+      await ActiveMsgClient.clearClientStateValue(amsgStateNamespace(char.id), AMSG_LAST_SKIP_KEY);
+    } catch (error) {
+      console.warn('[ActiveMsg2Modal] 清除最近一次未发送说明失败', error);
+      addToast('这条提示已先从面板隐藏，云端清除失败时下次打开可能还会回来。', 'error');
+    }
+  };
+
   return (
+    <>
     <Modal
       isOpen={isOpen}
       title="主动消息 2.0"
       onClose={onClose}
       footer={(
         <>
+          <button
+            type="button"
+            onClick={() => setDiagLogOpen(true)}
+            className="flex-shrink-0 px-3 py-3 text-xs font-bold text-slate-500 bg-slate-100 rounded-2xl active:scale-95 transition-transform"
+          >
+            查看日志
+          </button>
           <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">
             取消
           </button>
@@ -572,7 +594,18 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             「让路了」在用户看来跟「没发出去 / 功能坏了」完全一样。 */}
         {enabled && lastSkip ? (
           <div className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-xs leading-relaxed text-slate-600">
-            {describeLastSkip(lastSkip, (ms) => formatTaskTime(new Date(ms).toISOString()))}
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                {describeLastSkip(lastSkip, (ms) => formatTaskTime(new Date(ms).toISOString()))}
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissLastSkip}
+                className="shrink-0 px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[11px] font-bold text-slate-500 active:scale-95 transition-transform"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -882,6 +915,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
         ) : null}
       </div>
     </Modal>
+    {/* 麦麦 2026-09-24 13:48：诊断日志 viewer — 唯一入口（从全局弹窗迁过来的） */}
+    <AmsgDiagLogViewer
+      isOpen={diagLogOpen}
+      onClose={() => setDiagLogOpen(false)}
+    />
+    </>
   );
 };
 

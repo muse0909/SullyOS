@@ -54,6 +54,7 @@ import { useMusic } from '../context/MusicContext';
 import { useCloudMessages } from '../hooks/useCloudSync';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
 // 2026-07-22：移除 addFavorite/genFavoriteId/updateFavorite/uploadVoiceFavorite —— 取消「语音自动加入收藏」后没人用
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
@@ -1357,6 +1358,16 @@ const Chat: React.FC = () => {
         //   失败静默（最多留个 warn，不打扰用户）
         void cancelDynamicScheduleOnWorker(char.id).catch((e) => {
             console.warn('[Chat] cancelDynamicScheduleOnWorker 失败:', e);
+        });
+
+        // 麦麦 2026-09-24：暮色 9-24 拍板 — 用户发消息取消该角色的 2.0 character wakeup
+        //   老 cancelDynamicScheduleOnWorker 只走 1.x /cancel-dynamic-schedule（暮色已确认
+        //   1.0 老路径不动），但 schedule_next_wakeup 9-17 之后走的是 2.0 amsg 通道，老接口
+        //   碰不到。本接口走 2.0 cancelTask（删 D1 行 + 标 cancelled），跟面板取消同一条路径。
+        //   范围：source='character' + 未触发。手动排的（source='manual'）不动。
+        //   fire-and-forget — 同 1.x 那条，不阻塞消息保存 / triggerAI；失败静默。
+        void ActiveMsgClient.cancelCharacterWakeups(char).catch((e) => {
+            console.warn('[Chat] ActiveMsgClient.cancelCharacterWakeups 失败:', e);
         });
 
         // 麦麦 2026-09-06：用户说"晚安"短句 → 触发该角色今晚的日记

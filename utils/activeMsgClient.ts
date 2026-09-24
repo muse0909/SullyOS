@@ -21,7 +21,7 @@ import { amsgDiag } from './amsgDiag';
 import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
-  getPendingTasks, isAmsg2EnabledForChar, MAX_ACTIVE_TASKS_PER_CHAR,
+  getPendingTasks, isAmsg2EnabledForChar, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
   resolveExpirePolicy, toDatetimeLocalValue,
 } from './amsg2Tasks';
@@ -2595,6 +2595,71 @@ export const ActiveMsgClient = {
       // 解析好的绝对时刻（UTC ISO）。任务记录存这一份，字段口径才只有一种。
       firstSendAt: firstSendTime,
     };
+  },
+
+  /**
+   * 麦麦 2026-09-24：用户发消息 → 取消这个角色所有 source='character' 的未触发远端任务。
+   *
+   * 暮色 9-24 拍板链路：
+   *   1) 角色排了「10 分钟后找我」
+   *   2) 10 分钟内用户发新消息 → 这条未触发的任务取消（不再响）
+   *   3) 用户不回 → 到点照常触发
+   *   4) AI 下一轮自己再排的话，由 token 解析层走 schedule_next_wakeup 重建
+   *
+   * 跟原 cancelDynamicScheduleOnWorker 的差别：
+   *   - 老接口只调 1.x /cancel-dynamic-schedule，2.0 amsg 通道的任务根本碰不到——
+   *     这是暮色报「已经应该取消的任务，Worker/后台继续执行触发」的根因。
+   *   - 新接口走 2.0 的 cancelTask（删 D1 行 + 标 cancelled），跟面板取消同一条路径。
+   *
+   * 范围：只取消 source='character' 的。手动排的（source='manual'）是用户在面板里
+   * 手排的，优先级最高，不应被「用户发消息」这种自动动作吞掉。
+   *
+   * 用本地 char.activeMsg2Config.tasks 判定来源：远端投影不带 source 字段（白名单
+   * 不透出 amsgSource / amsgSelfScheduled，listRemoteTasksForChar 注释里写明），
+   * 本地 tasks 是 source 唯一权威。即使本地落后于远端，调 cancelTask 远端回 404
+   * alreadyGone 也走幂等路径（cancelTask 内部已处理）。
+   *
+   * 失败静默：用户消息保存是主链路，这一步挂了不该让用户看到「取消失败」之类的提示，
+   * 留 console.warn 便于事后排查。
+   */
+  async cancelCharacterWakeups(char: CharacterProfile): Promise<{ cancelled: string[]; alreadyGone: string[]; failed: string[] }> {
+    const nowMs = Date.now();
+    const charTasks = char.activeMsg2Config?.tasks ?? [];
+    const targets = charTasks.filter((t) =>
+      t.source === 'character'
+      && t.status === 'scheduled'
+      && isPendingTask(t, nowMs),
+    );
+    if (targets.length === 0) {
+      return { cancelled: [], alreadyGone: [], failed: [] };
+    }
+
+    const cancelled: string[] = [];
+    const alreadyGone: string[] = [];
+    const failed: string[] = [];
+    for (const t of targets) {
+      try {
+        const result = await this.cancelTask(t.taskUuid);
+        if (result.alreadyGone) {
+          alreadyGone.push(t.taskUuid);
+        } else {
+          cancelled.push(t.taskUuid);
+          // 麦麦 2026-09-24 18:05：诊断日志 — 用户发消息触发的取消
+          amsgDiag({
+            stage: 'wakeup-cancelled-by-user-message',
+            charId: char.id,
+            taskId: t.taskUuid,
+            source: 'character',
+            ok: true,
+            error: `用户发消息自动取消（fireAt=${new Date(t.firstSendTime).toISOString()}）`,
+          });
+        }
+      } catch (error) {
+        failed.push(t.taskUuid);
+        console.warn(`[ActiveMsg2] 取消角色 ${char.id} 的 character 唤醒任务失败`, t.taskUuid, error);
+      }
+    }
+    return { cancelled, alreadyGone, failed };
   },
 
   /**

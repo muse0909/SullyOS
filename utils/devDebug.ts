@@ -6,7 +6,8 @@
 // 其余存储 / 脱敏 / 限容 / 导出逻辑全部通用，不用改。
 // 分类按「来源通道」切：api = 普通聊天直发模型；instant-push = 经 worker 的通道事件；
 // lifecycle = 页面前后台/网络状态变化（排查「请求等着等着就 NetworkError」时跟 api 类对时间线）。
-export type DevDebugCaptureCategory = 'api' | 'instant-push' | 'lifecycle' | 'memory-palace';
+// amsg2 = 主动消息 2.0 全链路诊断（schedule_next_wakeup → Worker → Android → 聊天记录）。
+export type DevDebugCaptureCategory = 'api' | 'instant-push' | 'lifecycle' | 'memory-palace' | 'amsg2';
 
 export interface DevDebugCaptureCategoryMeta {
     key: DevDebugCaptureCategory;
@@ -36,6 +37,11 @@ export const DEV_DEBUG_CAPTURE_CATEGORIES: DevDebugCaptureCategoryMeta[] = [
         key: 'memory-palace',
         title: '记忆',
         detail: '记忆召回管线 Trace：入口、版本、开关快照、耗时与结果；不记录聊天原文和 API Key。',
+    },
+    {
+        key: 'amsg2',
+        title: '主动2.0',
+        detail: '主动消息 2.0 全链路诊断：schedule_next_wakeup token 解析 → Worker 写任务 → Android 收推送 → payload 解析 → 写聊天记录 → UI 刷新 → 系统通知。',
     },
 ];
 

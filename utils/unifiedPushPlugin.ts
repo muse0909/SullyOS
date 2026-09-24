@@ -32,9 +32,17 @@ interface UnifiedPushNativePlugin {
     eventName: 'pushReceived' | 'notificationTapped' | 'registrationChanged',
     listener: (event: any) => void,
   ): Promise<PluginListenerHandle>;
+  /**
+   * 导出 Android 端主动消息 2.0 诊断日志（JSON 数组字符串）。
+   * 返回的字符串是 AmsgDiagEntry[] 的 JSON。
+   * 不可达 / 老 APK 没这个方法时 reject / 抛错由调用方吞。
+   */
+  dumpAmsgDiag(): Promise<string>;
 }
 
 const NativeUnifiedPush = registerPlugin<UnifiedPushNativePlugin>('AmsgUnifiedPush');
+// 麦麦 2026-09-23 22:50：导出供 utils/amsgDiag.ts 拉 Android 端 ring buffer 用。
+export const NativeAmsgUnifiedPush = NativeUnifiedPush;
 
 export const isUnifiedPushPlatform = (): boolean =>
   Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';

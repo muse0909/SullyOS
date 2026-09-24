@@ -38,6 +38,8 @@ import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import { appendInstantTraceEntry } from './instantTraceLog';
 import { captureSwRegistrationSnapshot, probeSwChannel } from './swChannelProbe';
 import { trackEvent } from './analytics';
+// 麦麦 2026-09-23 22:50：诊断日志 — 节点 7/8 wakeup-save-message + wakeup-event-dispatched
+import { amsgDiag } from './amsgDiag';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
@@ -2047,6 +2049,16 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
       // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
       // 杜绝同 char 多轮并发 / 延迟到达的旧 push 被新一轮 send 误判为 delivered。
+
+      // 麦麦 2026-09-23 22:50：诊断日志 — 节点 7 wakeup-save-message（消息落到聊天流）
+      amsgDiag({
+        stage: 'wakeup-save-message',
+        msgId: message.messageId,
+        taskId: message.taskUuid ?? undefined,
+        charId: message.charId,
+        ok: true,
+      });
+
       window.dispatchEvent(new CustomEvent('active-msg-received', {
         detail: {
           sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
@@ -2057,6 +2069,14 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           sentAt: eventSentAt,
         },
       }));
+      // 麦麦 2026-09-23 22:50：诊断日志 — 节点 8 wakeup-event-dispatched（dispatchEvent 完成）
+      amsgDiag({
+        stage: 'wakeup-event-dispatched',
+        msgId: message.messageId,
+        taskId: message.taskUuid ?? undefined,
+        charId: message.charId,
+        ok: true,
+      });
       activeMsgTrace('runtime-active-msg-received-dispatched', {
         sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
         messageId: message.messageId,

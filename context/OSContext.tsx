@@ -13,6 +13,8 @@ import { startMailboxScheduler, stopMailboxScheduler } from '../utils/mailboxSch
 import { hasReachedDailyLimit, MAX_PROACTIVE_PER_DAY } from '../utils/proactiveCount';
 // 暮色 2026-08-09:2.0 暂停开关
 import { AMSG2_ENABLED } from '../utils/activeMsgFeatureFlag';
+// 麦麦 2026-09-23 22:50：诊断日志 — 节点 9/10/11 wakeup-chat-ui / wakeup-system-notification / wakeup-final
+import { amsgDiag } from '../utils/amsgDiag';
 // 暮色 2026-08-05 Phase 3：聊天在场状态（主动消息撞车闸）
 import { isUserCurrentlyChatting, clearUserChatPresence } from '../utils/chatPresenceStorage';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -1464,8 +1466,16 @@ if (!isVisible || !isChattingWithThisChar) {
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {
-    const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+    const detail = (e as CustomEvent).detail as { charId: string; charName: string; body?: string; sessionId?: string };
+    const { charId, charName, body } = detail;
     setLastMsgTimestamp(Date.now());
+    // 麦麦 2026-09-23 22:50：诊断日志 — 节点 9 wakeup-chat-ui（setLastMsgTimestamp 触发 Chat UI 刷新）
+    amsgDiag({
+      stage: 'wakeup-chat-ui',
+      taskId: (detail as any)?.sessionId,
+      charId,
+      ok: true,
+    });
 
     const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
     const isVisible = document.visibilityState === 'visible';
@@ -1481,6 +1491,13 @@ if (!isVisible || !isChattingWithThisChar) {
     }
 
     if (!isVisible || !isChattingWithThisChar) {
+        // 麦麦 2026-09-23 22:50：诊断日志 — 节点 10 wakeup-system-notification（前端 Capacitor 弹通知）
+        amsgDiag({
+          stage: 'wakeup-system-notification',
+          taskId: (detail as any)?.sessionId,
+          charId,
+          ok: true,
+        });
         void sendProactiveNativeNotification(charId, charName, preview);
 
         if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
@@ -1495,6 +1512,14 @@ if (!isVisible || !isChattingWithThisChar) {
             } catch (e) { /* notification failed */ }
         }
     }
+
+    // 麦麦 2026-09-23 22:50：诊断日志 — 节点 11 wakeup-final 链终
+    amsgDiag({
+      stage: 'wakeup-final',
+      taskId: (detail as any)?.sessionId,
+      charId,
+      ok: true,
+    });
 };
 
 

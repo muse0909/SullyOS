@@ -48,6 +48,8 @@ import { mcpStorage } from '../utils/mcpStorage';
 //   直接写主动消息 2.0 (source='character' + reason)，不走 1.0 老 fallback，不查 AMSG2_ENABLED。
 // 暮色 2026-09-23 19:57：正式接管，2.0 成为 schedule_next_wakeup 唯一主链路（不再走 1.0）。
 import { registerCharacterWakeup } from '../utils/proactivePushConfig';
+// 麦麦 2026-09-23 22:50：诊断日志 — 主动消息 2.0 全链路
+import { amsgDiag } from '../utils/amsgDiag';
 
 // 注意：云端同步 hook 已在 utils/db.ts 内部集成（DB.saveMessage 自动 enqueueUploadMessage），
 // useChatAI 直接用 import 进来的 DB 即可，不需要再包装一次。
@@ -3732,6 +3734,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         //   不再走 1.0 老 fallback（AMSG2_ENABLED=true 后 dispatcher 也不落 1.x）。
                         //   apiConfig 透传当前角色/全局的 baseUrl/apiKey/model（到点 worker 跑 LLM 用）。
                         //   写入成功才 toast（d27d7f34 行为：失败静默），解析失败单独 warn。
+                        // 麦麦 2026-09-23 22:50：诊断日志 — 节点 1 wakeup-token-parsed + 节点 3 wakeup-worker-ack
+                        amsgDiag({
+                          stage: 'wakeup-token-parsed',
+                          charId: char.id,
+                          fireAt,
+                          reason,
+                          source: 'character',
+                          ok: true,
+                        });
                         const ok = await registerCharacterWakeup(
                           char.id,
                           fireAt,
@@ -3742,6 +3753,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             model: (effectiveApi as any).model || '',
                           },
                         );
+                        amsgDiag({
+                          stage: 'wakeup-worker-ack',
+                          charId: char.id,
+                          fireAt,
+                          reason,
+                          source: 'character',
+                          ok,
+                          error: ok ? undefined : 'registerCharacterWakeup 返回 false（workerUrl 未配 / scheduleCharacterTask 失败）',
+                        });
                         console.log(`⏰ [ScheduleNextWakeup] char=${char.id} fireAt=${new Date(fireAt).toISOString()} reason="${reason}" register=${ok}`);
                         if (ok) {
                           // toast: 用户能看到"TA 给你排了 X 任务 · 时间" — 让暮色知道发生了什么。
@@ -3756,6 +3776,15 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         }
                     }
                 } catch (e) {
+                    amsgDiag({
+                      stage: 'wakeup-failed',
+                      charId: char.id,
+                      fireAt,
+                      reason,
+                      source: 'character',
+                      ok: false,
+                      error: e instanceof Error ? e.message : String(e),
+                    });
                     console.warn('⏰ [ScheduleNextWakeup] token 解析炸了:', e);
                 }
                 // strip（不管成功失败，token 都不给用户看）

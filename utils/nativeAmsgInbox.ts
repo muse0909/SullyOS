@@ -1,6 +1,8 @@
 import type { ActiveMsg2InboxMessage } from '../types';
 import { flushInboxToChat } from './activeMsgRuntime';
 import { ActiveMsgStore } from './activeMsgStore';
+// 麦麦 2026-09-23 22:50：诊断日志 — 节点 6 wakeup-payload-parsed
+import { amsgDiag } from './amsgDiag';
 
 const RECEIVED_IDS_KEY = 'amsg2_native_received_ids_v2';
 
@@ -36,10 +38,28 @@ export const ingestNativeAmsgPayload = async (
 ): Promise<{ charId: string; messageId: string } | null> => {
   const payload = parseNativeAmsgPayload(raw);
   const charId = payload?.metadata?.charId;
-  if (!payload || typeof charId !== 'string' || !charId) return null;
+  if (!payload || typeof charId !== 'string' || !charId) {
+    // 麦麦 2026-09-23 22:50：诊断日志 — payload 缺 charId 早退
+    amsgDiag({
+      stage: 'wakeup-payload-parsed',
+      ok: false,
+      error: 'payload 缺 metadata.charId 或解析失败',
+    });
+    return null;
+  }
 
   const messageId = String(payload.messageId || `${charId}-${Date.now()}`);
-  if (readReceivedIds().includes(messageId)) return { charId, messageId };
+  if (readReceivedIds().includes(messageId)) {
+    // 麦麦 2026-09-23 22:50：诊断日志 — 重复 messageId 早退
+    amsgDiag({
+      stage: 'wakeup-payload-parsed',
+      msgId: messageId,
+      charId,
+      ok: false,
+      error: 'messageId 已在 receivedIds 中（重复推送）',
+    });
+    return { charId, messageId };
+  }
 
   const parsedSentAt = payload.timestamp ? new Date(payload.timestamp).getTime() : NaN;
   const body = String(payload.message || '').trim();
@@ -66,6 +86,15 @@ export const ingestNativeAmsgPayload = async (
     sentAt: Number.isFinite(parsedSentAt) ? parsedSentAt : Date.now(),
     receivedAt: Date.now(),
   };
+
+  // 麦麦 2026-09-23 22:50：诊断日志 — payload 解析成功，msgId/taskUuid 拿到
+  amsgDiag({
+    stage: 'wakeup-payload-parsed',
+    msgId: messageId,
+    taskId: payload.taskUuid ?? undefined,
+    charId,
+    ok: true,
+  });
 
   await ActiveMsgStore.saveInboxMessage(inbox);
   rememberReceivedId(messageId);

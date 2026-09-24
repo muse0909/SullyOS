@@ -6,6 +6,14 @@
  * When disabled or misconfigured, every function becomes a no-op and the
  * existing local-timer path in proactiveChat.ts keeps working unchanged.
  *
+ * 麦麦 2026-09-23 22:50：诊断日志 — registerCharacterWakeup 入口/失败记录（节点 2）
+ *   import amsgDiag 是静态 import，amsgDiag 模块本身只依赖 localStorage / console，
+ *   跟这里的动态 import（activeMsgClient / activeMsgStore）不冲突。
+ */
+// 麦麦 2026-09-23 22:50：诊断日志 — 主动消息 2.0 全链路
+import { amsgDiag } from './amsgDiag';
+
+/**
  * 麦麦 2026-09-03：配置从 import.meta.env 读，跟 Android BuildConfig 字段对齐。
  *   - VITE_PROACTIVE_WORKER_URL     跟 android BuildConfig.WS_URL 同源（不是同一个，
  *                                   各自是 web push 跟 web socket 两条独立通道）
@@ -393,8 +401,27 @@ export async function registerCharacterWakeup(
   // 拿 workerUrl / masterKey — 跟 registerDynamicScheduleOnActiveMsg2 同样的前置,
   // 不同的是这里不在 flag=false 时直接 return false (这是该接口的核心:不查 flag)。
   const globalConfig = await ActiveMsgStore.getGlobalConfig().catch(() => null);
+  // 麦麦 2026-09-23 22:50：诊断日志 — 节点 2 wakeup-write-task 入口
+  amsgDiag({
+    stage: 'wakeup-write-task',
+    charId: String(charId),
+    fireAt,
+    reason,
+    source: 'character',
+    ok: true,
+  });
   if (!globalConfig?.workerUrl?.startsWith('https://')) {
     console.warn('[ProactivePush] registerCharacterWakeup: 2.0 workerUrl 未配置,无 worker 可写');
+    // 麦麦 2026-09-23 22:50：诊断日志 — workerUrl 未配 失败
+    amsgDiag({
+      stage: 'wakeup-write-task',
+      charId: String(charId),
+      fireAt,
+      reason,
+      source: 'character',
+      ok: false,
+      error: 'workerUrl 未配置（globalConfig.workerUrl 不是 https:// 开头）',
+    });
     return false;
   }
 
@@ -429,6 +456,16 @@ export async function registerCharacterWakeup(
     return true;
   } catch (e) {
     console.warn('[ProactivePush] registerCharacterWakeup 写任务失败:', e);
+    // 麦麦 2026-09-23 22:50：诊断日志 — scheduleCharacterTask 抛错
+    amsgDiag({
+      stage: 'wakeup-write-task',
+      charId: String(charId),
+      fireAt,
+      reason,
+      source: 'character',
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return false;
   }
 }

@@ -75,14 +75,35 @@ class AmsgUnifiedPushPlugin : Plugin() {
             val action = intent?.action
             if (action != UnifiedPushService.ACTION_PUSH_DELIVERED) return
             val payload = intent.getStringExtra(UnifiedPushService.EXTRA_PAYLOAD) ?: return
+            // 麦麦 2026-09-23 22:50：诊断日志 — 节点 5 wakeup-push-received
+            //   pushReceiver 收到 broadcast、即将 notifyListeners 派给 JS。
+            val rawMsgId = try { JSONObject(payload).optString("messageId") } catch (_: Throwable) { "" }
+            val rawCharId = try {
+                JSONObject(payload).optJSONObject("metadata")?.optString("charId")
+            } catch (_: Throwable) { "" }
+            val rawTaskUuid = try { JSONObject(payload).optString("taskUuid") } catch (_: Throwable) { "" }
             try {
                 val jsObj = JSObject()
                 jsObj.put("payload", payload)
                 jsObj.put("receivedAt", System.currentTimeMillis())
                 notifyListeners("pushReceived", jsObj)
                 Log.i(TAG, "pushReceived 派发到 JS（payload 头 ${payload.take(40)}）")
+                AmsgDiagLog.append(
+                    context = context,
+                    stage = "wakeup-push-received",
+                    msgId = rawMsgId.ifEmpty { null },
+                    taskId = rawTaskUuid.ifEmpty { null },
+                    charId = rawCharId?.ifEmpty { null },
+                    ok = true,
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "notifyListeners pushReceived 失败", e)
+                AmsgDiagLog.append(
+                    context = context,
+                    stage = "wakeup-push-received",
+                    ok = false,
+                    error = "notifyListeners 抛错：${e.javaClass.simpleName}: ${e.message?.take(80)}",
+                )
             }
         }
     }
@@ -321,6 +342,39 @@ class AmsgUnifiedPushPlugin : Plugin() {
     @PluginMethod
     override fun removeListener(call: PluginCall) {
         super.removeListener(call)
+    }
+
+    /**
+     * 麦麦 2026-09-23 22:50：导出主动消息 2.0 Android 端诊断日志 ring buffer。
+     *   返回 JSON 数组字符串（AmsgDiagEntry[]），前端 utils/amsgDiag.ts formatFullAmsgDiagLog
+     *   会调这个 + 合并 page 端 trace 一起输出。
+     */
+    @PluginMethod
+    fun dumpAmsgDiag(call: PluginCall) {
+        try {
+            val json = AmsgDiagLog.dump(context)
+            val ret = JSObject()
+            // Capacitor 插件方法 resolve 必须传 JSObject;JSON 字符串塞进 payload 字段。
+            ret.put("payload", json)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            Log.e(TAG, "dumpAmsgDiag 失败", e)
+            call.reject("dumpAmsgDiag 失败：${e.message}")
+        }
+    }
+
+    /**
+     * 麦麦 2026-09-23 22:50：清空主动消息 2.0 Android 端诊断日志 ring buffer。
+     */
+    @PluginMethod
+    fun clearAmsgDiag(call: PluginCall) {
+        try {
+            AmsgDiagLog.clear(context)
+            call.resolve()
+        } catch (e: Exception) {
+            Log.e(TAG, "clearAmsgDiag 失败", e)
+            call.reject("clearAmsgDiag 失败：${e.message}")
+        }
     }
 
     // ----- helpers -----

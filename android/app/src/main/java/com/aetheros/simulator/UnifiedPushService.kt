@@ -149,6 +149,27 @@ class UnifiedPushService : PushService() {
             val bytes = message.content
             val payload = String(bytes, Charsets.UTF_8)
 
+            // 麦麦 2026-09-23 22:50：诊断日志 — 节点 4 wakeup-android-receive（UnifiedPush SDK 派发）
+            //   先做最浅的解析拿到 msgId / charId / taskId 用于日志，其余字段后面再读。
+            val rawMeta = try {
+                JSONObject(payload).optJSONObject("metadata")
+            } catch (_: Throwable) { null }
+            val rawCharId = rawMeta?.optString("charId") ?: ""
+            val rawMessageId = try {
+                JSONObject(payload).optString("messageId")
+            } catch (_: Throwable) { "" }
+            val rawTaskUuid = try {
+                JSONObject(payload).optString("taskUuid")
+            } catch (_: Throwable) { "" }
+            AmsgDiagLog.append(
+                context = applicationContext,
+                stage = "wakeup-android-receive",
+                msgId = rawMessageId.ifEmpty { null },
+                taskId = rawTaskUuid.ifEmpty { null },
+                charId = rawCharId.ifEmpty { null },
+                ok = true,
+            )
+
             // 1) 先弹通知 — 不等 JS 端，慢路径也能落通知栏。
             //    payload 长这样 (worker/amsg/src/agentic.ts buildScheduledPush)：
             //      { messageKind:'content', messageType, source:'scheduled',
@@ -172,10 +193,26 @@ class UnifiedPushService : PushService() {
                 }
                 if (body.isNotEmpty()) {
                     showProactiveNotification(title, body, charId, messageId)
+                    // 麦麦 2026-09-23 22:50：诊断日志 — 节点 10 wakeup-system-notification
+                    //   安卓本地弹通知完成（与前端的 wakeup-system-notification 并列，不重复算节点）
+                    AmsgDiagLog.append(
+                        context = applicationContext,
+                        stage = "wakeup-system-notification",
+                        msgId = messageId,
+                        taskId = rawTaskUuid.ifEmpty { null },
+                        charId = charId.ifEmpty { null },
+                        ok = true,
+                    )
                 }
             } catch (e: Exception) {
                 // payload 不是 JSON 或字段缺失 — 弹个原始字符串进去
                 Log.w(TAG, "payload 解析失败，按原文弹通知", e)
+                AmsgDiagLog.append(
+                    context = applicationContext,
+                    stage = "wakeup-android-receive",
+                    ok = false,
+                    error = "payload 解析失败：${e.javaClass.simpleName}: ${e.message?.take(80)}",
+                )
                 showProactiveNotification(
                     "主动消息",
                     payload.take(120),
@@ -191,6 +228,12 @@ class UnifiedPushService : PushService() {
             appendPendingMessage(applicationContext, payload)
         } catch (e: Exception) {
             Log.e(TAG, "处理推送消息失败", e)
+            AmsgDiagLog.append(
+                context = applicationContext,
+                stage = "wakeup-android-receive",
+                ok = false,
+                error = "onMessage 顶层抛错：${e.javaClass.simpleName}: ${e.message?.take(80)}",
+            )
         }
     }
 

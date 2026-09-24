@@ -39,6 +39,7 @@ export type AmsgDiagStage =
   | 'wakeup-chat-ui'             // 9. setLastMsgTimestamp / reloadMessages
   | 'wakeup-system-notification' // 10. 弹系统通知
   | 'wakeup-failed'              // 任意节点失败通用
+  | 'wakeup-dedup-hit'           // 麦麦 2026-09-24：远端已有同 charId+fireAt 未触发任务，去重命中
   | 'wakeup-final';              // 链终
 
 export interface AmsgDiagEntry {

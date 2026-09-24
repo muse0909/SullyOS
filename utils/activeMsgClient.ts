@@ -16,6 +16,8 @@ import {
   UserProfile,
 } from '../types';
 import { getLastRealUserMessageAt } from './amsg2ExpireGuard';
+// 麦麦 2026-09-24：诊断日志（去重命中要打一条 trace）
+import { amsgDiag } from './amsgDiag';
 import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
@@ -2381,6 +2383,54 @@ export const ActiveMsgClient = {
     // 别存自己手上那个墙钟串——角色写的是它那边的钟、面板填的是设备的钟，两种串长得一样，
     // 落盘后谁也认不出该按哪个时区读，本地一律 new Date() 按设备解析就会差一个时差。
     const firstSendTime = ensureFutureTime(task.firstSendTime, tzId);
+
+    // 麦麦 2026-09-24：任务级去重（暮色拍板）
+    //   同一个角色 + 同一个唤醒时间（绝对时刻 60 秒内），未触发状态只允许一条。
+    //   角色自排（source='character'）命中已有远端未触发任务 → 复用，不新建；
+    //   手动排（source='manual'）照旧放行——用户面板排的优先级最高，这是用户主动行为。
+    //   用「绝对时刻 60 秒窗」而不是字符串相等：cron 是按整分触发的，send_at 在远端
+    //   落库时会被服务端按当前分钟对齐，传参给到秒的两条记录只要落在同一分钟就该算同一条。
+    //   去重要查远端而不是本地 config.tasks：本地可能落后于远端（面板对账注释里承认
+    //   这点），用本地会漏。
+    if (task.source === 'character' && !replaceTaskUuid) {
+      try {
+        const firstSendMs = new Date(firstSendTime).getTime();
+        const remoteTasks = await this.listRemoteTasksForChar(char.id);
+        const matched = remoteTasks.find((t) => {
+          if (typeof t.nextSendAt !== 'string') return false;
+          if (t.messageSubtype === AMSG_INSTANT_CHAT_SUBTYPE) return false;
+          const existingMs = new Date(t.nextSendAt).getTime();
+          if (!Number.isFinite(existingMs)) return false;
+          // 已触发的（一次性任务过点之后云端会删行，所以还活着就是 pending）当未触发。
+          // status 字段在云端表现是字符串；这里不去解析，沿用「还在远端清单里」=pending。
+          return Math.abs(existingMs - firstSendMs) < 60_000;
+        });
+        if (matched) {
+          // 麦麦 2026-09-24 17:30：诊断日志 — 节点 wakeup-dedup-hit
+          amsgDiag({
+            stage: 'wakeup-dedup-hit',
+            charId: char.id,
+            taskId: matched.uuid,
+            fireAt: firstSendMs,
+            source: 'character',
+            ok: true,
+            error: `复用远端未触发的同 (charId, fireAt±60s) 任务，跳过创建`,
+          });
+          // 复用路径：返回值形状跟创建成功那条一致，让调用方按 uuid 落本地账。
+          return {
+            uuid: matched.uuid,
+            status: matched.status ?? 'scheduled',
+            nextSendAt: matched.nextSendAt,
+            clientTaskId: matched.clientTaskId ?? '',
+            replacedCancelFailed: false,
+            firstSendAt: firstSendTime,
+          };
+        }
+      } catch (error) {
+        // 远端查失败 → 不拦排程，让原本的创建路径走（任务级去重是 best-effort 增强）。
+        console.warn('[ActiveMsg2] 任务级去重的远端查失败，按新建处理', error);
+      }
+    }
     // AI 模式的 prompt 只有一条来源：firePack 上传 client_state，worker 到点现场填槽。
     // 任务体里不再冻结一份渲染好的 prompt——读不到 fire_pack 就直接报错，没有第二条路，
     // 留着那份快照只是白占请求体（完整角色卡 + 世界书）。

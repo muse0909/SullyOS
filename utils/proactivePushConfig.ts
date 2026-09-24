@@ -12,6 +12,10 @@
  */
 // 麦麦 2026-09-23 22:50：诊断日志 — 主动消息 2.0 全链路
 import { amsgDiag } from './amsgDiag';
+// 麦麦 2026-09-24：把角色自排的 2.0 任务同步到本地 char.activeMsg2Config.tasks
+//   需要 ActiveMsg2TaskRecord 类型 + applyScheduledTask/pruneStaleTasks 工具。
+import { applyScheduledTask, pruneStaleTasks } from './amsg2Tasks';
+import type { ActiveMsg2TaskRecord, CharacterProfile } from '../types';
 
 /**
  * 麦麦 2026-09-03：配置从 import.meta.env 读，跟 Android BuildConfig 字段对齐。
@@ -365,6 +369,108 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
 }
 
 /**
+ * 麦麦 2026-09-24：把 scheduleCharacterTask 创建成功的远端任务同步到本地
+ * char.activeMsg2Config.tasks。
+ *
+ * 暮色 9-24 拍板第 2 项修复：scheduleCharacterTask 只往远端 D1 写一行，不动本地账本。
+ * 后果：面板看不到、cancelCharacterWakeups 查不到、用户发消息时无法取消，
+ * 到点照样触发（用户被通知却找不到这条任务是怎么来的）。
+ *
+ * 数据结构跟工具桥那条 schedule_active_message 完全一致
+ * （见 amsg2ToolBridge.ts:309 的 record + persistTasks），保证两条创建路径
+ * 落账形状相同 — 面板 / 对账 / 取消链路不必为这条路径写特例。
+ *
+ * 防重复：applyScheduledTask 自带按 taskUuid 防重复（同 uuid 二次落账是覆盖）。
+ * 加上 scheduleCharacterTask 入口的任务级去重已经拦了"同 (charId, fireAt) 复用"，
+ * 走到这里的远端 uuid 一定不存在本地账本里。
+ *
+ * React state 同步：写完 IDB 后 dispatchEvent amsg2-character-tasks-changed，
+ * OSContext 监听 + 重读 IDB + setCharacters。面板 / Chat.tsx 都靠 characters
+ * state 拿 char，不刷新就用旧 activeMsg2Config.tasks，cancelCharacterWakeups
+ * 还是找不到这条任务。
+ *
+ * 失败静默：写本地账本是补账动作（远端已经存在），写不进不该阻塞整个流程。
+ * 留 console.warn 便于事后排查。
+ */
+async function persistCharacterWakeupToLocal(params: {
+  charId: string;
+  storedChar: CharacterProfile | null;
+  result: {
+    uuid: string;
+    clientTaskId: string;
+    firstSendAt: string;
+  };
+  taskInput: {
+    mode: 'prompted';
+    recurrenceType: 'none';
+    firstSendTime: string;
+    promptHint: string;
+    reason: string;
+    source: 'character';
+  };
+}): Promise<void> {
+  const { charId, result } = params;
+  // 入参 taskInput 里的字段是固定那一组（schedule_next_wakeup token 永远 mode=prompted、
+  // recurrenceType=none、source=character），不再额外解析。
+  const record: ActiveMsg2TaskRecord = {
+    taskUuid: result.uuid,
+    clientTaskId: result.clientTaskId,
+    mode: params.taskInput.mode,
+    firstSendTime: result.firstSendAt, // 解析好的绝对时刻，跟工具桥那条一致
+    recurrenceType: params.taskInput.recurrenceType,
+    promptHint: params.taskInput.promptHint,
+    expirePolicy: 'expire',
+    source: params.taskInput.source,
+    status: 'scheduled',
+    createdAt: Date.now(),
+  };
+
+  try {
+    // 拿最新一份 char：registerCharacterWakeup 进来时读到的 storedChar 可能在调用之前
+    // 已经过期（比如面板里刚改完设置落了一次）。重读避免覆盖面板刚改的设置。
+    const { DB } = await import('./db');
+    const freshChar = await DB.getCharacter(charId).catch(() => null);
+    if (!freshChar) {
+      // 角色被删了 / IDB 读不到 — 不写本地账本，让远端任务到期自然作废。
+      console.warn(`[ProactivePush] persistCharacterWakeupToLocal: 找不到角色 ${charId}, 跳过本地账本`);
+      return;
+    }
+
+    const existingConfig = freshChar.activeMsg2Config ?? { enabled: true } as any;
+    // applyScheduledTask 按 taskUuid 防重复（同 uuid 二次落账是覆盖而不是新增）。
+    // 替换语义不传 replaceTaskUuid，行为是「并入清单」。
+    const nextTasks = applyScheduledTask(
+      existingConfig.tasks ?? [],
+      record,
+      { replacedCancelFailed: false },
+      Date.now(),
+    );
+    // 清过点 48h 的一次性任务（跟 persistTasks 一致）。
+    const cleanedTasks = pruneStaleTasks(nextTasks, Date.now());
+
+    const nextConfig = {
+      ...existingConfig,
+      tasks: cleanedTasks,
+      lastSyncedAt: Date.now(),
+    };
+
+    const updatedChar: CharacterProfile = { ...freshChar, activeMsg2Config: nextConfig as any };
+    await DB.saveCharacter(updatedChar);
+
+    // 通知 OSContext 同步 React state — Chat.tsx 拿 characters state 的 char 调
+    // cancelCharacterWakeups，面板 ActiveMsg2SettingsModal 也读 characters[].activeMsg2Config。
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('amsg2-character-tasks-changed', {
+        detail: { charId, taskUuid: result.uuid },
+      }));
+    }
+  } catch (error) {
+    // 写本地账本是补账（远端已经成功），写不进不该阻塞整个流程。
+    console.warn(`[ProactivePush] persistCharacterWakeupToLocal 失败 (远端任务 ${result.uuid} 已写，不影响)`, error);
+  }
+}
+
+/**
  * 暮色 2026-09-17 21:50:schedule_next_wakeup 第四模式 — 独立入口
  *
  *   跟 registerDynamicScheduleOnWorker 的差别：
@@ -452,7 +558,7 @@ export async function registerCharacterWakeup(
     //   注：本接口的旧注释写过「不查 flag」 — 那是 AMSG2_ENABLED 那个全局 flag，角色级
     //   enabled 是用户主权，性质不同（暮色 9-24 拍板）。
     const charEnabled = (storedChar?.activeMsg2Config?.enabled === true);
-    await ActiveMsgClient.scheduleCharacterTask({
+    const result = await ActiveMsgClient.scheduleCharacterTask({
       char: charStub,
       config: activeMsg2Config,
       task: {
@@ -473,6 +579,39 @@ export async function registerCharacterWakeup(
       apiConfig: (apiConfig ?? { baseUrl: '', apiKey: '', model: '' }) as any,
       enabledOverride: charEnabled,
     });
+
+    // 麦麦 2026-09-24：暮色拍板第 2 项修复 — 把任务记录写进本地 char.activeMsg2Config.tasks。
+    //   scheduleCharacterTask 这条路只往远端 D1 写一行 + 返回 uuid，不动本地账本。
+    //   后果：角色主动消息面板看不到、cancelCharacterWakeups 查不到、用户发消息时无法取消，
+    //   到点照样触发（面板按钮一行都看不到，用户只能被通知）。
+    //   工具桥那条路（schedule_active_message）本来就会写本地账本（amsg2ToolBridge.ts:309），
+    //   这里补齐 schedule_next_wakeup 的缺失，让两条创建路径数据结构一致。
+    //
+    //   入口已经在 scheduleCharacterTask 的任务级去重命中时 short-circuit return 复用已有任务
+    //   （不会执行到这一段）；本分支只处理真正新建成功的路径。applyScheduledTask 按 taskUuid
+    //   去重，同 uuid 二次落账是覆盖而不是新增 —— 不会产生重复本地记录。
+    //
+    //   写完 IDB 后 dispatchEvent 让 OSContext 同步刷新 React state（面板 / Chat.tsx 都靠
+    //   characters state 拿 char，没刷新就用旧 activeMsg2Config.tasks，调 cancelCharacterWakeups
+    //   还是找不到这条任务）。
+    await persistCharacterWakeupToLocal({
+      charId: String(charId),
+      storedChar,
+      result: {
+        uuid: result.uuid,
+        clientTaskId: result.clientTaskId,
+        firstSendAt: result.firstSendAt,
+      },
+      taskInput: {
+        mode: 'prompted',
+        recurrenceType: 'none',
+        firstSendTime: fireAtText,
+        promptHint: reason,
+        reason,
+        source: 'character',
+      },
+    });
+
     return true;
   } catch (e) {
     console.warn('[ProactivePush] registerCharacterWakeup 写任务失败:', e);

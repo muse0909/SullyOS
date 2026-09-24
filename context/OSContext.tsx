@@ -772,6 +772,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.removeEventListener('os_date_quick_phrases_changed', onCustom);
     };
   }, []);
+
+  // 麦麦 2026-09-24：监听 amsg2-character-tasks-changed — scheduleCharacterTask 写远端成功后
+  //   会 dispatchEvent，把新任务同步进 char.activeMsg2Config.tasks。React state 里 characters
+  //   是面板 / Chat.tsx 拿 char 的唯一来源，不刷新就用旧 tasks —— cancelCharacterWakeups
+  //   查不到、面板看不到。这里重读 IDB + setCharacters 同步。
+  useEffect(() => {
+    const onTasksChanged = async (e: Event) => {
+      const detail = (e as CustomEvent<{ charId?: string }>).detail;
+      const targetCharId = detail?.charId;
+      if (!targetCharId) return;
+      try {
+        const fresh = await DB.getCharacter(targetCharId);
+        if (!fresh) return;
+        setCharacters((prev) => {
+          const exists = prev.some((c) => c.id === targetCharId);
+          if (!exists) return prev;
+          return prev.map((c) => (c.id === targetCharId
+            ? normalizeCharacterImpression({ ...c, activeMsg2Config: fresh.activeMsg2Config ?? c.activeMsg2Config })
+            : c));
+        });
+      } catch (error) {
+        console.warn('[OSContext] amsg2-character-tasks-changed 同步失败', error);
+      }
+    };
+    window.addEventListener('amsg2-character-tasks-changed', onTasksChanged);
+    return () => {
+      window.removeEventListener('amsg2-character-tasks-changed', onTasksChanged);
+    };
+  }, []);
   const addDateQuickPhrase = (display: string, content: string, cursorPos: 'start' | 'middle' | 'end' = 'end') => {
     const id = `qp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     setDateQuickPhrases([...dateQuickPhrases, { id, display: display || content.slice(0, 2), content, enabled: true, cursorPos }]);

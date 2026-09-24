@@ -431,6 +431,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
         },
         replaceTaskUuid: editingTaskUuid ?? undefined,
         userProfile, groups, realtimeConfig, apiConfig,
+        // 麦麦 2026-09-24：把当前面板开关传给排程接口做客户端闸。上面 `if (!enabled)` 的分支
+        // 走到 onClose 已经 return 了，这里 enabled 一定是 true；显式传是给 scheduleCharacterTask
+        // 一个稳定的判断口径，不让它再去翻 buildConfig 算 enabled（那里把 enabled 钉 true）。
+        enabledOverride: enabled,
       });
 
       const record: ActiveMsg2TaskRecord = {

@@ -2332,6 +2332,20 @@ export const ActiveMsgClient = {
     char: CharacterProfile;
     /** 角色级共享设置（secondaryApi / maxTokens）。 */
     config: ActiveMsg2CharacterConfig;
+    /**
+     * 角色级 2.0 启用态。省略时按 config.enabled 推断。
+     *
+     * 暮色 9-24 拍板：角色关闭主动消息 → 新任务不该被创建（不然关等于没关）。
+     * 关闭时已有未触发任务由 ActiveMsg2SettingsModal.handleSubmit 在面板底部
+     * 「关闭 2.0」按钮里统一走 cancelAllTasksForChar 取消，**不在这里**重复做。
+     *
+     * 来源：
+     *   - 面板 handleSubmit：传当前 enabled state
+     *   - 工具桥 handleSchedule：传 isAmsg2EnabledForChar(deps.char)（跟注入门同源）
+     *   - registerCharacterWakeup：传 isAmsg2EnabledForChar(storedChar) 的显式判断，
+     *     关着时拒绝，不弹 toast（跟原有失败静默一致）
+     */
+    enabledOverride?: boolean;
     /** 本次要排的任务。 */
     task: {
       mode: ActiveMsg2Mode;
@@ -2362,7 +2376,21 @@ export const ActiveMsgClient = {
     realtimeConfig: RealtimeConfig;
     apiConfig: APIConfig;
   }) {
-    const { char, config, task, replaceTaskUuid, userProfile, groups, realtimeConfig, apiConfig } = params;
+    const { char, config, task, replaceTaskUuid, userProfile, groups, realtimeConfig, apiConfig, enabledOverride } = params;
+
+    // 麦麦 2026-09-24：角色级 2.0 启用闸（暮色 9-24 拍板第 3 项）
+    //   关闭时拒绝一切新建路径（schedule_next_wakeup / schedule_active_message / 面板手动）。
+    //   已有未触发的任务由面板底部「关闭 2.0」按钮走 cancelAllTasksForChar 取消，不在这里重复。
+    //   replaceTaskUuid 时是「关掉后想重建」，按「关着 = 不接任何新建」一致处理：编辑路径
+    //   也拒，让用户先去面板打开开关。理由：关 = 用户主权「我不要这条」，编辑它本身就把
+    //   主权反向撕了。
+    //   Worker 端的 selfScheduleEnabled 只控 fire 里能不能调工具，拦不到本任务的 fire 触发。
+    //   所以关闭态的硬拦截必须客户端做——worker 端不在本轮范围内（暮色 9-17 拍板不动）。
+    const charEnabled = enabledOverride ?? (config.enabled === true);
+    if (!charEnabled) {
+      throw new Error('主动消息 2.0 在该角色上已关闭；请先在「主动消息 2.0」面板重新打开再排程。');
+    }
+
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
     // 任务体不带订阅，worker 到点读用户级那一份——所以建任务前先把它登记上去。

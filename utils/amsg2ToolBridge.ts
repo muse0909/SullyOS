@@ -26,7 +26,7 @@ import { trackEvent } from './analytics';
 import {
   applyScheduledTask, currentOccurrenceMs, describeExpirePolicy, describeRecurrence,
   describeTaskMode, describeTaskProgress, findTaskByShortId, formatTaskTime,
-  getPendingTasks, isPendingTask, pruneStaleTasks, resolveExpirePolicy, shortTaskId,
+  getPendingTasks, isAmsg2EnabledForChar, isPendingTask, pruneStaleTasks, resolveExpirePolicy, shortTaskId,
 } from './amsg2Tasks';
 import { resolveMaxUnansweredSends } from './amsgFirePack';
 import { EXPIRE_POLICY_DESCRIPTION } from './amsgFireSchedule';
@@ -304,6 +304,10 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
     char, config, task: { ...taskInput, selfScheduled: true },
     replaceTaskUuid: args.__replaceTaskUuid,   // renew 内部复用，LLM 不感知
     userProfile, groups, realtimeConfig, apiConfig,
+    // 麦麦 2026-09-24：把注入门同源的 enabled 状态传给排程接口。
+    //   工具只在 isAmsg2EnabledForChar(char) 为 true 时注入（见 useChatAI 的 amsg2ToolsInjected），
+    //   关着时这函数根本走不到；显式传 enabled 是给 scheduleCharacterTask 一个稳定的判断口径。
+    enabledOverride: isAmsg2EnabledForChar(char),
   });
 
   const record: ActiveMsg2TaskRecord = {

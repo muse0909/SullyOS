@@ -446,6 +446,12 @@ export async function registerCharacterWakeup(
     const { DB } = await import('./db');
     const storedChar = await DB.getCharacter(charStub.id).catch(() => null);
     const activeMsg2Config = storedChar?.activeMsg2Config ?? { enabled: true } as any;
+    // 麦麦 2026-09-24：暮色拍板第 3 项 — 角色关了 2.0 后 schedule_next_wakeup 拒绝建任务。
+    //   isAmsg2EnabledForChar 是面板开关 / 工具注入门同源判定（utils/amsg2Tasks.ts）。
+    //   关着时 scheduleCharacterTask 入口闸会抛错 → 这里 catch 静默（与原有失败静默一致）。
+    //   注：本接口的旧注释写过「不查 flag」 — 那是 AMSG2_ENABLED 那个全局 flag，角色级
+    //   enabled 是用户主权，性质不同（暮色 9-24 拍板）。
+    const charEnabled = (storedChar?.activeMsg2Config?.enabled === true);
     await ActiveMsgClient.scheduleCharacterTask({
       char: charStub,
       config: activeMsg2Config,
@@ -465,6 +471,7 @@ export async function registerCharacterWakeup(
       groups: [],
       realtimeConfig: baseConfig as any,
       apiConfig: (apiConfig ?? { baseUrl: '', apiKey: '', model: '' }) as any,
+      enabledOverride: charEnabled,
     });
     return true;
   } catch (e) {

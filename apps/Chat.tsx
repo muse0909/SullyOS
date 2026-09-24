@@ -525,7 +525,7 @@ const Chat: React.FC = () => {
                 if (!isTyping) {
                     setTimeout(() => {
                         setMessages(currMsgs => {
-                            triggerAI(currMsgs);
+                            triggerAI(currMsgs, undefined, 'listeningTogether');
                             return currMsgs;
                         });
                     }, 100);
@@ -562,7 +562,7 @@ const Chat: React.FC = () => {
                     setTimeout(() => {
                         // 拿最新的 messages（含新推的 system）传给 triggerAI
                         setMessages(currMsgs => {
-                            triggerAI(currMsgs);
+                            triggerAI(currMsgs, undefined, 'listeningTogether');
                             return currMsgs;
                         });
                     }, 100);
@@ -1449,7 +1449,7 @@ const Chat: React.FC = () => {
             await reloadMessages(visibleCountRef.current);
             // 4. 调 triggerAI 让江澈回应(显式触发,因为 handleSendText 不会自动调)
             const newMsgs: Message[] = [...safeMessages, { ...msgPayload, id: Date.now() } as Message];
-            triggerAI(newMsgs);
+            triggerAI(newMsgs, undefined, 'coReadSendChapter');
         } catch (e: any) {
             console.error('[co-read] send chapter hint failed:', e?.message || e);
         }
@@ -1476,7 +1476,7 @@ const Chat: React.FC = () => {
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
 
-        triggerAI(newHistory);
+        triggerAI(newHistory, undefined, 'reroll');
     };
 
    const handleImageSelect = async (file: File) => {
@@ -1679,7 +1679,7 @@ const Chat: React.FC = () => {
         ProactiveChat.markUserContact(char.id);
         const recent = sanitizeChatMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         setMessages(recent);
-        triggerAI(recent);
+        triggerAI(recent, undefined, 'mcdSend');
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [char, isTyping, triggerAI]);
 
@@ -3089,7 +3089,7 @@ if (keepN > 0) {
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
-                onTriggerAI={() => triggerAI(messages)}
+                onTriggerAI={() => triggerAI(messages, undefined, 'memoryPalaceTrigger')}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
@@ -3478,7 +3478,7 @@ if (keepN > 0) {
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
-                    onTriggerAI={() => { if (input.trim()) { handleSendText().then(() => triggerAI(messages)); } else { triggerAI(messages); } }}
+                    onTriggerAI={() => { if (input.trim()) { handleSendText().then(() => triggerAI(messages, undefined, 'inputBarFlashBtn')); } else { triggerAI(messages, undefined, 'inputBarFlashBtn'); } }}
 
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}

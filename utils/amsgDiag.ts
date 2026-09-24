@@ -41,7 +41,11 @@ export type AmsgDiagStage =
   | 'wakeup-failed'              // 任意节点失败通用
   | 'wakeup-dedup-hit'           // 麦麦 2026-09-24：远端已有同 charId+fireAt 未触发任务，去重命中
   | 'wakeup-cancelled-by-user-message' // 麦麦 2026-09-24：用户发消息触发自动取消
-  | 'wakeup-final';              // 链终
+  | 'wakeup-final'               // 链终
+  // 麦麦 2026-09-24 v2：调查后两次任务来源的临时节点
+  | 'wakeup-trigger-start'       // triggerAI 入口：写 triggerId + callSite
+  | 'wakeup-aicontent-snapshot'  // 每次 aiContent = data.choices[0].message.content 重赋值后写一次
+  | 'wakeup-token-parse-skip';   // 60 秒同 (charId,fireAt,reason) 内存 ring 命中跳过时写
 
 export interface AmsgDiagEntry {
   ts: string;
@@ -61,9 +65,17 @@ export interface AmsgDiagEntry {
   ok: boolean;
   /** 失败原因，截断 120 字；不含 stack trace（devDebug 另算） */
   error?: string;
+  /**
+   * 麦麦 2026-09-24 v2：自由扩展字段（不破坏现有 reader）。
+   * 仅用于排查周期内的临时诊断：triggerAI callSite、aiContent 来源 label、
+   * 整段 token 原文、同次 triggerAI 第几次解析… 等。
+   * 老 reader 读取时会忽略此字段；新 reader 可读但不强依赖。
+   * 结构：Record<string, string | number | boolean | null>，值会被 JSON 化落盘。
+   */
+  extra?: Record<string, string | number | boolean | null>;
 }
 
-interface RawAmsgDiagInput extends Omit<AmsgDiagEntry, 'ts' | 'ok' | 'reason' | 'error' | 'msgId' | 'taskId' | 'charId' | 'fireAt' | 'source'> {
+interface RawAmsgDiagInput extends Omit<AmsgDiagEntry, 'ts' | 'ok' | 'reason' | 'error' | 'msgId' | 'taskId' | 'charId' | 'fireAt' | 'source' | 'extra'> {
   msgId?: string;
   taskId?: string;
   charId?: string;
@@ -72,6 +84,7 @@ interface RawAmsgDiagInput extends Omit<AmsgDiagEntry, 'ts' | 'ok' | 'reason' | 
   source?: 'manual' | 'character';
   ok?: boolean;
   error?: string;
+  extra?: Record<string, string | number | boolean | null>;
 }
 
 const truncate = (value: string | undefined, max: number): string | undefined => {
@@ -84,18 +97,39 @@ const redactEndpoint = (url: string | undefined): string | undefined => {
   return url.length > 30 ? url.slice(0, 30) + '...' : url;
 };
 
-const buildAmsgDiagEntry = (input: RawAmsgDiagInput): AmsgDiagEntry => ({
-  ts: new Date().toISOString(),
-  stage: input.stage,
-  msgId: input.msgId,
-  taskId: input.taskId,
-  charId: input.charId,
-  fireAt: input.fireAt,
-  reason: truncate(input.reason, 80),
-  source: input.source,
-  ok: input.ok ?? true,
-  error: truncate(input.error, 120),
-});
+const buildAmsgDiagEntry = (input: RawAmsgDiagInput): AmsgDiagEntry => {
+  // extra 字段：自由扩展。值为字符串时照样按 truncate 走 80 字避免爆 localStorage；
+  // 其余类型（number/boolean/null）原样落。key 数量限制 12 个以内防事故。
+  let extra: Record<string, string | number | boolean | null> | undefined;
+  if (input.extra && typeof input.extra === 'object') {
+    const entries: Array<[string, string | number | boolean | null]> = [];
+    let count = 0;
+    for (const [k, v] of Object.entries(input.extra)) {
+      if (count >= 12) break;
+      if (v === undefined) continue;
+      if (typeof v === 'string') {
+        entries.push([k, truncate(v, 80) as string]);
+      } else {
+        entries.push([k, v]);
+      }
+      count++;
+    }
+    if (entries.length > 0) extra = Object.fromEntries(entries);
+  }
+  return {
+    ts: new Date().toISOString(),
+    stage: input.stage,
+    msgId: input.msgId,
+    taskId: input.taskId,
+    charId: input.charId,
+    fireAt: input.fireAt,
+    reason: truncate(input.reason, 80),
+    source: input.source,
+    ok: input.ok ?? true,
+    error: truncate(input.error, 120),
+    extra,
+  };
+};
 
 /** 追加一条主动消息 2.0 诊断日志。失败一律静默：诊断不能反过来打断正常链路。 */
 export const appendAmsgDiagEntry = (entry: AmsgDiagEntry): void => {

@@ -817,8 +817,39 @@ export const useChatAI = ({
         }
     };
 
-    const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }) => {
+    const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }, callSite?: string) => {
         if (isTyping || !char) return;
+        // 麦麦 2026-09-24 v2：临时诊断 — 给每次 triggerAI 一个 triggerId，写入 wakeup-trigger-start。
+        //   排查 20:14 和 20:15 两条任务时用来对应「同次 triggerAI」vs「跨次 triggerAI」。
+        //   callSite 由调用方（Chat.tsx 多处 triggerAI 调用）传入字符串标签；未传则记 'unknown'。
+        //   本地排查完成后可整块删掉（连同 Chat.tsx 的 __site 实参 + AmsgDiagEntry.extra 字段）。
+        const triggerId = `tr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        let triggerParseCount = 0; // 同次 triggerAI 内 schedule_next_wakeup 解析到几次（含被跳过的）
+        amsgDiag({
+          stage: 'wakeup-trigger-start',
+          charId: char.id,
+          ok: true,
+          extra: { triggerId, callSite: callSite || 'unknown', msgCount: currentMsgs.length },
+        });
+        // 麦麦 2026-09-24 v2：临时诊断 — 每次 aiContent 重新赋值后调一次，把「哪次 fetch 后的内容含 schedule_next_wakeup token」串起来
+        //   这样排查 20:14 / 20:15 两任务时，能直接看 wakeup-aicontent-snapshot 行找出哪次 snapshot 后跟了 wakeup-token-parsed。
+        //   本 helper 不动业务，只把 source label / 长度 / 是否含 token 写到 amsgDiag.extra。
+        const logAiSnapshot = (label: string, content: string) => {
+          try {
+            amsgDiag({
+              stage: 'wakeup-aicontent-snapshot',
+              charId: char.id,
+              ok: true,
+              extra: {
+                triggerId,
+                source: label,
+                contentLen: content.length,
+                containsToken: content.includes('[schedule_next_wakeup'),
+                rawFirst80: content.slice(0, 80),
+              },
+            });
+          } catch { /* ignore */ }
+        };
         // 暮色 2026-08-07：触发路径收窄——小纸条只在"主路径"（主动消息 + 正常聊天）解析
         //   5 个递归路径（read-note / search / diary / read-diary / fs-diary / fs-read-diary）的 LLM 调用前会临时设 false
         //   即使 LLM 偶尔从 history 学到模式输出 [[XIAO_ZHI_TIAO:...]] 也不会被保存
@@ -2239,6 +2270,8 @@ ${visionDesc}
                         body: JSON.stringify(followBody)
                     }, 2, 0, apiProtocol);
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
+                    // 麦麦 2026-09-24 v2：临时诊断 — mcd propose loop 第 it+1 轮
+                    logAiSnapshot(`mcd-propose-${it + 1}`, data?.choices?.[0]?.message?.content || '');
                     // 第二轮跳过 (我们已经禁用了 tools)
                     if (!getToolCalls(data).length) break;
                 }
@@ -2576,6 +2609,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             }
 
             updateTokenUsage(data, historyMsgCount, 'image-gen-failed-followup');
+            // 麦麦 2026-09-24 v2：临时诊断 — image-gen failed followup
+            logAiSnapshot('image-gen-failed-followup', data?.choices?.[0]?.message?.content || '');
         }
 
         if (imageGenerated) {
@@ -2623,6 +2658,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             }
 
             updateTokenUsage(data, historyMsgCount, 'image-gen-followup');
+            // 麦麦 2026-09-24 v2：临时诊断 — image-gen success followup
+            logAiSnapshot('image-gen-followup', data?.choices?.[0]?.message?.content || '');
         }
     }
 
@@ -2753,6 +2790,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 });
             }
             updateTokenUsage(data, historyMsgCount, 'play-song-followup');
+            // 麦麦 2026-09-24 v2：临时诊断 — play-song followup
+            logAiSnapshot('play-song-followup', data?.choices?.[0]?.message?.content || '');
         }
     }
 
@@ -2858,6 +2897,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             });
         }
         updateTokenUsage(data, historyMsgCount, 'phone-usage-followup');
+        // 麦麦 2026-09-24 v2：临时诊断 — phone-usage followup
+        logAiSnapshot('phone-usage-followup', data?.choices?.[0]?.message?.content || '');
     }
 }
 
@@ -2893,6 +2934,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
             aiContent = normalizeAiContent(aiContent);
+            // 麦麦 2026-09-24 v2：临时诊断 — 主响应写入 snapshot
+            logAiSnapshot('main', aiContent);
 
             // 【改动 2】主 API 返回后解析内联心声块
             if (isEmotionOn(char)) {
@@ -2995,6 +3038,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             aiContent = data.choices?.[0]?.message?.content || '';
                             // Re-clean
                             aiContent = normalizeAiContent(aiContent);
+                            // 麦麦 2026-09-24 v2：临时诊断 — recall followup
+                            logAiSnapshot('recall-followup', aiContent);
                             addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
                         } catch (recallErr: any) {
                             console.error('Recall API failed:', recallErr.message);
@@ -3041,6 +3086,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         console.log('🔍 [Search] AI基于搜索结果生成的新回复:', aiContent.slice(0, 100) + '...');
                         // Re-clean
                         aiContent = normalizeAiContent(aiContent);
+                        // 麦麦 2026-09-24 v2：临时诊断 — search followup
+                        logAiSnapshot('search-followup', aiContent);
                         addToast(`🔍 搜索完成: ${searchQuery}`, 'success');
                     } else {
                         console.log('🔍 [Search] 搜索失败或无结果:', searchResult.message);
@@ -3164,6 +3211,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     updateTokenUsage(data, historyMsgCount, 'diary-fallback');
                     aiContent = data.choices?.[0]?.message?.content || '';
                     aiContent = normalizeAiContent(aiContent);
+                    // 麦麦 2026-09-24 v2：临时诊断 — diary fallback
+                    logAiSnapshot('diary-fallback', aiContent);
                 } catch (fallbackErr) {
                     console.error('📖 [Diary Fallback] 也失败了:', fallbackErr);
                     aiContent = aiContent.replace(tagPattern, '').trim();
@@ -3237,6 +3286,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-notion');
                                     aiContent = data.choices?.[0]?.message?.content || '';
                                     aiContent = normalizeAiContent(aiContent);
+                                    // 麦麦 2026-09-24 v2：临时诊断 — read-diary success
+                                    logAiSnapshot('read-diary-success', aiContent);
                                     addToast(`📖 ${char.name}翻阅了${targetDate}的日记`, 'info');
                                 } else {
                                     console.log('📖 [ReadDiary] 日记内容为空');
@@ -3260,6 +3311,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-notion');
                                 aiContent = data.choices?.[0]?.message?.content || '';
                                 aiContent = normalizeAiContent(aiContent);
+                                // 麦麦 2026-09-24 v2：临时诊断 — read-diary no-diary
+                                logAiSnapshot('read-diary-nodiary', aiContent);
                             }
                         } catch (e) {
                             console.error('📖 [ReadDiary] 读取异常:', e);
@@ -3402,6 +3455,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-feishu');
                                     aiContent = data.choices?.[0]?.message?.content || '';
                                     aiContent = normalizeAiContent(aiContent);
+                                    // 麦麦 2026-09-24 v2：临时诊断 — fs-read-diary success
+                                    logAiSnapshot('fs-read-diary-success', aiContent);
                                     addToast(`📖 ${char.name}翻阅了${targetDate}的飞书日记`, 'info');
                                 } else {
                                     console.log('📖 [Feishu ReadDiary] 日记内容为空');
@@ -3424,6 +3479,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-feishu');
                                 aiContent = data.choices?.[0]?.message?.content || '';
                                 aiContent = normalizeAiContent(aiContent);
+                                // 麦麦 2026-09-24 v2：临时诊断 — fs-read-diary nodiary
+                                logAiSnapshot('fs-read-diary-nodiary', aiContent);
                             }
                         } catch (e) {
                             console.error('📖 [Feishu ReadDiary] 读取异常:', e);
@@ -3494,6 +3551,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 updateTokenUsage(data, historyMsgCount, 'read-note');
                                 aiContent = data.choices?.[0]?.message?.content || '';
                                 aiContent = normalizeAiContent(aiContent);
+                                // 麦麦 2026-09-24 v2：临时诊断 — read-note success
+                                logAiSnapshot('read-note-success', aiContent);
                                 addToast(`📝 ${char.name}翻阅了关于"${keyword}"的笔记`, 'info');
                             } else {
                                 console.log('📝 [ReadNote] 笔记内容为空');
@@ -3517,6 +3576,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             updateTokenUsage(data, historyMsgCount, 'read-note-empty');
                             aiContent = data.choices?.[0]?.message?.content || '';
                             aiContent = normalizeAiContent(aiContent);
+                            // 麦麦 2026-09-24 v2：临时诊断 — read-note empty
+                            logAiSnapshot('read-note-empty', aiContent);
                         }
                     } catch (e) {
                         console.error('📝 [ReadNote] 读取异常:', e);
@@ -3716,6 +3777,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     for (const m of matches) {
                         const timeStr = m[1].trim();
                         const reason = m[2].trim();
+                        triggerParseCount++; // 麦麦 2026-09-24 v2：同次 triggerAI 第几次解析到 token（含被跳过的）
                         // 解析时间：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD HH:MM
                         const dateMatch = timeStr.match(
                             /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/
@@ -3741,6 +3803,16 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         const lastAt = dedupWindow.get(dedupKey);
                         if (lastAt && Date.now() - lastAt < dedupCutoffMs) {
                             console.log(`⏰ [ScheduleNextWakeup] 重复 token 跳过: fireAt=${new Date(fireAt).toISOString()} reason="${reason}"`);
+                            // 麦麦 2026-09-24 v2：临时诊断 — 60 秒 ring 命中跳过时也写一条,看有没有「同 reason 一次回复内重复」
+                            amsgDiag({
+                              stage: 'wakeup-token-parse-skip',
+                              charId: char.id,
+                              fireAt,
+                              reason,
+                              source: 'character',
+                              ok: true,
+                              extra: { triggerId, parseCount: triggerParseCount, rawToken: m[0], dedupGapMs: Date.now() - lastAt },
+                            });
                             continue;
                         }
                         dedupWindow.set(dedupKey, Date.now());
@@ -3751,6 +3823,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         //   apiConfig 透传当前角色/全局的 baseUrl/apiKey/model（到点 worker 跑 LLM 用）。
                         //   写入成功才 toast（d27d7f34 行为：失败静默），解析失败单独 warn。
                         // 麦麦 2026-09-23 22:50：诊断日志 — 节点 1 wakeup-token-parsed + 节点 3 wakeup-worker-ack
+                        // 麦麦 2026-09-24 v2：临时诊断 — 写整段 token 原文 m[0] + triggerId + 同次 triggerAI 解析次数
                         amsgDiag({
                           stage: 'wakeup-token-parsed',
                           charId: char.id,
@@ -3758,6 +3831,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                           reason,
                           source: 'character',
                           ok: true,
+                          extra: { triggerId, parseCount: triggerParseCount, rawToken: m[0] },
                         });
                         const ok = await registerCharacterWakeup(
                           char.id,
@@ -4046,6 +4120,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         updateTokenUsage(data, historyMsgCount, 'xhs-search');
                         aiContent = data.choices?.[0]?.message?.content || '';
                         aiContent = normalizeAiContent(aiContent);
+                        // 麦麦 2026-09-24 v2：临时诊断 — xhs search
+                        logAiSnapshot('xhs-search', aiContent);
                         await DB.saveMessage({
                             charId: char.id,
                             role: 'system',
@@ -4098,6 +4174,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         updateTokenUsage(data, historyMsgCount, 'xhs-browse');
                         aiContent = data.choices?.[0]?.message?.content || '';
                         aiContent = normalizeAiContent(aiContent);
+                        // 麦麦 2026-09-24 v2：临时诊断 — xhs browse
+                        logAiSnapshot('xhs-browse', aiContent);
                         addToast(`📕 ${char.name}刷了会儿小红书`, 'info');
                     } else {
                         aiContent = aiContent.replace(xhsBrowseMatch[0], '').trim();
@@ -4422,6 +4500,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     updateTokenUsage(data, historyMsgCount, 'xhs-profile');
                     aiContent = data.choices?.[0]?.message?.content || '';
                     aiContent = normalizeAiContent(aiContent);
+                    // 麦麦 2026-09-24 v2：临时诊断 — xhs profile
+                    logAiSnapshot('xhs-profile', aiContent);
                     addToast(`📕 ${char.name}看了看自己的小红书`, 'info');
                 } catch (e) {
                     console.error('📕 [XHS] 查看主页异常:', e);
@@ -4597,6 +4677,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     updateTokenUsage(data, historyMsgCount, 'xhs-detail');
                     aiContent = data.choices?.[0]?.message?.content || '';
                     aiContent = normalizeAiContent(aiContent);
+                    // 麦麦 2026-09-24 v2：临时诊断 — xhs detail
+                    logAiSnapshot('xhs-detail', aiContent);
                     addToast(`📕 ${char.name}${detailFailed ? '尝试查看一条笔记（加载失败）' : '看了一条笔记的详情'}`, 'info');
                 } catch (e) {
                     console.error('📕 [XHS] 查看详情异常:', e);

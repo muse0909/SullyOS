@@ -240,21 +240,27 @@ class AmsgUnifiedPushPlugin : Plugin() {
                 sub.put("endpoint", endpoint)
                 val keys = JSObject()
                 // 暮色 2026-09-25 19:33 拍板：p256dh 必须是 client 自己的 VAPID 公钥 = ECDH 公钥。
-                //   之前错写成 workerVapidPublicKey（注释里"distributor 已经替我们做 RFC8291 加密"
-                //   是错的认知，UnifiedPush 协议里 distributor 只透传 ciphertext，加密必须由
-                //   application server 用 client 的 ECDH 公钥完成），导致：
-                //     - worker 用 worker 公钥做 ECDH → ciphertext 用 client 私钥解不开
-                //     - PushMessage.decrypted=false → content 是 ciphertext
-                //     - onMessage 当 UTF-8 解码 ciphertext → 大量 U+FFFD + 控制字符 + 孤立 surrogate
-                //     - JSON parse 失败 → 之前弹乱码通知、现在走 wakeup-push-noisy-skip
-                //   vapidPublicKey 字段保留 workerVapidPublicKey（前端 ensureUnifiedPushSubscription
-                //   比对 worker 公钥用），仅 keys.p256dh 改读 client 公钥。
-                val clientVapidPublicKey = vapidSp.getString(VAPID_PUBLIC_KEY, null)
-                    ?: workerVapidPublicKey
-                keys.put("p256dh", clientVapidPublicKey)
-                // UnifiedPush 协议里 VAPID key pair 就是 ECDH key pair，不要求独立的 auth secret。
-                //   worker sendWebPush 把空字符串 b64uDecode 当 0 byte salt 喂给 HKDF，符合 RFC 5869 允许。
-                keys.put("auth", "")
+                // 暮色 2026-09-25 21:11 拍板（修复 A）：
+                //   keys.auth 必须等于 AmsgKeyManager 实际生成的 16 byte auth secret。
+                //   之前 line 257 写死 keys.put("auth", "") → worker 用 0 byte salt 加密
+                //   → AmsgKeyManager 用 16 byte auth 解密 → RFC 8291 HKDF PRK 派生不同
+                //   → AES-GCM auth tag 校验失败 → PushMessage.decrypted=false。
+                //   现在直接调 AmsgKeyManager.getPublicKeySet(instance) 拿 pubKey + auth，
+                //   保证两端用同一份密钥。exists() 为 false 时（旧用户未重注册）退回原行为。
+                val keyManager = AmsgKeyManager(context)
+                if (keyManager.exists(INSTANCE)) {
+                    val publicKeySet = keyManager.getPublicKeySet(INSTANCE)
+                    keys.put("p256dh", publicKeySet.pubKey)
+                    keys.put("auth", publicKeySet.auth)
+                } else {
+                    // 兼容旧用户：还没重新注册 UnifiedPush 时维持旧行为（空 auth），
+                    // 等用户点"连接 ntfy 并开启通知"触发 AmsgKeyManager.generate() 后下次
+                    // getStatus 会进 if 分支拿到正确的 16 byte auth。
+                    val clientVapidPublicKey = vapidSp.getString(VAPID_PUBLIC_KEY, null)
+                        ?: workerVapidPublicKey
+                    keys.put("p256dh", clientVapidPublicKey)
+                    keys.put("auth", "")
+                }
                 sub.put("keys", keys)
                 sub.put("distributor", ret.getString("distributor") ?: "")
                 sub.put("temporary", false)

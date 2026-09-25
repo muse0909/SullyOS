@@ -145,6 +145,25 @@ class UnifiedPushService : PushService() {
      *   4) 缓存到 SP 兜底（plugin receiver 没注册时下次启动 drain）
      */
     override fun onMessage(message: org.unifiedpush.android.connector.data.PushMessage, instance: String) {
+        // 暮色 2026-09-25 19:33 拍板：UnifiedPush SDK 解密失败 → content 是 RFC 8291 ciphertext
+        //   不要当 UTF-8 解码 ciphertext（高熵二进制会产生大量 U+FFFD + 控制字符 + 孤立 surrogate）
+        //   不要弹通知、不要写入 SP（SP 是按 UTF-8 string 存的，ciphertext 进去会污染 pending queue
+        //   让 JS drain 把 ciphertext 当 JSON 解析也会全部失败）
+        //   只记录诊断 + 跳过这条推送
+        if (!message.decrypted) {
+            val bytesLen = try { message.content.size } catch (_: Throwable) { -1 }
+            Log.w(
+                TAG,
+                "UnifiedPush SDK 解密失败 — content 是 ciphertext（bytes=$bytesLen），跳过此推送",
+            )
+            AmsgDiagLog.append(
+                context = applicationContext,
+                stage = "wakeup-push-not-decrypted",
+                ok = false,
+                error = "PushMessage.decrypted=false，content 是 RFC 8291 ciphertext（bytes=$bytesLen）；跳过 UTF-8 解码、SP 写入和通知弹窗。可能是 subscription.keys.p256dh 错位（应填 client VAPID 公钥，不能填 worker 公钥）。",
+            )
+            return
+        }
         try {
             val bytes = message.content
             val payload = String(bytes, Charsets.UTF_8)

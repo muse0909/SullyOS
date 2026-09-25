@@ -205,8 +205,12 @@ class UnifiedPushService : PushService() {
                     )
                 }
             } catch (e: Exception) {
-                // 暮色 2026-09-25：诊断 — 排查"同一份 payload 进 SP 后 JS 端能解析、onMessage 解析失败"
-                //   不改 fallback 弹通知行为，只追加诊断字段
+                // 暮色 2026-09-25 19:12 拍板 B：catch 时不再 fallback 弹乱码通知。
+                //   理由：同一条推送的 payload 在 Kotlin JSONObject 解析失败，但 JS 端 JSON.parse 更宽松
+                //   能正常 ingest → 消息会进 chat；让 Android 弹乱码通知反而误导用户"刚才没收到"。
+                //   JS ingest 失败兜底由 OSContext.sendProactiveNativeNotification 走 messageId 覆盖（同 A3）。
+                //   注意：这里只跳过弹通知，下面的 deliverPushToPlugin + appendPendingMessage 仍然执行，
+                //   让 JS drain 能补上这条消息。
                 val bytesLen = try { bytes.size } catch (_: Throwable) { -1 }
                 val payloadLen = payload.length
                 // 安全 hex 摘要：前 16 字节 + 后 16 字节（不打印完整敏感内容）
@@ -236,11 +240,15 @@ class UnifiedPushService : PushService() {
                     ok = false,
                     error = "payload 解析失败: bytes=$bytesLen payloadLen=$payloadLen guessMsgId=$guessMessageId hex=$payloadHexSummary exc=${e.javaClass.simpleName}: ${e.message?.take(80)}",
                 )
-                showProactiveNotification(
-                    "主动消息",
-                    payload.take(120),
-                    "",
-                    System.currentTimeMillis().toString(),
+                // 暮色 2026-09-25 19:12：新增诊断节点 wakeup-push-noisy-skip —— 标记"Android 原生解析失败
+                //   因此跳过弹通知"。跟前一个 wakeup-android-receive ok=false 配对，便于排查哪些推送
+                //   走了这条路径。后续 VAPID/ntfy byte 损坏根因修复后这个 stage 应该消失。
+                AmsgDiagLog.append(
+                    context = applicationContext,
+                    stage = "wakeup-push-noisy-skip",
+                    msgId = guessMessageId,
+                    ok = true,
+                    error = "skip noisy fallback notification: bytes=$bytesLen payloadLen=$payloadLen guessMsgId=$guessMessageId hex=$payloadHexSummary (JS drain 兜底)",
                 )
             }
 

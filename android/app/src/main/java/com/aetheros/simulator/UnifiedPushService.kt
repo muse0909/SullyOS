@@ -205,13 +205,36 @@ class UnifiedPushService : PushService() {
                     )
                 }
             } catch (e: Exception) {
-                // payload 不是 JSON 或字段缺失 — 弹个原始字符串进去
-                Log.w(TAG, "payload 解析失败，按原文弹通知", e)
+                // 暮色 2026-09-25：诊断 — 排查"同一份 payload 进 SP 后 JS 端能解析、onMessage 解析失败"
+                //   不改 fallback 弹通知行为，只追加诊断字段
+                val bytesLen = try { bytes.size } catch (_: Throwable) { -1 }
+                val payloadLen = payload.length
+                // 安全 hex 摘要：前 16 字节 + 后 16 字节（不打印完整敏感内容）
+                val headBytes = try {
+                    payload.substring(0, minOf(16, payloadLen)).toByteArray(Charsets.UTF_8)
+                } catch (_: Throwable) { ByteArray(0) }
+                val tailBytes = try {
+                    payload.substring(maxOf(0, payloadLen - 16)).toByteArray(Charsets.UTF_8)
+                } catch (_: Throwable) { ByteArray(0) }
+                val headHex = headBytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val tailHex = tailBytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val payloadHexSummary = "head(${headBytes.size}B)=$headHex tail(${tailBytes.size}B)=$tailHex"
+                // 在 bytes 里粗搜 "messageId":"..." —— cipher bytes 单字节解码成 latin1 字符串（不再次 UTF-8 替换）
+                val guessMessageId = try {
+                    val raw = String(bytes, Charsets.ISO_8859_1)
+                    Regex(""""messageId"\s*:\s*"([^"\\]{1,80})"""").find(raw)?.groupValues?.get(1)
+                } catch (_: Throwable) { null }
+                Log.w(
+                    TAG,
+                    "payload 解析失败 — bytes=$bytesLen payloadLen=$payloadLen guessMsgId=$guessMessageId hex=$payloadHexSummary exc=${e.javaClass.simpleName}: ${e.message?.take(120)}",
+                    e,
+                )
                 AmsgDiagLog.append(
                     context = applicationContext,
                     stage = "wakeup-android-receive",
+                    msgId = guessMessageId,
                     ok = false,
-                    error = "payload 解析失败：${e.javaClass.simpleName}: ${e.message?.take(80)}",
+                    error = "payload 解析失败: bytes=$bytesLen payloadLen=$payloadLen guessMsgId=$guessMessageId hex=$payloadHexSummary exc=${e.javaClass.simpleName}: ${e.message?.take(80)}",
                 )
                 showProactiveNotification(
                     "主动消息",

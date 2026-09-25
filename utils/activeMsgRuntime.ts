@@ -2065,6 +2065,9 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           charId: message.charId,
           charName: message.charName,
           body: message.previewBody || message.body,
+          // 暮色 2026-09-25：A3 去重 —— OSContext handler 用这个算通知 id，跟 UnifiedPushService.kt:97
+          //   notificationIdHash(messageId, charId) 算的 id 完全一致 → 同 messageId 弹两次会覆盖
+          messageId: message.messageId,
           avatarUrl: message.avatarUrl,
           sentAt: eventSentAt,
         },

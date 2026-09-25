@@ -50,6 +50,8 @@ import { maybeAutoPruneMemoryLinks } from '../utils/memoryPalace/autoPrune';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+// 暮色 2026-09-25：A3 重复通知去重 — JS 端算通知 id 跟 Kotlin 端 notificationIdHash 用同一套算法
+import { proactiveNotificationId } from '../utils/amsgNotificationId';
 import { ActiveMsgRuntime } from '../utils/activeMsgRuntime';
 // 麦麦 2026-09-17：主动消息 2.0 全局配置加进云端备份（暮色反馈"换 apk 后 2.0 设置还得重新填"）
 //   export/import 函数早就在 utils/activeMsgStore.ts 写好了，但 exportSystem/importSystem
@@ -884,16 +886,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // Call Suspend
   const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
 
-  const sendProactiveNativeNotification = useCallback(async (charId: string, charName: string, body: string) => {
+  const sendProactiveNativeNotification = useCallback(async (charId: string, charName: string, body: string, messageId?: string) => {
       if (!Capacitor.isNativePlatform()) return;
       try {
           const permStatus = await LocalNotifications.checkPermissions();
           if (permStatus.display !== 'granted') return;
+          // 暮色 2026-09-25：A3 重复通知去重 — 通知 id 用 (messageId, charId) 的 Kotlin hash 算法
+          //   跟 UnifiedPushService.kt:97 notificationIdHash 算的 id 完全一致 → 同 messageId
+          //   即便走 UnifiedPushService.onMessage + OSContext 两条链路，两次弹通知 id 相同，
+          //   Android 系统会覆盖旧的（不重复），并且 drain 时拿到的正常 body 会把乱码通知替换掉。
+          //   之前用 Math.random() 每次都不一样 → 4+4 = 8 条并存。
+          const notifId = proactiveNotificationId(messageId || '', charId);
           await LocalNotifications.schedule({
               notifications: [{
                   title: charName,
                   body,
-                  id: Math.floor(Math.random() * 1000000),
+                  id: notifId,
                   schedule: { at: new Date(Date.now() + 250) },
                   smallIcon: 'ic_stat_icon_config_sample',
                   extra: { charId, source: 'proactive-chat' }
@@ -1495,8 +1503,10 @@ if (!isVisible || !isChattingWithThisChar) {
       let awayActiveMsgCount = 0;
 
       const handler = (e: Event) => {
-    const detail = (e as CustomEvent).detail as { charId: string; charName: string; body?: string; sessionId?: string };
-    const { charId, charName, body } = detail;
+    const detail = (e as CustomEvent).detail as { charId: string; charName: string; body?: string; sessionId?: string; messageId?: string };
+    // 暮色 2026-09-25：A3 去重 — 解构 messageId（来自 activeMsgRuntime.ts:2062 dispatchEvent），
+    //   用来跟 UnifiedPushService.kt:97 同 messageId 算出同一通知 id，覆盖而非叠加
+    const { charId, charName, body, messageId } = detail;
     setLastMsgTimestamp(Date.now());
     // 麦麦 2026-09-23 22:50：诊断日志 — 节点 9 wakeup-chat-ui（setLastMsgTimestamp 触发 Chat UI 刷新）
     amsgDiag({
@@ -1524,10 +1534,12 @@ if (!isVisible || !isChattingWithThisChar) {
         amsgDiag({
           stage: 'wakeup-system-notification',
           taskId: (detail as any)?.sessionId,
+          msgId: (detail as any)?.messageId,
           charId,
           ok: true,
         });
-        void sendProactiveNativeNotification(charId, charName, preview);
+        // 暮色 2026-09-25：A3 去重 — 传 messageId 让通知 id 跟 UnifiedPushService 端算法一致
+        void sendProactiveNativeNotification(charId, charName, preview, messageId);
 
         if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
             const char = characters.find(c => c.id === charId);

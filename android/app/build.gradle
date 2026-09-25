@@ -155,6 +155,10 @@ dependencies {
     //   这里用 UnifiedPush 官方 android-connector 3.0.0（JitPack 分发）。
     //   选 3.0.0 是因为它支持 INSTANCE_DEFAULT 常量和 tryUseCurrentOrDefaultDistributor 回调签名。
     implementation 'com.github.UnifiedPush:android-connector:3.0.0'
+    // 暮色 2026-09-25 20:02：app 端 AmsgKeyManager 复用 SDK 的 RFC 8291 解密实现
+    //   （com.google.crypto.tink.apps.webpush.WebPushHybridDecrypt）。SDK 用 implementation 引入，
+    //   Tink 不在编译 classpath 里——显式声明让 Gradle 把传递依赖拉进来。
+    implementation 'com.google.crypto.tink:apps-webpush:1.11.0'
 }
 
 apply from: 'capacitor.build.gradle'

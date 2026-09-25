@@ -55,6 +55,59 @@ class AmsgUnifiedPushPlugin : Plugin() {
         const val PENDING_PREFS = UnifiedPushService.PENDING_PREFS
         const val PENDING_KEY = UnifiedPushService.PENDING_KEY
         const val INSTANCE = "amsg2_main"
+
+        /**
+         * 读或生成 VAPID 密钥对，返回 SEC1 uncompressed 公钥的 base64url 字符串。
+         * 持久化在 SharedPreferences 里（重新 install app 会丢，但同一次 install 内复用）。
+         *
+         * 暮色 2026-09-25 20:02 拍板：把原本的 instance method 改成 companion 静态方法，
+         * 让 AmsgKeyManager 能直接调用（不需要构造 plugin 实例）—— AmsgKeyManager 需要保证
+         * 推送加密用的 VAPID key pair 跟解密用的 ECDH key pair 是同一对。
+         */
+        @JvmStatic
+        fun ensureVapidKey(context: android.content.Context): String {
+            val sp = context.getSharedPreferences(VAPID_PREFS, android.content.Context.MODE_PRIVATE)
+            val existing = sp.getString(VAPID_PUBLIC_KEY, null)
+            if (existing != null) return existing
+
+            val kpg = java.security.KeyPairGenerator.getInstance("EC")
+            kpg.initialize(java.security.spec.ECGenParameterSpec("secp256r1"), java.security.SecureRandom())
+            val pair: java.security.KeyPair = kpg.generateKeyPair()
+            val pub = pair.public as java.security.interfaces.ECPublicKey
+            val x = pad32(pub.w.affineX.toByteArray())
+            val y = pad32(pub.w.affineY.toByteArray())
+            val sec1 = ByteArray(1 + x.size + y.size)
+            sec1[0] = 0x04
+            System.arraycopy(x, 0, sec1, 1, x.size)
+            System.arraycopy(y, 0, sec1, 1 + x.size, y.size)
+            val pubB64u = base64UrlEncode(sec1)
+
+            val privPkcs8 = pair.private.encoded
+            val privB64 = Base64.encodeToString(privPkcs8, Base64.NO_WRAP)
+
+            sp.edit()
+                .putString(VAPID_PUBLIC_KEY, pubB64u)
+                .putString(VAPID_PRIVATE_KEY, privB64)
+                .apply()
+
+            Log.i(TAG, "生成新 VAPID 密钥对（pub 头 ${pubB64u.take(20)}）")
+            return pubB64u
+        }
+
+        private fun pad32(bytes: ByteArray): ByteArray {
+            // BigInteger.toByteArray 可能带符号位 0x00 或截短，要 pad 到 32 字节
+            return when {
+                bytes.size == 32 -> bytes
+                bytes.size == 33 && bytes[0] == 0.toByte() -> bytes.copyOfRange(1, 33)
+                bytes.size < 32 -> ByteArray(32 - bytes.size) + bytes
+                else -> bytes.copyOfRange(bytes.size - 32, bytes.size)
+            }
+        }
+
+        private fun base64UrlEncode(bytes: ByteArray): String =
+            Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+                .replace('+', '-')
+                .replace('/', '_')
     }
 
     /**
@@ -238,9 +291,15 @@ class AmsgUnifiedPushPlugin : Plugin() {
                 sp.edit().putString("workerVapidPublicKey", vapidPublicKeyFromWorker).apply()
             }
 
-            val ourVapid = ensureOrGenerateVapidKey()
+            // 暮色 2026-09-25 20:02 拍板：改用 5-arg register 重载，注入 AmsgKeyManager。
+            //   AmsgKeyManager 复用 SDK 的 WebPushHybridDecrypt（Tink）做 RFC 8291 解密，
+            //   密钥来源是 app 端 VAPID_PREFS 里已经持久化的 VAPID key pair + per-instance auth secret。
+            //   这样推送实际加密用的 ECDH 公钥（= distributor 拿到的 vapid 公钥）跟解密用的
+            //   ECDH 私钥（= VAPID 私钥）就是同一对 → 解密能成功。
+            val ourVapid = ensureVapidKey(context)
             val instance = INSTANCE
-            Log.i(TAG, "register 用 client vapid (${ourVapid.take(20)}...) + instance=$instance")
+            val keyManager = AmsgKeyManager(context)
+            Log.i(TAG, "register 用 client vapid (${ourVapid.take(20)}...) + instance=$instance + 自定义 AmsgKeyManager")
 
             // 提示用户允许 / 选 distributor
             // tryUseCurrentOrDefaultDistributor 会启动一个 translucent activity
@@ -256,9 +315,10 @@ class AmsgUnifiedPushPlugin : Plugin() {
                         context,
                         instance,
                         "拾光机主动消息 2.0",
-                        ourVapid
+                        ourVapid,
+                        keyManager
                     )
-                    Log.i(TAG, "UnifiedPush.register() 已调, 等 distributor 回调 onNewEndpoint")
+                    Log.i(TAG, "UnifiedPush.register() 已调（5-arg + AmsgKeyManager），等 distributor 回调 onNewEndpoint")
                     val ret = JSObject()
                     ret.put("pending", true)
                     call.resolve(ret)
@@ -389,55 +449,8 @@ class AmsgUnifiedPushPlugin : Plugin() {
 
     // ----- helpers -----
 
-    /**
-     * 读或生成 VAPID 密钥对。返回 SEC1 uncompressed 公钥的 base64url 字符串。
-     * 持久化在 SharedPreferences 里（重新 install app 会丢，但同一次 install 内复用）。
-     */
-    private fun ensureOrGenerateVapidKey(): String {
-        val sp = context.getSharedPreferences(VAPID_PREFS, android.content.Context.MODE_PRIVATE)
-        val existing = sp.getString(VAPID_PUBLIC_KEY, null)
-        if (existing != null) return existing
-
-        val kpg = KeyPairGenerator.getInstance("EC")
-        kpg.initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
-        val pair: KeyPair = kpg.generateKeyPair()
-        val pub = pair.public as ECPublicKey
-        // W = public point (affine x, y)，每个 32 字节
-        val x = pad32(pub.w.affineX.toByteArray())
-        val y = pad32(pub.w.affineY.toByteArray())
-        // SEC 1 uncompressed = 0x04 || X || Y = 65 字节
-        val sec1 = ByteArray(1 + x.size + y.size)
-        sec1[0] = 0x04
-        System.arraycopy(x, 0, sec1, 1, x.size)
-        System.arraycopy(y, 0, sec1, 1 + x.size, y.size)
-        val pubB64u = base64UrlEncode(sec1)
-
-        val privPkcs8 = pair.private.encoded
-        val privB64 = Base64.encodeToString(privPkcs8, Base64.NO_WRAP)
-
-        sp.edit()
-            .putString(VAPID_PUBLIC_KEY, pubB64u)
-            .putString(VAPID_PRIVATE_KEY, privB64)
-            .apply()
-
-        Log.i(TAG, "生成新 VAPID 密钥对（pub 头 ${pubB64u.take(20)}）")
-        return pubB64u
-    }
-
-    private fun pad32(bytes: ByteArray): ByteArray {
-        // BigInteger.toByteArray 可能带符号位 0x00 或截短，要 pad 到 32 字节
-        return when {
-            bytes.size == 32 -> bytes
-            bytes.size == 33 && bytes[0] == 0.toByte() -> bytes.copyOfRange(1, 33)
-            bytes.size < 32 -> ByteArray(32 - bytes.size) + bytes
-            else -> bytes.copyOfRange(bytes.size - 32, bytes.size)
-        }
-    }
-
-    private fun base64UrlEncode(bytes: ByteArray): String =
-        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-            .replace('+', '-')
-            .replace('/', '_')
+    // 暮色 2026-09-25 20:02 拍板：ensureVapidKey / pad32 / base64UrlEncode 已搬到 companion object
+    //   （让 AmsgKeyManager 能直接调，无需 plugin 实例）。原来的 instance method 已删除。
 
     /** 让 JSObject / JSArray 在 Plugin 内部易用的便利类型（Capacitor 6 提供） */
     private class JSArray : org.json.JSONArray() {

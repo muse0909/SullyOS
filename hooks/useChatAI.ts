@@ -4979,7 +4979,36 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   - 现在 finally 块启动，主回复一定先入库+渲染，再触发识图
             //   - enableVisionApi 开关控制是否调用；主模型看图不受任何开关影响（手动塞图无条件跑）
             //   - DB.updateMessageMeta 改为 await（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
-            if (hasImageInLatest && !alreadyDescribed && (effectiveApi as any).enableVisionApi === true && visionActiveUrl && visionActiveKey) {
+            //
+            //   麦麦 9-27 修：hasImageInLatest / latestImageUrl / targetImageRawMsg / alreadyDescribed
+            //   等模块级变量（缩进 0）在 finally 块访问不到（江澈反馈 ReferenceError）。
+            //   临时方案：finally 块顶部从 historySlice + effectiveApi 重新派生需要的变量。
+            const _fHasImageInLatest = historySlice.some((m: any) =>
+                m?.role === 'user' && m?.type === 'image' &&
+                !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
+                typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:'))
+            );
+            const _fTargetImageRawMsg = [...historySlice].reverse().find((m: any) =>
+                m?.role === 'user' && m?.type === 'image' &&
+                !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
+                typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:')) &&
+                !m?.metadata?.imageDesc
+            );
+            const _fLatestImageUrl = _fTargetImageRawMsg?.content as string | undefined;
+            const _fAlreadyDescribed = !!_fTargetImageRawMsg?.metadata?.imageDesc;
+            const _fVisionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
+            const _fUseVisionGeminiProtocol = _fVisionProtocol === 'gemini';
+            const _fVisionActiveUrl = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
+                : effectiveApi.visionBaseUrl;
+            const _fVisionActiveKey = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
+                : effectiveApi.visionApiKey;
+            const _fVisionActiveModel = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-3.6-flash')
+                : (effectiveApi.visionModel || 'gemini-1.5-flash');
+
+            if (_fHasImageInLatest && !_fAlreadyDescribed && (effectiveApi as any).enableVisionApi === true && _fVisionActiveUrl && _fVisionActiveKey) {
                 const buildVisionMessages = (imageUrl: string) => [
                     {
                         role: 'system',
@@ -5030,19 +5059,19 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     };
                 };
 
-                const visionUrl = useVisionGeminiProtocol
-                    ? (visionActiveUrl || '').replace(/\/+$/, '')
-                    : normalizeApiUrl(visionActiveUrl);
+                const _fVisionUrl = _fUseVisionGeminiProtocol
+                    ? (_fVisionActiveUrl || '').replace(/\/+$/, '')
+                    : normalizeApiUrl(_fVisionActiveUrl);
                 const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
-                    const requestModel = visionActiveModel;
+                    const requestModel = _fVisionActiveModel;
                     const logBase = {
                         timestamp: new Date().toISOString(),
-                        url: useVisionGeminiProtocol
-                            ? `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
-                            : `${visionUrl}/chat/completions`,
+                        url: _fUseVisionGeminiProtocol
+                            ? `${_fVisionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
+                            : `${_fVisionUrl}/chat/completions`,
                         model: requestModel,
                         mode,
-                        protocol: useVisionGeminiProtocol ? 'gemini' : 'openai',
+                        protocol: _fUseVisionGeminiProtocol ? 'gemini' : 'openai',
                         image: imageUrl.startsWith('data:image')
                             ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
                             : { kind: 'url', url: imageUrl },
@@ -5051,7 +5080,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     try {
                         saveVisionReqLog({ ...logBase, status: 'requesting' });
                         let data: any;
-                        if (useVisionGeminiProtocol) {
+                        if (_fUseVisionGeminiProtocol) {
                             const visionGeminiKeys = extractGeminiKeys(
                                 effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
                             );
@@ -5072,7 +5101,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                     lastErr = new Error('识图 Gemini 协议：key 池里所有 key 都不可用');
                                     break;
                                 }
-                                const tryUrl = `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
+                                const tryUrl = `${_fVisionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
                                 const res = await fetch(tryUrl, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -5126,11 +5155,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 temperature: 0.85,
                                 stream: false,
                             };
-                            data = await safeFetchJson(`${visionUrl}/chat/completions`, {
+                            data = await safeFetchJson(`${_fVisionUrl}/chat/completions`, {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${visionActiveKey}`
+                                    'Authorization': `Bearer ${_fVisionActiveKey}`
                                 },
                                 body: JSON.stringify(requestBody)
                             }, 0);
@@ -5148,10 +5177,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     try {
                         let visionData: any;
                         try {
-                            visionData = await callVision(latestImageUrl!, 'url');
+                            visionData = await callVision(_fLatestImageUrl!, 'url');
                         } catch (urlErr: any) {
                             console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
-                            const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
+                            const dataUrl = await imageUrlToDataUrl(_fLatestImageUrl!);
                             if (!dataUrl) throw urlErr;
                             try {
                                 visionData = await callVision(dataUrl, 'base64');
@@ -5159,7 +5188,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 saveVisionReqLog({
                                     timestamp: new Date().toISOString(),
                                     status: 'error',
-                                    url: `${visionUrl}/chat/completions`,
+                                    url: `${_fVisionUrl}/chat/completions`,
                                     model: effectiveApi.visionModel || 'gemini-1.5-flash',
                                     urlModeError: urlErr?.message || String(urlErr),
                                     base64ModeError: base64Err?.message || String(base64Err),
@@ -5168,11 +5197,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             }
                         }
                         const visionDesc = visionData?.choices?.[0]?.message?.content;
-                        if (visionDesc && targetImageRawMsg?.id) {
+                        if (visionDesc && _fTargetImageRawMsg?.id) {
                             // 必须 await 写 DB（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
-                            await DB.updateMessageMeta(targetImageRawMsg.id, { imageDesc: visionDesc });
-                            targetImageRawMsg.metadata = {
-                                ...(targetImageRawMsg.metadata || {}),
+                            await DB.updateMessageMeta(_fTargetImageRawMsg.id, { imageDesc: visionDesc });
+                            _fTargetImageRawMsg.metadata = {
+                                ...(_fTargetImageRawMsg.metadata || {}),
                                 imageDesc: visionDesc
                             };
                             console.log('🔍 后台识图成功，描述已写回 metadata');

@@ -4987,8 +4987,35 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //   - enableVisionApi 开关控制是否调用；主模型看图不受任何开关影响（手动塞图无条件跑）
             //   - DB.updateMessageMeta 改为 await（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
             //
-            //   麦麦 9-27 修：hasImageInLatest / latestImageUrl / targetImageRawMsg / alreadyDescribed
-            //   等模块级变量（缩进 0）在 finally 块访问不到（江澈反馈 ReferenceError）。
+            //   麦麦 9-27 修作用域：模块级函数（_fImageUrlToDataUrl / _fSaveVisionReqLog / _fBlobToDataUrl）
+            //   在 finally 块访问不到（江澈 9-27 反馈 ReferenceError）。
+            //   临时方案：finally 块顶部声明本地副本（避免引用模块级函数）。
+            const _fSaveVisionReqLog = (log: any) => {
+                try {
+                    localStorage.setItem('sullyos:lastVisionReqLog', JSON.stringify(log, null, 2));
+                } catch { /* quota 忽略 */ }
+            };
+            const _fBlobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => reject(reader.error || new Error('图片转 base64 失败'));
+                reader.readAsDataURL(blob);
+            });
+            const _fImageUrlToDataUrl = async (url: string): Promise<string | null> => {
+                if (url.startsWith('data:image')) return url;
+                if (!/^https?:\/\//i.test(url)) return null;
+                const response = await fetch('/api/proxy-image?url=' + encodeURIComponent(url));
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '');
+                    throw new Error(`图片转 base64 失败: HTTP ${response.status} ${text.slice(0, 120)}`);
+                }
+                const blob = await response.blob();
+                if (!blob.type.startsWith('image/')) {
+                    throw new Error(`图片转 base64 失败: 返回类型不是图片 (${blob.type || 'unknown'})`);
+                }
+                return _fBlobToDataUrl(blob);
+            };
+
             //   临时方案：finally 块顶部从 _historySliceRef + effectiveApi 重新派生需要的变量。
             const _fHasImageInLatest = _historySliceRef.some((m: any) =>
                 m?.role === 'user' && m?.type === 'image' &&
@@ -5085,7 +5112,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                     };
 
                     try {
-                        saveVisionReqLog({ ...logBase, status: 'requesting' });
+                        _fSaveVisionReqLog({ ...logBase, status: 'requesting' });
                         let data: any;
                         if (_fUseVisionGeminiProtocol) {
                             const visionGeminiKeys = extractGeminiKeys(
@@ -5171,10 +5198,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 body: JSON.stringify(requestBody)
                             }, 0);
                         }
-                        saveVisionReqLog({ ...logBase, status: 'ok' });
+                        _fSaveVisionReqLog({ ...logBase, status: 'ok' });
                         return data;
                     } catch (err: any) {
-                        saveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
+                        _fSaveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
                         throw err;
                     }
                 };
@@ -5187,12 +5214,12 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             visionData = await callVision(_fLatestImageUrl!, 'url');
                         } catch (urlErr: any) {
                             console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
-                            const dataUrl = await imageUrlToDataUrl(_fLatestImageUrl!);
+                            const dataUrl = await _fImageUrlToDataUrl(_fLatestImageUrl!);
                             if (!dataUrl) throw urlErr;
                             try {
                                 visionData = await callVision(dataUrl, 'base64');
                             } catch (base64Err: any) {
-                                saveVisionReqLog({
+                                _fSaveVisionReqLog({
                                     timestamp: new Date().toISOString(),
                                     status: 'error',
                                     url: `${_fVisionUrl}/chat/completions`,

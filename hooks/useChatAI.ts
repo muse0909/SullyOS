@@ -1064,27 +1064,25 @@ export const useChatAI = ({
             });
 
             // 麦麦 2026-09-27：手动塞最新一张图片（无条件，主模型永远直接看图）
-            //   找 apiMessages 最新一条用户图片，从临时缓存取 base64，替换 cleanedApiMessages 对应条目为数组 content
+            //   从 historySlice 找最新一条用户图片（chatPrompts.ts 处理前的原始数据）
+            //   重要：不能从 apiMessages 找——当图片不是最新一条 user 消息时，chatPrompts 会把它
+            //   降级成中文文字（如 "[timeStr] [用户发送了一张图片]\n[图片描述]: xxx"），原 URL 就丢了
+            //   从 historySlice 拿原始 m.content（URL/data:），临时缓存查 base64，替换 cleanedApiMessages 对应条目
+            //   - apiMessages / historySlice / cleanedApiMessages 三者长度一一对应（chatPrompts.buildMessageHistory 返回）
             //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
-            //   - 兼容数组 content：chatPrompts.ts 给最新图片消息的是 [{text}, {image_url}] 数组
             //   - enableVisionApi 开关不再影响手动塞图（暮色 9-27 拍板：开关只控制后台是否再调识图）
             //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
             //   - 麦麦 9-27 修作用域：_tempImageCleanupKey 声明必须在 try 块内且不被 { } 块包住，
             //     否则 finally 块 / doGeminiRequest 闭包访问不到（江澈反馈 ReferenceError）
             let _tempImageCleanupKey: string | null = null;
-            for (let i = apiMessages.length - 1; i >= 0; i--) {
-                const raw = apiMessages[i];
+            for (let i = historySlice.length - 1; i >= 0; i--) {
+                const raw = historySlice[i];
                 if (raw?.role !== 'user') continue;
-                // 兼容两种 content 形态：字符串 URL/base64，或数组（含 image_url 块）
-                let imageUrlToLookup: string | undefined;
-                if (typeof raw.content === 'string') {
-                    imageUrlToLookup = raw.content;
-                } else if (Array.isArray(raw.content)) {
-                    const imgPart = raw.content.find((c: any) => c?.type === 'image_url');
-                    imageUrlToLookup = imgPart?.image_url?.url;
-                }
-                if (!imageUrlToLookup) continue;
-                if (!imageUrlToLookup.startsWith('http') && !imageUrlToLookup.startsWith('data:')) continue;
+                if (raw?.type !== 'image') continue;
+                const c = raw.content;
+                if (typeof c !== 'string') continue;
+                if (!c.startsWith('http') && !c.startsWith('data:')) continue;
+                let imageUrlToLookup: string = c;
                 let base64: string | undefined;
                 if (imageUrlToLookup.startsWith('http')) {
                     base64 = getTempImageBase64(imageUrlToLookup);
@@ -1096,8 +1094,8 @@ export const useChatAI = ({
                 // 麦麦 2026-09-27：手动塞图诊断日志（江澈 9-27 要求：打缓存 key 和命中结果）
                 console.log('🖼️ [手动塞图] 查找最新用户图片:', {
                     msgIndex: i,
-                    contentType: Array.isArray(raw.content) ? 'array' : typeof raw.content,
-                    imageUrl: imageUrlToLookup,
+                    contentType: 'string (原始 m.content)',
+                    imageUrl: imageUrlToLookup.slice(0, 80) + (imageUrlToLookup.length > 80 ? '...' : ''),
                     cacheHit: !!base64,
                     base64Length: base64?.length || 0,
                 });

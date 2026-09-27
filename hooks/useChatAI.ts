@@ -1063,14 +1063,14 @@ export const useChatAI = ({
                 return { ...msg, content: c };
             });
 
-            // 麦麦 2026-09-27：手动塞最新一张图片（开关关闭时）
+            // 麦麦 2026-09-27：手动塞最新一张图片（无条件，主模型永远直接看图）
             //   找 apiMessages 最新一条用户图片，从临时缓存取 base64，替换 cleanedApiMessages 对应条目为数组 content
-            //   - 开关开启时跳过（让识别 API 流程接管，主请求不带图）
             //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
             //   - 兼容数组 content：chatPrompts.ts 给最新图片消息的是 [{text}, {image_url}] 数组
-            const enableVisionApiFlag = (effectiveApi as any).enableVisionApi === true;
+            //   - enableVisionApi 开关不再影响手动塞图（暮色 9-27 拍板：开关只控制后台是否再调识图）
+            //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
             let _tempImageCleanupKey: string | null = null;
-            if (!enableVisionApiFlag) {
+            {
                 for (let i = apiMessages.length - 1; i >= 0; i--) {
                     const raw = apiMessages[i];
                     if (raw?.role !== 'user') continue;
@@ -1116,120 +1116,8 @@ export const useChatAI = ({
                 }
             }
 
-            // 麦麦 2026-09-27：异步后置图片摘要识图函数定义（finally 块里 fire-and-forget 调用）
-            //   - 复用识别 API 那组的 visionGeminiApiKeys 池（决策1）
-            //   - 防重复：检测 metadata.imageDesc 已有就跳过
-            //   - 必须 await 写 DB，保证下一轮 chatPrompts.ts:1247 能读到 imageDesc
-            //   - 失败 catch 打 warn，不影响主回复
-            //   - 临时缓存在函数 finally 里释放（成功/失败/跳过都清）
-            const runAsyncImageDescription = async (imageUrl: string): Promise<void> => {
-                try {
-                    // 1. 防重复：先查 DB 看目标用户图片是否已有 imageDesc
-                    const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                    const targetMsg = [...recentMsgs].reverse().find((m: any) =>
-                        m?.role === 'user' &&
-                        m?.type === 'image' &&
-                        typeof m?.content === 'string' &&
-                        (m.content.startsWith('http') || m.content.startsWith('data:')) &&
-                        m?.content === imageUrl
-                    );
-                    if (!targetMsg) {
-                        console.warn('🖼️ [异步识图] 找不到目标用户图片消息:', imageUrl.slice(0, 60));
-                        return;
-                    }
-                    if ((targetMsg as any).metadata?.imageDesc) {
-                        console.log('🖼️ [异步识图] 该图片已有 imageDesc，跳过（防重复）');
-                        return;
-                    }
-                    // 2. 从临时缓存拿 base64
-                    const base64 = getTempImageBase64(imageUrl);
-                    if (!base64) {
-                        console.warn('🖼️ [异步识图] 临时缓存里没 base64（可能已过期），跳过');
-                        return;
-                    }
-                    // 3. 取 visionGeminiApiKeys 池
-                    const visionGeminiKeys = extractGeminiKeys(
-                        effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
-                    );
-                    const visionPicked = pickGeminiKey('vision', visionGeminiKeys);
-                    if (!visionPicked) {
-                        console.warn('🖼️ [异步识图] visionGeminiApiKeys 池为空，跳过');
-                        return;
-                    }
-                    const visionBaseUrl = ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl || 'https://generativelanguage.googleapis.com/v1beta')
-                        .replace(/\/+$/, '');
-                    const visionModel = (effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash';
-                    // 4. 构造 Gemini body（base64 走 inline_data）
-                    const dm = base64.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-                    if (!dm) {
-                        console.warn('🖼️ [异步识图] base64 解析失败，跳过');
-                        return;
-                    }
-                    const body = {
-                        contents: [{
-                            role: 'user',
-                            parts: [
-                                { text: '请用两到三句话客观描述这张图片的内容，包括画面主体、颜色、文字（如有）、整体风格。只输出描述，不要输出其他内容。' },
-                                { inline_data: { mimeType: dm[1], data: dm[2] } },
-                            ],
-                        }],
-                        generationConfig: { temperature: 0.85, maxOutputTokens: 256 },
-                    };
-                    // 5. fetch（带 key 池轮询重试一次，跟现有 callVision 同款）
-                    let desc = '';
-                    let lastErr: Error | null = null;
-                    for (let attempt = 0; attempt < 2; attempt++) {
-                        const currentKey = (() => {
-                            if (attempt === 0) return visionPicked.key;
-                            const np = pickGeminiKey('vision', visionGeminiKeys);
-                            return np ? np.key : null;
-                        })();
-                        if (currentKey === null) {
-                            lastErr = new Error('异步识图：visionGeminiApiKeys 池里所有 key 都不可用');
-                            break;
-                        }
-                        const tryUrl = `${visionBaseUrl}/models/${encodeURIComponent(visionModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
-                        const res = await fetch(tryUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body),
-                        });
-                        if (!res.ok) {
-                            const errText = await res.text().catch(() => '');
-                            const usedKeyIndex = (() => {
-                                if (attempt === 0) return visionPicked.keyIndex;
-                                return visionGeminiKeys.indexOf(currentKey);
-                            })();
-                            const verdict = reportGeminiFailure('vision', usedKeyIndex, res.status, errText);
-                            if (verdict === 'fail-permanent' || verdict === 'fail-recoverable') {
-                                lastErr = new Error(`异步识图 ${res.status}: ${errText.slice(0, 200)}`);
-                                break;
-                            }
-                            console.warn(`🖼️ [异步识图] Gemini ${res.status}，切下一个重试`);
-                            lastErr = new Error(`异步识图 ${res.status}: ${errText.slice(0, 200)}`);
-                            continue;
-                        }
-                        const usedKeyIndex = attempt === 0 ? visionPicked.keyIndex : visionGeminiKeys.indexOf(currentKey);
-                        reportGeminiSuccess('vision', usedKeyIndex);
-                        const gj: any = await res.json();
-                        desc = (gj?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-                        console.log(`🖼️ [异步识图] Gemini 响应 ${desc.length} 字 (key ${usedKeyIndex + 1}/${visionGeminiKeys.length})`);
-                        break;
-                    }
-                    if (!desc) {
-                        console.warn('🖼️ [异步识图] 失败:', lastErr?.message || '返回文本为空');
-                        return;
-                    }
-                    // 6. 必须 await 写 DB（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
-                    await DB.updateMessageMeta(targetMsg.id, { imageDesc: desc });
-                    console.log(`🖼️ [异步识图] 写回 imageDesc 成功: ${desc.length} 字`);
-                } catch (e: any) {
-                    console.warn('🖼️ [异步识图] 异常:', e?.message || e);
-                } finally {
-                    // 异步识图完成（成功/失败/跳过都释放）后清理临时缓存
-                    clearTempImage(imageUrl);
-                }
-            };
+            // 麦麦 2026-09-27：手动塞图完成。
+            // 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
@@ -1846,89 +1734,50 @@ if (hasImageInLatest && !alreadyDescribed && (effectiveApi as any).enableVisionA
         }
     };
 
-    try {
-        let visionData: any;
+    // 麦麦 2026-09-27：原识别 API 改为后台 fire-and-forget 异步调用（不阻塞主请求）
+    //   - 主模型现在直接看图（手动塞图已塞进去），不需要再把描述注入 fullMessages
+    //   - DB.updateMessageMeta 改为 await（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
+    //   - 失败 catch 打 warn，不影响主请求
+    //   - enableVisionApi 开关仍控制是否调用（暮色 9-27 拍板新语义：控制后台是否再调一次识图生成描述）
+    //   - 主模型看图不受任何开关影响（手动塞图无条件跑）
+    (async () => {
         try {
-            visionData = await callVision(latestImageUrl!, 'url');
-        } catch (urlErr: any) {
-            console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
-            const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
-            if (!dataUrl) throw urlErr;
+            let visionData: any;
             try {
-                visionData = await callVision(dataUrl, 'base64');
-            } catch (base64Err: any) {
-                saveVisionReqLog({
-                    timestamp: new Date().toISOString(),
-                    status: 'error',
-                    url: `${visionUrl}/chat/completions`,
-                    model: effectiveApi.visionModel || 'gemini-1.5-flash',
-                    urlModeError: urlErr?.message || String(urlErr),
-                    base64ModeError: base64Err?.message || String(base64Err),
-                });
-                throw base64Err;
+                visionData = await callVision(latestImageUrl!, 'url');
+            } catch (urlErr: any) {
+                console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
+                const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
+                if (!dataUrl) throw urlErr;
+                try {
+                    visionData = await callVision(dataUrl, 'base64');
+                } catch (base64Err: any) {
+                    saveVisionReqLog({
+                        timestamp: new Date().toISOString(),
+                        status: 'error',
+                        url: `${visionUrl}/chat/completions`,
+                        model: effectiveApi.visionModel || 'gemini-1.5-flash',
+                        urlModeError: urlErr?.message || String(urlErr),
+                        base64ModeError: base64Err?.message || String(base64Err),
+                    });
+                    throw base64Err;
+                }
             }
-        }
-
-        const visionDesc = visionData?.choices?.[0]?.message?.content;
-
-        if (visionDesc) {
-            // 注入到本轮发给主模型的最后一条 user 消息里。
-            // 注意：这段是内部图片理解，不是用户原话，避免 AI 出戏说“视觉分析报告”。
-            const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
-            if (lastUserIdx >= 0) {
-                const original = typeof fullMessages[lastUserIdx].content === 'string'
-                    ? fullMessages[lastUserIdx].content
-                    : '[图片]';
-
-                fullMessages[lastUserIdx] = {
-                    role: 'user',
-                    content: `${original}
-
-[系统内部图片理解]
-用户刚才发送了一张图片。图片内容如下：
-${visionDesc}
-
-请你自然理解这张图片，并结合用户当前文字回复。
-不要提到“视觉分析报告”“图片描述”“识图结果”“系统提示”“内部图片理解”等字样。
-不要说自己看不到图，也不要说图片加载失败。
-[/系统内部图片理解]`
-                };
-            }
-
-            // 写回 DB，永久保存图片描述
-            if (targetImageRawMsg?.id) {
-                DB.updateMessageMeta(targetImageRawMsg.id, { imageDesc: visionDesc }).catch(e =>
-                    console.warn('识图描述写回失败:', e)
-                );
-
-                // 同步修改当前内存对象：这样 AI 回复触发重新渲染后，胶囊不用刷新页面也能出现
+            const visionDesc = visionData?.choices?.[0]?.message?.content;
+            if (visionDesc && targetImageRawMsg?.id) {
+                // 必须 await 写 DB（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
+                await DB.updateMessageMeta(targetImageRawMsg.id, { imageDesc: visionDesc });
+                // 同步修改当前内存对象：AI 回复触发重新渲染后，胶囊不用刷新页面也能出现
                 targetImageRawMsg.metadata = {
                     ...(targetImageRawMsg.metadata || {}),
                     imageDesc: visionDesc
                 };
+                console.log('🔍 后台识图成功，描述已写回 metadata');
             }
-
-            console.log('🔍 识图成功，描述已注入并写回 metadata');
+        } catch (e: any) {
+            console.warn('后台识图失败:', e);
         }
-    } catch (e: any) {
-        console.warn('识图失败:', e);
-
-        const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
-        if (lastUserIdx >= 0) {
-            const original = typeof fullMessages[lastUserIdx].content === 'string'
-                ? fullMessages[lastUserIdx].content
-                : '[图片]';
-
-            fullMessages[lastUserIdx] = {
-                role: 'user',
-                content: `${original}
-
-[系统提示]
-用户刚才发送了一张图片，但识图服务暂时不可用。请不要假装自己看到了图片，可以自然地告诉用户图片识别暂时失败。
-[/系统提示]`
-            };
-        }
-    }
+    })();
 }
 // --- 【识图补丁结束】 ---
 
@@ -2355,8 +2204,12 @@ ${visionDesc}
                     body: JSON.stringify(baseReqBody)
                 }, 2, 0, apiProtocol);
             }
-            // 麦麦 2026-09-27：清理临时图片缓存的时机已移到「异步识图完成后」
-            //   原因：主请求只是把 base64 序列化发出，异步后置识图还要从缓存读 base64
+            // 麦麦 2026-09-27：清理临时图片缓存（主请求已发出，base64 已序列化进请求体）
+            //   后台异步识图走原识别 API 调用流程（callVision + imageUrlToDataUrl 转换 base64），不需要读我们的临时缓存
+            if (_tempImageCleanupKey) {
+                clearTempImage(_tempImageCleanupKey);
+                _tempImageCleanupKey = null;
+            }
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -5346,17 +5199,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
-            // 麦麦 2026-09-27：异步后置图片摘要识图（决策3：主回复 setMessages 后立即异步跑，不等 followup）
-            //   - 复用识别 API 那组的 visionGeminiApiKeys 池（决策1）
-            //   - 防重复：检测 metadata.imageDesc 已有就跳过
-            //   - 必须 await 写 DB，保证下一轮 chatPrompts.ts:1247 能读到 imageDesc
-            //   - 失败 catch 打 warn，不影响主回复（finally 块后续清理照常执行）
-            //   - 临时缓存清理移到异步识图完成后（在 runAsyncImageDescription 的 finally）
-            if (_tempImageCleanupKey) {
-                runAsyncImageDescription(_tempImageCleanupKey).catch(e =>
-                    console.warn('🖼️ [异步识图] 外层 catch:', e?.message || e)
-                );
-            }
             KeepAlive.stop();
             setIsTyping(false);
             setRecallStatus('');

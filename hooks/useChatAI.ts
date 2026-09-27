@@ -1081,48 +1081,56 @@ export const useChatAI = ({
             //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
             //   - 麦麦 9-27 修作用域：_tempImageCleanupKey 声明必须在 try 块内且不被 { } 块包住，
             //     否则 finally 块 / doGeminiRequest 闭包访问不到（江澈反馈 ReferenceError）
-            let _tempImageCleanupKey: string | null = null;
-            for (let i = historySlice.length - 1; i >= 0; i--) {
-                const raw = historySlice[i];
-                if (raw?.role !== 'user') continue;
-                if (raw?.type !== 'image') continue;
-                const c = raw.content;
-                if (typeof c !== 'string') continue;
-                if (!c.startsWith('http') && !c.startsWith('data:')) continue;
-                let imageUrlToLookup: string = c;
-                let base64: string | undefined;
-                if (imageUrlToLookup.startsWith('http')) {
-                    base64 = getTempImageBase64(imageUrlToLookup);
-                    if (base64) _tempImageCleanupKey = imageUrlToLookup;
-                } else if (imageUrlToLookup.startsWith('data:')) {
-                    // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
-                    base64 = imageUrlToLookup;
-                }
-                // 麦麦 2026-09-27：手动塞图诊断日志（江澈 9-27 要求：打缓存 key 和命中结果）
-                console.log('🖼️ [手动塞图] 查找最新用户图片:', {
-                    msgIndex: i,
-                    contentType: 'string (原始 m.content)',
-                    imageUrl: imageUrlToLookup.slice(0, 80) + (imageUrlToLookup.length > 80 ? '...' : ''),
-                    cacheHit: !!base64,
-                    base64Length: base64?.length || 0,
-                });
-                // 麦麦 9-27 修：缓存未命中时直接 break，不要 continue 往下找更早的图片
-                //   之前用 continue，导致 9 张历史图全部 cacheHit: false 跑一遍（暮色反馈\"怎么这么多手动塞图\"）
-                //   意图：找最新一张图片塞图；没命中就降级不带图，不污染上下文
-                if (!base64) break;
-                if (i < cleanedApiMessages.length) {
-                    cleanedApiMessages[i] = {
-                        role: cleanedApiMessages[i].role,
-                        content: [
-                            { type: 'text', text: '[用户发送了一张图片]' },
-                            { type: 'image_url', image_url: { url: base64 } },
-                        ],
-                    };
-                    // 麦麦 2026-09-27：手动塞图完成日志
-                    console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', i, '] 为数组 content（text + image_url）');
-                }
-                break;
+            // 麦麦 9-27 修复：手动塞图只对"最新一条 user 消息是图片"才生效（暮色反馈 base64 污染历史上下文）
+//   之前用 historySlice 找最新一张图——但用户先发图后追问时，historySlice 最新一张图是历史图（被 AI 回复隔开），
+//   manual inject 循环里又找到它，重新替换 cleanedApiMessages[i] 为带 base64 的数组 content——
+//   导致历史图片消息在下一轮上下文里变成 base64 data URL（不降级成文字描述）。
+//
+//   修复：先找最新一条 user 消息，如果它是图片才塞图；如果最新 user 是文字（追问），完全不动 cleanedApiMessages
+//   （历史图已由 chatPrompts.ts:1247 降级成文字描述，含 imageDesc，主模型能看到描述）
+let _tempImageCleanupKey: string | null = null;
+{
+    // 找最新一条 user 消息的索引
+    let lastUserIdx = -1;
+    for (let i = historySlice.length - 1; i >= 0; i--) {
+        if (historySlice[i]?.role === 'user') {
+            lastUserIdx = i;
+            break;
+        }
+    }
+    // 只有最新 user 消息是图片时才塞图
+    if (lastUserIdx >= 0 && historySlice[lastUserIdx]?.type === 'image') {
+        const raw = historySlice[lastUserIdx];
+        const c = raw.content;
+        if (typeof c === 'string' && (c.startsWith('http') || c.startsWith('data:'))) {
+            let base64: string | undefined;
+            if (c.startsWith('http')) {
+                base64 = getTempImageBase64(c);
+                if (base64) _tempImageCleanupKey = c;
+            } else {
+                // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
+                base64 = c;
             }
+            console.log('🖼️ [手动塞图] 查找最新用户图片:', {
+                msgIndex: lastUserIdx,
+                contentType: 'string (原始 m.content)',
+                imageUrl: c.slice(0, 80) + (c.length > 80 ? '...' : ''),
+                cacheHit: !!base64,
+                base64Length: base64?.length || 0,
+            });
+            if (base64 && lastUserIdx < cleanedApiMessages.length) {
+                cleanedApiMessages[lastUserIdx] = {
+                    role: cleanedApiMessages[lastUserIdx].role,
+                    content: [
+                        { type: 'text', text: '[用户发送了一张图片]' },
+                        { type: 'image_url', image_url: { url: base64 } },
+                    ],
+                };
+                console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', lastUserIdx, '] 为数组 content（text + image_url）');
+            }
+        }
+    }
+}
 
             // 麦麦 2026-09-27：手动塞图完成。
             // 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑

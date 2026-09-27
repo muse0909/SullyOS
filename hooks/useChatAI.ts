@@ -1069,51 +1069,51 @@ export const useChatAI = ({
             //   - 兼容数组 content：chatPrompts.ts 给最新图片消息的是 [{text}, {image_url}] 数组
             //   - enableVisionApi 开关不再影响手动塞图（暮色 9-27 拍板：开关只控制后台是否再调识图）
             //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
+            //   - 麦麦 9-27 修作用域：_tempImageCleanupKey 声明必须在 try 块内且不被 { } 块包住，
+            //     否则 finally 块 / doGeminiRequest 闭包访问不到（江澈反馈 ReferenceError）
             let _tempImageCleanupKey: string | null = null;
-            {
-                for (let i = apiMessages.length - 1; i >= 0; i--) {
-                    const raw = apiMessages[i];
-                    if (raw?.role !== 'user') continue;
-                    // 兼容两种 content 形态：字符串 URL/base64，或数组（含 image_url 块）
-                    let imageUrlToLookup: string | undefined;
-                    if (typeof raw.content === 'string') {
-                        imageUrlToLookup = raw.content;
-                    } else if (Array.isArray(raw.content)) {
-                        const imgPart = raw.content.find((c: any) => c?.type === 'image_url');
-                        imageUrlToLookup = imgPart?.image_url?.url;
-                    }
-                    if (!imageUrlToLookup) continue;
-                    if (!imageUrlToLookup.startsWith('http') && !imageUrlToLookup.startsWith('data:')) continue;
-                    let base64: string | undefined;
-                    if (imageUrlToLookup.startsWith('http')) {
-                        base64 = getTempImageBase64(imageUrlToLookup);
-                        if (base64) _tempImageCleanupKey = imageUrlToLookup;
-                    } else if (imageUrlToLookup.startsWith('data:')) {
-                        // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
-                        base64 = imageUrlToLookup;
-                    }
-                    // 麦麦 2026-09-27：手动塞图诊断日志（江澈 9-27 要求：打缓存 key 和命中结果）
-                    console.log('🖼️ [手动塞图] 查找最新用户图片:', {
-                        msgIndex: i,
-                        contentType: Array.isArray(raw.content) ? 'array' : typeof raw.content,
-                        imageUrl: imageUrlToLookup,
-                        cacheHit: !!base64,
-                        base64Length: base64?.length || 0,
-                    });
-                    if (!base64) continue;
-                    if (i < cleanedApiMessages.length) {
-                        cleanedApiMessages[i] = {
-                            role: cleanedApiMessages[i].role,
-                            content: [
-                                { type: 'text', text: '[用户发送了一张图片]' },
-                                { type: 'image_url', image_url: { url: base64 } },
-                            ],
-                        };
-                        // 麦麦 2026-09-27：手动塞图完成日志
-                        console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', i, '] 为数组 content（text + image_url）');
-                    }
-                    break;
+            for (let i = apiMessages.length - 1; i >= 0; i--) {
+                const raw = apiMessages[i];
+                if (raw?.role !== 'user') continue;
+                // 兼容两种 content 形态：字符串 URL/base64，或数组（含 image_url 块）
+                let imageUrlToLookup: string | undefined;
+                if (typeof raw.content === 'string') {
+                    imageUrlToLookup = raw.content;
+                } else if (Array.isArray(raw.content)) {
+                    const imgPart = raw.content.find((c: any) => c?.type === 'image_url');
+                    imageUrlToLookup = imgPart?.image_url?.url;
                 }
+                if (!imageUrlToLookup) continue;
+                if (!imageUrlToLookup.startsWith('http') && !imageUrlToLookup.startsWith('data:')) continue;
+                let base64: string | undefined;
+                if (imageUrlToLookup.startsWith('http')) {
+                    base64 = getTempImageBase64(imageUrlToLookup);
+                    if (base64) _tempImageCleanupKey = imageUrlToLookup;
+                } else if (imageUrlToLookup.startsWith('data:')) {
+                    // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
+                    base64 = imageUrlToLookup;
+                }
+                // 麦麦 2026-09-27：手动塞图诊断日志（江澈 9-27 要求：打缓存 key 和命中结果）
+                console.log('🖼️ [手动塞图] 查找最新用户图片:', {
+                    msgIndex: i,
+                    contentType: Array.isArray(raw.content) ? 'array' : typeof raw.content,
+                    imageUrl: imageUrlToLookup,
+                    cacheHit: !!base64,
+                    base64Length: base64?.length || 0,
+                });
+                if (!base64) continue;
+                if (i < cleanedApiMessages.length) {
+                    cleanedApiMessages[i] = {
+                        role: cleanedApiMessages[i].role,
+                        content: [
+                            { type: 'text', text: '[用户发送了一张图片]' },
+                            { type: 'image_url', image_url: { url: base64 } },
+                        ],
+                    };
+                    // 麦麦 2026-09-27：手动塞图完成日志
+                    console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', i, '] 为数组 content（text + image_url）');
+                }
+                break;
             }
 
             // 麦麦 2026-09-27：手动塞图完成。

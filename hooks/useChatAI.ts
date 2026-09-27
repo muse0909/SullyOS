@@ -1066,22 +1066,39 @@ export const useChatAI = ({
             //   找 apiMessages 最新一条用户图片，从临时缓存取 base64，替换 cleanedApiMessages 对应条目为数组 content
             //   - 开关开启时跳过（让识别 API 流程接管，主请求不带图）
             //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
+            //   - 兼容数组 content：chatPrompts.ts 给最新图片消息的是 [{text}, {image_url}] 数组
             const enableVisionApiFlag = (effectiveApi as any).enableVisionApi === true;
             let _tempImageCleanupKey: string | null = null;
             if (!enableVisionApiFlag) {
                 for (let i = apiMessages.length - 1; i >= 0; i--) {
                     const raw = apiMessages[i];
                     if (raw?.role !== 'user') continue;
-                    if (typeof raw.content !== 'string') continue;
-                    if (!raw.content.startsWith('http') && !raw.content.startsWith('data:')) continue;
-                    let base64: string | undefined;
-                    if (raw.content.startsWith('http')) {
-                        base64 = getTempImageBase64(raw.content);
-                        if (base64) _tempImageCleanupKey = raw.content;
-                    } else if (raw.content.startsWith('data:')) {
-                        // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
-                        base64 = raw.content;
+                    // 兼容两种 content 形态：字符串 URL/base64，或数组（含 image_url 块）
+                    let imageUrlToLookup: string | undefined;
+                    if (typeof raw.content === 'string') {
+                        imageUrlToLookup = raw.content;
+                    } else if (Array.isArray(raw.content)) {
+                        const imgPart = raw.content.find((c: any) => c?.type === 'image_url');
+                        imageUrlToLookup = imgPart?.image_url?.url;
                     }
+                    if (!imageUrlToLookup) continue;
+                    if (!imageUrlToLookup.startsWith('http') && !imageUrlToLookup.startsWith('data:')) continue;
+                    let base64: string | undefined;
+                    if (imageUrlToLookup.startsWith('http')) {
+                        base64 = getTempImageBase64(imageUrlToLookup);
+                        if (base64) _tempImageCleanupKey = imageUrlToLookup;
+                    } else if (imageUrlToLookup.startsWith('data:')) {
+                        // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
+                        base64 = imageUrlToLookup;
+                    }
+                    // 麦麦 2026-09-27：手动塞图诊断日志（江澈 9-27 要求：打缓存 key 和命中结果）
+                    console.log('🖼️ [手动塞图] 查找最新用户图片:', {
+                        msgIndex: i,
+                        contentType: Array.isArray(raw.content) ? 'array' : typeof raw.content,
+                        imageUrl: imageUrlToLookup,
+                        cacheHit: !!base64,
+                        base64Length: base64?.length || 0,
+                    });
                     if (!base64) continue;
                     if (i < cleanedApiMessages.length) {
                         cleanedApiMessages[i] = {
@@ -1091,6 +1108,8 @@ export const useChatAI = ({
                                 { type: 'image_url', image_url: { url: base64 } },
                             ],
                         };
+                        // 麦麦 2026-09-27：手动塞图完成日志
+                        console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', i, '] 为数组 content（text + image_url）');
                     }
                     break;
                 }
@@ -1201,6 +1220,22 @@ export const useChatAI = ({
                 },
                 ...cleanedApiMessages
             ];
+
+            // 麦麦 2026-09-27：手动塞图 sanity check（江澈 9-27 要求：打最终请求体里有没有 image_url）
+            //   验证手动塞图是否真的进了 fullMessages（最终发给主模型）
+            {
+                const lastUserMsg = [...fullMessages].reverse().find((m: any) => m?.role === 'user');
+                const lastUserContent = lastUserMsg?.content;
+                const hasImageUrl = Array.isArray(lastUserContent)
+                    && lastUserContent.some((c: any) => c?.type === 'image_url');
+                console.log('🖼️ [手动塞图 sanity check] fullMessages 最新 user 消息:', {
+                    contentType: Array.isArray(lastUserContent) ? 'array' : typeof lastUserContent,
+                    hasImageUrlBlock: hasImageUrl,
+                    contentLength: Array.isArray(lastUserContent)
+                        ? lastUserContent.length
+                        : (typeof lastUserContent === 'string' ? lastUserContent.length : 0),
+                });
+            }
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;

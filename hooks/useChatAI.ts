@@ -5030,6 +5030,9 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
                 typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:'))
             );
+            // 麦麦 9-28 修复：find 加 !imageDesc 防重复（暮色反馈\"每次都调识图\"）
+            //   - 之前没加，同一张图被反复识别（race condition：IIFE 还没写完 imageDesc，下一轮又 find 到了）
+            //   - find 跳过已有 imageDesc 的图，find 返回 undefined → 不调识图
             const _fTargetImageRawMsg = [..._historySliceRef].reverse().find((m: any) =>
                 m?.role === 'user' && m?.type === 'image' &&
                 !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
@@ -5037,7 +5040,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 !m?.metadata?.imageDesc
             );
             const _fLatestImageUrl = _fTargetImageRawMsg?.content as string | undefined;
-            const _fAlreadyDescribed = !!_fTargetImageRawMsg?.metadata?.imageDesc;
             const _fVisionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
             const _fUseVisionGeminiProtocol = _fVisionProtocol === 'gemini';
             const _fVisionActiveUrl = _fUseVisionGeminiProtocol
@@ -5050,7 +5052,7 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-3.6-flash')
                 : (effectiveApi.visionModel || 'gemini-1.5-flash');
 
-            if (_fHasImageInLatest && !_fAlreadyDescribed && (effectiveApi as any).enableVisionApi === true && _fVisionActiveUrl && _fVisionActiveKey) {
+            if (_fTargetImageRawMsg && _fLatestImageUrl && (effectiveApi as any).enableVisionApi === true && _fVisionActiveUrl && _fVisionActiveKey) {
                 const buildVisionMessages = (imageUrl: string) => [
                     {
                         role: 'system',

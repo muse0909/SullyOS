@@ -878,6 +878,12 @@ export const useChatAI = ({
         // Keep the Service Worker alive while we make potentially long AI calls
         await KeepAlive.start();
 
+        // 麦麦 9-27 修作用域：triggerAI 函数体顶层声明 _historySliceRef ，
+        //   try 块内 ChatPrompts.buildMessageHistory 解构赋值后赋给它，
+        //   finally 块访问 _historySliceRef（不用 historySlice，避免 Vite/esbuild 编译后 try 块内 const
+        //   被优化成块级作用域导致 finally 看不到，江澈 9-27 反馈 ReferenceError）
+        let _historySliceRef: any[] = [];
+
         try {
             const baseUrl = normalizeApiUrl(effectiveApi.baseUrl);
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
@@ -1034,6 +1040,7 @@ export const useChatAI = ({
             // Memory Palace 过滤已在 DB 层完成（getMessagesByCharId / getRecentMessagesByCharId 自动排除 hwm 之前的消息）
 
             const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
+            _historySliceRef = historySlice;
 
             // 2.5 Strip translation content from previous messages to save tokens
 
@@ -4982,13 +4989,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             //
             //   麦麦 9-27 修：hasImageInLatest / latestImageUrl / targetImageRawMsg / alreadyDescribed
             //   等模块级变量（缩进 0）在 finally 块访问不到（江澈反馈 ReferenceError）。
-            //   临时方案：finally 块顶部从 historySlice + effectiveApi 重新派生需要的变量。
-            const _fHasImageInLatest = historySlice.some((m: any) =>
+            //   临时方案：finally 块顶部从 _historySliceRef + effectiveApi 重新派生需要的变量。
+            const _fHasImageInLatest = _historySliceRef.some((m: any) =>
                 m?.role === 'user' && m?.type === 'image' &&
                 !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
                 typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:'))
             );
-            const _fTargetImageRawMsg = [...historySlice].reverse().find((m: any) =>
+            const _fTargetImageRawMsg = [..._historySliceRef].reverse().find((m: any) =>
                 m?.role === 'user' && m?.type === 'image' &&
                 !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
                 typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:')) &&

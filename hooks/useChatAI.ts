@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT, McpToolCallRecord } from '../types';
 import { DB } from '../utils/db';
+import { getTempImageBase64, clearTempImage } from '../utils/tempImageCache';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { phoneUsage, formatUsageForLLM } from '../utils/phoneUsage';
 import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
@@ -908,6 +909,12 @@ export const useChatAI = ({
         // Keep the Service Worker alive while we make potentially long AI calls
         await KeepAlive.start();
 
+        // 麦麦 9-27 修作用域：triggerAI 函数体顶层声明 _historySliceRef ，
+        //   try 块内 ChatPrompts.buildMessageHistory 解构赋值后赋给它，
+        //   finally 块访问 _historySliceRef（不用 historySlice，避免 Vite/esbuild 编译后 try 块内 const
+        //   被优化成块级作用域导致 finally 看不到，江澈 9-27 反馈 ReferenceError）
+        let _historySliceRef: any[] = [];
+
         try {
             const baseUrl = normalizeApiUrl(effectiveApi.baseUrl);
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
@@ -1010,6 +1017,7 @@ export const useChatAI = ({
             let bp2Rules = systemPromptResult.bp2Rules;
             let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
+
             // ⚠️ 2026-07-17 4 断点优化：「最近 5 条心声」挪出 bp3Context
             //   拼到末尾 dynamic 段（不参与 cache），让 bp3Context 段真正稳定
             let dynamicRecentEmotions = '';
@@ -1063,11 +1071,14 @@ export const useChatAI = ({
             // Memory Palace 过滤已在 DB 层完成（getMessagesByCharId / getRecentMessagesByCharId 自动排除 hwm 之前的消息）
 
             const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
+            _historySliceRef = historySlice;
 
             // 2.5 Strip translation content from previous messages to save tokens
 
             let cleanedApiMessages = apiMessages.map((msg: any) => {
-            // 如果 content 是数组（包含图片），提取纯文字部分，丢弃图片数据
+            // 麦麦 2026-09-27：回退"保留数组 content"逻辑，恢复砍图
+            //   历史图片已在 chatPrompts.ts 降级为文字描述（imageDesc 描述或 [图片] 占位）
+            //   最新一条图片走"手动塞图"逻辑（在下面 injectLatestImage）
             if (Array.isArray(msg.content)) {
                 const textParts = msg.content
                     .filter((c: any) => c.type === 'text')
@@ -1089,6 +1100,71 @@ export const useChatAI = ({
                 }
                 return { ...msg, content: c };
             });
+
+            // 麦麦 2026-09-27：手动塞最新一张图片（无条件，主模型永远直接看图）
+            //   从 historySlice 找最新一条用户图片（chatPrompts.ts 处理前的原始数据）
+            //   重要：不能从 apiMessages 找——当图片不是最新一条 user 消息时，chatPrompts 会把它
+            //   降级成中文文字（如 "[timeStr] [用户发送了一张图片]\n[图片描述]: xxx"），原 URL 就丢了
+            //   从 historySlice 拿原始 m.content（URL/data:），临时缓存查 base64，替换 cleanedApiMessages 对应条目
+            //   - apiMessages / historySlice / cleanedApiMessages 三者长度一一对应（chatPrompts.buildMessageHistory 返回）
+            //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
+            //   - enableVisionApi 开关不再影响手动塞图（暮色 9-27 拍板：开关只控制后台是否再调识图）
+            //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
+            //   - 麦麦 9-27 修作用域：_tempImageCleanupKey 声明必须在 try 块内且不被 { } 块包住，
+            //     否则 finally 块 / doGeminiRequest 闭包访问不到（江澈反馈 ReferenceError）
+            // 麦麦 9-27 修复：手动塞图只对"最新一条 user 消息是图片"才生效（暮色反馈 base64 污染历史上下文）
+//   之前用 historySlice 找最新一张图——但用户先发图后追问时，historySlice 最新一张图是历史图（被 AI 回复隔开），
+//   manual inject 循环里又找到它，重新替换 cleanedApiMessages[i] 为带 base64 的数组 content——
+//   导致历史图片消息在下一轮上下文里变成 base64 data URL（不降级成文字描述）。
+//
+//   修复：先找最新一条 user 消息，如果它是图片才塞图；如果最新 user 是文字（追问），完全不动 cleanedApiMessages
+//   （历史图已由 chatPrompts.ts:1247 降级成文字描述，含 imageDesc，主模型能看到描述）
+let _tempImageCleanupKey: string | null = null;
+{
+    // 找最新一条 user 消息的索引
+    let lastUserIdx = -1;
+    for (let i = historySlice.length - 1; i >= 0; i--) {
+        if (historySlice[i]?.role === 'user') {
+            lastUserIdx = i;
+            break;
+        }
+    }
+    // 只有最新 user 消息是图片时才塞图
+    if (lastUserIdx >= 0 && historySlice[lastUserIdx]?.type === 'image') {
+        const raw = historySlice[lastUserIdx];
+        const c = raw.content;
+        if (typeof c === 'string' && (c.startsWith('http') || c.startsWith('data:'))) {
+            let base64: string | undefined;
+            if (c.startsWith('http')) {
+                base64 = getTempImageBase64(c);
+                if (base64) _tempImageCleanupKey = c;
+            } else {
+                // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
+                base64 = c;
+            }
+            console.log('🖼️ [手动塞图] 查找最新用户图片:', {
+                msgIndex: lastUserIdx,
+                contentType: 'string (原始 m.content)',
+                imageUrl: c.slice(0, 80) + (c.length > 80 ? '...' : ''),
+                cacheHit: !!base64,
+                base64Length: base64?.length || 0,
+            });
+            if (base64 && lastUserIdx < cleanedApiMessages.length) {
+                cleanedApiMessages[lastUserIdx] = {
+                    role: cleanedApiMessages[lastUserIdx].role,
+                    content: [
+                        { type: 'text', text: '[用户发送了一张图片]' },
+                        { type: 'image_url', image_url: { url: base64 } },
+                    ],
+                };
+                console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', lastUserIdx, '] 为数组 content（text + image_url）');
+            }
+        }
+    }
+}
+
+            // 麦麦 2026-09-27：手动塞图完成。
+            // 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
@@ -1195,6 +1271,22 @@ export const useChatAI = ({
                 },
                 ...cleanedApiMessages
             ];
+
+            // 麦麦 2026-09-27：手动塞图 sanity check（江澈 9-27 要求：打最终请求体里有没有 image_url）
+            //   验证手动塞图是否真的进了 fullMessages（最终发给主模型）
+            {
+                const lastUserMsg = [...fullMessages].reverse().find((m: any) => m?.role === 'user');
+                const lastUserContent = lastUserMsg?.content;
+                const hasImageUrl = Array.isArray(lastUserContent)
+                    && lastUserContent.some((c: any) => c?.type === 'image_url');
+                console.log('🖼️ [手动塞图 sanity check] fullMessages 最新 user 消息:', {
+                    contentType: Array.isArray(lastUserContent) ? 'array' : typeof lastUserContent,
+                    hasImageUrlBlock: hasImageUrl,
+                    contentLength: Array.isArray(lastUserContent)
+                        ? lastUserContent.length
+                        : (typeof lastUserContent === 'string' ? lastUserContent.length : 0),
+                });
+            }
 
             // Debug: Log context composition
             const systemPromptLength = systemPrompt.length;
@@ -1508,269 +1600,6 @@ if (hasImageInLatest && !alreadyDescribed) {
     });
 }
 
-if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
-    const buildVisionMessages = (imageUrl: string) => [
-            {
-                role: 'system',
-                content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
-请对用户发送的图片进行深度扫描，并按以下逻辑进行详尽描述：
-1. 【整体概览】：用一句话描述图片的主题和构图。
-2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
-3. 【细节扫描】：观察背景、边缘或微小元素，如光影、纹理、微小物件。
-4. 【文字提取】：如果图片中有任何文字，请完整准确提取。
-   - 如果图片是聊天截图、评论区、弹幕、列表消息或左右气泡对话，必须按画面从上到下的时间顺序整理，不要先把左边全部读完再读右边。
-   - 对聊天截图请尽量写成「第1条 左侧/右侧: 内容」「第2条 左侧/右侧: 内容」这种顺序列表；看不清的字标注“看不清”，不要猜。
-   - 如果左右气泡属于不同人，只用“左侧/右侧”或图片里能看见的名字区分，不要自行给说话人起名。
-5. 【氛围与色彩】：描述图片的色调、光线条件以及视觉感受。
-
-要求：
-- 输出内容只给主聊天模型阅读，不要和用户对话。
-- 不要说“作为视觉分析专家”。
-- 不要加入寒暄。
-- 不要虚构不存在的内容。`
-            },
-            {
-                role: 'user',
-                content: [
-                    { type: 'text', text: '请按系统要求识别这张图片。若这是聊天截图，请严格按画面从上到下的时间顺序提取文字，不要按左右两边分组。' },
-                    { type: 'image_url', image_url: { url: imageUrl } }
-                ]
-            }
-        ];
-
-    // 暮色 2026-07-27：识图走 Gemini 直连时构造 Gemini contents 格式
-    //   - base64 dataURL 拆 mimeType + data
-    //   - 外链：Google Imagen 也能 fetch HTTPS 公开图（不用下到本地）
-    const buildGeminiVisionBody = (imageUrl: string) => {
-        const systemText = buildVisionMessages(imageUrl)[0].content;
-        const userText = buildVisionMessages(imageUrl)[1].content[0].text;
-        let inlineData: any;
-        if (imageUrl.startsWith('data:')) {
-            const m = imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-            if (m) inlineData = { mimeType: m[1], data: m[2] };
-        }
-        const parts: any[] = [{ text: userText }];
-        if (inlineData) {
-            parts.push({ inline_data: inlineData });
-        } else {
-            // 外链：Google 端支持 fileData 引用公开 URL
-            parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/*' } });
-        }
-        return {
-            contents: [{ role: 'user', parts }],
-            systemInstruction: { role: 'system', parts: [{ text: systemText }] },
-            // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
-            //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
-            generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
-        };
-    };
-
-    const visionUrl = useVisionGeminiProtocol
-        ? (visionActiveUrl || '').replace(/\/+$/, '')
-        : normalizeApiUrl(visionActiveUrl);
-    const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
-        const requestModel = visionActiveModel;
-        const logBase = {
-            timestamp: new Date().toISOString(),
-            url: useVisionGeminiProtocol
-                ? `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
-                : `${visionUrl}/chat/completions`,
-            model: requestModel,
-            mode,
-            protocol: useVisionGeminiProtocol ? 'gemini' : 'openai',
-            image: imageUrl.startsWith('data:image')
-                ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
-                : { kind: 'url', url: imageUrl },
-        };
-
-        try {
-            saveVisionReqLog({ ...logBase, status: 'requesting' });
-            let data: any;
-            if (useVisionGeminiProtocol) {
-                // 暮色 2026-07-27：Gemini 协议直连（独立 Key / Model 可用）
-                // 暮色 2026-08-04：key 池轮询 + 重试（同主 API 策略：429 切+401 不切+其他切）
-                const visionGeminiKeys = extractGeminiKeys(
-                    effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
-                );
-                const visionPicked = pickGeminiKey('vision', visionGeminiKeys);
-                if (!visionPicked) {
-                    throw new Error('识图 Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
-                }
-                const geminiBody = buildGeminiVisionBody(imageUrl);
-                let lastErr: Error | null = null;
-                let succeeded = false;
-                for (let attempt = 0; attempt < 2; attempt++) {
-                    const currentKey = (() => {
-                        if (attempt === 0) return visionPicked.key;
-                        const np = pickGeminiKey('vision', visionGeminiKeys);
-                        return np ? np.key : null;
-                    })();
-                    if (currentKey === null) {
-                        lastErr = new Error('识图 Gemini 协议：key 池里所有 key 都不可用');
-                        break;
-                    }
-                    const tryUrl = `${visionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
-                    const res = await fetch(tryUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(geminiBody),
-                    });
-                    if (!res.ok) {
-                        const errText = await res.text().catch(() => '');
-                        // 重试用相对索引：attempt=0 用 visionPicked.keyIndex；attempt=1 需要找到 currentKey 的索引
-                        const usedKeyIndex = (() => {
-                            if (attempt === 0) return visionPicked.keyIndex;
-                            return visionGeminiKeys.indexOf(currentKey);
-                        })();
-                        const verdict = reportGeminiFailure('vision', usedKeyIndex, res.status, errText);
-                        if (verdict === 'fail-permanent') {
-                            addToast(`🔑 识图 Gemini key 失效（${shortKey(currentKey)}）— 请去 API 浮窗更新`, 'error');
-                            lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
-                            break;
-                        }
-                        if (verdict === 'fail-recoverable') {
-                            addToast(`⏳ 识图 Gemini key 池全部限流中，等会儿自动恢复`, 'info');
-                            lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
-                            break;
-                        }
-                        console.warn(`🌐 [Vision Gemini] ${res.status}，切下一个重试`);
-                        lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
-                        continue;
-                    }
-                    // 成功
-                    const usedKeyIndex = attempt === 0 ? visionPicked.keyIndex : visionGeminiKeys.indexOf(currentKey);
-                    reportGeminiSuccess('vision', usedKeyIndex);
-                    const gj: any = await res.json();
-                    const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    // 转 OpenAI 格式让下游代码无感
-                    data = {
-                        choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
-                        usage: gj?.usageMetadata ? {
-                            prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
-                            completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
-                            total_tokens: gj.usageMetadata.totalTokenCount || 0,
-                        } : undefined,
-                    };
-                    console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字 (key ${usedKeyIndex + 1}/${visionGeminiKeys.length}: ${shortKey(currentKey)})`);
-                    succeeded = true;
-                    break;
-                }
-                if (!succeeded) {
-                    throw lastErr || new Error('Gemini Vision 失败');
-                }
-            } else {
-                const visionMessages = buildVisionMessages(imageUrl);
-                // 暮色 2026-08-06 拍板：所有非主 API 底层 temperature 写死 0.85
-                //   之前 0.3 是 Moonshot Kimi 兼容考虑，暮色产品决定统一 0.85
-                const requestBody = {
-                    model: requestModel,
-                    messages: visionMessages,
-                    temperature: 0.85,
-                    stream: false,
-                };
-                data = await safeFetchJson(`${visionUrl}/chat/completions`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${visionActiveKey}`
-                    },
-                    body: JSON.stringify(requestBody)
-                }, 0);
-            }
-            saveVisionReqLog({ ...logBase, status: 'ok' });
-            return data;
-        } catch (err: any) {
-            saveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
-            throw err;
-        }
-    };
-
-    try {
-        let visionData: any;
-        try {
-            visionData = await callVision(latestImageUrl!, 'url');
-        } catch (urlErr: any) {
-            console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
-            const dataUrl = await imageUrlToDataUrl(latestImageUrl!);
-            if (!dataUrl) throw urlErr;
-            try {
-                visionData = await callVision(dataUrl, 'base64');
-            } catch (base64Err: any) {
-                saveVisionReqLog({
-                    timestamp: new Date().toISOString(),
-                    status: 'error',
-                    url: `${visionUrl}/chat/completions`,
-                    model: effectiveApi.visionModel || 'gemini-1.5-flash',
-                    urlModeError: urlErr?.message || String(urlErr),
-                    base64ModeError: base64Err?.message || String(base64Err),
-                });
-                throw base64Err;
-            }
-        }
-
-        const visionDesc = visionData?.choices?.[0]?.message?.content;
-
-        if (visionDesc) {
-            // 注入到本轮发给主模型的最后一条 user 消息里。
-            // 注意：这段是内部图片理解，不是用户原话，避免 AI 出戏说“视觉分析报告”。
-            const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
-            if (lastUserIdx >= 0) {
-                const original = typeof fullMessages[lastUserIdx].content === 'string'
-                    ? fullMessages[lastUserIdx].content
-                    : '[图片]';
-
-                fullMessages[lastUserIdx] = {
-                    role: 'user',
-                    content: `${original}
-
-[系统内部图片理解]
-用户刚才发送了一张图片。图片内容如下：
-${visionDesc}
-
-请你自然理解这张图片，并结合用户当前文字回复。
-不要提到“视觉分析报告”“图片描述”“识图结果”“系统提示”“内部图片理解”等字样。
-不要说自己看不到图，也不要说图片加载失败。
-[/系统内部图片理解]`
-                };
-            }
-
-            // 写回 DB，永久保存图片描述
-            if (targetImageRawMsg?.id) {
-                DB.updateMessageMeta(targetImageRawMsg.id, { imageDesc: visionDesc }).catch(e =>
-                    console.warn('识图描述写回失败:', e)
-                );
-
-                // 同步修改当前内存对象：这样 AI 回复触发重新渲染后，胶囊不用刷新页面也能出现
-                targetImageRawMsg.metadata = {
-                    ...(targetImageRawMsg.metadata || {}),
-                    imageDesc: visionDesc
-                };
-            }
-
-            console.log('🔍 识图成功，描述已注入并写回 metadata');
-        }
-    } catch (e: any) {
-        console.warn('识图失败:', e);
-
-        const lastUserIdx = fullMessages.map((m: any) => m.role).lastIndexOf('user');
-        if (lastUserIdx >= 0) {
-            const original = typeof fullMessages[lastUserIdx].content === 'string'
-                ? fullMessages[lastUserIdx].content
-                : '[图片]';
-
-            fullMessages[lastUserIdx] = {
-                role: 'user',
-                content: `${original}
-
-[系统提示]
-用户刚才发送了一张图片，但识图服务暂时不可用。请不要假装自己看到了图片，可以自然地告诉用户图片识别暂时失败。
-[/系统提示]`
-            };
-        }
-    }
-}
-// --- 【识图补丁结束】 ---
-
 
 
             // toolsList 提前到这里——Gemini 协议下也要用（line 1682 / 1720 都要引用）
@@ -1849,6 +1678,33 @@ ${visionDesc}
                 const contents = cleanedApiMessages
                     .filter((m: any) => m.role === 'user' || m.role === 'assistant')
                     .map((m: any) => {
+                        // 麦麦 2026-09-27：如果 content 是数组（含 image_url），转成 Gemini parts
+                        //   - text 块 → { text }
+                        //   - image_url base64 → { inline_data: { mimeType, data } }
+                        //   - image_url 外链  → { fileData: { fileUri, mimeType } }
+                        if (Array.isArray(m.content)) {
+                            const parts: any[] = [];
+                            for (const part of m.content) {
+                                if (part?.type === 'text' && typeof part.text === 'string') {
+                                    parts.push({ text: part.text.slice(0, 30000) });
+                                } else if (part?.type === 'image_url') {
+                                    const url = part.image_url?.url;
+                                    if (typeof url === 'string') {
+                                        if (url.startsWith('data:')) {
+                                            const dm = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+                                            if (dm) parts.push({ inline_data: { mimeType: dm[1], data: dm[2] } });
+                                        } else if (/^https?:\/\//i.test(url)) {
+                                            parts.push({ fileData: { fileUri: url, mimeType: 'image/*' } });
+                                        }
+                                    }
+                                }
+                            }
+                            if (parts.length === 0) parts.push({ text: '(空消息)' });
+                            return {
+                                role: m.role === 'assistant' ? 'model' : 'user',
+                                parts,
+                            };
+                        }
                         const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
                         return {
                             role: m.role === 'assistant' ? 'model' : 'user',
@@ -2167,6 +2023,13 @@ ${visionDesc}
                     body: JSON.stringify(baseReqBody)
                 }, 2, 0, apiProtocol);
             }
+            // 麦麦 2026-09-27：手动塞图不再主动清理临时缓存
+            //   错误做法：之前在主请求 fetch 返回后调 clearTempImage(_tempImageCleanupKey)
+//   原因：base64 已经在 baseReqBody 里序列化发出，主请求返回时缓存里的 base64 已经"用完"
+//        但用户后续追问"刚才那张图好看吗"时，triggerAI 会再次手动塞图，需要重新读缓存
+//        主动清理过早清掉缓存，导致后续追问时 cacheHit: false（暮色 9-27 反馈）
+//   修复：删掉主动清理，让 TTL 5 分钟自然兜底（防止内存累积）
+//   后台异步识图走原识别 API（callVision + imageUrlToDataUrl），不需要读我们的临时缓存
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -5207,6 +5070,273 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            // 麦麦 2026-09-27：主回复完成（catch 块 setMessages 已经跑了）→ finally 块启动后台识图 IIFE
+            //   - 暮色 9-27 拍板：原识别 API 触发时机从"请求前阻塞"改为"主回复完成后后台异步"
+            //   - 之前在主请求前 fire-and-forget 启动，导致 IIFE 跑得快时识别完成日志出现在主请求响应之前
+            //   - 现在 finally 块启动，主回复一定先入库+渲染，再触发识图
+            //   - enableVisionApi 开关控制是否调用；主模型看图不受任何开关影响（手动塞图无条件跑）
+            //   - DB.updateMessageMeta 改为 await（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
+            //
+            //   麦麦 9-27 修作用域：模块级函数（_fImageUrlToDataUrl / _fSaveVisionReqLog / _fBlobToDataUrl）
+            //   在 finally 块访问不到（江澈 9-27 反馈 ReferenceError）。
+            //   临时方案：finally 块顶部声明本地副本（避免引用模块级函数）。
+            const _fSaveVisionReqLog = (log: any) => {
+                try {
+                    localStorage.setItem('sullyos:lastVisionReqLog', JSON.stringify(log, null, 2));
+                } catch { /* quota 忽略 */ }
+            };
+            const _fBlobToDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => reject(reader.error || new Error('图片转 base64 失败'));
+                reader.readAsDataURL(blob);
+            });
+            const _fImageUrlToDataUrl = async (url: string): Promise<string | null> => {
+                if (url.startsWith('data:image')) return url;
+                if (!/^https?:\/\//i.test(url)) return null;
+                const response = await fetch('/api/proxy-image?url=' + encodeURIComponent(url));
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '');
+                    throw new Error(`图片转 base64 失败: HTTP ${response.status} ${text.slice(0, 120)}`);
+                }
+                const blob = await response.blob();
+                if (!blob.type.startsWith('image/')) {
+                    throw new Error(`图片转 base64 失败: 返回类型不是图片 (${blob.type || 'unknown'})`);
+                }
+                return _fBlobToDataUrl(blob);
+            };
+
+            //   临时方案：finally 块顶部从 _historySliceRef + effectiveApi 重新派生需要的变量。
+            const _fHasImageInLatest = _historySliceRef.some((m: any) =>
+                m?.role === 'user' && m?.type === 'image' &&
+                !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
+                typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:'))
+            );
+            // 麦麦 9-28 修复：find 加 !imageDesc 防重复（暮色反馈\"每次都调识图\"）
+            //   - 之前没加，同一张图被反复识别（race condition：IIFE 还没写完 imageDesc，下一轮又 find 到了）
+            //   - find 跳过已有 imageDesc 的图，find 返回 undefined → 不调识图
+            const _fTargetImageRawMsg = [..._historySliceRef].reverse().find((m: any) =>
+                m?.role === 'user' && m?.type === 'image' &&
+                !m?.metadata?.emojiId && !m?.metadata?.isEmoji && !m?.metadata?.isSticker &&
+                typeof m?.content === 'string' && (m.content.startsWith('http') || m.content.startsWith('data:')) &&
+                !m?.metadata?.imageDesc
+            );
+            const _fLatestImageUrl = _fTargetImageRawMsg?.content as string | undefined;
+            const _fVisionProtocol = (effectiveApi as any).visionProtocol ?? 'openai';
+            const _fUseVisionGeminiProtocol = _fVisionProtocol === 'gemini';
+            const _fVisionActiveUrl = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl)
+                : effectiveApi.visionBaseUrl;
+            const _fVisionActiveKey = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiApiKey || effectiveApi.visionApiKey)
+                : effectiveApi.visionApiKey;
+            const _fVisionActiveModel = _fUseVisionGeminiProtocol
+                ? ((effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-3.6-flash')
+                : (effectiveApi.visionModel || 'gemini-1.5-flash');
+
+            if (_fTargetImageRawMsg && _fLatestImageUrl && (effectiveApi as any).enableVisionApi === true && _fVisionActiveUrl && _fVisionActiveKey) {
+                const buildVisionMessages = (imageUrl: string) => [
+                    {
+                        role: 'system',
+                        content: `你现在是一名顶级的视觉分析专家和高精度图像识别助手。
+请对用户发送的图片进行深度扫描，并按以下逻辑进行详尽描述：
+1. 【整体概览】：用一句话描述图片的主题和构图。
+2. 【核心主体】：详细描述图像中心或最重要的物体/人物，包括形状、材质、颜色、状态。
+3. 【细节扫描】：观察背景、边缘或微小元素，如光影、纹理、微小物件。
+4. 【文字提取】：如果图片中有任何文字，请完整准确提取。
+   - 如果图片是聊天截图、评论区、弹幕、列表消息或左右气泡对话，必须按画面从上到下的时间顺序整理，不要先把左边全部读完再读右边。
+   - 对聊天截图请尽量写成「第1条 左侧/右侧: 内容」「第2条 左侧/右侧: 内容」这种顺序列表；看不清的字标注"看不清"，不要猜。
+   - 如果左右气泡属于不同人，只用"左侧/右侧"或图片里能看见的名字区分，不要自行给说话人起名。
+5. 【氛围与色彩】：描述图片的色调、光线条件以及视觉感受。
+
+要求：
+- 输出内容只给主聊天模型阅读，不要和用户对话。
+- 不要说"作为视觉分析专家"。
+- 不要加入寒暄。
+- 不要虚构不存在的内容。`
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: '请按系统要求识别这张图片。若这是聊天截图，请严格按画面从上到下的时间顺序提取文字，不要按左右两边分组。' },
+                            { type: 'image_url', image_url: { url: imageUrl } }
+                        ]
+                    }
+                ];
+
+                const buildGeminiVisionBody = (imageUrl: string) => {
+                    const systemText = buildVisionMessages(imageUrl)[0].content;
+                    const userText = buildVisionMessages(imageUrl)[1].content[0].text;
+                    let inlineData: any;
+                    if (imageUrl.startsWith('data:')) {
+                        const m = imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+                        if (m) inlineData = { mimeType: m[1], data: m[2] };
+                    }
+                    const parts: any[] = [{ text: userText }];
+                    if (inlineData) {
+                        parts.push({ inline_data: inlineData });
+                    } else {
+                        parts.push({ fileData: { fileUri: imageUrl, mimeType: 'image/*' } });
+                    }
+                    return {
+                        contents: [{ role: 'user', parts }],
+                        systemInstruction: { role: 'system', parts: [{ text: systemText }] },
+                        generationConfig: { temperature: 0.85, maxOutputTokens: 4096 },
+                    };
+                };
+
+                const _fVisionUrl = _fUseVisionGeminiProtocol
+                    ? (_fVisionActiveUrl || '').replace(/\/+$/, '')
+                    : normalizeApiUrl(_fVisionActiveUrl);
+                const callVision = async (imageUrl: string, mode: 'url' | 'base64') => {
+                    const requestModel = _fVisionActiveModel;
+                    const logBase = {
+                        timestamp: new Date().toISOString(),
+                        url: _fUseVisionGeminiProtocol
+                            ? `${_fVisionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=***`
+                            : `${_fVisionUrl}/chat/completions`,
+                        model: requestModel,
+                        mode,
+                        protocol: _fUseVisionGeminiProtocol ? 'gemini' : 'openai',
+                        image: imageUrl.startsWith('data:image')
+                            ? { kind: 'base64', length: imageUrl.length, prefix: imageUrl.slice(0, 32) }
+                            : { kind: 'url', url: imageUrl },
+                    };
+
+                    try {
+                        _fSaveVisionReqLog({ ...logBase, status: 'requesting' });
+                        let data: any;
+                        if (_fUseVisionGeminiProtocol) {
+                            const visionGeminiKeys = extractGeminiKeys(
+                                effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
+                            );
+                            const visionPicked = pickGeminiKey('vision', visionGeminiKeys);
+                            if (!visionPicked) {
+                                throw new Error('识图 Gemini 协议：key 池为空，请去 API 浮窗添加至少一个 key');
+                            }
+                            const geminiBody = buildGeminiVisionBody(imageUrl);
+                            let lastErr: Error | null = null;
+                            let succeeded = false;
+                            for (let attempt = 0; attempt < 2; attempt++) {
+                                const currentKey = (() => {
+                                    if (attempt === 0) return visionPicked.key;
+                                    const np = pickGeminiKey('vision', visionGeminiKeys);
+                                    return np ? np.key : null;
+                                })();
+                                if (currentKey === null) {
+                                    lastErr = new Error('识图 Gemini 协议：key 池里所有 key 都不可用');
+                                    break;
+                                }
+                                const tryUrl = `${_fVisionUrl}/models/${encodeURIComponent(requestModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
+                                const res = await fetch(tryUrl, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(geminiBody),
+                                });
+                                if (!res.ok) {
+                                    const errText = await res.text().catch(() => '');
+                                    const usedKeyIndex = (() => {
+                                        if (attempt === 0) return visionPicked.keyIndex;
+                                        return visionGeminiKeys.indexOf(currentKey);
+                                    })();
+                                    const verdict = reportGeminiFailure('vision', usedKeyIndex, res.status, errText);
+                                    if (verdict === 'fail-permanent') {
+                                        addToast(`🔑 识图 Gemini key 失效（${shortKey(currentKey)}）— 请去 API 浮窗更新`, 'error');
+                                        lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                                        break;
+                                    }
+                                    if (verdict === 'fail-recoverable') {
+                                        addToast(`⏳ 识图 Gemini key 池全部限流中，等会儿自动恢复`, 'info');
+                                        lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                                        break;
+                                    }
+                                    console.warn(`🌐 [Vision Gemini] ${res.status}，切下一个重试`);
+                                    lastErr = new Error(`Gemini Vision ${res.status}: ${errText.slice(0, 300)}`);
+                                    continue;
+                                }
+                                const usedKeyIndex = attempt === 0 ? visionPicked.keyIndex : visionGeminiKeys.indexOf(currentKey);
+                                reportGeminiSuccess('vision', usedKeyIndex);
+                                const gj: any = await res.json();
+                                const txt = gj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                                data = {
+                                    choices: [{ message: { role: 'assistant', content: txt }, finish_reason: gj?.candidates?.[0]?.finishReason || 'stop' }],
+                                    usage: gj?.usageMetadata ? {
+                                        prompt_tokens: gj.usageMetadata.promptTokenCount || 0,
+                                        completion_tokens: gj.usageMetadata.candidatesTokenCount || 0,
+                                        total_tokens: gj.usageMetadata.totalTokenCount || 0,
+                                    } : undefined,
+                                };
+                                console.log(`🌐 [Vision Gemini] 响应 ${txt.length} 字 (key ${usedKeyIndex + 1}/${visionGeminiKeys.length}: ${shortKey(currentKey)})`);
+                                succeeded = true;
+                                break;
+                            }
+                            if (!succeeded) {
+                                throw lastErr || new Error('Gemini Vision 失败');
+                            }
+                        } else {
+                            const visionMessages = buildVisionMessages(imageUrl);
+                            const requestBody = {
+                                model: requestModel,
+                                messages: visionMessages,
+                                temperature: 0.85,
+                                stream: false,
+                            };
+                            data = await safeFetchJson(`${_fVisionUrl}/chat/completions`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${_fVisionActiveKey}`
+                                },
+                                body: JSON.stringify(requestBody)
+                            }, 0);
+                        }
+                        _fSaveVisionReqLog({ ...logBase, status: 'ok' });
+                        return data;
+                    } catch (err: any) {
+                        _fSaveVisionReqLog({ ...logBase, status: 'error', error: err?.message || String(err) });
+                        throw err;
+                    }
+                };
+
+                // 后台异步调识图（fire-and-forget，不阻塞 finally 后续清理）
+                (async () => {
+                    try {
+                        let visionData: any;
+                        try {
+                            visionData = await callVision(_fLatestImageUrl!, 'url');
+                        } catch (urlErr: any) {
+                            console.warn('识图外链模式失败，尝试 base64 兜底:', urlErr?.message || urlErr);
+                            const dataUrl = await _fImageUrlToDataUrl(_fLatestImageUrl!);
+                            if (!dataUrl) throw urlErr;
+                            try {
+                                visionData = await callVision(dataUrl, 'base64');
+                            } catch (base64Err: any) {
+                                _fSaveVisionReqLog({
+                                    timestamp: new Date().toISOString(),
+                                    status: 'error',
+                                    url: `${_fVisionUrl}/chat/completions`,
+                                    model: effectiveApi.visionModel || 'gemini-1.5-flash',
+                                    urlModeError: urlErr?.message || String(urlErr),
+                                    base64ModeError: base64Err?.message || String(base64Err),
+                                });
+                                throw base64Err;
+                            }
+                        }
+                        const visionDesc = visionData?.choices?.[0]?.message?.content;
+                        if (visionDesc && _fTargetImageRawMsg?.id) {
+                            // 必须 await 写 DB（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
+                            await DB.updateMessageMeta(_fTargetImageRawMsg.id, { imageDesc: visionDesc });
+                            _fTargetImageRawMsg.metadata = {
+                                ...(_fTargetImageRawMsg.metadata || {}),
+                                imageDesc: visionDesc
+                            };
+                            console.log('🔍 后台识图成功，描述已写回 metadata');
+                        }
+                    } catch (e: any) {
+                        console.warn('后台识图失败:', e);
+                    }
+                })();
+            }
             KeepAlive.stop();
             setIsTyping(false);
             setRecallStatus('');

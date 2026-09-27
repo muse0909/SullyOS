@@ -23,6 +23,9 @@ import CoReadFloatingWindow from './CoReadFloatingWindow';
  */
 const notifiedListenTogether = new Set<string>();
 import { processImage, saveRemoteImage } from '../utils/file';
+// 麦麦 2026-09-27：图片临时缓存 + 双图床兜底上传
+import { uploadImageToBed, extractMimeFromDataUrl } from '../utils/imageBedUpload';
+import { setTempImageBase64 } from '../utils/tempImageCache';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
 import { ProactiveDiary } from '../utils/proactiveDiary';
@@ -1482,77 +1485,64 @@ const Chat: React.FC = () => {
    const handleImageSelect = async (file: File) => {
     try {
         // 暮色 2026-07-14：调高压缩参数（600/0.6 → 1600/0.85）— 之前双重压缩导致截图字小看不清
-        // 暮色 2026-07-15：图床顺序调整 — R2 已放弃（试过一直卡 Vercel 函数 10 秒超时）
-        // 默认直接走 imgbb。imgbb 成功不弹 toast（正常流程不该打扰）；
-        // imgbb 失败时用 'bell' 样式 toast 提示"已用 base64 临时存储，会占 localStorage 空间"
+        // 麦麦 2026-09-27：图床顺序调整 — 走 imageBedUpload.uploadImageToBed（先 imgbb，失败 Cloudinary 兜底）
+        //   两个都失败 → 用 base64 直接发 + toast 提示（保留旧兜底，避免用户发不出图）
+        //   成功 → 把 base64 存进临时缓存（key = 图床 URL），主请求构造时取
         const base64 = await processImage(file, { maxWidth: 1600, quality: 0.85, forceJpeg: true });
         setShowPanel('none');
 
         const PLACEHOLDER = 'https://i.postimg.cc/fRh3tMPq/IMG-20260525-181944.jpg';
 
-        // 默认走 imgbb（用户发图主图床）
-        const imgbbKey = (apiConfig as any)?.imgbbApiKey;
-        if (imgbbKey) {
-            try {
-                const formData = new FormData();
-                const _b64Clean = (base64.includes(',') ? base64.split(',')[1] : base64).replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
-                formData.append('image', _b64Clean);
-                const res = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbKey}`, {
-                    method: 'POST',
-                    body: formData,
-                });
-                const json = await res.json();
-                if (json?.data?.url) {
-                    // imgbb 成功：不弹 toast，正常发送
-                    await handleSendText(json.data.url, 'image');
-                    return;
-                }
-                // imgbb 失败：打印完整错误体，下次排查更快
-                console.warn('🖼️ [ImageBed] imgbb 上传失败:', {
-                    status: res.status,
-                    statusText: res.statusText,
-                    key_preview: imgbbKey.slice(0, 12) + '...',
-                    key_length: imgbbKey.length,
-                    base64_length: base64.length,
-                    base64_cleaned_length: _b64Clean.length,
-                    base64_first_80: _b64Clean.slice(0, 80),
-                    base64_last_40: _b64Clean.slice(-40),
-                    base64_starts_with_data: base64.startsWith('data:'),
-                    image_size_kb: Math.round((_b64Clean.length * 3) / 4 / 1024),
-                    response: json,
-                });
-                await handleSendText(base64, 'image');
-                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
-            } catch (e: any) {
-                console.warn('🖼️ [ImageBed] imgbb 抛异常:', e?.message || e);
-                await handleSendText(base64, 'image');
-                pushImageBedWarning('图床失败，已用原图发送，占内存，建议看完删除');
-            }
+        // 麦麦 2026-09-27：双图床兜底（imgbb → Cloudinary → 都失败 base64 兜底）
+        const imageBedConfig = {
+            imgbbApiKey: (apiConfig as any)?.imgbbApiKey,
+            cloudinaryCloudName: (apiConfig as any)?.cloudinaryCloudName,
+            cloudinaryUploadPreset: (apiConfig as any)?.cloudinaryUploadPreset,
+            bedKind: (apiConfig as any)?.bedKind,
+        };
+        const uploadOutcome = await uploadImageToBed(
+            base64,
+            extractMimeFromDataUrl(base64),
+            imageBedConfig,
+        );
+
+        if (uploadOutcome.ok && uploadOutcome.url) {
+            // 图床成功：base64 暂存临时缓存，URL 入 DB
+            setTempImageBase64(uploadOutcome.url, base64);
+            await handleSendText(uploadOutcome.url, 'image');
             return;
         }
 
-        // 没配 imgbb key：把所有旧的 base64 图片立刻替换成占位图（state + DB同步）
-        const isBase64Img = (c: unknown): c is string =>
-            typeof c === 'string' && c.startsWith('data:image');
+        // 图床全失败：打印排查信息 + base64 直接发 + toast 提示用户重试
+        console.warn('🖼️ [ImageBed] 双图床都失败:', {
+            attempted: uploadOutcome.attempted,
+            reason: uploadOutcome.reason,
+            error: uploadOutcome.error,
+        });
 
-        // ① 更新 React state，界面立刻变
-        setMessages((prev: Message[]) =>
-            prev.map(msg =>
-                msg.role === 'user' && isBase64Img(msg.content)
-                    ? { ...msg, content: PLACEHOLDER }
-                    : msg
-            )
-        );
+        // 兜底前先看看是不是完全没配图床 — 是的话清理旧 base64 消息（暮色历史逻辑）
+        if (uploadOutcome.reason === 'no_config') {
+            const isBase64Img = (c: unknown): c is string =>
+                typeof c === 'string' && c.startsWith('data:image');
+            setMessages((prev: Message[]) =>
+                prev.map(msg =>
+                    msg.role === 'user' && isBase64Img(msg.content)
+                        ? { ...msg, content: PLACEHOLDER }
+                        : msg
+                )
+            );
+            const stale = safeMessages.filter(
+                (msg: Message) => msg.role === 'user' && isBase64Img(msg.content)
+            );
+            await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
+        }
 
-        // ② 写回 DB 持久化
-        const stale = safeMessages.filter(
-            (msg: Message) => msg.role === 'user' && isBase64Img(msg.content)
-        );
-        await Promise.all(stale.map((msg: Message) => DB.updateMessage(msg.id, PLACEHOLDER)));
-
-        // ③ 发当前图（base64），这一轮 AI 能识图
         await handleSendText(base64, 'image');
-        pushImageBedWarning('未配图床，已用原图发送，占内存，建议看完删除');
+        pushImageBedWarning(
+            uploadOutcome.reason === 'no_config'
+                ? '未配图床，已用原图发送，占内存，建议看完删除'
+                : `图床上传失败（${uploadOutcome.attempted.join(' → ')}），已用原图发送，占内存，建议重新选图上传`
+        );
 
     } catch (err: any) {
         addToast(err.message || '图片处理失败', 'error');

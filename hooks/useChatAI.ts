@@ -981,11 +981,6 @@ export const useChatAI = ({
             let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
 
-            // 麦麦 2026-09-27：图片摘要指令（无条件追加到 bp2Rules）
-            //   用户本轮发了图 → 主模型回复结尾必须用 [img_desc]...[/img_desc] 标签附上客观描述
-            //   前端拿到回复后会 strip 标签、把描述存进 metadata.imageDesc、UI 渲染折叠标签
-            //   下一轮 chatPrompts.ts 会读 imageDesc 注入历史上下文（line 1247 已有逻辑）
-            bp2Rules += `\n\n[图片摘要输出要求]\n如果用户本轮发送了图片，你在正常回复结尾必须另起一行输出一个标签块：[img_desc]用几句话客观描述图片内容，包括画面主体、颜色、文字（如有）、整体风格[/img_desc]。标签内文本要客观、简洁（1-3 句），不要带主观情绪或评价。\n不要在正文里解释这个标签、不要主动提到"图片描述""[img_desc]"等字样。\n没有图片时不要输出这个标签。`;
             // ⚠️ 2026-07-17 4 断点优化：「最近 5 条心声」挪出 bp3Context
             //   拼到末尾 dynamic 段（不参与 cache），让 bp3Context 段真正稳定
             let dynamicRecentEmotions = '';
@@ -1120,6 +1115,121 @@ export const useChatAI = ({
                     break;
                 }
             }
+
+            // 麦麦 2026-09-27：异步后置图片摘要识图函数定义（finally 块里 fire-and-forget 调用）
+            //   - 复用识别 API 那组的 visionGeminiApiKeys 池（决策1）
+            //   - 防重复：检测 metadata.imageDesc 已有就跳过
+            //   - 必须 await 写 DB，保证下一轮 chatPrompts.ts:1247 能读到 imageDesc
+            //   - 失败 catch 打 warn，不影响主回复
+            //   - 临时缓存在函数 finally 里释放（成功/失败/跳过都清）
+            const runAsyncImageDescription = async (imageUrl: string): Promise<void> => {
+                try {
+                    // 1. 防重复：先查 DB 看目标用户图片是否已有 imageDesc
+                    const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
+                    const targetMsg = [...recentMsgs].reverse().find((m: any) =>
+                        m?.role === 'user' &&
+                        m?.type === 'image' &&
+                        typeof m?.content === 'string' &&
+                        (m.content.startsWith('http') || m.content.startsWith('data:')) &&
+                        m?.content === imageUrl
+                    );
+                    if (!targetMsg) {
+                        console.warn('🖼️ [异步识图] 找不到目标用户图片消息:', imageUrl.slice(0, 60));
+                        return;
+                    }
+                    if ((targetMsg as any).metadata?.imageDesc) {
+                        console.log('🖼️ [异步识图] 该图片已有 imageDesc，跳过（防重复）');
+                        return;
+                    }
+                    // 2. 从临时缓存拿 base64
+                    const base64 = getTempImageBase64(imageUrl);
+                    if (!base64) {
+                        console.warn('🖼️ [异步识图] 临时缓存里没 base64（可能已过期），跳过');
+                        return;
+                    }
+                    // 3. 取 visionGeminiApiKeys 池
+                    const visionGeminiKeys = extractGeminiKeys(
+                        effectiveApi as any, 'visionGeminiApiKey', 'visionGeminiApiKeys',
+                    );
+                    const visionPicked = pickGeminiKey('vision', visionGeminiKeys);
+                    if (!visionPicked) {
+                        console.warn('🖼️ [异步识图] visionGeminiApiKeys 池为空，跳过');
+                        return;
+                    }
+                    const visionBaseUrl = ((effectiveApi as any).visionGeminiBaseUrl || effectiveApi.visionBaseUrl || 'https://generativelanguage.googleapis.com/v1beta')
+                        .replace(/\/+$/, '');
+                    const visionModel = (effectiveApi as any).visionGeminiModel || effectiveApi.visionModel || 'gemini-2.0-flash';
+                    // 4. 构造 Gemini body（base64 走 inline_data）
+                    const dm = base64.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+                    if (!dm) {
+                        console.warn('🖼️ [异步识图] base64 解析失败，跳过');
+                        return;
+                    }
+                    const body = {
+                        contents: [{
+                            role: 'user',
+                            parts: [
+                                { text: '请用两到三句话客观描述这张图片的内容，包括画面主体、颜色、文字（如有）、整体风格。只输出描述，不要输出其他内容。' },
+                                { inline_data: { mimeType: dm[1], data: dm[2] } },
+                            ],
+                        }],
+                        generationConfig: { temperature: 0.85, maxOutputTokens: 256 },
+                    };
+                    // 5. fetch（带 key 池轮询重试一次，跟现有 callVision 同款）
+                    let desc = '';
+                    let lastErr: Error | null = null;
+                    for (let attempt = 0; attempt < 2; attempt++) {
+                        const currentKey = (() => {
+                            if (attempt === 0) return visionPicked.key;
+                            const np = pickGeminiKey('vision', visionGeminiKeys);
+                            return np ? np.key : null;
+                        })();
+                        if (currentKey === null) {
+                            lastErr = new Error('异步识图：visionGeminiApiKeys 池里所有 key 都不可用');
+                            break;
+                        }
+                        const tryUrl = `${visionBaseUrl}/models/${encodeURIComponent(visionModel)}:generateContent?key=${encodeURIComponent(currentKey)}`;
+                        const res = await fetch(tryUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body),
+                        });
+                        if (!res.ok) {
+                            const errText = await res.text().catch(() => '');
+                            const usedKeyIndex = (() => {
+                                if (attempt === 0) return visionPicked.keyIndex;
+                                return visionGeminiKeys.indexOf(currentKey);
+                            })();
+                            const verdict = reportGeminiFailure('vision', usedKeyIndex, res.status, errText);
+                            if (verdict === 'fail-permanent' || verdict === 'fail-recoverable') {
+                                lastErr = new Error(`异步识图 ${res.status}: ${errText.slice(0, 200)}`);
+                                break;
+                            }
+                            console.warn(`🖼️ [异步识图] Gemini ${res.status}，切下一个重试`);
+                            lastErr = new Error(`异步识图 ${res.status}: ${errText.slice(0, 200)}`);
+                            continue;
+                        }
+                        const usedKeyIndex = attempt === 0 ? visionPicked.keyIndex : visionGeminiKeys.indexOf(currentKey);
+                        reportGeminiSuccess('vision', usedKeyIndex);
+                        const gj: any = await res.json();
+                        desc = (gj?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+                        console.log(`🖼️ [异步识图] Gemini 响应 ${desc.length} 字 (key ${usedKeyIndex + 1}/${visionGeminiKeys.length})`);
+                        break;
+                    }
+                    if (!desc) {
+                        console.warn('🖼️ [异步识图] 失败:', lastErr?.message || '返回文本为空');
+                        return;
+                    }
+                    // 6. 必须 await 写 DB（保证下一轮 chatPrompts.ts:1247 能读到 imageDesc）
+                    await DB.updateMessageMeta(targetMsg.id, { imageDesc: desc });
+                    console.log(`🖼️ [异步识图] 写回 imageDesc 成功: ${desc.length} 字`);
+                } catch (e: any) {
+                    console.warn('🖼️ [异步识图] 异常:', e?.message || e);
+                } finally {
+                    // 异步识图完成（成功/失败/跳过都释放）后清理临时缓存
+                    clearTempImage(imageUrl);
+                }
+            };
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
@@ -2245,12 +2355,8 @@ ${visionDesc}
                     body: JSON.stringify(baseReqBody)
                 }, 2, 0, apiProtocol);
             }
-            // 麦麦 2026-09-27：主请求已发出，清理临时图片缓存
-            //   base64 已被序列化进请求体，无需再留缓存；后续 followup（mcp / mcd loop）用 fullMessages 副本不影响
-            if (_tempImageCleanupKey) {
-                clearTempImage(_tempImageCleanupKey);
-                _tempImageCleanupKey = null;
-            }
+            // 麦麦 2026-09-27：清理临时图片缓存的时机已移到「异步识图完成后」
+            //   原因：主请求只是把 base64 序列化发出，异步后置识图还要从缓存读 base64
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }
@@ -3008,21 +3114,6 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
             aiContent = normalizeAiContent(aiContent);
-
-            // 麦麦 2026-09-27：解析 [img_desc] 图片描述标签
-            //   主模型按 system 指令在回复结尾附 [img_desc]客观描述[/img_desc]
-            //   提取后存到 _pendingImageDesc → 入库时写进 metadata.imageDesc
-            //   strip 后正文不显示这个标签（用户只看到正常回复 + UI 折叠标签）
-            //   下一轮 chatPrompts.ts:1247 会读 metadata.imageDesc 注入历史上下文
-            let _pendingImageDesc: string | null = null;
-            {
-                const imgDescMatch = aiContent.match(/\[img_desc\]([\s\S]*?)\[\/img_desc\]/);
-                if (imgDescMatch) {
-                    _pendingImageDesc = imgDescMatch[1].trim();
-                    aiContent = aiContent.replace(/\[img_desc\][\s\S]*?\[\/img_desc\]/g, '').trim();
-                    console.log('🖼️ [img_desc] 解析成功，长度:', _pendingImageDesc?.length || 0);
-                }
-            }
 
             // 【改动 2】主 API 返回后解析内联心声块
             if (isEmotionOn(char)) {
@@ -5102,14 +5193,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 let globalMsgIndex = 0;
 
                 // thought 只挂到本轮首条消息（globalMsgIndex === 0）——后续 chunk 不挂，避免重复显示
-                // 麦麦 2026-09-27：imageDesc 也只挂首条 chunk（同一轮所有 chunk 共享 metadata 引用 bug — 见 comment）
                 const buildChunkMeta = () => {
-                    const base: Record<string, any> = { ...(mcdInheritMeta || {}) };
-                    if (globalMsgIndex === 0) {
-                        if (thoughtContent) base.thought = thoughtContent;
-                        if (_pendingImageDesc) base.imageDesc = _pendingImageDesc;
+                    if (globalMsgIndex === 0 && thoughtContent) {
+                        return { ...(mcdInheritMeta || {}), thought: thoughtContent };
                     }
-                    return Object.keys(base).length > 0 ? base : undefined;
+                    return mcdInheritMeta;
                 };
 
                 if (hasTranslationTags) {
@@ -5258,6 +5346,17 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            // 麦麦 2026-09-27：异步后置图片摘要识图（决策3：主回复 setMessages 后立即异步跑，不等 followup）
+            //   - 复用识别 API 那组的 visionGeminiApiKeys 池（决策1）
+            //   - 防重复：检测 metadata.imageDesc 已有就跳过
+            //   - 必须 await 写 DB，保证下一轮 chatPrompts.ts:1247 能读到 imageDesc
+            //   - 失败 catch 打 warn，不影响主回复（finally 块后续清理照常执行）
+            //   - 临时缓存清理移到异步识图完成后（在 runAsyncImageDescription 的 finally）
+            if (_tempImageCleanupKey) {
+                runAsyncImageDescription(_tempImageCleanupKey).catch(e =>
+                    console.warn('🖼️ [异步识图] 外层 catch:', e?.message || e)
+                );
+            }
             KeepAlive.stop();
             setIsTyping(false);
             setRecallStatus('');

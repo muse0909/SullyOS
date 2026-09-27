@@ -1036,13 +1036,11 @@ export const useChatAI = ({
             // 2.5 Strip translation content from previous messages to save tokens
 
             let cleanedApiMessages = apiMessages.map((msg: any) => {
-            // 如果 content 是数组（包含图片），提取纯文字部分，丢弃图片数据
+            // 麦麦 2026-09-27：保留数组 content（含 image_url），让支持视觉的主模型直接看图
+            //   之前会丢弃图片只保留文字 → 多模态模型（Gemini/Claude/GPT-4o）看不到图
+            //   chatPrompts.ts 已经做了"最新一条带图 / 历史降级文字"的判断，这里直接保留即可
             if (Array.isArray(msg.content)) {
-                const textParts = msg.content
-                    .filter((c: any) => c.type === 'text')
-                    .map((c: any) => c.text)
-                    .join('\n');
-                return { role: msg.role, content: textParts || '[图片]' };
+                return msg;
             }
             if (typeof msg.content !== 'string') return msg;
             let c = msg.content;
@@ -1818,6 +1816,33 @@ ${visionDesc}
                 const contents = cleanedApiMessages
                     .filter((m: any) => m.role === 'user' || m.role === 'assistant')
                     .map((m: any) => {
+                        // 麦麦 2026-09-27：如果 content 是数组（含 image_url），转成 Gemini parts
+                        //   - text 块 → { text }
+                        //   - image_url base64 → { inline_data: { mimeType, data } }
+                        //   - image_url 外链  → { fileData: { fileUri, mimeType } }
+                        if (Array.isArray(m.content)) {
+                            const parts: any[] = [];
+                            for (const part of m.content) {
+                                if (part?.type === 'text' && typeof part.text === 'string') {
+                                    parts.push({ text: part.text.slice(0, 30000) });
+                                } else if (part?.type === 'image_url') {
+                                    const url = part.image_url?.url;
+                                    if (typeof url === 'string') {
+                                        if (url.startsWith('data:')) {
+                                            const dm = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+                                            if (dm) parts.push({ inline_data: { mimeType: dm[1], data: dm[2] } });
+                                        } else if (/^https?:\/\//i.test(url)) {
+                                            parts.push({ fileData: { fileUri: url, mimeType: 'image/*' } });
+                                        }
+                                    }
+                                }
+                            }
+                            if (parts.length === 0) parts.push({ text: '(空消息)' });
+                            return {
+                                role: m.role === 'assistant' ? 'model' : 'user',
+                                parts,
+                            };
+                        }
                         const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
                         return {
                             role: m.role === 'assistant' ? 'model' : 'user',

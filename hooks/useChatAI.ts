@@ -1475,7 +1475,11 @@ if (hasImageInLatest && !alreadyDescribed) {
     });
 }
 
-if (hasImageInLatest && !alreadyDescribed && visionActiveUrl && visionActiveKey) {
+// 麦麦 2026-09-27：识图 API 调用条件加 enableVisionApi 开关
+//   - true  ：用户图片走独立识图 API → imageDesc → 主模型（给无视觉能力的模型用）
+//   - false ：主模型自己看图（Gemini/Claude/GPT-4o 等多模态模型直接视觉理解）
+//   默认 false（undefined 视作 false）
+if (hasImageInLatest && !alreadyDescribed && (effectiveApi as any).enableVisionApi === true && visionActiveUrl && visionActiveKey) {
     const buildVisionMessages = (imageUrl: string) => [
             {
                 role: 'system',

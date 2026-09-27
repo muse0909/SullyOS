@@ -207,6 +207,8 @@ const Settings: React.FC = () => {
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionBaseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApiKey || '');
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionModel || '');
+  // 麦麦 2026-09-27：是否使用独立识图 API 开关（默认 false = 主模型直传看图）
+  const [localEnableVisionApi, setLocalEnableVisionApi] = useState<boolean>(apiConfig.enableVisionApi === true);
   const [localImgbbApiKey, setLocalImgbbApiKey] = useState(apiConfig.imgbbApiKey || '');
   // 暮色 2026-08-20：Cloudinary fallback（imgbb 网络不稳时的备用图床）
   const [localCloudinaryCloudName, setLocalCloudinaryCloudName] = useState(apiConfig.cloudinaryCloudName || '');
@@ -925,6 +927,8 @@ const Settings: React.FC = () => {
       visionGeminiBaseUrl: localVisionProtocol === 'gemini' ? localVisionUrl : '',
       visionGeminiApiKey: localVisionProtocol === 'gemini' ? localVisionKey : '',
       visionGeminiModel: localVisionProtocol === 'gemini' ? localVisionModel : '',
+      // 麦麦 2026-09-27：独立识图 API 开关（默认 false，多模态主模型直传看图）
+      enableVisionApi: localEnableVisionApi,
     };
     updateApiConfig({
       ...apiConfig,
@@ -1949,9 +1953,28 @@ const handleSaveTts = () => {
                 </div>
                 <h2 className="text-sm font-semibold text-slate-600 tracking-wider">独立识图配置</h2>
                 </div>
-                <button onClick={() => { setPresetSaveKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                    保存为预设
-                </button>
+                <div className="flex items-center gap-2">
+                    {/* 麦麦 2026-09-27：独立识图 API 开关（默认 false = 主模型直传） */}
+                    <button
+                        type="button"
+                        onClick={() => setLocalEnableVisionApi(!localEnableVisionApi)}
+                        className={`flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-all ${localEnableVisionApi ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500'}`}
+                    >
+                        <span className={`w-1.5 h-1.5 rounded-full ${localEnableVisionApi ? 'bg-white' : 'bg-slate-400'}`}></span>
+                        {localEnableVisionApi ? '已开启' : '已关闭'}
+                    </button>
+                    <button onClick={() => { setPresetSaveKind('vision'); setShowPresetModal(true); }} className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                        保存为预设
+                    </button>
+                </div>
+            </div>
+            {/* 麦麦 2026-09-27：开关说明卡片 */}
+            <div className="bg-blue-50/60 rounded-2xl p-3 mb-4 border border-blue-100/60">
+                <p className="text-xs font-bold text-slate-700 mb-1.5">使用独立识图 API</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                    开启后，图片会先转换为文字描述，再交给主模型。<br />
+                    关闭后，多模态模型会直接理解图片。
+                </p>
             </div>
             <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">当检测到图片时，系统将自动切换到此通道。支持 Gemini / GPT-4o 等。</p>
             {presetsByKind.vision.length > 0 && (

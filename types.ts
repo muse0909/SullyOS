@@ -265,6 +265,11 @@ export interface APIConfig {
   visionGeminiModel?: string;
   // 暮色 2026-08-04：识图 Gemini 直连 key 池
   visionGeminiApiKeys?: string[];
+  // 麦麦 2026-09-27：是否使用独立识图 API 开关
+  //   - true：用户图片走独立识图 API → imageDesc → 主模型（给无视觉能力的模型用）
+  //   - false（默认）：主模型自己看图（Gemini/Claude/GPT-4o 等多模态模型）
+  //   Missing → undefined 视作 false（不调识图 API，多模态主模型直传）
+  enableVisionApi?: boolean;
   // 暮色 2026-07-27 晚：删 imageGemini* 字段（生图只走 OpenAI 兼容，暮色原话"生图不用"）
   ttsProvider?: 'minimax' | 'volink';
 volinkTtsBaseUrl?: string;

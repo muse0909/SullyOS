@@ -2202,12 +2202,13 @@ if (hasImageInLatest && !alreadyDescribed && (effectiveApi as any).enableVisionA
                     body: JSON.stringify(baseReqBody)
                 }, 2, 0, apiProtocol);
             }
-            // 麦麦 2026-09-27：清理临时图片缓存（主请求已发出，base64 已序列化进请求体）
-            //   后台异步识图走原识别 API 调用流程（callVision + imageUrlToDataUrl 转换 base64），不需要读我们的临时缓存
-            if (_tempImageCleanupKey) {
-                clearTempImage(_tempImageCleanupKey);
-                _tempImageCleanupKey = null;
-            }
+            // 麦麦 2026-09-27：手动塞图不再主动清理临时缓存
+            //   错误做法：之前在主请求 fetch 返回后调 clearTempImage(_tempImageCleanupKey)
+//   原因：base64 已经在 baseReqBody 里序列化发出，主请求返回时缓存里的 base64 已经"用完"
+//        但用户后续追问"刚才那张图好看吗"时，triggerAI 会再次手动塞图，需要重新读缓存
+//        主动清理过早清掉缓存，导致后续追问时 cacheHit: false（暮色 9-27 反馈）
+//   修复：删掉主动清理，让 TTL 5 分钟自然兜底（防止内存累积）
+//   后台异步识图走原识别 API（callVision + imageUrlToDataUrl），不需要读我们的临时缓存
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }

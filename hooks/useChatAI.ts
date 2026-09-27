@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect, MutableRefObject, useCallback } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, RoomNote, XiaoZhiTiao, MUSIC_AI_AUTOPLAY_DAILY_LIMIT, McpToolCallRecord } from '../types';
 import { DB } from '../utils/db';
+import { getTempImageBase64, clearTempImage } from '../utils/tempImageCache';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { phoneUsage, formatUsageForLLM } from '../utils/phoneUsage';
 import { isXiaoZhiTiaoEnabled } from '../utils/chatPrompts';
@@ -1036,11 +1037,15 @@ export const useChatAI = ({
             // 2.5 Strip translation content from previous messages to save tokens
 
             let cleanedApiMessages = apiMessages.map((msg: any) => {
-            // 麦麦 2026-09-27：保留数组 content（含 image_url），让支持视觉的主模型直接看图
-            //   之前会丢弃图片只保留文字 → 多模态模型（Gemini/Claude/GPT-4o）看不到图
-            //   chatPrompts.ts 已经做了"最新一条带图 / 历史降级文字"的判断，这里直接保留即可
+            // 麦麦 2026-09-27：回退"保留数组 content"逻辑，恢复砍图
+            //   历史图片已在 chatPrompts.ts 降级为文字描述（imageDesc 描述或 [图片] 占位）
+            //   最新一条图片走"手动塞图"逻辑（在下面 injectLatestImage）
             if (Array.isArray(msg.content)) {
-                return msg;
+                const textParts = msg.content
+                    .filter((c: any) => c.type === 'text')
+                    .map((c: any) => c.text)
+                    .join('\n');
+                return { role: msg.role, content: textParts || '[图片]' };
             }
             if (typeof msg.content !== 'string') return msg;
             let c = msg.content;
@@ -1056,6 +1061,40 @@ export const useChatAI = ({
                 }
                 return { ...msg, content: c };
             });
+
+            // 麦麦 2026-09-27：手动塞最新一张图片（开关关闭时）
+            //   找 apiMessages 最新一条用户图片，从临时缓存取 base64，替换 cleanedApiMessages 对应条目为数组 content
+            //   - 开关开启时跳过（让识别 API 流程接管，主请求不带图）
+            //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
+            const enableVisionApiFlag = (effectiveApi as any).enableVisionApi === true;
+            let _tempImageCleanupKey: string | null = null;
+            if (!enableVisionApiFlag) {
+                for (let i = apiMessages.length - 1; i >= 0; i--) {
+                    const raw = apiMessages[i];
+                    if (raw?.role !== 'user') continue;
+                    if (typeof raw.content !== 'string') continue;
+                    if (!raw.content.startsWith('http') && !raw.content.startsWith('data:')) continue;
+                    let base64: string | undefined;
+                    if (raw.content.startsWith('http')) {
+                        base64 = getTempImageBase64(raw.content);
+                        if (base64) _tempImageCleanupKey = raw.content;
+                    } else if (raw.content.startsWith('data:')) {
+                        // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
+                        base64 = raw.content;
+                    }
+                    if (!base64) continue;
+                    if (i < cleanedApiMessages.length) {
+                        cleanedApiMessages[i] = {
+                            role: cleanedApiMessages[i].role,
+                            content: [
+                                { type: 'text', text: '[用户发送了一张图片]' },
+                                { type: 'image_url', image_url: { url: base64 } },
+                            ],
+                        };
+                    }
+                    break;
+                }
+            }
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
@@ -2164,6 +2203,12 @@ ${visionDesc}
                     method: 'POST', headers,
                     body: JSON.stringify(baseReqBody)
                 }, 2, 0, apiProtocol);
+            }
+            // 麦麦 2026-09-27：主请求已发出，清理临时图片缓存
+            //   base64 已被序列化进请求体，无需再留缓存；后续 followup（mcp / mcd loop）用 fullMessages 副本不影响
+            if (_tempImageCleanupKey) {
+                clearTempImage(_tempImageCleanupKey);
+                _tempImageCleanupKey = null;
             }
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);

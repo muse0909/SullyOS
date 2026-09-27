@@ -980,6 +980,12 @@ export const useChatAI = ({
             let bp2Rules = systemPromptResult.bp2Rules;
             let bp3Context = systemPromptResult.bp3Context;
             const dynamicTail = systemPromptResult.dynamicTail;
+
+            // 麦麦 2026-09-27：图片摘要指令（无条件追加到 bp2Rules）
+            //   用户本轮发了图 → 主模型回复结尾必须用 [img_desc]...[/img_desc] 标签附上客观描述
+            //   前端拿到回复后会 strip 标签、把描述存进 metadata.imageDesc、UI 渲染折叠标签
+            //   下一轮 chatPrompts.ts 会读 imageDesc 注入历史上下文（line 1247 已有逻辑）
+            bp2Rules += `\n\n[图片摘要输出要求]\n如果用户本轮发送了图片，你在正常回复结尾必须另起一行输出一个标签块：[img_desc]用几句话客观描述图片内容，包括画面主体、颜色、文字（如有）、整体风格[/img_desc]。标签内文本要客观、简洁（1-3 句），不要带主观情绪或评价。\n不要在正文里解释这个标签、不要主动提到"图片描述""[img_desc]"等字样。\n没有图片时不要输出这个标签。`;
             // ⚠️ 2026-07-17 4 断点优化：「最近 5 条心声」挪出 bp3Context
             //   拼到末尾 dynamic 段（不参与 cache），让 bp3Context 段真正稳定
             let dynamicRecentEmotions = '';
@@ -3002,6 +3008,21 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
             aiContent = normalizeAiContent(aiContent);
+
+            // 麦麦 2026-09-27：解析 [img_desc] 图片描述标签
+            //   主模型按 system 指令在回复结尾附 [img_desc]客观描述[/img_desc]
+            //   提取后存到 _pendingImageDesc → 入库时写进 metadata.imageDesc
+            //   strip 后正文不显示这个标签（用户只看到正常回复 + UI 折叠标签）
+            //   下一轮 chatPrompts.ts:1247 会读 metadata.imageDesc 注入历史上下文
+            let _pendingImageDesc: string | null = null;
+            {
+                const imgDescMatch = aiContent.match(/\[img_desc\]([\s\S]*?)\[\/img_desc\]/);
+                if (imgDescMatch) {
+                    _pendingImageDesc = imgDescMatch[1].trim();
+                    aiContent = aiContent.replace(/\[img_desc\][\s\S]*?\[\/img_desc\]/g, '').trim();
+                    console.log('🖼️ [img_desc] 解析成功，长度:', _pendingImageDesc?.length || 0);
+                }
+            }
 
             // 【改动 2】主 API 返回后解析内联心声块
             if (isEmotionOn(char)) {
@@ -5081,11 +5102,14 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                 let globalMsgIndex = 0;
 
                 // thought 只挂到本轮首条消息（globalMsgIndex === 0）——后续 chunk 不挂，避免重复显示
+                // 麦麦 2026-09-27：imageDesc 也只挂首条 chunk（同一轮所有 chunk 共享 metadata 引用 bug — 见 comment）
                 const buildChunkMeta = () => {
-                    if (globalMsgIndex === 0 && thoughtContent) {
-                        return { ...(mcdInheritMeta || {}), thought: thoughtContent };
+                    const base: Record<string, any> = { ...(mcdInheritMeta || {}) };
+                    if (globalMsgIndex === 0) {
+                        if (thoughtContent) base.thought = thoughtContent;
+                        if (_pendingImageDesc) base.imageDesc = _pendingImageDesc;
                     }
-                    return mcdInheritMeta;
+                    return Object.keys(base).length > 0 ? base : undefined;
                 };
 
                 if (hasTranslationTags) {

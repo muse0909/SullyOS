@@ -867,6 +867,20 @@ const MessageItem = React.memo(({
                     {!isUser && m.type !== 'emoji' && m.type !== 'image' && (m as any).metadata?.thought && (
                         <ThoughtFold thought={(m as any).metadata.thought} />
                     )}
+                    {/* 麦麦 2026-09-27：图片描述折叠标签
+                        - 用户本轮发图时主模型回复里附的 [img_desc]...[/img_desc] 描述（主模型自己生成的）
+                        - 折叠标签默认收起，点击展开查看内容
+                        - 方便用户核查模型识图是否准确 */}
+                    {!isUser && (m as any).metadata?.imageDesc && (
+                        <details className="bg-slate-50/80 rounded-xl px-3 py-1.5 mb-1.5 border border-slate-200/60 text-xs">
+                            <summary className="cursor-pointer font-bold text-slate-600 select-none flex items-center gap-1 active:opacity-70">
+                                📷 图片描述
+                            </summary>
+                            <div className="text-slate-500 mt-1.5 leading-relaxed pl-1">
+                                {(m as any).metadata.imageDesc}
+                            </div>
+                        </details>
+                    )}
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>

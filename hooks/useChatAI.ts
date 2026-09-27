@@ -1099,7 +1099,10 @@ export const useChatAI = ({
                     cacheHit: !!base64,
                     base64Length: base64?.length || 0,
                 });
-                if (!base64) continue;
+                // 麦麦 9-27 修：缓存未命中时直接 break，不要 continue 往下找更早的图片
+                //   之前用 continue，导致 9 张历史图全部 cacheHit: false 跑一遍（暮色反馈\"怎么这么多手动塞图\"）
+                //   意图：找最新一张图片塞图；没命中就降级不带图，不污染上下文
+                if (!base64) break;
                 if (i < cleanedApiMessages.length) {
                     cleanedApiMessages[i] = {
                         role: cleanedApiMessages[i].role,

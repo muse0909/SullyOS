@@ -532,17 +532,20 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       onClose={onClose}
       footer={(
         <>
+          {/* 麦麦 2026-09-28 19:54：暮色反馈"3 个按钮大小要一样，平均对称居中"
+              - 旧版"查看日志"用 flex-shrink-0 + 内容尺寸，按文字宽度收缩 → 比另外两个窄
+              - 改成 3 个统一 flex-1 + 居中按钮 */}
           <button
             type="button"
             onClick={() => setDiagLogOpen(true)}
-            className="flex-shrink-0 px-3 py-3 text-xs font-bold text-slate-500 bg-slate-100 rounded-2xl active:scale-95 transition-transform"
+            className="flex-1 py-3 text-xs font-bold text-slate-500 bg-slate-100 rounded-2xl active:scale-95 transition-transform"
           >
             查看日志
           </button>
-          <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">
+          <button onClick={onClose} className="flex-1 py-3 text-xs font-bold text-slate-500 bg-slate-100 rounded-2xl active:scale-95 transition-transform">
             取消
           </button>
-          <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-3 bg-violet-300 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50">
+          <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-3 text-xs font-bold text-white bg-violet-300 rounded-2xl active:scale-95 transition-transform disabled:opacity-50">
             {isSubmitting ? '保存中...' : !enabled ? '关闭 2.0' : (editingTaskUuid ? '保存修改' : '新建任务')}
           </button>
         </>

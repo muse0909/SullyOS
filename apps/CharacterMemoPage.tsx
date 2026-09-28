@@ -243,7 +243,7 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
                                         : `${meta.inactiveBg} hover:opacity-80`
                                 }`}
                             >
-                                <Icon size={14} weight={isActive ? 'bold' : 'regular'} />
+                                <Icon size={12} weight={isActive ? 'bold' : 'regular'} />
                                 {meta.label}
                             </button>
                         );
@@ -411,7 +411,8 @@ const MemoRegionTab: React.FC<{
 
     const handleDelete = async (id: number) => {
         if (!window.confirm('确认删除这条备忘？')) return;
-        await deleteMemo(charId, id);
+        // 麦麦 2026-09-28 19:54：UI 路径 — byUser=true 允许删核心约定
+        await deleteMemo(charId, id, { byUser: true });
         onChange();
     };
 
@@ -561,12 +562,17 @@ const EditMemoModal: React.FC<{
     };
 
     const footer = (
-        <div className="flex gap-3 justify-center">
+        // 麦麦 2026-09-28 19:54：暮色反馈"按钮要对称、平铺、居中、颜色浅一点"
+        //   旧版两个按钮用 px-5 py-2.5（不固定宽度，靠文字长度决定）
+        //   → "永久保存" 4 字比"保存" 2 字宽，按钮一大一小、整体偏左
+        //   改成 flex-1 平铺均分宽度（"保存" 单独时也撑满整行）
+        //   颜色 500 → 400 浅一档（hover 还是 500）
+        <div className="flex gap-2 w-full">
             {!isPermanent && (
                 <button
                     onClick={handlePromote}
                     disabled={saving}
-                    className="px-5 py-2.5 rounded-full bg-violet-500 text-white text-sm font-medium shadow-sm hover:bg-violet-600 active:scale-95 transition-transform disabled:opacity-50"
+                    className="flex-1 py-2.5 rounded-full bg-violet-400 text-white text-sm font-medium shadow-sm hover:bg-violet-500 active:scale-95 transition-transform disabled:opacity-50"
                 >
                     永久保存
                 </button>
@@ -574,7 +580,7 @@ const EditMemoModal: React.FC<{
             <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-5 py-2.5 rounded-full bg-emerald-500 text-white text-sm font-medium shadow-sm hover:bg-emerald-600 active:scale-95 transition-transform disabled:opacity-50"
+                className={`flex-1 py-2.5 rounded-full bg-emerald-400 text-white text-sm font-medium shadow-sm hover:bg-emerald-500 active:scale-95 transition-transform disabled:opacity-50 ${isPermanent ? 'mx-auto max-w-[12rem]' : ''}`}
             >
                 {saving ? '保存中…' : '保存'}
             </button>

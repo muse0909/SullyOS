@@ -253,18 +253,21 @@ export async function editMemo(
 
 /**
  * 删除一条（按 ID）
- * 麦麦 2026-09-28：核心约定 (permanent) 拒绝删除——
- *   暮色要求永久区只能手动删，AI 用 [[MEMO_DEL]] 命中 permanent 时静默拒绝
- *   写入指南已告知 AI 永久区不能删，但程序兜底一道
+ * 麦麦 2026-09-28：核心约定 (permanent) 默认拒绝删除——
+ *   AI 用 [[MEMO_DEL]] 命中 permanent 时静默拒绝（写入指南已说明）
+ * 麦麦 2026-09-28 19:54：暮色拍板"用户能删核心约定，AI 不能"——
+ *   新增 opts.byUser，UI 调用传 true 时绕过 permanent 限制
+ *   AI 路径（useChatAI.ts 解析 MEMO_DEL）不传 byUser，仍受限制
  */
 export async function deleteMemo(
     charId: string,
-    id: number
+    id: number,
+    opts?: { byUser?: boolean }
 ): Promise<boolean> {
     const memo = await getMemo(charId);
     const target = memo.entries.find((e) => e.id === id);
     if (!target) return false;
-    if (target.region === 'permanent') {
+    if (target.region === 'permanent' && !opts?.byUser) {
         console.warn(`📝 [Memo] DEL 被拒（核心约定不可删） #${id} (char=${charId})`);
         return false;
     }

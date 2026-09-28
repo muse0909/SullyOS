@@ -280,6 +280,8 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
 | 2026-08-27 | 页面缩放滑条 — 纯前端 CSS zoom 替代原生 WebView 缩放 | [`changelogs/2026-08-27-page-zoom-css.md`](./changelogs/2026-08-27-page-zoom-css.md) |
+| 2026-09-28 | 区间查找——扫描整轮所有图片并注入 base64（连发图 / 夹文字再发图都能识别） | [`changelogs/2026-09-28-range-scan-image-inject.md`](./changelogs/2026-09-28-range-scan-image-inject.md) |
+| 2026-09-28 | 修重复识图 bug——IIFE 写 imageDesc 后同步 React state + setMessages 类型签名补充 | [`changelogs/2026-09-28-prevent-duplicate-vision-call.md`](./changelogs/2026-09-28-prevent-duplicate-vision-call.md) |
 | 2026-08-11 | schedule_message 提示词收紧 + 诊断日志(不改业务) | [`changelogs/2026-08-11-schedule-message-prompt-and-diagnostics.md`](./changelogs/2026-08-11-schedule-message-prompt-and-diagnostics.md) |
 | 2026-08-09 | 主动消息 2.0 隔离(第一步)— AMSG2_ENABLED=false 短路 4 处接入点 | [`changelogs/2026-08-09-amsg2-pause.md`](./changelogs/2026-08-09-amsg2-pause.md) |
 | 2026-07-31 | 彼方 saveVRNovel 漏写 — 上传小说 TypeError | [`changelogs/2026-07-31-vrworld-savevrnovel.md`](./changelogs/2026-07-31-vrworld-savevrnovel.md) |

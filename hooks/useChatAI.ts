@@ -3501,7 +3501,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             if (aiContent.includes('[[MEMO_')) {
                 try {
                     // region mapping：中文 → 内部 enum（AI 喜欢用"重点事件"而不是 "event"）
-                    const REGION_ALIAS: Record<string, 'event' | 'private'> = {
+                    // 麦麦 2026-09-28：加 'permanent' / '核心约定' 别名
+                    const REGION_ALIAS: Record<string, CharacterMemoRegion> = {
                         'event': 'event',
                         'events': 'event',
                         '事件': 'event',
@@ -3513,6 +3514,13 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                         '私人': 'private',
                         '笔记': 'private',
                         '私人笔记': 'private',
+                        'permanent': 'permanent',
+                        'core': 'permanent',
+                        '核心约定': 'permanent',
+                        '永久': 'permanent',
+                        '永久区': 'permanent',
+                        '自留地': 'permanent',
+                        '重要约定': 'permanent',
                     };
                     // 6 个 status slot 的别名（麦麦 2026-09-06 16:43 加 recent）
                     const STATUS_SLOT_ALIAS: Record<string, CharacterStatusSlot> = {

@@ -622,7 +622,10 @@ interface UseChatAIProps {
     emojis: Emoji[];
     categories: EmojiCategory[];
     addToast: (msg: string, type: 'info'|'success'|'error') => void;
-    setMessages: (msgs: Message[]) => void; // Callback to update UI messages
+    // 麦麦 2026-09-28：补函数式签名（React 标准 setState 支持 (prev) => newState）
+    //   之前只允许传数组，IIFE 写完 imageDesc 想增量同步 state 得绕 `(setMessages as any)`
+    //   现在类型签名开放函数式调用，跟 React 标准 setState 对齐
+    setMessages: (msgs: Message[] | ((prev: Message[]) => Message[])) => void; // Callback to update UI messages
     realtimeConfig?: RealtimeConfig; // 新增：实时配置
     translationConfig?: { enabled: boolean; sourceLang: string; targetLang: string };
     memoryPalaceConfig?: { embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number }; lightLLM: { baseUrl: string; apiKey: string; model: string } };
@@ -5288,7 +5291,26 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                                 ...(_fTargetImageRawMsg.metadata || {}),
                                 imageDesc: visionDesc
                             };
-                            console.log('🔍 后台识图成功，描述已写回 metadata');
+                            // 麦麦 2026-09-28：IIFE 写完 imageDesc 后立刻同步 React state
+                            //   根因：setMessages 在 try 块最后同步重读 DB，IIFE 写 imageDesc 是异步的，
+                            //         setMessages 跑在 IIFE 写 DB 之前 → React state 不含 imageDesc
+                            //         → 下一轮 triggerAI 进入时 _fTargetImageRawMsg.find 又找到同一张图 → 重复调 Vision API
+                            //   修复：IIFE 写完 imageDesc 后用 setState 函数式调用增量同步到 React state
+                            //         主请求速度不变（IIFE 仍异步），state 强一致（IIFE 写完 → 立即同步）
+                            //         不重读全 DB（只更新一条 msg 的 metadata）
+                            const _tMsgId = _fTargetImageRawMsg.id;
+                            const _tImageDesc = visionDesc;
+                            try {
+                                setMessages((prev: Message[]) => Array.isArray(prev)
+                                    ? prev.map((m: any) => m?.id === _tMsgId
+                                        ? { ...m, metadata: { ...(m.metadata || {}), imageDesc: _tImageDesc } }
+                                        : m)
+                                    : prev);
+                            } catch (e) {
+                                // 兜底：极端情况下 setMessages 不支持函数式（不应该发生）→ 静默
+                                console.warn('[Vision] setMessages 函数式同步失败（不影响 DB 已写入）:', e);
+                            }
+                            console.log('🔍 后台识图成功，描述已写回 metadata（同步 React state）');
                         }
                     } catch (e: any) {
                         console.warn('后台识图失败:', e);

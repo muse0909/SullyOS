@@ -1,25 +1,111 @@
-// CharacterMemoPage — 角色备忘录只读页（江澈 9-5 指令）
+// CharacterMemoPage — 角色备忘录（麦麦 2026-09-28 重构）
 //
-// 暮色在发现页 → 角色备忘录进入，看角色（AI）自己通过 [[MEMO_ADD|EDIT|DEL:...]] 维护的备忘录
-// 暮色不能编辑——这是角色自己的备忘。
+// 江澈 9-5 指令拍板"暮色只读" → 暮色 9-28 推翻：
+//   "实战暴露问题——AI 删除不靠谱 + 重复写入撑爆上限 + 重要内容被静默淘汰
+//    完全让 AI 管理还是不行"
+//   暮色明确要求暮色可以手动操作（删除 / 编辑 / 永久保存 / 编辑状态面板）。
 //
-// 麦麦 2026-09-05 实现
+// 9-28 新结构：
+//   - 4 个 tab 顶端并列：当前状态 / 重点事件 / 私人笔记 / 核心约定
+//   - 状态面板：6 个槽点文字直接进编辑，onBlur 自动保存；每槽 hover 显示 🗑 清空
+//   - 三种备忘：点条目弹 Modal 编辑
+//       重点事件、私人笔记 弹窗底部：【永久保存】【保存】
+//       核心约定 弹窗底部：只有【保存】
+//   - 每条卡片右下角快捷 🗑（弹确认）
+//   - 核心约定：AI 能编辑不能删除（程序兜底）
+//   - 上限调整为：重点事件 10 条、非永久区合计 50 条
+//   - 写入去重中档：完全相同 + 关键词袋相似度 70% 视为重复
+//
+// 历史：
+//   9-5 首次实现（江澈 9-5 指令）
+//   9-6 16:14 状态面板置顶 + 写入指南永远注入
+//   9-6 16:25 matchAll 解析 + 角色下拉框挪到头部
+//   9-6 16:40 删副标题（后又加回）
+//   9-6 16:43 加 'recent' 状态槽
+//   9-28 重构为 4 tab + 暮色可写 + 永久区
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
-import { CaretLeft, Notebook, Smiley, Heart, BookOpen } from '@phosphor-icons/react';
-import { getMemo, getStatusPanel, sortEntries, REGION_LABELS, STATUS_LABELS } from '../utils/characterMemo';
-import type { CharacterMemo, CharacterMemoEntry, CharacterMemoRegion, CharacterStatusPanel, CharacterStatusSlot } from '../types';
+import {
+    CaretLeft,
+    Notebook,
+    Smiley,
+    Heart,
+    BookOpen,
+    Star,
+    Trash,
+    PencilSimple,
+} from '@phosphor-icons/react';
+import {
+    getMemo,
+    getStatusPanel,
+    setStatusSlot,
+    clearStatusSlot,
+    editMemo,
+    deleteMemo,
+    promoteMemoToPermanent,
+    sortEntries,
+    REGION_LABELS,
+    STATUS_LABELS,
+} from '../utils/characterMemo';
+import type {
+    CharacterMemo,
+    CharacterMemoEntry,
+    CharacterMemoRegion,
+    CharacterStatusPanel,
+    CharacterStatusSlot,
+} from '../types';
+import Modal from '../components/os/Modal';
 
-const REGION_ICONS: Record<CharacterMemoRegion, React.ReactNode> = {
-    event: <Heart size={14} weight="regular" />,
-    private: <BookOpen size={14} weight="regular" />,
+// ==================== 配置 ====================
+
+type TabKey = 'status' | 'event' | 'private' | 'permanent';
+
+const TAB_META: Record<TabKey, {
+    label: string;
+    Icon: React.ComponentType<{ size?: number; weight?: 'regular' | 'bold' }>;
+    activeBg: string;
+    activeText: string;
+    inactiveBg: string;
+    inactiveText: string;
+}> = {
+    status: {
+        label: '当前状态',
+        Icon: Smiley,
+        activeBg: 'bg-sky-500',
+        activeText: 'text-white',
+        inactiveBg: 'bg-sky-50 text-sky-700 border border-sky-100',
+        inactiveText: 'text-sky-700',
+    },
+    event: {
+        label: '重点事件',
+        Icon: Heart,
+        activeBg: 'bg-emerald-500',
+        activeText: 'text-white',
+        inactiveBg: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
+        inactiveText: 'text-emerald-700',
+    },
+    private: {
+        label: '私人笔记',
+        Icon: BookOpen,
+        activeBg: 'bg-amber-500',
+        activeText: 'text-white',
+        inactiveBg: 'bg-amber-50 text-amber-700 border border-amber-100',
+        inactiveText: 'text-amber-700',
+    },
+    permanent: {
+        label: '核心约定',
+        Icon: Star,
+        activeBg: 'bg-violet-500',
+        activeText: 'text-white',
+        inactiveBg: 'bg-violet-50 text-violet-700 border border-violet-100',
+        inactiveText: 'text-violet-700',
+    },
 };
 
-const REGION_BG: Record<CharacterMemoRegion, string> = {
-    event: 'bg-rose-50 text-rose-700 border-rose-100',
-    private: 'bg-amber-50 text-amber-700 border-amber-100',
-};
+const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder', 'recent'];
+
+// ==================== 主组件 ====================
 
 interface Props {
     onBack: () => void;
@@ -28,7 +114,9 @@ interface Props {
 const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
     const { characters } = useOS();
     const [activeCharId, setActiveCharId] = useState<string>('');
+    const [activeTab, setActiveTab] = useState<TabKey>('status');
     const [memo, setMemo] = useState<CharacterMemo | null>(null);
+    const [statusPanel, setStatusPanelState] = useState<CharacterStatusPanel | null>(null);
     const [loading, setLoading] = useState(false);
 
     // 默认选第一个角色
@@ -38,56 +126,37 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
         }
     }, [characters, activeCharId]);
 
-    // 读 memo（每切角色刷新一次）
+    // 读 memo + statusPanel（切角色刷新）
     useEffect(() => {
         if (!activeCharId) return;
         let cancelled = false;
         (async () => {
             setLoading(true);
-            const m = await getMemo(activeCharId);
+            const [m, p] = await Promise.all([getMemo(activeCharId), getStatusPanel(activeCharId)]);
             if (!cancelled) {
                 setMemo(m);
+                setStatusPanelState(p);
                 setLoading(false);
             }
         })();
         return () => { cancelled = true; };
     }, [activeCharId]);
 
-    // 麦麦 2026-09-06：监听 memo-updated 事件（addMemo/setStatusSlot 写完 IDB 后派发）
-    //   暮色 9-6 反馈：APK 端写完不显示 — 因为 useEffect 只在 activeCharId 变化时重读
-    //   写 memo 后没主动重新读。现在监听事件 + 检查 charId 匹配 → 重读
-    useEffect(() => {
-        const handler = (e: Event) => {
-            const detail = (e as CustomEvent<{ charId: string; kind: string }>).detail;
-            if (!detail || !activeCharId) return;
-            if (detail.charId !== activeCharId) return;  // 别的角色变化不重读
-            (async () => {
-                const m = await getMemo(activeCharId);
-                setMemo(m);
-            })();
-        };
-        window.addEventListener('memo-updated', handler);
-        return () => window.removeEventListener('memo-updated', handler);
-    }, [activeCharId]);
-
-    // 状态面板独立监听（同事件但 kind='status' 也要刷）
-    const [statusPanel, setStatusPanelState] = useState<CharacterStatusPanel | null>(null);
-    useEffect(() => {
-        if (!activeCharId) return;
-        (async () => {
-            const p = await getStatusPanel(activeCharId);
-            setStatusPanelState(p);
-        })();
-    }, [activeCharId]);
+    // 麦麦 2026-09-06：监听 memo-updated 事件（写完 IDB 后派发）→ 重读
     useEffect(() => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent<{ charId: string; kind: string }>).detail;
             if (!detail || !activeCharId) return;
             if (detail.charId !== activeCharId) return;
-            if (detail.kind !== 'status' && detail.kind !== 'both') return;
             (async () => {
-                const p = await getStatusPanel(activeCharId);
-                setStatusPanelState(p);
+                if (detail.kind === 'status' || detail.kind === 'both') {
+                    const p = await getStatusPanel(activeCharId);
+                    setStatusPanelState(p);
+                }
+                if (detail.kind === 'memo' || detail.kind === 'both') {
+                    const m = await getMemo(activeCharId);
+                    setMemo(m);
+                }
             })();
         };
         window.addEventListener('memo-updated', handler);
@@ -95,13 +164,10 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
     }, [activeCharId]);
 
     // 麦麦 2026-09-06：双保险 — pageshow / visibilitychange 触发重读
-    //   暮色 9-6 反馈"APK 端写完还是不显示" — CustomEvent 理论上能 work，但 APK WebView
-    //   切后台/回前台的事件流更稳。这里加 pageshow（页面显示/恢复）+ visibilitychange 兜底
-    //   从聊天页切回备忘录页时主动重读，绕过 CustomEvent 监听器挂载时机问题
     useEffect(() => {
         if (!activeCharId) return;
         const reload = () => {
-            if (document.visibilityState === 'hidden') return;  // 切到后台时跳过
+            if (document.visibilityState === 'hidden') return;
             (async () => {
                 const m = await getMemo(activeCharId);
                 setMemo(m);
@@ -119,40 +185,21 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
 
     const activeChar = characters.find((c) => c.id === activeCharId);
     const sorted = memo ? sortEntries(memo.entries) : [];
-    // 麦麦 2026-09-06：兜底 unknown region（5d71187 之前 IDB 里 region='status' 的旧 entries
-    //   暮色 IDB 里有 5d71187 之前写入的 memo，跑新代码 region type='event'|'private' 时
-    //   byRegion['status'] 是 undefined → push 报错）
-    //   防御写法：忽略 unknown region（不崩），下次 DB 升级（v72）会主动清掉
+
+    // 按 region 分组（兜底 unknown region 静默跳过）
     const byRegion: Record<CharacterMemoRegion, CharacterMemoEntry[]> = {
         event: [],
         private: [],
+        permanent: [],
     };
     for (const e of sorted) {
         const bucket = byRegion[e.region];
         if (bucket) bucket.push(e);
-        // else: 未知 region（5d71187 之前的 'status' 残留），跳过 — 不崩
     }
-
-    // 麦麦 2026-09-06：状态面板固定槽位顺序
-    // 麦麦 2026-09-06 16:43：暮色加一格"最近关系事件"——放最后（特殊槽，跟其他 5 槽视觉上略区分）
-    const STATUS_SLOT_ORDER: CharacterStatusSlot[] = ['location', 'health', 'schedule', 'mood', 'reminder', 'recent'];
-    // 暮色 9-6 16:14 反馈"状态面板要一直在备忘录页面置顶显示"
-    //   改：5 个固定槽永远显示，没值显示"未填"（不是整块隐藏）
-    //   statusEntries 改成全 5 槽都返回（不再 filter）
-    const statusEntries = STATUS_SLOT_ORDER.map(slot => ({
-        slot,
-        value: statusPanel?.slots?.[slot]?.trim() || '',
-    }));
-    const hasStatus = statusEntries.some(e => e.value);  // 给老逻辑兼容用，但不影响置顶显示
-    const hasMemo = sorted.length > 0;
 
     return (
         <div className="absolute inset-0 flex flex-col" style={{ background: 'linear-gradient(180deg, #f3f4f6 0%, #e7e9ee 100%)' }}>
-            {/* 麦麦 2026-09-06 16:25：角色下拉框合并到 header 那一行（暮色 9-6 16:25 反馈"切换角色想改到顶上"）
-                - 删独立的角色切换卡（原本 header 下面那一块）
-                - header 改成：返回 + 角色下拉框（带图标，inline，rounded-full 胶囊样式）
-                - 麦麦 2026-09-06 16:40：删"角色备忘录"标题（暮色 9-6 16:40 反馈"左上角的角色备忘录几个字去掉"）
-                - 副标题"X 自己记的备忘录"挪到内容区上方 */}
+            {/* 头部：返回 + 角色下拉框 */}
             <div className="flex items-center gap-2 px-2 py-3 bg-white/60 backdrop-blur shrink-0">
                 <button
                     onClick={onBack}
@@ -179,86 +226,378 @@ const CharacterMemoPage: React.FC<Props> = ({ onBack }) => {
                 </div>
             </div>
 
-            {/* 副标题挪到内容区上方 */}
-            <div className="px-5 pt-3 shrink-0">
-                <p className="text-xs text-slate-500 px-1">
-                    {activeChar?.name}自己记的备忘录，暮色只能看不能改。
-                </p>
+            {/* 4 tab 顶端并列 */}
+            <div className="px-3 pt-3 pb-2 shrink-0">
+                <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                    {(Object.keys(TAB_META) as TabKey[]).map((k) => {
+                        const meta = TAB_META[k];
+                        const isActive = activeTab === k;
+                        const Icon = meta.Icon;
+                        return (
+                            <button
+                                key={k}
+                                onClick={() => setActiveTab(k)}
+                                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all active:scale-95 ${
+                                    isActive
+                                        ? `${meta.activeBg} ${meta.activeText} shadow-sm`
+                                        : `${meta.inactiveBg} hover:opacity-80`
+                                }`}
+                            >
+                                <Icon size={14} weight={isActive ? 'bold' : 'regular'} />
+                                {meta.label}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
-            {/* 内容区 */}
-            <div className="flex-1 overflow-y-auto px-5 pt-3 pb-6">
+            {/* 内容区：根据 tab 切换 */}
+            <div className="flex-1 overflow-y-auto px-4 pt-2 pb-6">
                 {loading ? (
                     <div className="text-center text-slate-400 text-sm py-12">加载中…</div>
                 ) : (
-                    <div className="space-y-4">
-                        {/* 暮色 9-6 16:14 要求"状态面板要一直在备忘录页面置顶显示"——5 槽永远渲染，没值显示"未填" */}
-                        <div className="bg-white rounded-2xl shadow-sm p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-100">
-                                    <Smiley size={14} weight="regular" />
-                                    当前状态面板
-                                </span>
-                            </div>
-                            <div className="space-y-2">
-                                {statusEntries.map(({ slot, value }) => (
-                                    <div key={slot} className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed">
-                                        <div className="text-[10px] text-slate-400 mb-1 font-mono">{STATUS_LABELS[slot]}</div>
-                                        {value ? value : <span className="text-slate-300 italic">未填</span>}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        {hasMemo ? (
-                            (['event', 'private'] as CharacterMemoRegion[]).map((region) => {
-                                const items = byRegion[region];
-                                if (items.length === 0) return null;
-                                return (
-                                    <div key={region} className="bg-white rounded-2xl shadow-sm p-4">
-                                        <div className="flex items-center gap-2 mb-3">
-                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${REGION_BG[region]}`}>
-                                                {REGION_ICONS[region]}
-                                                {REGION_LABELS[region]}
-                                            </span>
-                                            <span className="text-xs text-slate-400">{items.length} 条</span>
-                                        </div>
-                                        <div className="space-y-2">
-                                            {items.map((e) => (
-                                                <div
-                                                    key={e.id}
-                                                    className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 leading-relaxed"
-                                                >
-                                                    <div className="text-[10px] text-slate-400 mb-1 font-mono">#{e.id}</div>
-                                                    {e.content}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        ) : (
-                            <EmptyMemoState charName={activeChar?.name ?? '该角色'} />
+                    <>
+                        {activeTab === 'status' && (
+                            <StatusPanelTab
+                                charId={activeCharId}
+                                statusPanel={statusPanel}
+                                onChange={setStatusPanelState}
+                            />
                         )}
-                    </div>
+                        {(activeTab === 'event' || activeTab === 'private' || activeTab === 'permanent') && (
+                            <MemoRegionTab
+                                charId={activeCharId}
+                                region={activeTab}
+                                entries={byRegion[activeTab]}
+                                onChange={() => {
+                                    // 写完后 memo-updated 事件会触发重读，这里兜底
+                                    (async () => {
+                                        const m = await getMemo(activeCharId);
+                                        setMemo(m);
+                                    })();
+                                }}
+                            />
+                        )}
+                    </>
                 )}
             </div>
         </div>
     );
 };
 
-const EmptyMemoState: React.FC<{ charName: string }> = ({ charName }) => (
-    <div className="bg-white rounded-2xl shadow-sm p-5">
-        <div className="flex items-center gap-2 mb-3">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-50 text-slate-500 border-slate-100">
-                <Notebook size={14} weight="regular" />
-                备忘录
-            </span>
-            <span className="text-xs text-slate-400">0 条</span>
+// ==================== 状态面板 tab ====================
+
+const StatusPanelTab: React.FC<{
+    charId: string;
+    statusPanel: CharacterStatusPanel | null;
+    onChange: (p: CharacterStatusPanel) => void;
+}> = ({ charId, statusPanel, onChange }) => {
+    return (
+        <div className="space-y-2.5">
+            {STATUS_SLOT_ORDER.map((slot) => (
+                <StatusSlotRow
+                    key={slot}
+                    charId={charId}
+                    slot={slot}
+                    value={statusPanel?.slots?.[slot]?.trim() || ''}
+                    onChange={onChange}
+                />
+            ))}
         </div>
-        <p className="text-xs text-slate-400 leading-relaxed">
-            {charName}还没记任何事。在聊天中{charName}可以通过 <code className="px-1 py-0.5 bg-slate-50 rounded font-mono text-[11px]">[[MEMO_ADD: event|private | 内容]]</code> 自己记下想记住的事。
-        </p>
-    </div>
-);
+    );
+};
+
+const StatusSlotRow: React.FC<{
+    charId: string;
+    slot: CharacterStatusSlot;
+    value: string;
+    onChange: (p: CharacterStatusPanel) => void;
+}> = ({ charId, slot, value, onChange }) => {
+    const [draft, setDraft] = useState(value);
+    const [saving, setSaving] = useState(false);
+    const [hovered, setHovered] = useState(false);
+
+    // 外部 value 变化（比如 AI 写入）→ 同步 draft
+    useEffect(() => {
+        setDraft(value);
+    }, [value]);
+
+    const save = async (next: string) => {
+        if (next === value) return;
+        setSaving(true);
+        try {
+            const p = await setStatusSlot(charId, slot, next);
+            onChange(p);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleClear = async () => {
+        if (!value) return;
+        if (!window.confirm(`确认清空「${STATUS_LABELS[slot]}」？`)) return;
+        const p = await clearStatusSlot(charId, slot);
+        onChange(p);
+    };
+
+    // recent 槽可能很长 → textarea；其他槽用 input
+    const isLong = slot === 'recent';
+    const placeholder = '点击直接编辑';
+
+    return (
+        <div
+            className="bg-white rounded-2xl shadow-sm p-3.5 group"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[11px] text-slate-400 font-mono">{STATUS_LABELS[slot]}</div>
+                <div className="flex items-center gap-2">
+                    {saving && <span className="text-[10px] text-slate-400">保存中…</span>}
+                    {value && (hovered || true) && (
+                        <button
+                            onClick={handleClear}
+                            className={`text-slate-300 hover:text-rose-500 transition-all ${
+                                hovered ? 'opacity-100' : 'opacity-0'
+                            }`}
+                            aria-label="清空"
+                            title="清空"
+                        >
+                            <Trash size={14} weight="regular" />
+                        </button>
+                    )}
+                </div>
+            </div>
+            {isLong ? (
+                <textarea
+                    value={draft}
+                    placeholder={placeholder}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onBlur={(e) => save(e.target.value)}
+                    rows={3}
+                    className="w-full bg-transparent text-sm text-slate-700 leading-relaxed outline-none resize-none placeholder:text-slate-300 placeholder:italic"
+                />
+            ) : (
+                <input
+                    type="text"
+                    value={draft}
+                    placeholder={placeholder}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onBlur={(e) => save(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            (e.target as HTMLInputElement).blur();
+                        }
+                    }}
+                    className="w-full bg-transparent text-sm text-slate-700 leading-relaxed outline-none placeholder:text-slate-300 placeholder:italic"
+                />
+            )}
+        </div>
+    );
+};
+
+// ==================== 三种备忘 tab ====================
+
+const MemoRegionTab: React.FC<{
+    charId: string;
+    region: CharacterMemoRegion;
+    entries: CharacterMemoEntry[];
+    onChange: () => void;
+}> = ({ charId, region, entries, onChange }) => {
+    const [editing, setEditing] = useState<CharacterMemoEntry | null>(null);
+    const meta = TAB_META[region];
+    const Icon = meta.Icon;
+
+    const handleDelete = async (id: number) => {
+        if (!window.confirm('确认删除这条备忘？')) return;
+        await deleteMemo(charId, id);
+        onChange();
+    };
+
+    if (entries.length === 0) {
+        return (
+            <div className="bg-white rounded-2xl shadow-sm p-5 mt-2">
+                <div className="flex items-center gap-2 mb-3">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${meta.inactiveBg}`}>
+                        <Icon size={14} weight="regular" />
+                        {REGION_LABELS[region]}
+                    </span>
+                    <span className="text-xs text-slate-400">0 条</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                    暂时没有内容。{region === 'permanent'
+                        ? '可以从其他区点"永久保存"升级到核心约定；AI 也可以直接 [[MEMO_ADD: 核心约定|...]] 写入。'
+                        : '在聊天里 AI 会按 token 自己记，也可以手动加。'}
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <>
+            <div className="flex items-center gap-2 mb-3 px-1">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${meta.inactiveBg}`}>
+                    <Icon size={14} weight="regular" />
+                    {REGION_LABELS[region]}
+                </span>
+                {region !== 'permanent' && (
+                    <span className="text-xs text-slate-400">{entries.length} 条</span>
+                )}
+            </div>
+            <div className="space-y-2.5">
+                {entries.map((e) => (
+                    <MemoEntryCard
+                        key={e.id}
+                        entry={e}
+                        region={region}
+                        onClick={() => setEditing(e)}
+                        onDelete={() => handleDelete(e.id)}
+                    />
+                ))}
+            </div>
+
+            {editing && (
+                <EditMemoModal
+                    entry={editing}
+                    region={region}
+                    charId={charId}
+                    onClose={() => setEditing(null)}
+                    onSaved={() => {
+                        setEditing(null);
+                        onChange();
+                    }}
+                />
+            )}
+        </>
+    );
+};
+
+const MemoEntryCard: React.FC<{
+    entry: CharacterMemoEntry;
+    region: CharacterMemoRegion;
+    onClick: () => void;
+    onDelete: () => void;
+}> = ({ entry, region, onClick, onDelete }) => {
+    const [hovered, setHovered] = useState(false);
+    const isPermanent = region === 'permanent';
+
+    return (
+        <div
+            className="bg-white rounded-2xl shadow-sm p-3.5 cursor-pointer active:scale-[0.98] transition-transform relative"
+            onClick={onClick}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <div className="flex items-start justify-between gap-2 mb-1.5">
+                <div className="text-[11px] text-slate-400 font-mono">#{entry.id}</div>
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete();
+                    }}
+                    className={`text-slate-300 hover:text-rose-500 transition-all ${
+                        hovered ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    aria-label="删除"
+                    title="删除"
+                >
+                    <Trash size={14} weight="regular" />
+                </button>
+            </div>
+            <div className={`text-sm text-slate-700 leading-relaxed ${isPermanent ? 'pl-1 border-l-2 border-violet-300' : ''}`}>
+                {entry.content}
+            </div>
+            {isPermanent && (
+                <div className="flex items-center gap-1 mt-2 text-[10px] text-violet-500">
+                    <Star size={10} weight="fill" />
+                    核心约定 · 永久保存
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ==================== 编辑 Modal ====================
+
+const EditMemoModal: React.FC<{
+    entry: CharacterMemoEntry;
+    region: CharacterMemoRegion;
+    charId: string;
+    onClose: () => void;
+    onSaved: () => void;
+}> = ({ entry, region, charId, onClose, onSaved }) => {
+    const [draft, setDraft] = useState(entry.content);
+    const [saving, setSaving] = useState(false);
+    const isPermanent = region === 'permanent';
+
+    const handleSave = async () => {
+        if (!draft.trim() || draft.trim() === entry.content) {
+            onClose();
+            return;
+        }
+        setSaving(true);
+        try {
+            await editMemo(charId, entry.id, draft);
+            onSaved();
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handlePromote = async () => {
+        if (!window.confirm('把这条升级到「核心约定」？原区会删除这条，编号保留。')) return;
+        setSaving(true);
+        try {
+            // 先 edit 新内容（如果有改动），再 promote
+            if (draft.trim() && draft.trim() !== entry.content) {
+                await editMemo(charId, entry.id, draft);
+            }
+            await promoteMemoToPermanent(charId, entry.id);
+            onSaved();
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const footer = (
+        <div className="flex gap-3 justify-center">
+            {!isPermanent && (
+                <button
+                    onClick={handlePromote}
+                    disabled={saving}
+                    className="px-5 py-2.5 rounded-full bg-violet-500 text-white text-sm font-medium shadow-sm hover:bg-violet-600 active:scale-95 transition-transform disabled:opacity-50"
+                >
+                    永久保存
+                </button>
+            )}
+            <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-5 py-2.5 rounded-full bg-emerald-500 text-white text-sm font-medium shadow-sm hover:bg-emerald-600 active:scale-95 transition-transform disabled:opacity-50"
+            >
+                {saving ? '保存中…' : '保存'}
+            </button>
+        </div>
+    );
+
+    return (
+        <Modal
+            isOpen={true}
+            title={`编辑 #${entry.id}${isPermanent ? ' · 核心约定' : ''}`}
+            onClose={onClose}
+            footer={footer}
+        >
+            <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="内容..."
+                autoFocus
+                rows={10}
+                className="w-full bg-transparent text-sm text-slate-700 leading-relaxed outline-none resize-none placeholder:text-slate-300 placeholder:italic p-1"
+            />
+        </Modal>
+    );
+};
 
 export default CharacterMemoPage;

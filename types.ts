@@ -702,7 +702,13 @@ export interface XiaoZhiTiao {
 //   - 状态面板拆出独立模块（5 固定槽 + 整体覆盖）
 //   - 备忘录剩 event + private 2 种 region
 //   - 30 条上限 = memo 合计
-export type CharacterMemoRegion = 'event' | 'private';
+// 麦麦 2026-09-28：暮色新增 "核心约定 (permanent)" region
+//   - 暮色手动"永久保存"或 AI 直接 [[MEMO_ADD: permanent|...]] 写入
+//   - AI 能编辑（[[MEMO_EDIT]]）但**不能删除**（[[MEMO_DEL]] 命中 permanent 时静默拒绝）
+//   - 不参与任何上限淘汰（重点事件 10 条 / 私人笔记 50 条都跟它无关）
+//   - 写入指南里说明：永久区内容只能改不能删
+//   暮色 9-28 同时把上限调整为：重点事件 10 条、私人笔记 50 条
+export type CharacterMemoRegion = 'event' | 'private' | 'permanent';
 
 export interface CharacterMemoEntry {
     id: number;                          // 每角色独立自增 1, 2, 3...

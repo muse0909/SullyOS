@@ -1078,19 +1078,29 @@ export const useChatAI = ({
             //   - apiMessages / historySlice / cleanedApiMessages 三者长度一一对应（chatPrompts.buildMessageHistory 返回）
             //   - 临时缓存未命中时跳过（缓存过期 / 图床 URL 没存进缓存 → 降级不带图）
             //   - enableVisionApi 开关不再影响手动塞图（暮色 9-27 拍板：开关只控制后台是否再调识图）
-            //   - 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
             //   - 麦麦 9-27 修作用域：_tempImageCleanupKey 声明必须在 try 块内且不被 { } 块包住，
             //     否则 finally 块 / doGeminiRequest 闭包访问不到（江澈反馈 ReferenceError）
-            // 麦麦 9-27 修复：手动塞图只对"最新一条 user 消息是图片"才生效（暮色反馈 base64 污染历史上下文）
-//   之前用 historySlice 找最新一张图——但用户先发图后追问时，historySlice 最新一张图是历史图（被 AI 回复隔开），
-//   manual inject 循环里又找到它，重新替换 cleanedApiMessages[i] 为带 base64 的数组 content——
-//   导致历史图片消息在下一轮上下文里变成 base64 data URL（不降级成文字描述）。
+            //   - 麦麦 9-28 改名：_tempImageCleanupKey 单 key → _tempImageCleanupKeys: string[] 数组，
+            //     因为区间查找后本轮可能有 N 张图都要记录；作用域约束同样适用（try 块内、不被 { } 包住）
+            // 麦麦 2026-09-28：实现区间查找——扫描整轮所有图片并注入 base64
+//   9-27 收紧成"只处理最新一张图"是因为 base64 污染历史上下文。
+//   9-28 18:25 暮色要求扩成区间查找：扫描"最近一条 assistant 消息之后到最新 user 消息"区间内
+//   所有 user 图片，独立注入。
 //
-//   修复：先找最新一条 user 消息，如果它是图片才塞图；如果最新 user 是文字（追问），完全不动 cleanedApiMessages
-//   （历史图已由 chatPrompts.ts:1247 降级成文字描述，含 imageDesc，主模型能看到描述）
-let _tempImageCleanupKey: string | null = null;
+// 区间算法：
+//   - lastUserIdx = 最新 user 消息索引（终点）
+//   - 从 lastUserIdx 往前翻，第一条 assistant 消息的下一条就是 startIdx
+//   - 翻到头没找到 assistant → startIdx = 0（首次对话）
+//
+// 区间内遍历：role=user && type=image 才处理
+//   - c.startsWith('http')：查临时缓存，命中就把原 URL 记进 _tempImageCleanupKeys（5 分钟自动过期兜底）
+//   - c.startsWith('data:')：图床全失败时存的 dataURL，直接用，不查缓存
+//
+// 缓存清理策略：不在 finally 主动清（沿用 9-27 修复，避免连发图场景丢 cacheHit）
+//   _tempImageCleanupKeys 数组保留作为本轮扫描记录，TTL 5 分钟自动兜底
+let _tempImageCleanupKeys: string[] = [];
 {
-    // 找最新一条 user 消息的索引
+    // 1. 找 lastUserIdx（最新 user 消息）
     let lastUserIdx = -1;
     for (let i = historySlice.length - 1; i >= 0; i--) {
         if (historySlice[i]?.role === 'user') {
@@ -1098,42 +1108,52 @@ let _tempImageCleanupKey: string | null = null;
             break;
         }
     }
-    // 只有最新 user 消息是图片时才塞图
-    if (lastUserIdx >= 0 && historySlice[lastUserIdx]?.type === 'image') {
-        const raw = historySlice[lastUserIdx];
-        const c = raw.content;
-        if (typeof c === 'string' && (c.startsWith('http') || c.startsWith('data:'))) {
+    // 2. 找 startIdx（区间起点）：从 lastUserIdx 往前翻，第一条 assistant 的下一条
+    //    没找到 assistant（首次对话）→ startIdx = 0
+    let startIdx = 0;
+    if (lastUserIdx > 0) {
+        for (let i = lastUserIdx - 1; i >= 0; i--) {
+            if (historySlice[i]?.role === 'assistant') {
+                startIdx = i + 1;
+                break;
+            }
+        }
+    }
+    // 3. 区间内遍历，role=user && type=image 独立注入
+    if (lastUserIdx >= 0 && startIdx <= lastUserIdx) {
+        const rangeSize = lastUserIdx - startIdx + 1;
+        console.log(`🖼️ [手动塞图] 区间扫描: startIdx=${startIdx}, lastUserIdx=${lastUserIdx}, rangeSize=${rangeSize}`);
+        for (let i = startIdx; i <= lastUserIdx; i++) {
+            const m = historySlice[i];
+            if (!m || m.role !== 'user' || m.type !== 'image') continue;
+            const c = m.content;
+            if (typeof c !== 'string') continue;
+            if (!(c.startsWith('http') || c.startsWith('data:'))) continue;
             let base64: string | undefined;
             if (c.startsWith('http')) {
                 base64 = getTempImageBase64(c);
-                if (base64) _tempImageCleanupKey = c;
+                if (base64) _tempImageCleanupKeys.push(c);
             } else {
                 // 兜底场景：图床全失败时 DB 直接存了 base64 dataURL
                 base64 = c;
             }
-            console.log('🖼️ [手动塞图] 查找最新用户图片:', {
-                msgIndex: lastUserIdx,
-                contentType: 'string (原始 m.content)',
-                imageUrl: c.slice(0, 80) + (c.length > 80 ? '...' : ''),
-                cacheHit: !!base64,
-                base64Length: base64?.length || 0,
-            });
-            if (base64 && lastUserIdx < cleanedApiMessages.length) {
-                cleanedApiMessages[lastUserIdx] = {
-                    role: cleanedApiMessages[lastUserIdx].role,
+            if (base64 && i < cleanedApiMessages.length) {
+                cleanedApiMessages[i] = {
+                    role: cleanedApiMessages[i].role,
                     content: [
                         { type: 'text', text: '[用户发送了一张图片]' },
                         { type: 'image_url', image_url: { url: base64 } },
                     ],
                 };
-                console.log('🖼️ [手动塞图] 已替换 cleanedApiMessages[', lastUserIdx, '] 为数组 content（text + image_url）');
+                console.log(`🖼️ [手动塞图] 替换 cleanedApiMessages[${i}] 为数组 content（区间内第 ${i - startIdx + 1} 张图, cacheHit=${!!base64}, base64Length=${base64.length}）`);
+            } else if (!base64) {
+                console.log(`🖼️ [手动塞图] cleanedApiMessages[${i}] cache miss (URL=${c.slice(0, 60)}...) 跳过 inject，靠 imageDesc 文字描述兜底`);
             }
         }
     }
 }
 
-            // 麦麦 2026-09-27：手动塞图完成。
-            // 区间查找（连发图片+文字都进主请求）以后再说，先用最新一张逻辑
+            // 麦麦 2026-09-28：手动塞图完成。区间内所有图片独立注入。
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
@@ -1241,20 +1261,31 @@ let _tempImageCleanupKey: string | null = null;
                 ...cleanedApiMessages
             ];
 
-            // 麦麦 2026-09-27：手动塞图 sanity check（江澈 9-27 要求：打最终请求体里有没有 image_url）
-            //   验证手动塞图是否真的进了 fullMessages（最终发给主模型）
+            // 麦麦 2026-09-28：区间查找后 sanity check 改为检查区间内
+            //   区间 = [最近一条 assistant 之后, fullMessages 末尾]
+            //   只要区间内任何 user 消息含 image_url 块就算 inject 成功
+            //   避免"最新 user 是文字追问但前面有图"时误报 false
             {
-                const lastUserMsg = [...fullMessages].reverse().find((m: any) => m?.role === 'user');
-                const lastUserContent = lastUserMsg?.content;
-                const hasImageUrl = Array.isArray(lastUserContent)
-                    && lastUserContent.some((c: any) => c?.type === 'image_url');
-                console.log('🖼️ [手动塞图 sanity check] fullMessages 最新 user 消息:', {
-                    contentType: Array.isArray(lastUserContent) ? 'array' : typeof lastUserContent,
-                    hasImageUrlBlock: hasImageUrl,
-                    contentLength: Array.isArray(lastUserContent)
-                        ? lastUserContent.length
-                        : (typeof lastUserContent === 'string' ? lastUserContent.length : 0),
-                });
+                let lastAssistantIdx = -1;
+                for (let i = fullMessages.length - 1; i >= 0; i--) {
+                    if (fullMessages[i]?.role === 'assistant') {
+                        lastAssistantIdx = i;
+                        break;
+                    }
+                }
+                const rangeStart = lastAssistantIdx + 1;
+                let injectedCount = 0;
+                let hasAnyImageUrlInRange = false;
+                for (let i = rangeStart; i < fullMessages.length; i++) {
+                    const m = fullMessages[i];
+                    if (m?.role !== 'user') continue;
+                    const content = m.content;
+                    if (Array.isArray(content) && content.some((c: any) => c?.type === 'image_url')) {
+                        hasAnyImageUrlInRange = true;
+                        injectedCount++;
+                    }
+                }
+                console.log(`🖼️ [手动塞图 sanity check] 区间 [${rangeStart}, ${fullMessages.length - 1}] 注入 ${injectedCount} 张图, hasImageUrl=${hasAnyImageUrlInRange}`);
             }
 
             // Debug: Log context composition
@@ -1993,12 +2024,13 @@ if (hasImageInLatest && !alreadyDescribed) {
                 }, 2, 0, apiProtocol);
             }
             // 麦麦 2026-09-27：手动塞图不再主动清理临时缓存
-            //   错误做法：之前在主请求 fetch 返回后调 clearTempImage(_tempImageCleanupKey)
+            //   错误做法：之前在主请求 fetch 返回后调 clearTempImage(_tempImageCleanupKey)（9-28 改名 _tempImageCleanupKeys）
 //   原因：base64 已经在 baseReqBody 里序列化发出，主请求返回时缓存里的 base64 已经"用完"
 //        但用户后续追问"刚才那张图好看吗"时，triggerAI 会再次手动塞图，需要重新读缓存
 //        主动清理过早清掉缓存，导致后续追问时 cacheHit: false（暮色 9-27 反馈）
 //   修复：删掉主动清理，让 TTL 5 分钟自然兜底（防止内存累积）
 //   后台异步识图走原识别 API（callVision + imageUrlToDataUrl），不需要读我们的临时缓存
+//   区间查找（9-28）后同样适用：连发图场景需要图1 的缓存给图2 trigger 读，TTL 自然过期兜底
             if (data?.choices?.[0]?.finish_reason === 'tool_calls' && !getToolCalls(data).length) {
                 console.warn('🎨 [ToolCalls] finish_reason=tool_calls 但响应里没有可解析的 tool_calls，原始响应可能被兼容接口裁剪:', data);
             }

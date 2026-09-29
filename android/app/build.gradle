@@ -47,8 +47,11 @@ android {
         //   2026-09-29 麦麦：测试版桌面上改个名字（暮色要求），否则两个图标一模一样分不清。
         //     名字在 resValue 里覆盖 strings.xml 的 app_name / title_activity_main。
         //     resValue 只对当前变体生效，资源优先级高于 res/values/strings.xml。
-        resValue "string", "app_name", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
-        resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
+        //     -PtestAppName=xxx 可以临时换名字（暮色 9-29 打语音测试包时要求叫「语音测试」），
+        //     不传就还是默认的 Solly，所以不影响之前 amsg2 那套既有流程。
+        def testAppName = project.findProperty('testAppName') ?: "Solly"
+        resValue "string", "app_name", (project.hasProperty('testBuild') ? testAppName : "拾光机")
+        resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? testAppName : "拾光机")
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // 暮色 2026-09-10：APK 自动版本号

@@ -13,6 +13,10 @@ dist
 dist-ssr
 *.local
 
+# 麦麦 2026-09-29：打出来的测试 APK 放这儿（给暮色手机装）
+# 几十兆的二进制，不进 git
+apk/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -45,3 +49,4 @@ worker/amsg/worker.bundle.js
 worker/proactive-push/worker.bundle.js
 .dev.vars
 .wrangler/
+

@@ -276,6 +276,13 @@ volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;
 volinkTtsVoice?: string;   // 全局默认声音ID（角色没配时用这个）
 volinkTtsModel?: string;
+// 麦麦 2026-09-30：语音识别。设置里那一栏之前只有一句「无需额外配置」的空话，
+//   实际上没有任何输入框也没接任何实现（界面文案写的 Groq 更是压根没有 Groq 代码）。
+//   聊天语音输入 transcribeWithVolink 读的是 config.volinkApiKey —— 一个从不存在
+//   于 APIConfig 的野字段（用 as any 绕过了类型检查），所以那个功能也一直是坏的。
+//   这里补上正式字段，聊天和打电话共用。
+siliconflowApiKey?: string;   // 硅基流动密钥（识别用，免费的）
+siliconflowSttModel?: string; // 识别模型，留空用默认的 FunAudioLLM/SenseVoiceSmall
 }
 
 export interface InstantPushConfig {

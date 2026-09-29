@@ -5533,8 +5533,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
     audioBlob: Blob,
     config: APIConfig,
   ): Promise<string> => {
-   const apiKey = (config as any).volinkApiKey;
-    if (!apiKey) throw new Error('Volink API key not configured');
+   // 麦麦 2026-09-30：原来读的是 config.volinkApiKey —— APIConfig 里根本没这个字段
+    // （用 as any 绕过了类型检查），所以聊天语音输入一直是坏的，还以为没配 key。
+    // 现在统一读设置里新加的正式字段。
+    const apiKey = config.siliconflowApiKey;
+    if (!apiKey) throw new Error('还没配硅基流动的识别密钥（设置 → 语音识别）');
 
     const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -5550,8 +5553,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         apiKey,
         audioBase64: base64,
         mimeType:    audioBlob.type || 'audio/webm',
-        model:       (config as any).volinkModel    || 'FunAudioLLM/SenseVoiceSmall',
-        language:    (config as any).volinkLanguage || 'auto',
+        model:       config.siliconflowSttModel || 'FunAudioLLM/SenseVoiceSmall',
+        language:    'auto',
       }),
     });
 

@@ -257,9 +257,13 @@ const Settings: React.FC = () => {
   //   删生图 Gemini 折叠块（暮色原话"生图不用"）
   //   删生图 Gemini 折叠 state
   const [ttsStatusMsg, setTtsStatusMsg] = useState('');
+  // 麦麦 2026-09-30：语音识别配置（之前这一栏只有一句「无需额外配置」的空文案）
+  const [localSiliconKey, setLocalSiliconKey] = useState(apiConfig.siliconflowApiKey || '');
+  const [localSiliconModel, setLocalSiliconModel] = useState(apiConfig.siliconflowSttModel || '');
+  const [showSiliconKey, setShowSiliconKey] = useState(false);
+  const [sttStatusMsg, setSttStatusMsg] = useState('');
     
-  const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
-  const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
+  const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');  const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
@@ -1018,8 +1022,18 @@ const handleSaveTts = () => {
   setTimeout(() => setTtsStatusMsg(''), 2000);
 };
 
-  const handleSaveOtherApis = () => {
+  // 麦麦 2026-09-30：保存语音识别配置
+  const handleSaveStt = () => {
     updateApiConfig({
+      ...apiConfig,
+      siliconflowApiKey: localSiliconKey.trim(),
+      siliconflowSttModel: localSiliconModel.trim(),
+    });
+    setSttStatusMsg('已保存');
+    setTimeout(() => setSttStatusMsg(''), 2000);
+  };
+
+  const handleSaveOtherApis = () => {    updateApiConfig({
       minimaxApiKey: localMiniMaxKey,
       minimaxGroupId: localMiniMaxGroupId,
       minimaxRegion: localMiniMaxRegion,
@@ -2106,8 +2120,16 @@ const handleSaveTts = () => {
         </SettingsSection>
 
         {/* 6 - 语音识别 STT */}
-        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="Groq / 硅基流动 STT" isOpen={openSectionId === 'stt'} onToggle={toggleSection}>
-          <div className="py-6 text-center text-xs text-slate-400">语音识别使用 Groq Whisper，通话时自动启用，无需额外配置。</div>
+        <SettingsSection id="stt" icon="🎙️" title="语音识别" subtitle="硅基流动 STT" isOpen={openSectionId === 'stt'} onToggle={toggleSection}
+          statusText={apiConfig.siliconflowApiKey ? '' : '未配置'} statusColor="text-slate-400">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 mb-4">
+          <VisibleKeyInput label="硅基流动 API Key" value={localSiliconKey} onChange={setLocalSiliconKey} placeholder="cloud.siliconflow.cn 的 API Key" visible={showSiliconKey} onToggle={() => setShowSiliconKey(v => !v)} />
+          <p className="text-[11px] text-slate-400 mt-1 pl-1">
+            在 <span className="font-mono">cloud.siliconflow.cn</span> 注册后拿，有免费额度。
+          </p>
+          <div className="group mt-4"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">识别模型（可选）</label><input type="text" value={localSiliconModel} onChange={(e) => setLocalSiliconModel(e.target.value)} placeholder="FunAudioLLM/SenseVoiceSmall" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" /><p className="text-[11px] text-slate-400 mt-1 pl-1">留空用默认。想换 Whisper 系就填 siliconflow 账号里可用的模型名。</p></div>
+        </section>
+        <button onClick={handleSaveStt} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-purple-500/20 bg-purple-500 active:scale-95 transition-all mt-4">{sttStatusMsg || '保存识别配置'}</button>
         </SettingsSection>
 
         {/* 7 - 生图服务 */}

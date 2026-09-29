@@ -207,12 +207,12 @@ export const isCallAsrConfigured = (apiKey: string): boolean => (apiKey || '').t
  * 优先硅基流动（免费、聊天语音输入在用同一个），没有就退回 MiniMax。
  */
 export function pickCallAsrProvider(apiConfig: any): { provider: CallAsrProvider; apiKey: string; model?: string } | null {
-  const siliconKey = (apiConfig?.volinkApiKey || '').trim();
+  const siliconKey = (apiConfig?.siliconflowApiKey || '').trim();
   if (siliconKey) {
     return {
       provider: 'siliconflow',
       apiKey: siliconKey,
-      model: (apiConfig?.volinkModel || '').trim() || 'FunAudioLLM/SenseVoiceSmall',
+      model: (apiConfig?.siliconflowSttModel || '').trim() || 'FunAudioLLM/SenseVoiceSmall',
     };
   }
   const minimaxKey = (apiConfig?.minimaxApiKey || '').trim();

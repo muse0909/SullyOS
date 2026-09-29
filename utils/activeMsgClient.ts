@@ -42,6 +42,7 @@ import {
   forgetAllCredIds,
   forgetCredIds,
   normalizeChatApiUrl,
+  resolveAmsgApiTriplet,
   pickChangedCredRows,
   rememberCredRows,
   supportsLlmCredentials,
@@ -506,11 +507,16 @@ const resolveApiConfig = (char: CharacterProfile, config: ActiveMsg2CharacterCon
   const useSecondary = config.useSecondaryApi && config.secondaryApi?.baseUrl;
   const source = useSecondary ? config.secondaryApi! : apiConfig;
 
-  if (!source.baseUrl || !source.apiKey || !source.model) {
+  // 2026-09-29 麦麦：这里原来直接读 source.baseUrl/apiKey/model，而 protocol='gemini'
+  //   的配置存在 gemini* 三个另外的字段里 → Gemini 直连的角色在 2.0 里永远建不出任务。
+  //   归一化交给 resolveAmsgApiTriplet（同文件口径，也负责把 Gemini 地址补成
+  //   worker 会用的 OpenAI 兼容终点 .../v1beta/openai/chat/completions）。
+  const triplet = resolveAmsgApiTriplet(source);
+  if (!triplet) {
     throw new Error('主动消息 2.0 缺少可用的 API URL / Key / Model。');
   }
 
-  return source;
+  return triplet;
 };
 
 /**

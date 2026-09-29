@@ -55,6 +55,56 @@ export const supportsLlmCredentials = (features: string[] | null | undefined): b
 export const normalizeChatApiUrl = (baseUrl: string): string =>
   `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
+/** 能带协议的那一份配置（全局主 API；角色的单独 API 只有 baseUrl/apiKey/model 三个字段）。 */
+type MaybeProtocolApi = Partial<APIConfig> & {
+  geminiBaseUrl?: string;
+  geminiApiKey?: string;
+  geminiApiKeys?: string[];
+  geminiModel?: string;
+};
+
+/**
+ * 把任意来源的 API 配置归一化成 2.0 要的那三件套（baseUrl / apiKey / model）。
+ *
+ * 2026-09-29 暮色反馈：主 API 选 Gemini 直连的角色，在 2.0 里点「新建任务」永远报
+ * 「主动消息 2.0 缺少可用的 API URL / Key / Model」。根因是这一层只读 OpenAI 的
+ * baseUrl / apiKey / model，而 protocol='gemini' 时配置存在另外三个字段里
+ * （geminiBaseUrl / geminiApiKey / geminiModel，见 types.ts 的 protocol 注释）。
+ * OpenAI 协议的老用户完全无感，只有切到 Gemini 直连的角色中招。
+ *
+ * Gemini 还要多做一步：**worker 只用 OpenAI 那种调法**——POST `{model,messages}` +
+ * `Authorization: Bearer`，打向 normalizeChatApiUrl 拼出来的终点。直接拿 geminiBaseUrl
+ * 去拼会得到 `.../v1beta/chat/completions`，Google 那边没有这个路径。
+ * 而 Google 官方有 OpenAI 兼容层 `.../v1beta/openai/chat/completions`——鉴权头和请求体
+ * 跟 worker 发的一模一样，所以这里把 baseUrl 补上 `/openai` 就能直接通，worker 一行不用改。
+ * 用户已经填了 `/openai` 的不重复补。
+ *
+ * 读字段的口径与 OSContext 那段本地生成（apiProtocol === 'gemini' 读 gemini* 字段）同源；
+ * 密钥池的取法跟 extractGeminiKeys 一致（数组优先，回落单字符串）。
+ */
+export const resolveAmsgApiTriplet = (
+  source: MaybeProtocolApi | null | undefined,
+): { baseUrl: string; apiKey: string; model: string } | null => {
+  if (!source) return null;
+  const anySource = source as MaybeProtocolApi & Record<string, unknown>;
+  if (source.protocol !== 'gemini') {
+    const baseUrl = source.baseUrl;
+    const apiKey = source.apiKey;
+    const model = source.model;
+    if (!baseUrl || !apiKey || !model) return null;
+    return { baseUrl, apiKey, model };
+  }
+  // Gemini 协议：主字段可能还留着上一次 OpenAI 的值，所以 gemini* 优先，缺项才回落。
+  const rawBaseUrl = anySource.geminiBaseUrl || source.baseUrl;
+  const pool = Array.isArray(anySource.geminiApiKeys) ? anySource.geminiApiKeys : [];
+  const apiKey = pool.find((k) => typeof k === 'string' && k.trim()) || anySource.geminiApiKey || source.apiKey;
+  const model = anySource.geminiModel || source.model;
+  if (!rawBaseUrl || !apiKey || !model) return null;
+  const trimmed = rawBaseUrl.replace(/\/+$/, '');
+  const baseUrl = /\/openai$/i.test(trimmed) ? trimmed : `${trimmed}/openai`;
+  return { baseUrl, apiKey, model };
+};
+
 /**
  * 一个角色名下的三种凭据。**引用一经写进任务就不再改**，配置变了只覆盖行的值。
  *
@@ -114,11 +164,11 @@ export const toCredentialValue = (
 export const buildCharChatCredRow = (
   char: Pick<CharacterProfile, 'id'>,
   config: ActiveMsg2CharacterConfig | undefined,
-  apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>,
+  apiConfig: MaybeProtocolApi,
 ): LlmCredentialRow | null => {
   const useSecondary = !!(config?.useSecondaryApi && config.secondaryApi?.baseUrl);
   const source = useSecondary ? config!.secondaryApi! : apiConfig;
-  const value = toCredentialValue(source);
+  const value = toCredentialValue(resolveAmsgApiTriplet(source));
   return value ? { credId: charCredId(char.id, 'chat'), value } : null;
 };
 

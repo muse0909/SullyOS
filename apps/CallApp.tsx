@@ -404,6 +404,20 @@ const CallApp: React.FC = () => {
   const [voiceLang, setVoiceLang] = useState('');
   const [showLangPicker, setShowLangPicker] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /**
+   * 通话记录**详情页**专用的播放器。
+   *
+   * 2026-09-30 暮色反馈「按钮有了但是听不到」——根因：`<audio ref={audioRef}>` 只渲染在
+   * 「通话中」那一页（组件在 `viewMode === 'record-detail'` 时提前 return 了，整块通话
+   * 界面包括那个 audio 元素都不挂载）。于是进详情页点「重播语音」，audioRef.current
+   * 是 null，`playAudio` 第一行就 return 了——**静默失败，连提示都没有**。
+   *
+   * 详情页有自己的一套：自己的 audio 元素、自己的状态、自己的地址回收。
+   * 通话中那个不受影响（它在通话时要跟着 setCallState 走）。
+   */
+  const detailAudioRef = useRef<HTMLAudioElement | null>(null);
+  const detailBlobUrlRef = useRef<string | null>(null);
+  const [detailPlayingId, setDetailPlayingId] = useState<string | null>(null);
   // 麦麦 2026-09-29：录音器实例。挂 ref 而不是 state —— 每次渲染新建会丢流。
   const recorderRef = useRef<CallVoiceRecorder | null>(null);
   const isRecordingRef = useRef(false);
@@ -874,13 +888,9 @@ const CallApp: React.FC = () => {
     setCallState('speaking');
   };
   /**
-   * 麦麦 2026-09-30：回放一条气泡的语音。
-   *
-   * 通话进行中气泡上有内存地址，直接播；历史记录里没有地址，只有 audioKey
-   * （指向 assets 表里存的那份 blob），按需去取。
-   *
-   * **故意不在列表加载时就把音频全读出来**：一次通话几十条，全读会让打开记录明显变慢，
-   * 而用户通常只听其中一两句。按需取，点哪句读哪句。
+   * 麦麦 2026-09-30：回放**通话中**气泡的语音。
+   * 通话中气泡上一直有内存地址，所以这里基本走第一分支；audioKey 只是兜底
+   * （比如刚挂断、地址还没挂上气泡的情况）。
    */
   const playBubbleAudio = async (b: CallBubble) => {
     if (b.audioUrl) { playAudio(b.audioUrl); return; }
@@ -896,6 +906,51 @@ const CallApp: React.FC = () => {
     setBubbles(prev => prev.map(x => (x.id === b.id ? { ...x, audioUrl: url } : x)));
     playAudio(url);
   };
+
+  /**
+   * 麦麦 2026-09-30：回放**通话记录详情页**里的语音。用自己那个 audio 元素，
+   * 不碰通话中的 audioRef（那边在详情页压根不存在，见 detailAudioRef 的注释）。
+   *
+   * 同样**按需取**：一次通话几十条，全读会让打开记录明显变慢，而用户通常只听一两句。
+   */
+  const playDetailAudio = async (item: CallBubble) => {
+    const el = detailAudioRef.current;
+    if (!el) return;
+    // 正在播同一条 → 当暂停用，不用重新取一遍音频
+    if (detailPlayingId === item.id) {
+      el.pause();
+      setDetailPlayingId(null);
+      return;
+    }
+    let url = item.audioUrl;
+    if (!url && item.audioKey) {
+      const blob = await loadCallAudio(item.audioKey);
+      if (!blob) return addToast('这段语音找不到了（可能是改动之前存的记录）', 'info');
+      // 换一条播之前先把上一条临时地址回收，别越点越多
+      if (detailBlobUrlRef.current) URL.revokeObjectURL(detailBlobUrlRef.current);
+      url = URL.createObjectURL(blob);
+      detailBlobUrlRef.current = url;
+    }
+    if (!url) return addToast('这段没有语音', 'info');
+    el.src = url;
+    el.currentTime = 0;
+    try {
+      await el.play();
+      setDetailPlayingId(item.id);
+    } catch (e) {
+      console.warn('[call] detail playback failed', e);
+      setDetailPlayingId(null);
+      addToast('播放失败，再点一次试试', 'error');
+    }
+  };
+
+  // 离开通话记录页时回收详情页持有的临时地址
+  useEffect(() => {
+    return () => {
+      if (detailBlobUrlRef.current) URL.revokeObjectURL(detailBlobUrlRef.current);
+      detailBlobUrlRef.current = null;
+    };
+  }, []);
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
     audioRef.current.play().catch(() => addToast('继续播放失败，请点击重播', 'error'));
@@ -1390,10 +1445,24 @@ const CallApp: React.FC = () => {
                 const { display, voiceText } = extractVoiceTag(item.text);
                 return <>{display}{voiceText && <div className="mt-1 text-[10px] text-slate-400/60 italic">{voiceText}</div>}</>;
               })()}</div>
-              {(item.audioUrl || item.audioKey) && <button onClick={() => playBubbleAudio(item)} className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-400 transition hover:bg-white/15">重播语音</button>}
+              {(item.audioUrl || item.audioKey) && (
+                <button
+                  onClick={() => playDetailAudio(item)}
+                  className={`mt-2 text-xs px-2.5 py-1 rounded-full border transition ${detailPlayingId === item.id ? 'bg-white/20 border-white/30 text-white' : 'bg-white/8 border-white/15 text-slate-400 hover:bg-white/15'}`}
+                >
+                  {detailPlayingId === item.id ? '停止' : '重播语音'}
+                </button>
+              )}
             </div>
           ))}
         </div>
+        {/* 麦麦 2026-09-30：详情页自己的播放器。通话中那个 audio 元素在这页不挂载，
+            之前点「重播语音」就是走的那个空引用，静默失败。 */}
+        <audio
+          ref={detailAudioRef}
+          onEnded={() => setDetailPlayingId(null)}
+          onPause={() => setDetailPlayingId(null)}
+        />
         <button
           onClick={() => {
             setSelectedCharId(recordDetail.characterId || selectedCharId);

@@ -305,6 +305,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-09-30 | 语音真正存下来 — 通话记录能回听 + 语音收藏自己存一份（顺便发现收藏云端那条路一直是死的） | [`changelogs/2026-09-30-voice-playback-and-favorites.md`](./changelogs/2026-09-30-voice-playback-and-favorites.md) |
 | 2026-09-30 | Gemini 直连 baseUrl 全量归一化 — 100 多处调 API 的地方一次接上（新增 `utils/chatApiCompat.ts` 唯一出处） | [`changelogs/2026-09-30-gemini-baseurl-normalize.md`](./changelogs/2026-09-30-gemini-baseurl-normalize.md) |
 | 2026-09-29 | 聊天轮次重写 — 拆掉上游 30 分钟规则和两套标记补丁，主动消息改按 2.0 推送编号分轮 | [`changelogs/2026-09-29-chat-round-avatar-timestamp.md`](./changelogs/2026-09-29-chat-round-avatar-timestamp.md) |
 | 2026-08-27 | 页面缩放滑条 — 纯前端 CSS zoom 替代原生 WebView 缩放 | [`changelogs/2026-08-27-page-zoom-css.md`](./changelogs/2026-08-27-page-zoom-css.md) |

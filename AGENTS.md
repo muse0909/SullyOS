@@ -121,6 +121,32 @@ SullyOS-master/
 - 改 v2 的设置项（背景图、遮罩、字体大小、字体颜色）→ 这些已 localStorage 持久化，**保持键名稳定**
 - 预览里**固定显示"输入消息···"**，不要 echo 输入框内容
 
+### 4.5 调聊天 API 的规矩（2026-09-30 暮色要求记住）
+
+**新增功能要调聊天 API 时，规则已经帮你兜住了，但有两个地方要自己留心。**
+
+背景：`APIConfig` 里同一个字段存两套名字——OpenAI 协议用 `baseUrl/apiKey/model`，
+Gemini 协议用 `geminiBaseUrl/geminiApiKey/geminiModel`，设置页保存时只写当前协议那一套、
+另一套清空。所以 `protocol === 'gemini'` 时 `apiConfig.baseUrl` **是空的**。
+全项目 100 多处按「读 baseUrl + 拼 `/chat/completions` + `Authorization: Bearer`」发请求，
+以前全都不判协议 → Gemini 直连用户点哪坏哪（打电话最先撞上）。
+
+现在 `utils/chatApiCompat.ts` 是这套规则的**唯一出处**，`OSContext` 交出去的那份
+`apiConfig` 已经归一化（`baseUrl/apiKey/model` 一律是当前协议生效的值，
+`gemini*` 原样保留给原生 `:generateContent` 用）。
+
+| 你的代码在哪 | 要做什么 |
+|---|---|
+| React 里，`useOS().apiConfig` | **什么都不用做**，拿到的已经是归一化后的 |
+| React 之外直接读 `localStorage['os_api_config']` | **必须自己包一层** `withEffectiveChatApi(cfg)`，否则绕过归一化，Gemini 直连下拿到空 baseUrl |
+| 地址要补 `/v1`（防中转站根路径 404） | 用 `normalizeChatBaseUrl()`，**不要**自己写 `/\/v\d+$/` 那套——Gemini 的 `.../v1beta` 会被补成 `.../v1beta/v1` |
+
+- 别在别处再抄一份「补 `/openai` 后缀」的逻辑，改了一处别的地方不会跟着变
+- 新增识别 / 生图 / 副 API 这类**独立配置**（像 `siliconflowApiKey`、`vision*`、
+  `memoryPalaceConfig.lightLLM`）时，它们**不走**这套归一化，各自带自己的协议字段，
+  要按 protocol 选的那套来写
+- 背景和踩坑见 [`changelogs/2026-09-30-gemini-baseurl-normalize.md`](./changelogs/2026-09-30-gemini-baseurl-normalize.md)
+
 ---
 
 ## 5. 设计偏好（暮色审美）
@@ -279,6 +305,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-09-30 | Gemini 直连 baseUrl 全量归一化 — 100 多处调 API 的地方一次接上（新增 `utils/chatApiCompat.ts` 唯一出处） | [`changelogs/2026-09-30-gemini-baseurl-normalize.md`](./changelogs/2026-09-30-gemini-baseurl-normalize.md) |
 | 2026-09-29 | 聊天轮次重写 — 拆掉上游 30 分钟规则和两套标记补丁，主动消息改按 2.0 推送编号分轮 | [`changelogs/2026-09-29-chat-round-avatar-timestamp.md`](./changelogs/2026-09-29-chat-round-avatar-timestamp.md) |
 | 2026-08-27 | 页面缩放滑条 — 纯前端 CSS zoom 替代原生 WebView 缩放 | [`changelogs/2026-08-27-page-zoom-css.md`](./changelogs/2026-08-27-page-zoom-css.md) |
 | 2026-09-28 | 区间查找——扫描整轮所有图片并注入 base64（连发图 / 夹文字再发图都能识别） | [`changelogs/2026-09-28-range-scan-image-inject.md`](./changelogs/2026-09-28-range-scan-image-inject.md) |

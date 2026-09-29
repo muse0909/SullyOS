@@ -127,7 +127,7 @@ class AmsgKeyManager(private val context: Context) : KeyManager {
 
     /** base64(NO_PADDING) 编码，跟 SDK UtilsKt.b64encode 一致。 */
     private fun b64Encode(bytes: ByteArray): String =
-        Base64.encodeToString(bytes, Base64.NO_PADDING)
+        Base64.encodeToString(bytes, Base64.NO_PADDING or Base64.NO_WRAP)
 
     /** SEC1 uncompressed P-256 公钥 → ECPublicKey（跟 SDK UtilsKt.deserializePubKey 一致）。 */
     private fun unserializePubKey(b64u: String): ECPublicKey {

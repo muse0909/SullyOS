@@ -5,6 +5,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { CallVoiceRecorder, describeCallVoiceError } from '../utils/callVoice';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
@@ -384,6 +385,13 @@ const CallApp: React.FC = () => {
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showInputPanel, setShowInputPanel] = useState(true);
+  // 麦麦 2026-09-29：语音输入（按住说话）
+  const [isRecording, setIsRecording] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+  const [micError, setMicError] = useState('');
+  const [micAvailable, setMicAvailable] = useState(true);
+  const [recordedHint, setRecordedHint] = useState('');
+  const [recordedUrl, setRecordedUrl] = useState('');
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
@@ -392,6 +400,10 @@ const CallApp: React.FC = () => {
   const [voiceLang, setVoiceLang] = useState('');
   const [showLangPicker, setShowLangPicker] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // 麦麦 2026-09-29：录音器实例。挂 ref 而不是 state —— 每次渲染新建会丢流。
+  const recorderRef = useRef<CallVoiceRecorder | null>(null);
+  const isRecordingRef = useRef(false);
+  const recordedUrlRef = useRef<string | null>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const callTouchStartPos = useRef({ x: 0, y: 0 });
@@ -467,7 +479,81 @@ const CallApp: React.FC = () => {
       URL.revokeObjectURL(currentBlobUrlRef.current);
       currentBlobUrlRef.current = null;
     }
+    // 麦麦 2026-09-29：离开组件时把麦克风释放掉，不然指示灯会一直亮着
+    recorderRef.current?.cancel();
+    recorderRef.current = null;
   }, []);
+
+  // 麦麦 2026-09-29：进通话页就先探一次麦克风。
+  //   提前拿权限，用户第一次按住说话时才不用等系统弹窗，体验上快一大截。
+  useEffect(() => {
+    if (viewMode !== 'in-call') return;
+    let cancelled = false;
+    (async () => {
+      const result = await CallVoiceRecorder.preflight();
+      if (cancelled) return;
+      setMicAvailable(result.ok);
+      if (!result.ok && result.message) setMicError(result.message);
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode, currentSessionId]);
+
+  // 麦麦 2026-09-29：语音输入 —— 开始 / 停止
+  const startRecording = async () => {
+    if (isRecordingRef.current) return;
+    if (draftInput.trim()) {
+      // 打字框里有字还没发，先提醒，别让用户以为说上去了
+      addToast('先把打的字发出去，或者说之前先清空', 'info');
+      return;
+    }
+    if (isAudioPlaying) pauseAudio();
+    setMicError('');
+    setRecordedHint('');
+    try {
+      if (!recorderRef.current) recorderRef.current = new CallVoiceRecorder();
+      await recorderRef.current.start({
+        onVolume: (v) => setMicVolume(v),
+        onInterrupted: (reason) => {
+          setMicError(reason);
+          setIsRecording(false);
+          isRecordingRef.current = false;
+          setMicVolume(0);
+        },
+      });
+      isRecordingRef.current = true;
+      setIsRecording(true);
+    } catch (err: any) {
+      const message = describeCallVoiceError(err);
+      setMicError(message);
+      setMicAvailable(false);
+      addToast(`麦克风打不开：${message}`, 'error');
+    }
+  };
+
+  const stopRecording = async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || !isRecordingRef.current) return;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    setMicVolume(0);
+    try {
+      const result = await recorder.stop();
+      if (!result) {
+        setRecordedHint('没录到声音，再按住试试');
+        return;
+      }
+      const seconds = (result.durationMs / 1000).toFixed(1);
+      // 阶段一只验证"确实录到了"，不做语音识别。
+      // 挂个本地地址让暮色能点播放，亲耳听到自己声音才算真通了。
+      const url = URL.createObjectURL(result.blob);
+      if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = url;
+      setRecordedUrl(url);
+      setRecordedHint(`录到 ${seconds} 秒`);
+    } catch (err: any) {
+      setMicError(describeCallVoiceError(err));
+    }
+  };
   useEffect(() => {
     if (!callStartedAt || ['idle', 'ended'].includes(callState)) return;
     const timer = window.setInterval(() => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000))), 1000);
@@ -725,7 +811,14 @@ const CallApp: React.FC = () => {
     const userBubble: CallBubble = { id: `${nowTs}-u`, role: 'user', text: input, time: now, timestamp: nowTs };
     setBubbles(prev => [...prev, userBubble]);
     setDraftInput('');
-    setShowInputPanel(false);
+    // 麦麦 2026-09-29：不再发完就收起输入框。
+    //   语音输入的提示、音量条都挂在输入框下面，收起来用户就看不到"还在录"了。
+    setRecordedHint('');
+    setRecordedUrl('');
+    if (recordedUrlRef.current) {
+      URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = null;
+    }
     let userDbId: number | undefined;
     if (selectedChar?.id) {
       userDbId = await DB.saveMessage({ charId: selectedChar.id, role: 'user', type: 'text', content: input, metadata: { source: 'call', callSessionId: currentSessionId } });
@@ -1263,17 +1356,66 @@ const CallApp: React.FC = () => {
               onChange={(e) => setDraftInput(e.target.value)}
               className="flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-slate-500"
               placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : `想对${selectedChar?.name || '对方'}说什么？`}
-              autoFocus
             />
+            {/* 麦麦 2026-09-29：按住说话。麦克风从底部挪到这里 —— 语音和打字挨着，
+                用户一眼就知道"这俩是同一个输入框的两种方式"，不用来回找。 */}
+            <button
+              onPointerDown={(e) => {
+                if (!micAvailable || sendingBusy) return;
+                e.preventDefault();
+                // 抓住这次触摸，手指滑出按钮再松手也能正确结束录音
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住也不影响 */ }
+                startRecording();
+              }}
+              onPointerUp={() => { if (isRecordingRef.current) stopRecording(); }}
+              onPointerCancel={() => { if (isRecordingRef.current) stopRecording(); }}
+              onContextMenu={(e) => e.preventDefault()}
+              disabled={!micAvailable || sendingBusy}
+              className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center transition select-none touch-none ${
+                isRecording
+                  ? 'bg-emerald-400/40 border border-emerald-200/70'
+                  : 'bg-white/10 border border-white/15'
+              } ${!micAvailable || sendingBusy ? 'opacity-40' : 'active:scale-95'}`}
+              title={micAvailable ? '按住说话' : (micError || '麦克风不可用')}
+            >
+              <Microphone size={19} weight="fill" className={isRecording ? 'text-emerald-50' : 'text-slate-300'} />
+            </button>
             <button onClick={handleTurn} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
           </div>
+
+          {/* 麦麦 2026-09-29：录音时的实时反馈 */}
+          {isRecording && (
+            <div className="mt-2 px-1 flex items-center gap-2">
+              <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-300/90 transition-[width] duration-75"
+                  style={{ width: `${Math.max(6, Math.min(100, micVolume * 100))}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-emerald-100/80 shrink-0 animate-pulse">松开发送</span>
+            </div>
+          )}
+
+          {/* 录完的确认。第一阶段靠它证明"真的录到了" */}
+          {!isRecording && recordedHint && (
+            <div className="mt-2 px-1 flex items-center gap-2">
+              <span className={`text-[10px] ${micError ? 'text-rose-300/80' : 'text-slate-400/80'}`}>
+                {micError || recordedHint}
+              </span>
+              {recordedUrl && (
+                <button
+                  onClick={() => { const a = new Audio(recordedUrl); a.play().catch(() => {}); }}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-slate-300 shrink-0"
+                >
+                  听听看
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="px-5 pb-5 pt-1.5">
-        <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md px-6 py-3 flex items-center justify-between">
-          <button onClick={() => setShowInputPanel(prev => !prev)} className={`w-12 h-12 rounded-full border flex items-center justify-center transition ${showInputPanel ? 'bg-emerald-400/25 border-emerald-300/50' : 'bg-white/10 border-white/20'}`}>
-            <Microphone size={22} weight="fill" className={showInputPanel ? 'text-emerald-100' : 'text-slate-300'} />
-          </button>
+        <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md px-6 py-3 flex items-center justify-center gap-5">
           <button
             onClick={() => setShowLangPicker(prev => !prev)}
             className={`w-12 h-12 rounded-full border flex items-center justify-center transition ${voiceLang ? 'bg-amber-400/25 border-amber-300/50' : 'bg-white/10 border-white/20'}`}

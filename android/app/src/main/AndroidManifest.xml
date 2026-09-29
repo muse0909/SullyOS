@@ -91,6 +91,13 @@
          不永久 acquire（避免耗电被 vivo / Doze 标记为异常） -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- 麦麦 2026-09-29：打电话功能语音输入
+         RECORD_AUDIO 是运行时权限（Android 6+ 必须弹窗申请）。
+         浏览器标准的 getUserMedia 在 Android WebView 里最终走的是这个原生权限，
+         manifest 不声明的话 requestPermissions 永远拿不到，录音会直接失败。
+         声明后系统才会显示拾光机在「麦克风」权限列表里，用户也能去设置页手动开。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- 麦麦 2026-09-03：电池优化白名单
          加了之后可以调 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 让用户加白名单
          用途：Doze 模式下系统可能断长连接 WebSocket；加白名单后 Doze 不影响本 app

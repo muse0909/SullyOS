@@ -22,13 +22,17 @@
 
 import { getMinimaxBaseUrl, getMinimaxRegion } from './minimaxEndpoint';
 
-/** 识别服务来源。以后加别的家就在这个联合类型里加一项。 */
-export type CallAsrProvider = 'minimax';
+/** 识别服务来源。 */
+export type CallAsrProvider = 'minimax' | 'siliconflow';
 
 export interface CallAsrOptions {
-  /** 密钥。没配就别调，直接返回错误让上层提示用户 */
+  /** 对应服务商的密钥 */
   apiKey: string;
-  /** 语言提示。不传 = 混合语言识别（对方会自动判断） */
+  /** 用哪家识别 */
+  provider: CallAsrProvider;
+  /** 识别模型。硅基流动默认用项目里聊天语音输入同款那个 */
+  model?: string;
+  /** 语言提示。不传 / 'auto' = 自动判断 */
   language?: string;
   /** 超时（毫秒）。识别一般 1-2 秒，给宽松点 */
   timeoutMs?: number;
@@ -68,6 +72,52 @@ const describeAsrError = (status: number, body: string): string => {
 const buildUrl = (): string => `${getMinimaxBaseUrl(getMinimaxRegion())}/v1/speech_to_text`;
 
 /**
+ * 走项目里已有的硅基流动识别中转（`api/volink/stt.ts`）。
+ *
+ * 注意两件事：
+ *  1. **它要的是硅基流动的 key，不是 Volink 的**。
+ *     文件放在 volink 目录里是历史遗留，实际转发目标是 api.siliconflow.cn。
+ *     填错 key 会一直 401，聊天里的语音输入也是同一个坑。
+ *  2. **它需要服务端**（要转发 + 绕开跨域），
+ *     所以离线包（页面打在本地、没有 /api）用不了这条，只能走 MiniMax 直连。
+ */
+async function transcribeViaSiliconFlow(
+  blob: Blob,
+  options: CallAsrOptions,
+): Promise<CallAsrResult> {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('读取录音失败'));
+    reader.readAsDataURL(blob);
+  });
+
+  const response = await fetch('/api/volink/stt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: options.apiKey,
+      audioBase64: base64,
+      mimeType: blob.type || 'audio/wav',
+      model: options.model || 'FunAudioLLM/SenseVoiceSmall',
+      language: options.language || 'auto',
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    // 401 最常见的原因就是把 Volink 的 key 填到了这个字段里
+    if (response.status === 401) {
+      throw new Error('识别密钥不对（这一项要填硅基流动的 key，不是 Volink 的）');
+    }
+    throw new Error(`识别失败（${response.status}）${body ? '：' + body.slice(0, 120) : ''}`);
+  }
+
+  const data = await response.json();
+  return { text: (data?.text || '').trim(), duration: 0, provider: 'siliconflow' };
+}
+
+/**
  * 把录音送去识别。
  *
  * 注意 FormData 的写法：文件必须包成 Blob，不能直接塞字符串，
@@ -79,10 +129,18 @@ export async function transcribeCallAudio(
 ): Promise<CallAsrResult> {
   const apiKey = (options.apiKey || '').trim();
   if (!apiKey) {
-    throw new Error('还没配 MiniMax 密钥，识别用不了');
+    throw new Error(
+      options.provider === 'siliconflow'
+        ? '还没配识别密钥，识别用不了'
+        : '还没配 MiniMax 密钥，识别用不了',
+    );
   }
   if (!blob || blob.size === 0) {
     throw new Error('没有录音');
+  }
+
+  if (options.provider === 'siliconflow') {
+    return transcribeViaSiliconFlow(blob, options);
   }
 
   const controller = new AbortController();
@@ -143,3 +201,23 @@ export async function transcribeCallAudio(
 
 /** 当前环境能不能识别（前端判一次，省得用户按了没反应） */
 export const isCallAsrConfigured = (apiKey: string): boolean => (apiKey || '').trim().length > 0;
+
+/**
+ * 挑一家能用的识别服务。
+ * 优先硅基流动（免费、聊天语音输入在用同一个），没有就退回 MiniMax。
+ */
+export function pickCallAsrProvider(apiConfig: any): { provider: CallAsrProvider; apiKey: string; model?: string } | null {
+  const siliconKey = (apiConfig?.volinkApiKey || '').trim();
+  if (siliconKey) {
+    return {
+      provider: 'siliconflow',
+      apiKey: siliconKey,
+      model: (apiConfig?.volinkModel || '').trim() || 'FunAudioLLM/SenseVoiceSmall',
+    };
+  }
+  const minimaxKey = (apiConfig?.minimaxApiKey || '').trim();
+  if (minimaxKey) {
+    return { provider: 'minimax', apiKey: minimaxKey };
+  }
+  return null;
+}

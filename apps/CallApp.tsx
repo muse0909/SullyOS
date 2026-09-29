@@ -5,8 +5,9 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { synthesizeSpeechDetailed } from '../utils/minimaxTts';
 import { CallVoiceRecorder, describeCallVoiceError } from '../utils/callVoice';
-import { transcribeCallAudio } from '../utils/callAsr';
+import { transcribeCallAudio, pickCallAsrProvider } from '../utils/callAsr';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
@@ -545,16 +546,16 @@ const CallApp: React.FC = () => {
 
   /** 录完了要送去识别。这段跟停止录音是分开的，方便失败时保留录音重试。 */
   const recognizeAndSend = async (blob: Blob) => {
-    const apiKey = resolveMiniMaxApiKey(apiConfig);
-    if (!apiKey) {
-      setMicError('还没配 MiniMax 密钥，识别用不了');
+    const target = pickCallAsrProvider(apiConfig);
+    if (!target) {
+      setMicError('还没配识别密钥，识别用不了（设置里填一把就行）');
       return;
     }
     setIsRecognizing(true);
     setCallState('thinking');
     setRecordedHint('在听你在说什么…');
     try {
-      const result = await transcribeCallAudio(blob, { apiKey });
+      const result = await transcribeCallAudio(blob, target);
       setIsRecognizing(false);
       if (!result.text) {
         // 识别到静音不是错误，但用户确实说了什么，告诉他没听清比报错了强
@@ -625,7 +626,28 @@ const CallApp: React.FC = () => {
         const voiceId = resolveVoiceId();
         const hasTimberWeights = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
         let greetingAudioPlayed = false;
-        if (isSpeakerOn && minimaxApiKey && (voiceId || hasTimberWeights)) {
+        // 麦麦 2026-09-30：开场白也要跟着设置走 Volink，
+        //   不然会出现「接电话是哑的，说两句突然有声音」的割裂感。
+        if (isSpeakerOn && apiConfig.ttsProvider === 'volink' && selectedChar) {
+          try {
+            const volinkText = convertNarrationCues(greetingText);
+            if (volinkText.trim()) {
+              const { url: volinkGreetingUrl } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+              if (currentBlobUrlRef.current) {
+                URL.revokeObjectURL(currentBlobUrlRef.current);
+                currentBlobUrlRef.current = null;
+              }
+              if (volinkGreetingUrl.startsWith('blob:')) currentBlobUrlRef.current = volinkGreetingUrl;
+              setAudioUrl(volinkGreetingUrl);
+              setBubbles(prev => prev.map(b => (b.id === greetingBubble.id ? { ...b, audioUrl: volinkGreetingUrl } : b)));
+              setTimeout(() => playAudio(volinkGreetingUrl), 0);
+              greetingAudioPlayed = true;
+            }
+          } catch (greetVolinkErr: any) {
+            console.warn('[call] greeting volink tts failed:', greetVolinkErr?.message);
+          }
+        }
+        if (!greetingAudioPlayed && isSpeakerOn && minimaxApiKey && (voiceId || hasTimberWeights)) {
           try {
             const groupId = resolveGroupId();
             const { speech: greetingVoiceTag } = extractVoiceTag(greetingText);
@@ -889,6 +911,31 @@ const CallApp: React.FC = () => {
         return b;
       }));
     }
+    // 麦麦 2026-09-30：打电话之前只认 MiniMax，用户在设置里选的 Volink 被无视了
+    // （聊天走 synthesizeSpeechDetailed 会自动分流，打电话自己写了一套所以漏了）。
+    // 现在补上：配了 Volink 就走 Volink，用他在 Volink 平台挑的那个声音。
+    if (apiConfig.ttsProvider === 'volink' && selectedChar) {
+      try {
+        setCallState('thinking');
+        const volinkText = convertNarrationCues(assistantText);
+        if (!volinkText.trim()) throw new Error('可朗读文本为空');
+        const { url: volinkUrl } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+        if (currentBlobUrlRef.current) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        if (volinkUrl.startsWith('blob:')) currentBlobUrlRef.current = volinkUrl;
+        setAudioUrl(volinkUrl);
+        setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: volinkUrl } : b)));
+        setTimeout(() => playAudio(volinkUrl), 0);
+        setCallState('listening');
+      } catch (volinkErr: any) {
+        addToast(`语音生成失败：${volinkErr?.message || '未知错误'}，已保留文字`, 'error');
+        setCallState('listening');
+      }
+      return;
+    }
+
     const hasTimberWeights2 = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
     if (!isSpeakerOn || !minimaxApiKey || (!voiceId && !hasTimberWeights2)) {
       setCallState('listening');

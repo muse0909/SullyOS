@@ -190,6 +190,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   // Token 只在这次部署期间留在内存里，成功与否都不落盘——它是能改整个账号 Workers 的
   // 权限，真正需要长期留着的那一份已经作为 secret 写进用户自己的 worker 了（自更新用）。
   const [cfToken, setCfToken] = useState('');
+  // 2026-09-29 麦麦：加密钥匙复用输入框。空串 = 沿用本地那份（老行为）。
+  const [masterKeyOverride, setMasterKeyOverride] = useState('');
   const [provisioning, setProvisioning] = useState(false);
   const [provisionStep, setProvisionStep] = useState('');
   /** token 能用在多个账号上时让用户挑一个。 */
@@ -487,7 +489,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         accountId: accountId || undefined,
         desiredSubdomain: desiredSubdomain.trim() || undefined,
         secrets: {
-          AMSG_MASTER_KEY: config?.masterKey || undefined,
+          // 有填就以填的为准（让多个 app 对齐同一把），没填沿用本地那份。
+          AMSG_MASTER_KEY: masterKeyOverride.trim() || config?.masterKey || undefined,
           VAPID_PUBLIC_KEY: vapid.vapidPublicKey || undefined,
           VAPID_PRIVATE_KEY: vapid.vapidPrivateKey || undefined,
           VAPID_EMAIL: vapid.vapidEmail || undefined,
@@ -1064,6 +1067,70 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             autoComplete="off"
             className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:border-violet-400"
           />
+
+          {/* 2026-09-29 麦麦加：加密钥匙（AMSG_MASTER_KEY）的复用入口。
+              一键部署原来只从本地配置取这份密钥（config?.masterKey），界面上没有输入框，
+              于是「两个 app 共用一个后端」这种场景无解：谁后部署谁把云端换成自己那份，
+              另一个 app 的密钥立刻对不上——表现是所有请求 Decryption failed、到点任务全挂，
+              但界面上看不出是哪一步坏了。
+
+              留空 = 沿用本地那份（老行为，一个人的情况不用管这里）。
+              填了 = 部署时用这一份，把手机里的设置和云端对齐。 */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[11px] font-bold text-slate-500">
+                加密钥匙（已有后端才填）
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setMasterKeyOverride((v) => (v ? '' : (config?.masterKey || '')));
+                  trackEvent('一键部署 2.0 后端', { action: '切换加密钥匙输入框' });
+                }}
+                className="text-[11px] font-bold text-violet-600"
+              >
+                {masterKeyOverride ? '收起' : '我要填'}
+              </button>
+            </div>
+            {masterKeyOverride !== '' ? (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={masterKeyOverride}
+                    onChange={(e) => setMasterKeyOverride(e.target.value)}
+                    placeholder="把另一个 app 设置页里那份粘过来"
+                    autoComplete="off"
+                    className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 text-sm font-mono outline-none focus:border-violet-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const text = masterKeyOverride || config?.masterKey || '';
+                      if (!text) {
+                        addToast('本地没有已存的加密钥匙', 'error');
+                        return;
+                      }
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        addToast('已复制，去另一个 app 粘上', 'info');
+                        trackEvent('一键部署 2.0 后端', { action: '复制加密钥匙' });
+                      } catch {
+                        addToast('复制失败，长按输入框手动选中吧', 'error');
+                      }
+                    }}
+                    className="shrink-0 px-3.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-transform"
+                  >
+                    复制
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-400">
+                  跟上面那个「共享密钥」不是一回事：那个是通行证，这个是把任务内容加密用的。
+                  手机上装了多个 app 时，让它们填同一份，云端才解得开。
+                </p>
+              </>
+            ) : null}
+          </div>
 
           {provisionAccounts?.length ? (
             <div className="space-y-1.5">

@@ -3333,42 +3333,47 @@ if (keepN > 0) {
                     if (!m) return null;
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    // 暮色 2026-08-02 21:48：calcBreaks 改成"每轮一个 group"逻辑
-                    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
-                    //   暮色反馈之前 7-23/7-27 改的方向不对——盯在 30 分钟 group 上，
-                    //   实际要的是 role 切换 = 轮边界（不是 30 分钟）
+                    // 暮色 2026-09-29：一轮 = 一个头像 + 一个时间戳。
+                    //   7-23 到 8-07 那几次改动都是在这条错的地基上贴膏药，这轮把地基换掉。
                     //
-                    //   新规则：
-                    //   - 主动消息 vs 正常消息：永远独立 group（保持 7-27 v2，不让主动消息并入正常聊天）
-                    //   - 主动消息内部：cur 是新轮首（proactiveRoundStart=true）→ 自己开始新 group
-                    //     否则同 group（接续上一轮）。老数据没 proactiveRoundStart 标记 → fallback 同 group
-                    //     （老数据 4 个气泡会变成 1 头像 + 1 时间戳，暮色要的"按轮"行为）
-                    //   - 普通 user/AI 对话：role 切换 = 轮边界
-                    //     user 1 + AI 1 = 2 轮（各 1 个时间戳）
-                    //     user 5 + AI 1 = 2 轮
-                    //     5 轮 user/AI 交替 = 10 个时间戳（没合并）
-                    //     30 分钟规则：同 role 内超过 30 分钟也算轮边界（避免"聊一整晚"合并成 1 轮）
-                    const USER_CHAT_GAP_MS = 30 * 60 * 1000;
+                    //   轮边界只有三条：
+                    //   1. 角色切换 —— 我说一句、江澈说一句，各算一轮
+                    //   2. 戳一戳打断 —— 它居中自己渲染，前后断开
+                    //   3. 主动消息换了一条推送 —— 2.0 每条推送自带唯一编号
+                    //      (metadata.activeMsg2.messageId)，一条推送拆成几个气泡共用同一个编号，
+                    //      编号变了就是新来的一条，独立成轮
+                    //
+                    //   这次删掉的：
+                    //   - 30 分钟规则：2026-03-21 上游 e3330cb3 加的（"split message groups by time"），
+                    //     照搬微信"隔很久说话算新一段"的习惯。它切的是时间不是轮，导致主动消息
+                    //     时灵时不灵——够 30 分钟就断开显示，不够就并进上一条，看着像没发过。
+                    //   - isProactive / proactiveRoundStart 两套标记当分组判据（8-02、8-07 的补丁）：
+                    //     靠"第一条打标记后面不打"这种约定，而约定是会漏的 —— 2.0 压根没写这两个
+                    //     标记（activeMsgRuntime 只写 source + activeMsg2），主动消息就一直走
+                    //     30 分钟兜底。换成推送编号是数据自带的，永远不会漏。
+                    //
+                    //   注 1：1.0 老数据没有推送编号，那批主动消息会并进相邻轮次显示
+                    //        （暮色 2026-09-29 确认 1.0 以后不用了，不管）。
+                    //   注 2：isProactive 字段本身仍保留 —— utils/proactiveCount.ts 靠它统计
+                    //        每天主动消息条数上限，那是业务闸门不是显示逻辑。
+                    const pushIdOf = (msg: typeof m): string | undefined =>
+                        (msg.metadata as any)?.activeMsg2?.messageId || undefined;
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
                         if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
-                        if (neighbor.role !== cur.role) return true;  // role 切换 = 轮边界
-                        // 暮色 2026-08-07：type 不同也算 break
-                        //   戳一戳（type='interaction'）消息跟普通 text 消息 role 相同但语义不同
-                        //   不并入 group → 下一条 AI 回复的 isFirstInGroup=true → 带头像
-                        if (neighbor.type !== cur.type) return true;
-                        const curProactive = !!cur.metadata?.isProactive;
-                        const neighborProactive = !!neighbor.metadata?.isProactive;
-                        // 主动消息 vs 正常消息：永远独立 group
-                        if (curProactive !== neighborProactive) return true;
-                        // 主动消息内部：cur 是新轮首 → 自己开始新 group；否则同 group
-                        if (curProactive && neighborProactive) {
-                            if (cur.metadata?.proactiveRoundStart === true) return true;
-                            return false;
-                        }
-                        // 普通 user/AI 对话：30 分钟规则（避免长时间对话合并成 1 轮）
-                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
-                        return gap > USER_CHAT_GAP_MS;
+                        if (neighbor.role !== cur.role) return true;  // 1. 角色切换 = 轮边界
+                        // 2. 戳一戳打断：它走自己的渲染分支（MessageItem.tsx:803），居中全宽、不带头像，
+                        //    被并进相邻轮次的话那一轮会莫名多出半截内容。
+                        //    （原先这里是"type 不同就断开"，本意也是为了解决戳一戳，但打错了目标 ——
+                        //     戳一戳压根不经过带头像那段代码。代价是表情包↔文字混发被拆成碎轮，
+                        //     一次回复 4 个气泡顶 4 个头像 4 个时间戳。）
+                        if (cur.type === 'interaction' || neighbor.type === 'interaction') return true;
+                        // 3. 主动消息：每条推送独立成轮。任一侧带推送编号就说明这头是主动消息；
+                        //    编号相同 = 同一条推送拆出来的几块气泡 = 同一轮；编号不同（含一侧为空）= 新一轮。
+                        const curPush = pushIdOf(cur);
+                        const neighborPush = pushIdOf(neighbor);
+                        if (curPush || neighborPush) return curPush !== neighborPush;
+                        return false;
                     };
                     const breaksWithPrevious = calcBreaks(m, prevMessage);
                     const breaksWithNext = calcBreaks(nextMessage, m);

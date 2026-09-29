@@ -279,6 +279,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-09-29 | 聊天轮次重写 — 拆掉上游 30 分钟规则和两套标记补丁，主动消息改按 2.0 推送编号分轮 | [`changelogs/2026-09-29-chat-round-avatar-timestamp.md`](./changelogs/2026-09-29-chat-round-avatar-timestamp.md) |
 | 2026-08-27 | 页面缩放滑条 — 纯前端 CSS zoom 替代原生 WebView 缩放 | [`changelogs/2026-08-27-page-zoom-css.md`](./changelogs/2026-08-27-page-zoom-css.md) |
 | 2026-09-28 | 区间查找——扫描整轮所有图片并注入 base64（连发图 / 夹文字再发图都能识别） | [`changelogs/2026-09-28-range-scan-image-inject.md`](./changelogs/2026-09-28-range-scan-image-inject.md) |
 | 2026-09-28 | 修重复识图 bug——IIFE 写 imageDesc 后同步 React state + setMessages 类型签名补充 | [`changelogs/2026-09-28-prevent-duplicate-vision-call.md`](./changelogs/2026-09-28-prevent-duplicate-vision-call.md) |

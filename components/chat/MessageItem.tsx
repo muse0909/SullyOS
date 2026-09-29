@@ -370,22 +370,11 @@ const MessageItem = React.memo(({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isFirstInGroup;
-    // 暮色 2026-08-02 21:48：统一"按轮"画头像逻辑
-    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
-    //   之前 7-23/7-27 主动消息每条都画头像时间戳的"7-23 行为"——暮色不要
-    //
-    //   规则：
-    //   - 主动消息新数据（c613e54 之后）：m.metadata?.proactiveRoundStart === true 才画（轮首唯一）
-    //   - 主动消息老数据（c613e54 之前，没 proactiveRoundStart 标记）：按 isFirstInGroup 画（按 group 算首）
-    //   - 普通消息：按 shouldShowAvatar（every_message || isFirstInGroup）
-    const effectiveShowAvatar = (() => {
-        const meta: any = m.metadata || {};
-        const isProactive = meta.isProactive;
-        if (!isProactive) return shouldShowAvatar;
-        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
-        if (isNewProactiveFormat) return !!meta.proactiveRoundStart;
-        return isFirstInGroup;  // 老数据：按 group 算首（不按 every_message）
-    })();
+    // 暮色 2026-09-29：轮次判定统一收在 Chat.tsx 的 calcBreaks（角色切换 / 戳一戳打断 /
+    //   2.0 推送编号变化），这里不再自己判一次。
+    //   之前 8-02 给主动消息单开了一套（metadata.proactiveRoundStart 轮首标记 + 老数据
+    //   fallback），导致两个变量分叉——外层槽位看 effectiveShowAvatar、内层图片看
+    //   shouldShowAvatar。今天两者重新等价，但留着分叉早晚还会出 bug，所以整个拆掉。
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
@@ -837,15 +826,12 @@ const MessageItem = React.memo(({
                 )}
 
                 {/* Avatar - Absolute Positioned */}
-                {!isUser && effectiveShowAvatar && (
+                {!isUser && shouldShowAvatar && (
                         <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
-                        {/*
-                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
-                          - 用户头像下 + AI 头像下 都画
-                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
-                          - 7-23/7-27/6edc7fc (8-2) 几个版本的方向都反了 — 这次按暮色原话实现
-                        */}
+                        {/* 时间戳画在头像正下方（暮色 2026-08-02 定的位置，之前在消息下面），
+                            跟头像绑在同一个槽位里：外层跟着 shouldShowAvatar 走，
+                            轮次由 Chat.tsx 的 calcBreaks 统一算 —— 一轮一个头像 + 一个时间戳。 */}
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (
@@ -877,14 +863,10 @@ const MessageItem = React.memo(({
                 </div>
 
                                 {/* User Avatar - Absolute Positioned */}
-                {isUser && effectiveShowAvatar && (
+                {isUser && shouldShowAvatar && (
                     <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
-                        {/*
-                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
-                          - 用户头像下 + AI 头像下 都画
-                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
-                        */}
+                        {/* 同 AI 侧：时间戳绑在头像槽位里，跟一轮走 */}
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (

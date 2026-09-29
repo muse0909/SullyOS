@@ -39,7 +39,11 @@ android {
     namespace "com.aetheros.simulator"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.aetheros.simulator"
+        // 麦麦 2026-09-29：测试版并存支持。
+        //   默认行为一个字都不变；带 -PtestBuild=true 打出来的包，包名后面多一段，
+        //   手机上就能跟正式版同时存在（各自一份本地数据、各自一份推送订阅，
+        //   因为用户身份是从本地数据读出来的，互不干扰）。
+        applicationId "com.aetheros.simulator" + (project.hasProperty('testBuild') ? ".amsgtest" : "")
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // 暮色 2026-09-10：APK 自动版本号
@@ -58,7 +62,7 @@ android {
                 gitHash = proc.text.trim()
             }
         } catch (Exception ignored) {}
-        versionName "${buildDate}-${gitHash}"
+        versionName "${buildDate}-${gitHash}" + (project.hasProperty('testBuild') ? "-test" : "")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

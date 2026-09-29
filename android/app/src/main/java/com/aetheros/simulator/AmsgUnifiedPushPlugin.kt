@@ -15,6 +15,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import org.json.JSONArray
 import org.json.JSONObject
 import org.unifiedpush.android.connector.UnifiedPush
+import org.unifiedpush.android.connector.keys.DefaultKeyManager
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -60,9 +61,9 @@ class AmsgUnifiedPushPlugin : Plugin() {
          * 读或生成 VAPID 密钥对，返回 SEC1 uncompressed 公钥的 base64url 字符串。
          * 持久化在 SharedPreferences 里（重新 install app 会丢，但同一次 install 内复用）。
          *
-         * 暮色 2026-09-25 20:02 拍板：把原本的 instance method 改成 companion 静态方法，
-         * 让 AmsgKeyManager 能直接调用（不需要构造 plugin 实例）—— AmsgKeyManager 需要保证
-         * 推送加密用的 VAPID key pair 跟解密用的 ECDH key pair 是同一对。
+         * 暮色 2026-09-25 20:02 拍板：把原本的 instance method 改成 companion 静态方法
+         * （原为让 AmsgKeyManager 调；该类已于 9-29 退役，这个静态方法保留下来是因为
+         *   register() 自己也要用它拿公钥）。
          */
         @JvmStatic
         fun ensureVapidKey(context: android.content.Context): String {
@@ -239,23 +240,22 @@ class AmsgUnifiedPushPlugin : Plugin() {
                 val sub = JSObject()
                 sub.put("endpoint", endpoint)
                 val keys = JSObject()
-                // 暮色 2026-09-25 19:33 拍板：p256dh 必须是 client 自己的 VAPID 公钥 = ECDH 公钥。
-                // 暮色 2026-09-25 21:11 拍板（修复 A）：
-                //   keys.auth 必须等于 AmsgKeyManager 实际生成的 16 byte auth secret。
-                //   之前 line 257 写死 keys.put("auth", "") → worker 用 0 byte salt 加密
-                //   → AmsgKeyManager 用 16 byte auth 解密 → RFC 8291 HKDF PRK 派生不同
-                //   → AES-GCM auth tag 校验失败 → PushMessage.decrypted=false。
-                //   现在直接调 AmsgKeyManager.getPublicKeySet(instance) 拿 pubKey + auth，
-                //   保证两端用同一份密钥。exists() 为 false 时（旧用户未重注册）退回原行为。
-                val keyManager = AmsgKeyManager(context)
-                if (keyManager.exists(INSTANCE)) {
-                    val publicKeySet = keyManager.getPublicKeySet(INSTANCE)
+                // 麦麦 2026-09-29 重写整段（撤回 9-25 的自定义 KeyManager，见 register() 那段长注释）：
+                //   p256dh + auth 是 worker 加密推送用的那套密钥，解密端必须用**同一把**。
+                //   SDK 的解密固定走 DefaultKeyManager，所以这里也必须是它。
+                //   之前这里用的是自定义 AmsgKeyManager —— 注册时用它取这对密钥，但 SDK
+                //   解密时压根不会调它（MessagingReceiverImpl.getKeyManager 写死 new
+                //   DefaultKeyManager），于是加密用一套、解密用另一套，必然失败。
+                val keyManager = DefaultKeyManager(context)
+                // DefaultKeyManager.getPublicKeySet 返回可空（键还没生成完时给 null），
+                // 所以这里判一下再塞——拿不到就走下面的兜底，绝不塞半截值上去。
+                val publicKeySet = if (keyManager.exists(INSTANCE)) keyManager.getPublicKeySet(INSTANCE) else null
+                if (publicKeySet != null) {
                     keys.put("p256dh", publicKeySet.pubKey)
                     keys.put("auth", publicKeySet.auth)
                 } else {
-                    // 兼容旧用户：还没重新注册 UnifiedPush 时维持旧行为（空 auth），
-                    // 等用户点"连接 ntfy 并开启通知"触发 AmsgKeyManager.generate() 后下次
-                    // getStatus 会进 if 分支拿到正确的 16 byte auth。
+                    // 还没调过 generate()：等用户点"连接 ntfy 并开启通知"走完 register，
+                    // 下次 getStatus 就会进 if 分支拿到真正的 pubKey/auth。
                     val clientVapidPublicKey = vapidSp.getString(VAPID_PUBLIC_KEY, null)
                         ?: workerVapidPublicKey
                     keys.put("p256dh", clientVapidPublicKey)
@@ -297,15 +297,19 @@ class AmsgUnifiedPushPlugin : Plugin() {
                 sp.edit().putString("workerVapidPublicKey", vapidPublicKeyFromWorker).apply()
             }
 
-            // 暮色 2026-09-25 20:02 拍板：改用 5-arg register 重载，注入 AmsgKeyManager。
-            //   AmsgKeyManager 复用 SDK 的 WebPushHybridDecrypt（Tink）做 RFC 8291 解密，
-            //   密钥来源是 app 端 VAPID_PREFS 里已经持久化的 VAPID key pair + per-instance auth secret。
-            //   这样推送实际加密用的 ECDH 公钥（= distributor 拿到的 vapid 公钥）跟解密用的
-            //   ECDH 私钥（= VAPID 私钥）就是同一对 → 解密能成功。
+            // （9-25 20:02 曾在这里用 5-arg register 注入自定义 AmsgKeyManager，已于 9-29 撤回，理由见下）
+            // 麦麦 2026-09-29：撤回 9-25 的自定义 KeyManager，改用 SDK 默认那把。
+            //   起因：SDK 的 MessagingReceiverImpl 没有覆盖 getKeyManager()，它的实现是
+            //   `new DefaultKeyManager(context)`（写死）。也就是说 5-arg register 传进去的
+            //   自定义 KeyManager 只在**注册时**被用来取 getPublicKeySet()，注册完就再也
+            //   取不回来——SDK 的 RegistrationSet 只存 token，没有任何 getKeyManager 方法。
+            //   结果：worker 用我们的 pubKey+auth 加密，手机却拿 SDK 默认那把（另一套密钥）
+            //   去解 → 永远失败。实测日志里 ntfy 送来 797 字节，解密函数一次都没被调用。
+            //   现在注册和解密都用 SDK 默认那把，两端天然一致（底层存在同一个
+            //   SharedPreferences + AndroidKeyStore，按 instance 索引，跨实例共享）。
             val ourVapid = ensureVapidKey(context)
             val instance = INSTANCE
-            val keyManager = AmsgKeyManager(context)
-            Log.i(TAG, "register 用 client vapid (${ourVapid.take(20)}...) + instance=$instance + 自定义 AmsgKeyManager")
+            Log.i(TAG, "register 用 client vapid (${ourVapid.take(20)}...) + instance=$instance + SDK 默认 KeyManager")
 
             // 提示用户允许 / 选 distributor
             // tryUseCurrentOrDefaultDistributor 会启动一个 translucent activity
@@ -321,10 +325,9 @@ class AmsgUnifiedPushPlugin : Plugin() {
                         context,
                         instance,
                         "拾光机主动消息 2.0",
-                        ourVapid,
-                        keyManager
+                        ourVapid
                     )
-                    Log.i(TAG, "UnifiedPush.register() 已调（5-arg + AmsgKeyManager），等 distributor 回调 onNewEndpoint")
+                    Log.i(TAG, "UnifiedPush.register() 已调（4-arg + SDK 默认 KeyManager），等 distributor 回调 onNewEndpoint")
                     val ret = JSObject()
                     ret.put("pending", true)
                     call.resolve(ret)
@@ -456,7 +459,7 @@ class AmsgUnifiedPushPlugin : Plugin() {
     // ----- helpers -----
 
     // 暮色 2026-09-25 20:02 拍板：ensureVapidKey / pad32 / base64UrlEncode 已搬到 companion object
-    //   （让 AmsgKeyManager 能直接调，无需 plugin 实例）。原来的 instance method 已删除。
+    //   （原为让已退役的 AmsgKeyManager 直接调）。
 
     /** 让 JSObject / JSArray 在 Plugin 内部易用的便利类型（Capacitor 6 提供） */
     private class JSArray : org.json.JSONArray() {

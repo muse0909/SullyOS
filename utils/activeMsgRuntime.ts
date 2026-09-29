@@ -4,6 +4,7 @@ import { DB } from './db';
 import { ChatPrompts } from './chatPrompts';
 import { ActiveMsgStore } from './activeMsgStore';
 import { ActiveMsgClient, type AmsgOutboxEntry, type RemoteTaskStatus } from './activeMsgClient';
+import { withEffectiveChatApi } from './chatApiCompat';
 import { AMSG_CHAT_FAIL_KEY, AMSG_SELF_LOG_KEY, amsgStateNamespace, parseChatFailRecord, parseSelfLog } from './amsgFirePack';
 import {
   applyAssistantPostProcessing,
@@ -147,12 +148,15 @@ const loadApiConfigFromLocalStorage = (): APIConfig => {
     const raw = localStorage.getItem('os_api_config');
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    return {
+    // 麦麦 2026-09-30：存的是原始配置，protocol='gemini' 时 baseUrl 是空的（真值在
+    //   gemini* 三件套里）。这里跑在 React 之外、拿不到 OSContext 归一化后那份，所以自己
+    //   归一化一次——下面 api.baseUrl / effectiveApi 都要按 OpenAI 那种调法用。
+    return withEffectiveChatApi({
       baseUrl: parsed.baseUrl || '',
       apiKey: parsed.apiKey || '',
       model: parsed.model || '',
       ...parsed,
-    };
+    });
   } catch {
     return fallback;
   }

@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, DateQuickPhrase } from '../types';
 import { DB } from '../utils/db';
 // 暮色 2026-08-16：格式化系统保留云端备份
@@ -22,6 +22,12 @@ import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { extractGeminiKeys, pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, shortKey } from '../utils/geminiKeyPool';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+// 麦麦 2026-09-30：聊天 API 按协议归一化的**唯一**出处。
+//   全项目 100 多处按「OpenAI 那种调法」读 apiConfig.baseUrl 发请求，但 protocol='gemini'
+//   时真配置在 geminiBaseUrl/geminiApiKey/geminiModel，baseUrl 是空的 → Gemini 直连用户
+//   点哪坏哪（打电话最先撞上：「请先在设置里配置聊天 API URL」）。
+//   规则和为什么这么修见 utils/chatApiCompat.ts 顶部那段。
+import { normalizeChatBaseUrl, withEffectiveChatApi } from '../utils/chatApiCompat';
 
 // 任务 5：API 调试日志开关（跟 useChatAI.isApiLogEnabled 同款）
 //   - localStorage.getItem('sullyos:enableApiLog') === 'true' 才写入 + console.log
@@ -70,16 +76,16 @@ const normalizeProactiveAiContent = (raw: string): string => {
   return cleaned;
 };
 
-// 任务 1：baseUrl 缺 /v1 时自动补，防止打到中转站根路径 404。
-//   useChatAI 行 41-46 的同款函数逻辑写反了（! 写错）——这里写对版：
+// baseUrl 缺 /v1 时自动补，防止打到中转站根路径 404。
 //   - 不以 /v1 /v2 结尾 → 补 /v1
 //   - 已经以 /v1 结尾 → 原样
-const normalizeApiUrl = (url?: string): string => {
-    const raw = (url || '').trim().replace(/\/+$/, '');
-    if (!raw) return '';
-    if (/\/v\d+$/i.test(raw)) return raw;
-    return `${raw}/v1`;
-};
+//
+// 麦麦 2026-09-30：实现搬到 utils/chatApiCompat.normalizeChatBaseUrl 了，多一条 Gemini 的
+//   例外——结尾是 /v1beta、/v1alpha、/openai 的原样返回不补 /v1。Gemini 的地址是
+//   `.../v1beta`，原来的正则 `/\/v\d+$/` 匹配不上（v1beta 后面还有字母）→ 补成
+//   `.../v1beta/v1`，Google 那边没这个路径。这里保留一个同名薄封装，底下几百行调用点
+//   不用动，行为在 OpenAI 协议下跟以前一模一样。
+const normalizeApiUrl = normalizeChatBaseUrl;
 
 
 type JSZipLike = {
@@ -1601,11 +1607,24 @@ if (!isVisible || !isChattingWithThisChar) {
   //   在 runProactive 内部读 + 清，跨重入独立
   const proactiveBackgroundTriggerRef = useRef(false);
 
+  // 麦麦 2026-09-30：交给使用方的那份 apiConfig —— baseUrl / apiKey / model 一律是
+  //   「当前协议真正生效」的值。100 多处按 OpenAI 那种调法读 apiConfig.baseUrl 的地方
+  //   因此一行都不用改；Gemini 原生调用读 gemini* 字段也不受影响（那份原样保留）。
+  //   非 Gemini 协议时 withEffectiveChatApi 返回原对象引用，身份不变，不会白白打醒 memo。
+  //   位置放在 refs 之前：下面 apiConfigRef 要拿它（见那里的说明）。
+  const exposedApiConfig = useMemo(() => withEffectiveChatApi(apiConfig), [apiConfig]);
+
   // Refs to avoid stale closures in proactive callback
   const charactersRef = useRef(characters);
   charactersRef.current = characters;
-  const apiConfigRef = useRef(apiConfig);
-  apiConfigRef.current = apiConfig;
+  const apiConfigRef = useRef(exposedApiConfig);
+  // 麦麦 2026-09-30：ref 里放的是**归一化后**那份，不是原始 state。
+  //   两个消费者：
+  //     - 主动消息（行 ~1815）：自己按 protocol 选字段，Gemini 读 geminiBaseUrl 走原生
+  //       :generateContent —— 镜像没动 gemini*，行为不变。
+  //     - 彼方 runVRSession（行 ~2505）：纯 OpenAI 那种调法（`${baseUrl}/chat/completions`），
+  //       给原始配置的话 Gemini 直连用户 baseUrl 是空的 → 「no-api」直接不跑。
+  apiConfigRef.current = exposedApiConfig;
 
   // Keep the MiniMax endpoint module in sync with the user's region choice
   // so every minimaxFetch() call reads the latest preference.
@@ -2657,7 +2676,42 @@ if (!isVisible || !isChattingWithThisChar) {
 
     localStorage.setItem('os_theme', JSON.stringify(lsTheme));
   };
-  const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
+  /**
+   * 麦麦 2026-09-30：把「映出来的派生值」挡在存储外面。
+   *
+   * 背景：下面 exposedApiConfig 会把「当前协议生效的」baseUrl 映进 apiConfig.baseUrl，
+   * 而设置页有一堆 `updateApiConfig({ ...apiConfig, 改别的字段 })` 的保存（识图 / 图床 /
+   * 生图 / TTS / 语音识别…）。那个展开带进来的 baseUrl 是**归一化产物**，不是用户填的，
+   * 一旦落盘就成了脏数据——Gemini 用户哪天切回 OpenAI，baseUrl 里就躺着一个
+   * `.../v1beta/openai`，界面上还显示得好好的，一点也看不出不对。
+   *
+   * 判据只认一种：新值**恰好等于我们交出去的那个派生值**。只挡派生源，别的一律照旧——
+   * 设置页显式写 `''`（切协议时清另一套）、预设加载、备份恢复全都原样放行，行为不变。
+   */
+  const keepStoredIfDerived = (
+    incoming: string | undefined,
+    exposedValue: string | undefined,
+    storedValue: string | undefined,
+  ): string => {
+    const isDerived = exposedValue !== storedValue && incoming === exposedValue;
+    // 兜底成 ''：APIConfig 这三个字段是必填 string，而存储里的旧数据可能压根没这个键。
+    return (isDerived ? storedValue : incoming) ?? '';
+  };
+
+  const updateApiConfig = (updates: Partial<APIConfig>) => {
+    const newConfig: APIConfig = { ...apiConfig, ...updates };
+    // Gemini 协议下 baseUrl/apiKey/model 是映出来的，这三个挡住不让落盘。
+    //   （协议不是 gemini 时 withEffectiveChatApi 原样返回同一个对象，暴露值 == 存储值，
+    //    下面的判据自动全 false，所以不用再为 openai 写一份对称的护栏——那份是死代码。）
+    if ((newConfig.protocol ?? 'openai') === 'gemini') {
+      const exposed = withEffectiveChatApi(apiConfig);
+      newConfig.baseUrl = keepStoredIfDerived(newConfig.baseUrl, exposed.baseUrl, apiConfig.baseUrl);
+      newConfig.apiKey = keepStoredIfDerived(newConfig.apiKey, exposed.apiKey, apiConfig.apiKey);
+      newConfig.model = keepStoredIfDerived(newConfig.model, exposed.model, apiConfig.model);
+    }
+    setApiConfig(newConfig);
+    localStorage.setItem('os_api_config', JSON.stringify(newConfig));
+  };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
 
   // Cloud Backup functions
@@ -4643,7 +4697,7 @@ if (!isVisible || !isChattingWithThisChar) {
     theme,
     updateTheme,
     virtualTime,
-    apiConfig,
+    apiConfig: exposedApiConfig,
     updateApiConfig,
     isLocked,
     unlock,

@@ -28,6 +28,7 @@ import {
 } from './instantPushClient';
 import { pushXhsCaches, pushLastXhsNotesRef } from './activeMsgRuntime';
 import { describeToolForUser } from './amsgToolTrace';
+import { withEffectiveChatApi } from './chatApiCompat';
 import { ReiClient } from '@rei-standard/amsg-client';
 import type { APIConfig, RealtimeConfig, UserProfile, InstantPushPendingToolCall } from '../types';
 
@@ -260,12 +261,15 @@ function loadApiConfigFromLocalStorage(): APIConfig {
     const raw = localStorage.getItem('os_api_config');
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    return {
+    // 麦麦 2026-09-30：存的是原始配置，protocol='gemini' 时 baseUrl/apiKey/model 是空的
+    //   （真值在 gemini* 三件套里）。这里跑在 React 之外、拿不到 OSContext 归一化后那份，
+    //   下面 apiUrl/apiKey/primaryModel 直接当 OpenAI 那种凭据用，所以自己归一化一次。
+    return withEffectiveChatApi({
       baseUrl: parsed.baseUrl || '',
       apiKey: parsed.apiKey || '',
       model: parsed.model || '',
       ...parsed,
-    };
+    });
   } catch {
     return fallback;
   }

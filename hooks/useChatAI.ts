@@ -76,14 +76,15 @@ const isApiLogEnabled = (): boolean => {
 // 暮色 2026-08-23 v3：MCP 工具调用多轮循环（OpenAI 协议第一版）
 //   实现已抽到 utils/mcpChatAI.ts（可独立测试 + 维护）
 import { processMcpToolCalls } from '../utils/mcpChatAI';
+import { normalizeChatBaseUrl } from '../utils/chatApiCompat';
 
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
-const normalizeApiUrl = (url?: string): string => {
-    const raw = (url || '').trim().replace(/\/+$/, '');
-    if (!raw) return '';
-    if (/\/v\d+$/i.test(raw)) return raw;
-    return `${raw}/v1`;
-};
+//   麦麦 2026-09-30：实现搬到 utils/chatApiCompat.normalizeChatBaseUrl（跟 OSContext 那份
+//   合并成一处），多一条 Gemini 例外——结尾 /v1beta、/v1alpha、/openai 的不补 /v1，
+//   否则 Gemini 地址会被补成 `.../v1beta/v1` 打错。
+//   注意本文件的主聊天走原生 Gemini 分支（:generateContent + key 走 URL 参数，
+//   见下方 useGeminiProtocol），不经过这个函数——这里只管 OpenAI 那种调法。
+const normalizeApiUrl = normalizeChatBaseUrl;
 
 // —— 生图工具定义 ——
 const IMAGE_GENERATION_TOOL = {

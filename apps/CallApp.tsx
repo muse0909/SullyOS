@@ -5,6 +5,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { saveCallAudio, loadCallAudio } from '../utils/callAudioStore';
 import { synthesizeSpeechDetailed } from '../utils/minimaxTts';
 import { CallVoiceRecorder, describeCallVoiceError } from '../utils/callVoice';
 import { transcribeCallAudio, pickCallAsrProvider } from '../utils/callAsr';
@@ -17,7 +18,7 @@ import { Message, ChatTheme } from '../types';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type ViewMode = 'role-select' | 'in-call' | 'history' | 'record-detail';
-type CallBubble = { id: string; dbId?: number; role: 'user' | 'assistant'; text: string; time: string; audioUrl?: string; timestamp: number };
+type CallBubble = { id: string; dbId?: number; role: 'user' | 'assistant'; text: string; time: string; audioUrl?: string; audioKey?: string; timestamp: number };
 type CallRecord = {
   id: string;
   characterId: string;
@@ -617,10 +618,19 @@ const CallApp: React.FC = () => {
         const greetingBubble: CallBubble = { id: `${nowTs}-greeting`, role: 'assistant', text: greetingText, time: formatTime(), timestamp: nowTs };
         setCallState('speaking');
         setBubbles([greetingBubble]);
+        // 麦麦 2026-09-30：dbId 提到 if 外面——开场白的音频也要存进库并把键记进消息，
+        //   存音频那几步在下面拿得到它。
+        let greetingDbId: number | undefined;
         if (selectedChar?.id) {
-          const dbId = await DB.saveMessage({ charId: selectedChar.id, role: 'assistant', type: 'text', content: greetingText, metadata: { source: 'call', callSessionId: currentSessionId } });
-          setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, dbId: dbId } : b));
+          greetingDbId = await DB.saveMessage({ charId: selectedChar.id, role: 'assistant', type: 'text', content: greetingText, metadata: { source: 'call', callSessionId: currentSessionId } });
+          setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, dbId: greetingDbId } : b));
         }
+        /** 把开场白音频存进库 + 键写回消息（存不了不影响播放） */
+        const persistGreeting = async (blob: Blob | null | undefined) => {
+          if (!blob) return;
+          const key = await saveCallAudio(greetingDbId, blob);
+          if (key && greetingDbId) await DB.updateMessageMetadata(greetingDbId, { audioAssetKey: key });
+        };
         // 尝试语音合成开场白
         const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
         const voiceId = resolveVoiceId();
@@ -632,7 +642,7 @@ const CallApp: React.FC = () => {
           try {
             const volinkText = convertNarrationCues(greetingText);
             if (volinkText.trim()) {
-              const { url: volinkGreetingUrl } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+              const { url: volinkGreetingUrl, blob: volinkGreetingBlob } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
               if (currentBlobUrlRef.current) {
                 URL.revokeObjectURL(currentBlobUrlRef.current);
                 currentBlobUrlRef.current = null;
@@ -641,6 +651,7 @@ const CallApp: React.FC = () => {
               setAudioUrl(volinkGreetingUrl);
               setBubbles(prev => prev.map(b => (b.id === greetingBubble.id ? { ...b, audioUrl: volinkGreetingUrl } : b)));
               setTimeout(() => playAudio(volinkGreetingUrl), 0);
+              await persistGreeting(volinkGreetingBlob);
               greetingAudioPlayed = true;
             }
           } catch (greetVolinkErr: any) {
@@ -665,8 +676,12 @@ const CallApp: React.FC = () => {
             const greetingCacheKey = ttsCacheKeyFromPayload(ttsPayload);
             const cachedGreeting = await getCachedTts(greetingCacheKey);
             let greetingAudioUrl = '';
+            // 麦麦 2026-09-30：留住真正播的那份 blob（缓存命中和新合成两条路都要填），
+            //   下面存库要用。greetingBlob 那个变量声明在更内层，这里够不着。
+            let greetingFinalBlob: Blob | null = null;
             if (cachedGreeting) {
               greetingAudioUrl = URL.createObjectURL(cachedGreeting);
+              greetingFinalBlob = cachedGreeting;
             } else {
               const response = await minimaxFetch('/api/minimax/t2a', {
                 method: 'POST',
@@ -685,6 +700,7 @@ const CallApp: React.FC = () => {
                 }
                 if (greetingBlob) {
                   greetingAudioUrl = URL.createObjectURL(greetingBlob);
+                  greetingFinalBlob = greetingBlob;
                   saveCachedTts(greetingCacheKey, greetingBlob).catch(() => { /* ignore */ });
                 }
               }
@@ -694,6 +710,7 @@ const CallApp: React.FC = () => {
               setAudioUrl(greetingAudioUrl);
               setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, audioUrl: greetingAudioUrl } : b));
               setTimeout(() => playAudio(greetingAudioUrl), 0);
+              await persistGreeting(greetingFinalBlob);
               greetingAudioPlayed = true;
             }
           } catch { /* 语音合成失败不影响文字开场白 */ }
@@ -742,7 +759,12 @@ const CallApp: React.FC = () => {
           dbId: m.id,
           role: m.role as 'user' | 'assistant',
           text: m.content,
+          // 麦麦 2026-09-30：以前这里读 metadata.audioUrl，而那个字段从来没人写过
+          //   → 通话记录里的「重播语音」按钮永远不出现。
+          //   真正存下来的是 audioAssetKey（指向 assets 表里那份 blob），
+          //   回放时按需去取，不用在这里就把每个气泡的音频都读出来。
           audioUrl: m.metadata?.audioUrl,
+          audioKey: m.metadata?.audioAssetKey,
           time: formatTimeByTs(m.timestamp),
           timestamp: m.timestamp,
         })),
@@ -851,6 +873,29 @@ const CallApp: React.FC = () => {
     audioRef.current.play().catch(() => addToast('音频已生成，自动播放被浏览器拦截，请点击重播', 'info'));
     setCallState('speaking');
   };
+  /**
+   * 麦麦 2026-09-30：回放一条气泡的语音。
+   *
+   * 通话进行中气泡上有内存地址，直接播；历史记录里没有地址，只有 audioKey
+   * （指向 assets 表里存的那份 blob），按需去取。
+   *
+   * **故意不在列表加载时就把音频全读出来**：一次通话几十条，全读会让打开记录明显变慢，
+   * 而用户通常只听其中一两句。按需取，点哪句读哪句。
+   */
+  const playBubbleAudio = async (b: CallBubble) => {
+    if (b.audioUrl) { playAudio(b.audioUrl); return; }
+    if (!b.audioKey) return addToast('这段没有语音', 'info');
+    const blob = await loadCallAudio(b.audioKey);
+    if (!blob) return addToast('这段语音找不到了（可能是改动之前存的记录）', 'info');
+    const url = URL.createObjectURL(blob);
+    // 交给 currentBlobUrlRef 管：下次生成新音频时会 revoke 掉，切换音频源时不会叠着播。
+    if (currentBlobUrlRef.current) {
+      URL.revokeObjectURL(currentBlobUrlRef.current);
+    }
+    currentBlobUrlRef.current = url;
+    setBubbles(prev => prev.map(x => (x.id === b.id ? { ...x, audioUrl: url } : x)));
+    playAudio(url);
+  };
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
     audioRef.current.play().catch(() => addToast('继续播放失败，请点击重播', 'error'));
@@ -919,7 +964,7 @@ const CallApp: React.FC = () => {
         setCallState('thinking');
         const volinkText = convertNarrationCues(assistantText);
         if (!volinkText.trim()) throw new Error('可朗读文本为空');
-        const { url: volinkUrl } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+        const { url: volinkUrl, blob: volinkBlob } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
         if (currentBlobUrlRef.current) {
           URL.revokeObjectURL(currentBlobUrlRef.current);
           currentBlobUrlRef.current = null;
@@ -928,6 +973,12 @@ const CallApp: React.FC = () => {
         setAudioUrl(volinkUrl);
         setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: volinkUrl } : b)));
         setTimeout(() => playAudio(volinkUrl), 0);
+        // 麦麦 2026-09-30：存一份到库里并把键记进消息，通话记录以后才能回听。
+        //   volinkBlob 为 null 时（远程地址没 fetch 下来）存不了，跳过——见 callAudioStore 顶部说明。
+        if (assistantDbId && volinkBlob) {
+          const audioKey = await saveCallAudio(assistantDbId, volinkBlob);
+          if (audioKey) await DB.updateMessageMetadata(assistantDbId, { audioAssetKey: audioKey });
+        }
         setCallState('listening');
       } catch (volinkErr: any) {
         addToast(`语音生成失败：${volinkErr?.message || '未知错误'}，已保留文字`, 'error');
@@ -1019,6 +1070,9 @@ const CallApp: React.FC = () => {
       const traceIds: string[] = [];
       const audioBlobs: Blob[] = [];
       let finalUrl = '';
+      // 麦麦 2026-09-30：留着「真正拿去播的那份 blob」，存进库让通话记录以后能回听。
+      //   finalUrl 是内存地址（blob: 或远程），刷新就没了，存它没意义。
+      let finalBlob: Blob | null = null;
 
       console.log('[call] tts request(full)', {
         model,
@@ -1035,6 +1089,7 @@ const CallApp: React.FC = () => {
         if (singleResult.remoteUrl) {
           finalUrl = singleResult.remoteUrl;
         } else if (singleResult.blob) {
+          finalBlob = singleResult.blob;
           finalUrl = URL.createObjectURL(singleResult.blob);
         } else {
           throw new Error('未获得可播放音频');
@@ -1057,7 +1112,10 @@ const CallApp: React.FC = () => {
         }
         if (!finalUrl) {
           if (!audioBlobs.length) throw new Error('未获得可播放音频');
-          finalUrl = URL.createObjectURL(audioBlobs.length === 1 ? audioBlobs[0] : new Blob(audioBlobs, { type: 'audio/mpeg' }));
+          // 合并成一份再存：分块合成时，合并出来的音频不对应任何单个 TTS 缓存键，
+          //   所以要自己落一份，见 utils/callAudioStore 顶部说明。
+          finalBlob = audioBlobs.length === 1 ? audioBlobs[0] : new Blob(audioBlobs, { type: 'audio/mpeg' });
+          finalUrl = URL.createObjectURL(finalBlob);
         }
       }
 
@@ -1077,6 +1135,12 @@ const CallApp: React.FC = () => {
       if (assistantDbId) {
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
+        // 麦麦 2026-09-30：音频存一份 + 把键记进消息。
+        //   没有 dbId 或 finalBlob 为空（远程地址没 fetch 下来）就跳过，不影响文字回复。
+        if (finalBlob) {
+          const audioKey = await saveCallAudio(assistantDbId, finalBlob);
+          if (audioKey) await DB.updateMessageMetadata(assistantDbId, { audioAssetKey: audioKey });
+        }
       }
       setCallState('listening');
     } catch (e: any) {
@@ -1168,8 +1232,11 @@ const CallApp: React.FC = () => {
             const rerollCacheKey = ttsCacheKeyFromPayload(ttsPayload);
             const cachedReroll = await getCachedTts(rerollCacheKey);
             let rerollAudioUrl = '';
+            // 麦麦 2026-09-30：跟主流程一样留住真正播的那份 blob，存进库让记录能回听
+            let rerollFinalBlob: Blob | null = null;
             if (cachedReroll) {
               rerollAudioUrl = URL.createObjectURL(cachedReroll);
+              rerollFinalBlob = cachedReroll;
             } else {
               const response = await minimaxFetch('/api/minimax/t2a', {
                 method: 'POST',
@@ -1193,6 +1260,7 @@ const CallApp: React.FC = () => {
                 }
                 if (rerollBlob) {
                   rerollAudioUrl = URL.createObjectURL(rerollBlob);
+                  rerollFinalBlob = rerollBlob;
                   saveCachedTts(rerollCacheKey, rerollBlob).catch(() => { /* ignore */ });
                 }
               }
@@ -1203,6 +1271,12 @@ const CallApp: React.FC = () => {
               setAudioUrl(rerollAudioUrl);
               setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
               setTimeout(() => playAudio(rerollAudioUrl), 0);
+              // 麦麦 2026-09-30：换个说法会产生新音频，存到同一个键（覆盖旧的）。
+              //   键跟消息 id 绑定，所以不管重 roll 几次，一条消息只留一份，不会越攒越多。
+              if (rerollFinalBlob) {
+                const audioKey = await saveCallAudio(bubble.dbId, rerollFinalBlob);
+                if (audioKey && bubble.dbId) await DB.updateMessageMetadata(bubble.dbId, { audioAssetKey: audioKey });
+              }
             }
           }
         } catch (ttsErr: any) {
@@ -1316,7 +1390,7 @@ const CallApp: React.FC = () => {
                 const { display, voiceText } = extractVoiceTag(item.text);
                 return <>{display}{voiceText && <div className="mt-1 text-[10px] text-slate-400/60 italic">{voiceText}</div>}</>;
               })()}</div>
-              {!!item.audioUrl && <button onClick={() => playAudio(item.audioUrl)} className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-400 transition hover:bg-white/15">重播语音</button>}
+              {(item.audioUrl || item.audioKey) && <button onClick={() => playBubbleAudio(item)} className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-400 transition hover:bg-white/15">重播语音</button>}
             </div>
           ))}
         </div>
@@ -1428,7 +1502,7 @@ const CallApp: React.FC = () => {
             </div>
             {isLatest && bubble.role === 'assistant' && (
               <div className="mt-2 flex gap-2">
-                {bubble.audioUrl && <button onClick={() => playAudio(bubble.audioUrl)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15">重播语音</button>}
+                {(bubble.audioUrl || bubble.audioKey) && <button onClick={() => playBubbleAudio(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15">重播语音</button>}
                 <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>
               </div>
             )}

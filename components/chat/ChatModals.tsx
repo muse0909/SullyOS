@@ -6,8 +6,9 @@ import Modal from '../os/Modal';
 import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import { saveRemoteImage } from '../../utils/file';
-import { addFavorite, genFavoriteId, getAllFavorites } from '../../utils/favoritesStorage';
+import { addFavorite, genFavoriteId, getAllFavorites, saveFavoriteVoiceBlob } from '../../utils/favoritesStorage';
 import { useOS } from '../../context/OSContext';
+import { DB } from '../../utils/db';
 
 interface ChatModalsProps {
     modalType: string;
@@ -125,6 +126,25 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const { addToast } = useOS();
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
+    // 麦麦 2026-09-30：这条消息有没有存过的语音（决定「收藏语音」按钮显不显示）。
+    //   聊天里的语音是「点播放才生成」的，所以大部分消息没有——不能无脑显示按钮。
+    const [voiceBlobCache, setVoiceBlobCache] = useState<{ msgId: string; blob: Blob } | null>(null);
+    const [checkingVoice, setCheckingVoice] = useState(false);
+    useEffect(() => {
+        const mid = selectedMessage?.id;
+        if (modalType !== 'message-actions' || !mid) { setVoiceBlobCache(null); return; }
+        let cancelled = false;
+        setCheckingVoice(true);
+        (async () => {
+            try {
+                const entry = await DB.getAssetRaw(`voice_msg_${mid}`);
+                if (cancelled) return;
+                setVoiceBlobCache(entry && entry.blob instanceof Blob ? { msgId: String(mid), blob: entry.blob } : null);
+            } catch { if (!cancelled) setVoiceBlobCache(null); }
+            finally { if (!cancelled) setCheckingVoice(false); }
+        })();
+        return () => { cancelled = true; };
+    }, [modalType, selectedMessage?.id]);
     const HISTORY_PAGE_SIZE = 50;
 
     // --- Emoji Manager 状态（取代旧的 emoji-options / emoji-reorder 长按弹窗）---
@@ -513,8 +533,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 const text = selectedMessage.content || '';
                                 if (!text.trim()) return;
                                 // 防重复：同 sourceMessageId 不重复加
+                                //   （Message.id 是数字，FavoriteItem.sourceMessageId 是字符串，
+                                //     比较和赋值都得显式转一下——这组 4 处报错是项目里既有的，
+                                //     麦麦 2026-09-30 补语音收藏时顺手一起修掉）
                                 const existing = getAllFavorites().find(
-                                    (f) => f.sourceMessageId === selectedMessage.id && f.type === 'text'
+                                    (f) => f.sourceMessageId === String(selectedMessage.id) && f.type === 'text'
                                 );
                                 if (existing) {
                                     addToast('这条消息已收藏过', 'info');
@@ -526,7 +549,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     text: text,
                                     charId: activeCharacter.id,
                                     charName: activeCharacter.name,
-                                    sourceMessageId: selectedMessage.id,
+                                    sourceMessageId: String(selectedMessage.id),
                                     createdAt: Date.now(),
                                 });
                                 addToast('已加入收藏', 'success');
@@ -538,6 +561,49 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006Z" clipRule="evenodd" />
                             </svg>
                             收藏消息
+                        </button>
+                    )}
+
+                    {/* 收藏语音 — 麦麦 2026-09-30 补回入口。
+                        语音存**自己**一份（fav_voice_<收藏id>），不再借聊天那份，
+                        这样清聊天缓存 / 删原消息都不影响收藏。 */}
+                    {voiceBlobCache && voiceBlobCache.msgId === String(selectedMessage?.id) && (
+                        <button
+                            onClick={async () => {
+                                if (!selectedMessage || !voiceBlobCache) return;
+                                const existing = getAllFavorites().find(
+                                    (f) => f.sourceMessageId === String(selectedMessage.id) && f.type === 'voice' && !f.invalid
+                                );
+                                if (existing) {
+                                    addToast('这条语音已收藏过', 'info');
+                                    return;
+                                }
+                                const favId = genFavoriteId();
+                                const text = selectedMessage.content || '';
+                                const saved = await saveFavoriteVoiceBlob(favId, voiceBlobCache.blob);
+                                if (!saved) {
+                                    addToast('语音保存失败，收藏没加上', 'error');
+                                    return;
+                                }
+                                addFavorite({
+                                    id: favId,
+                                    type: 'voice',
+                                    text,
+                                    charId: activeCharacter.id,
+                                    charName: activeCharacter.name,
+                                    sourceMessageId: String(selectedMessage.id),
+                                    createdAt: Date.now(),
+                                });
+                                addToast('已收藏语音', 'success');
+                                setModalType('none');
+                            }}
+                            className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                                <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+                                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+                            </svg>
+                            收藏语音
                         </button>
                     )}
 

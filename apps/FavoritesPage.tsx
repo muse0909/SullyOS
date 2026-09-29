@@ -14,6 +14,8 @@ import {
   updateFavorite,
   markFavoriteInvalid,
   getFavoriteVoiceBlob,
+  getFavoriteVoiceBlobByFavId,
+  deleteFavoriteVoiceBlob,
   deleteVoiceFavoriteCloud,
 } from '../utils/favoritesStorage';
 
@@ -53,16 +55,26 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     addToast('正在跳转到聊天...', 'info');
   };
 
+  /**
+   * 删一条收藏的连带清理：元数据 + 自己存的那份音频 + 云端那份。
+   * fire-and-forget，失败只 warn 不影响主流程。
+   * 三处删除入口（单删 / 批量删 / 清理失效）都走这个，别再各写一遍漏掉某个。
+   */
+  const purgeFavorite = (item: FavoriteItem) => {
+    removeFavorite(item.id);
+    if (item.type !== 'voice') return;
+    deleteFavoriteVoiceBlob(item.id).catch((e) => {
+      console.warn('[favorites] 本地音频删除失败', e);
+    });
+    deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
+      console.warn('[favorites] cloud delete failed', e);
+    });
+  };
+
   const handleRemove = (item: FavoriteItem) => {
     if (window.confirm(`确定要删除这条收藏吗？`)) {
-      removeFavorite(item.id);
+      purgeFavorite(item);
       setItems((prev) => prev.filter((i) => i.id !== item.id));
-      // 云端 blob 也清掉（fire-and-forget，失败不影响主流程）
-      if (item.type === 'voice') {
-        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
-          console.warn('[favorites] cloud delete failed', e);
-        });
-      }
       addToast('已删除', 'success');
     }
   };
@@ -100,12 +112,7 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     if (!window.confirm(`确定要删除选中的 ${selectedIds.size} 条收藏吗？`)) return;
     const toDelete = items.filter((i) => selectedIds.has(i.id));
     toDelete.forEach((item) => {
-      removeFavorite(item.id);
-      if (item.type === 'voice') {
-        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
-          console.warn('[favorites] cloud delete failed', e);
-        });
-      }
+      purgeFavorite(item);
     });
     setItems((prev) => prev.filter((i) => !selectedIds.has(i.id)));
     addToast(`已删除 ${toDelete.length} 条`, 'success');
@@ -121,12 +128,7 @@ const FavoritesPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     }
     if (!window.confirm(`清理 ${invalidItems.length} 条已失效的收藏？此操作不可撤销。`)) return;
     invalidItems.forEach((item) => {
-      removeFavorite(item.id);
-      if (item.type === 'voice') {
-        deleteVoiceFavoriteCloud(item.sourceMessageId).catch((e) => {
-          console.warn('[favorites] cloud delete failed', e);
-        });
-      }
+      purgeFavorite(item);
     });
     setItems((prev) => prev.filter((i) => !i.invalid));
     addToast(`已清理 ${invalidItems.length} 条失效收藏`, 'success');
@@ -295,8 +297,11 @@ const FavoriteCard: React.FC<{
           // 云端没了（用户手动删 / 后端故障）→ 继续回退
         }
 
-        // 2) 回退 IndexedDB —— 升级前的收藏或本次未上传成功的本地数据
-        const blob = await getFavoriteVoiceBlob(item.sourceMessageId);
+        // 2) 回退 IndexedDB —— 优先收藏自己存的那份（2026-09-30 新增），
+        //    拿不到再借 Chat 的 voice_msg_*（老数据）。
+        //    云端那条（item.url）现在实际是死路：接口是 Netlify 的，项目在 Vercel 上，
+        //    详见 utils/favoritesStorage 顶部的说明。留着只为兼容将来把接口搬过来。
+        const blob = await getFavoriteVoiceBlobByFavId(item.id, item.sourceMessageId);
         if (cancelled) return;
         if (blob) {
           url = URL.createObjectURL(blob);

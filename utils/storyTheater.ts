@@ -34,6 +34,10 @@ import {
     buildOpeningPrompt,    // 暮色 9-20:开场生成 prompt
 } from './storyTheater/prompts';
 import { ContextBuilder } from './context';
+// 麦麦 2026-09-30：主 API 切到 Gemini 直连后地址是 Google 的 OpenAI 兼容层，
+//   而 getResolvedRPApiConfig 会把主配置硬编码成 protocol='openai'（"套壳为 openai 协议"），
+//   所以不能按 protocol 判断该裁哪些参数——按实际请求地址裁。见 chatApiCompat 顶部。
+import { toGeminiCompatRequestBody } from './chatApiCompat';
 
 export const BATCH_SIZE = 10;       // 每批摘要的消息数(5 轮 = 10 条)
 export const KEEP_RECENT = 10;      // 保留最近 5 轮原文
@@ -1041,12 +1045,12 @@ export async function callMainLLMNonStream(args: {
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
-            body: JSON.stringify({
+            body: JSON.stringify(toGeminiCompatRequestBody({
                 model: cfg.model,
                 messages,
                 ...(await buildRPGenerationBody(args.entry)),
                 stream: false,
-            }),
+            }, cfg.baseUrl)),
         },
         1, 0,
         { appName: '剧情模式', purpose: 'RP 对话', charId: args.char.id, charName: args.char.name },
@@ -1208,12 +1212,12 @@ export async function* callMainLLMStream(args: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${cfg.apiKey}`,
             },
-            body: JSON.stringify({
+            body: JSON.stringify(toGeminiCompatRequestBody({
                 model: cfg.model,
                 messages,
                 ...genBody,
                 stream: true,
-            }),
+            }, cfg.baseUrl)),
         });
     };
 

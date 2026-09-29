@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { useOS } from '../context/OSContext';
+import { withEffectiveChatApi } from '../utils/chatApiCompat';
 import {
     ArrowLeft, Plus, Trash, BookOpen, Planet, Clock, Play, CaretRight, X,
     UploadSimple, PencilSimple, FlipHorizontal, CaretLeft, Sparkle,
@@ -2593,7 +2594,9 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
     }, []);
 
     const follow = !vrApi?.baseUrl;
-    const effective = follow ? chatApi : vrApi!;
+    // 麦麦 2026-09-30：跟 runSession 同一个理由 —— 彼方独立 API 是从 IndexedDB 读的原始
+    //   配置，没经过 OSContext 归一化，协议是 Gemini 时这里拿到的 baseUrl 是空的。
+    const effective = withEffectiveChatApi(follow ? chatApi : vrApi!);
     const sameAs = (c: APIConfig) => !follow && vrApi!.baseUrl === c.baseUrl && vrApi!.model === c.model && vrApi!.apiKey === c.apiKey;
     const host = (u?: string) => { try { return u ? new URL(u).host : '—'; } catch { return u || '—'; } };
 

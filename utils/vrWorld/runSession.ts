@@ -27,6 +27,7 @@ import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
 import { getRoom, VR_DEFAULT_INTERVAL_MIN } from './constants';
 import { getVRApi, logVRApiCall } from './vrApi';
+import { withEffectiveChatApi } from '../chatApiCompat';
 import { PostOffice } from './postOffice';
 import { getReadingWindow, getBookmark, buildAnnotation } from './novel';
 import {
@@ -140,8 +141,14 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
     if (running.has(char.id)) return { ok: false, reason: 'busy' };
 
     // API 优先级：角色自带覆盖 > 彼方独立 API > 聊天默认
+    // 麦麦 2026-09-30：这里要**自己再归一化一次**。聊天默认那份（apiConfig）已经由
+    //   OSContext 归一化过了，但「角色自带」和「彼方独立 API」是从 IndexedDB / 角色档案
+    //   直接读的原始配置，协议是 Gemini 时 baseUrl 是空的、也没补 /openai 后缀。
+    //   下面这行是纯 OpenAI 那种调法（`${baseUrl}/chat/completions`），必须先归一化。
     const vrGlobalApi = await getVRApi();
-    const vrApi = char.vrState?.api?.baseUrl ? char.vrState.api : (vrGlobalApi?.baseUrl ? vrGlobalApi : apiConfig);
+    const vrApi = withEffectiveChatApi(
+        char.vrState?.api?.baseUrl ? char.vrState.api : (vrGlobalApi?.baseUrl ? vrGlobalApi : apiConfig),
+    );
     if (!vrApi.baseUrl) return { ok: false, reason: 'no-api' };
 
     const novels = await DB.getVRNovels();

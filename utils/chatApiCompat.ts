@@ -126,10 +126,47 @@ export const resolveChatApiTriplet = (
   };
 };
 
-/** 三件套齐了才算配好了（少一样请求发出去必然失败）。 */
+/**
+ * 三件套齐了才算配好了（少一样请求发出去必然失败）。
+ */
 export const isUsableChatApi = (
   api: { baseUrl?: string; apiKey?: string; model?: string } | null | undefined,
 ): boolean => !!(api?.baseUrl && api.model);
+
+/**
+ * Google 的 OpenAI 兼容层**不认**的 OpenAI 专属参数。
+ *
+ * 2026-09-30 暮色反馈：见面 app 剧情开场报
+ * `400 Invalid JSON payload received. Unknown name "frequency_penalty": Cannot find field.`
+ * ——地址补了 /openai 之后请求确实打到 Google 了（这一步是对的），但请求体里带着
+ * OpenAI 的 `frequency_penalty` / `presence_penalty`，Google 直接拒收。
+ * 这两个参数是 OpenAI 的「重复度惩罚」，Gemini 原生 API 没有对应概念。
+ */
+const GEMINI_UNSUPPORTED_PARAMS = new Set(['frequency_penalty', 'presence_penalty']);
+
+/**
+ * 往「Google OpenAI 兼容层」发请求前，把它不认的参数摘掉；打到别处就原样返回。
+ *
+ * 判据是**实际请求地址**而不是「声称的协议」——这个区别很要紧：
+ * 见面 app 剧情剧场 `getResolvedRPApiConfig` 会把主配置硬编码成 `protocol: 'openai'`
+ * （注释写「套壳为 openai 协议」），主配置切到 Gemini 直连后地址是兼容层地址、
+ * protocol 却还是 openai。按 protocol 判断就会漏掉，然后被 Google 打回 400。
+ * 请求发到哪，就按哪的规矩裁剪参数。
+ *
+ * 返回新对象，不改入参。
+ */
+export const toGeminiCompatRequestBody = <T extends Record<string, unknown>>(
+  body: T,
+  baseUrl: string | undefined,
+): T => {
+  if (!isGeminiOpenAiCompatUrl(baseUrl)) return body;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (GEMINI_UNSUPPORTED_PARAMS.has(k)) continue;
+    out[k] = v;
+  }
+  return out as T;
+};
 
 /**
  * 把当前协议生效的值**映**进 baseUrl / apiKey / model 三个字段，原对象原样返回（类型不变）。

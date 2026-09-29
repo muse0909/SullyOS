@@ -77,6 +77,26 @@ export const cleanTextForTts = (raw: string): string => {
   return text;
 };
 
+/**
+ * Volink 专用的 TTS 文本清理。
+ *
+ * 2026-09-30 暮色反馈：打电话开头会「说一个英文标签」。根因是语气标签是 **MiniMax 的
+ * 私有语法** —— `(chuckle)` `(sighs)` `(groans)` 这些 MiniMax TTS 认得，会当成音效演绎；
+ * 但 Volink（CosyVoice，OpenAI 兼容那套）**不认**，只当普通文字，于是把 "chuckle"
+ * "sighs" 一个词一个词念出来。打电话每句开头都可能带（轻笑）（叹气），所以特别明显。
+ *
+ * `cleanTextForTts` 保留这些标签对 MiniMax 是对的，所以给 Volink 用之前再剥一层，
+ * 不能直接改 `cleanTextForTts` —— 那边剥了 MiniMax 自己就听不出笑声了。
+ *
+ * 剥掉总比念出来强：舞台指示本来就不该被朗读。聊天那边走的是同一条 Volink 路径，
+ * 一并修好（不止打电话）。
+ */
+export const cleanTextForVolinkTts = (raw: string): string =>
+  cleanTextForTts(raw)
+    .replace(/\(([a-z-]{1,20})\)/gi, (match, tag: string) =>
+      VALID_INTERJECTION_TAGS.has(tag.trim().toLowerCase()) ? '' : match)
+    .replace(/\s+/g, ' ').trim();
+
 /** 为 TTS 文本插入 MiniMax 原生停顿标签 <#秒数#>，让语音有自然停顿
  * 停顿层次（从短到长）:
  *   ，、；  →  0.06s  微停（换气级）
@@ -214,7 +234,7 @@ async function synthesizeSpeechVolink(
   const voice = char.voiceProfile?.volinkVoiceId || apiConfig.volinkTtsVoice;
   if (!voice) throw new Error('未配置 Volink 声音 ID（请在角色设置或全局设置中填写）');
 
-  const cleanedText = cleanTextForTts(text);
+  const cleanedText = cleanTextForVolinkTts(text);
   if (!cleanedText) throw new Error('TS 文本为空');
 
       const response = await fetch(`${baseUrl}/v1/audio/speech`, {

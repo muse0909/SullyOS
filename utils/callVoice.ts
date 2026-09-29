@@ -41,9 +41,14 @@ const SCRIPT_BUFFER_SIZE = 4096;
 
 /** 静音判定：音量低于这个值算"没在说" */
 const SILENCE_THRESHOLD = 0.02;
-/** 静音判定：连续这么多次采样没声音，认为你说完了 */
+/** 音量采样间隔（毫秒），也是静音计时的最小单位 */
 const SILENCE_TICK_MS = 120;
-const DEFAULT_SILENCE_MS = SILENCE_TICK_MS * 5; // 约 600ms
+/**
+ * 静音多久算"说完了" —— 1.2 秒。
+ * 麦麦 9-30：原来是 0.6 秒，实测太激进，中文说话中间常停一下会被拦腰截断。
+ * 1.2 秒更接近真人判断"对方说完了"的节奏。
+ */
+const DEFAULT_SILENCE_MS = SILENCE_TICK_MS * 10;
 
 /** 单次录音最长时长，防止内存爆掉（官方接口上限 500 秒，这里留余量） */
 const MAX_RECORDING_MS = 5 * 60 * 1000;

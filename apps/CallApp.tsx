@@ -6,6 +6,7 @@ import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { CallVoiceRecorder, describeCallVoiceError } from '../utils/callVoice';
+import { transcribeCallAudio } from '../utils/callAsr';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
@@ -392,6 +393,7 @@ const CallApp: React.FC = () => {
   const [micAvailable, setMicAvailable] = useState(true);
   const [recordedHint, setRecordedHint] = useState('');
   const [recordedUrl, setRecordedUrl] = useState('');
+  const [isRecognizing, setIsRecognizing] = useState(false);
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
@@ -498,9 +500,15 @@ const CallApp: React.FC = () => {
     return () => { cancelled = true; };
   }, [viewMode, currentSessionId]);
 
+  // 麦麦 2026-09-30：静音自动结束。
+  //   一直按住不放很别扭，跟真打电话不一样。安静一会儿就认为你说完了，
+  //   自动收尾送去识别。想接着说就再按一次。
+  //   具体阈值在 utils/callVoice.ts 里（1.2 秒），不在前端定 ——
+  //   定时器跑在录音模块里，阈值得跟采样节奏放一起才好调。
+
   // 麦麦 2026-09-29：语音输入 —— 开始 / 停止
   const startRecording = async () => {
-    if (isRecordingRef.current) return;
+    if (isRecordingRef.current || isRecognizing) return;
     if (draftInput.trim()) {
       // 打字框里有字还没发，先提醒，别让用户以为说上去了
       addToast('先把打的字发出去，或者说之前先清空', 'info');
@@ -513,6 +521,9 @@ const CallApp: React.FC = () => {
       if (!recorderRef.current) recorderRef.current = new CallVoiceRecorder();
       await recorderRef.current.start({
         onVolume: (v) => setMicVolume(v),
+        onSilence: () => {
+          if (isRecordingRef.current) stopRecording();
+        },
         onInterrupted: (reason) => {
           setMicError(reason);
           setIsRecording(false);
@@ -532,6 +543,34 @@ const CallApp: React.FC = () => {
     }
   };
 
+  /** 录完了要送去识别。这段跟停止录音是分开的，方便失败时保留录音重试。 */
+  const recognizeAndSend = async (blob: Blob) => {
+    const apiKey = resolveMiniMaxApiKey(apiConfig);
+    if (!apiKey) {
+      setMicError('还没配 MiniMax 密钥，识别用不了');
+      return;
+    }
+    setIsRecognizing(true);
+    setCallState('thinking');
+    setRecordedHint('在听你在说什么…');
+    try {
+      const result = await transcribeCallAudio(blob, { apiKey });
+      setIsRecognizing(false);
+      if (!result.text) {
+        // 识别到静音不是错误，但用户确实说了什么，告诉他没听清比报错了强
+        setCallState('listening');
+        setRecordedHint('没听清，再说一次？');
+        return;
+      }
+      // 识别成功 → 走跟打字完全一样的发送路径
+      await handleTurn(result.text);
+    } catch (err: any) {
+      setIsRecognizing(false);
+      setCallState('listening');
+      setMicError(err?.message || '识别失败');
+    }
+  };
+
   const stopRecording = async () => {
     const recorder = recorderRef.current;
     if (!recorder || !isRecordingRef.current) return;
@@ -544,14 +583,12 @@ const CallApp: React.FC = () => {
         setRecordedHint('没录到声音，再按住试试');
         return;
       }
-      const seconds = (result.durationMs / 1000).toFixed(1);
-      // 阶段一只验证"确实录到了"，不做语音识别。
-      // 挂个本地地址让暮色能点播放，亲耳听到自己声音才算真通了。
+      // 挂个本地地址，识别失败时用户还能点「听听看」确认自己刚才说了什么
       const url = URL.createObjectURL(result.blob);
       if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current);
       recordedUrlRef.current = url;
       setRecordedUrl(url);
-      setRecordedHint(`录到 ${seconds} 秒`);
+      await recognizeAndSend(result.blob);
     } catch (err: any) {
       setMicError(describeCallVoiceError(err));
     }
@@ -801,10 +838,12 @@ const CallApp: React.FC = () => {
     audioRef.current.pause();
     setCallState('listening');
   };
-  const handleTurn = async () => {
+  // 麦麦 2026-09-30：overrideText 供语音识别走同一条发送路径，
+  //   不必先把文字塞回输入框（那样会闪一下，用户看到字凭空冒出来）。
+  const handleTurn = async (overrideText?: string) => {
     const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
     const voiceId = resolveVoiceId();
-    const input = draftInput.trim();
+    const input = (overrideText ?? draftInput).trim();
     if (!input) return addToast('说点什么吧', 'info');
     if (['connecting', 'thinking'].includes(callState)) return addToast(`${selectedChar?.name || '对方'}还在想，等一等`, 'info');
     if (isAudioPlaying) pauseAudio();
@@ -1363,7 +1402,7 @@ const CallApp: React.FC = () => {
                 用户一眼就知道"这俩是同一个输入框的两种方式"，不用来回找。 */}
             <button
               onPointerDown={(e) => {
-                if (sendingBusy) return;
+                if (sendingBusy || isRecognizing) return;
                 e.preventDefault();
                 // 抓住这次触摸，手指滑出按钮再松手也能正确结束录音
                 try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住也不影响 */ }
@@ -1372,7 +1411,7 @@ const CallApp: React.FC = () => {
               onPointerUp={() => { if (isRecordingRef.current) stopRecording(); }}
               onPointerCancel={() => { if (isRecordingRef.current) stopRecording(); }}
               onContextMenu={(e) => e.preventDefault()}
-              disabled={sendingBusy}
+              disabled={sendingBusy || isRecognizing}
               // 麦麦 2026-09-29 修正：之前麦克风拿不到就把按钮彻底锁死（灰的、点不动），
               //   用户只看到一个死按钮，连为什么都不显示。现在改成——
               //   始终可以按（按下去会重新尝试申请权限），
@@ -1383,12 +1422,12 @@ const CallApp: React.FC = () => {
                   : micAvailable
                     ? 'bg-white/10 border-white/15'
                     : 'bg-rose-500/20 border-rose-300/60'
-              } ${sendingBusy ? 'opacity-40' : 'active:scale-95'}`}
-              title={micAvailable ? '按住说话' : (micError || '麦克风还没开，按一下重试')}
+              } ${sendingBusy || isRecognizing ? 'opacity-40' : 'active:scale-95'}`}
+              title={isRecognizing ? '正在识别…' : (micAvailable ? '按住说话' : '麦克风还没开，按一下重试')}
             >
               <Microphone size={19} weight="fill" className={isRecording ? 'text-emerald-50' : (micAvailable ? 'text-slate-300' : 'text-rose-200')} />
             </button>
-            <button onClick={handleTurn} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
+            <button onClick={() => handleTurn()} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
           </div>
 
           {/* 麦麦 2026-09-29：录音时的实时反馈 */}
@@ -1400,7 +1439,7 @@ const CallApp: React.FC = () => {
                   style={{ width: `${Math.max(6, Math.min(100, micVolume * 100))}%` }}
                 />
               </div>
-              <span className="text-[10px] text-emerald-100/80 shrink-0 animate-pulse">松开发送</span>
+              <span className="text-[10px] text-emerald-100/80 shrink-0 animate-pulse">说完松手</span>
             </div>
           )}
 

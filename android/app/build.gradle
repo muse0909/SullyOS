@@ -44,6 +44,11 @@ android {
         //   手机上就能跟正式版同时存在（各自一份本地数据、各自一份推送订阅，
         //   因为用户身份是从本地数据读出来的，互不干扰）。
         applicationId "com.aetheros.simulator" + (project.hasProperty('testBuild') ? ".amsgtest" : "")
+        //   2026-09-29 麦麦：测试版桌面上改个名字（暮色要求），否则两个图标一模一样分不清。
+        //     名字在 resValue 里覆盖 strings.xml 的 app_name / title_activity_main。
+        //     resValue 只对当前变体生效，资源优先级高于 res/values/strings.xml。
+        resValue "string", "app_name", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
+        resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // 暮色 2026-09-10：APK 自动版本号

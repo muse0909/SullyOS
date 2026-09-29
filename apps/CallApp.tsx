@@ -522,6 +522,8 @@ const CallApp: React.FC = () => {
       });
       isRecordingRef.current = true;
       setIsRecording(true);
+      // 第一次点成功了就说明权限其实能拿到，把"不可用"的提示撤掉
+      setMicAvailable(true);
     } catch (err: any) {
       const message = describeCallVoiceError(err);
       setMicError(message);
@@ -1361,7 +1363,7 @@ const CallApp: React.FC = () => {
                 用户一眼就知道"这俩是同一个输入框的两种方式"，不用来回找。 */}
             <button
               onPointerDown={(e) => {
-                if (!micAvailable || sendingBusy) return;
+                if (sendingBusy) return;
                 e.preventDefault();
                 // 抓住这次触摸，手指滑出按钮再松手也能正确结束录音
                 try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住也不影响 */ }
@@ -1370,15 +1372,21 @@ const CallApp: React.FC = () => {
               onPointerUp={() => { if (isRecordingRef.current) stopRecording(); }}
               onPointerCancel={() => { if (isRecordingRef.current) stopRecording(); }}
               onContextMenu={(e) => e.preventDefault()}
-              disabled={!micAvailable || sendingBusy}
-              className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center transition select-none touch-none ${
+              disabled={sendingBusy}
+              // 麦麦 2026-09-29 修正：之前麦克风拿不到就把按钮彻底锁死（灰的、点不动），
+              //   用户只看到一个死按钮，连为什么都不显示。现在改成——
+              //   始终可以按（按下去会重新尝试申请权限），
+              //   只用红色描边提示"这会儿还没权限"，不再假装按钮不存在。
+              className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center transition select-none touch-none border ${
                 isRecording
-                  ? 'bg-emerald-400/40 border border-emerald-200/70'
-                  : 'bg-white/10 border border-white/15'
-              } ${!micAvailable || sendingBusy ? 'opacity-40' : 'active:scale-95'}`}
-              title={micAvailable ? '按住说话' : (micError || '麦克风不可用')}
+                  ? 'bg-emerald-400/40 border-emerald-200/70'
+                  : micAvailable
+                    ? 'bg-white/10 border-white/15'
+                    : 'bg-rose-500/20 border-rose-300/60'
+              } ${sendingBusy ? 'opacity-40' : 'active:scale-95'}`}
+              title={micAvailable ? '按住说话' : (micError || '麦克风还没开，按一下重试')}
             >
-              <Microphone size={19} weight="fill" className={isRecording ? 'text-emerald-50' : 'text-slate-300'} />
+              <Microphone size={19} weight="fill" className={isRecording ? 'text-emerald-50' : (micAvailable ? 'text-slate-300' : 'text-rose-200')} />
             </button>
             <button onClick={handleTurn} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
           </div>
@@ -1396,10 +1404,12 @@ const CallApp: React.FC = () => {
             </div>
           )}
 
-          {/* 录完的确认。第一阶段靠它证明"真的录到了" */}
-          {!isRecording && recordedHint && (
-            <div className="mt-2 px-1 flex items-center gap-2">
-              <span className={`text-[10px] ${micError ? 'text-rose-300/80' : 'text-slate-400/80'}`}>
+          {/* 麦麦 2026-09-29 修正：原来只在"录过音"时才显示这一块，
+              结果麦克风拿不到的时候错误信息根本不显示，界面上只剩一个死按钮。
+              现在只要有提示就显示。 */}
+          {!isRecording && (recordedHint || micError) && (
+            <div className="mt-2 px-1 flex flex-wrap items-center gap-2">
+              <span className={`text-[10px] ${micError ? 'text-rose-300/90' : 'text-slate-400/80'}`}>
                 {micError || recordedHint}
               </span>
               {recordedUrl && (
@@ -1409,6 +1419,12 @@ const CallApp: React.FC = () => {
                 >
                   听听看
                 </button>
+              )}
+              {/* 麦克风拿不到时，直接把该去哪开说清楚，别让用户自己猜 */}
+              {!micAvailable && !micError.includes('被别的程序') && (
+                <span className="text-[10px] text-slate-400/70 w-full mt-0.5">
+                  没开的话去手机「设置 → 应用 → 语音测试 → 权限 → 麦克风」打开
+                </span>
               )}
             </div>
           )}

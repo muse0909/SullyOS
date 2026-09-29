@@ -98,6 +98,23 @@
          声明后系统才会显示拾光机在「麦克风」权限列表里，用户也能去设置页手动开。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- 麦麦 2026-09-29：上面那个麦克风权限还不够，缺这一个录音就不成。
+         MODIFY_AUDIO_SETTINGS 是「修改音频设置」权限，安装时系统自动给，
+         **但仍然必须在清单文件里声明** —— 不声明的话 checkSelfPermission 直接返回
+         DENIED，网页里 getUserMedia 会被 Chromium 判成「设备没有可用麦克风」，
+         报 NotAllowedError: Permission denied，而且 onPermissionRequest 根本不会被调用。
+
+         排查过程（暮色手机 vivo / 安卓 16）：
+         现象是权限弹窗点了「允许」、dumpsys 显示 RECORD_AUDIO granted=true，
+         网页里拿不到麦克风。真正的原因是这个权限没声明。
+         定位靠 Chromium 内部日志那一句：
+           W/cr_media: Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO.
+                        No audio device will be available for recording
+
+         注意：这段只影响网页里录音（打电话语音输入）。
+         之前 TTS 播放不受影响 —— 播放音频只要 RECORD_AUDIO 不需要这个。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- 麦麦 2026-09-03：电池优化白名单
          加了之后可以调 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 让用户加白名单
          用途：Doze 模式下系统可能断长连接 WebSocket；加白名单后 Doze 不影响本 app

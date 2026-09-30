@@ -3339,25 +3339,38 @@ if (keepN > 0) {
                     //   轮边界只有三条：
                     //   1. 角色切换 —— 我说一句、江澈说一句，各算一轮
                     //   2. 戳一戳打断 —— 它居中自己渲染，前后断开
-                    //   3. 主动消息换了一条推送 —— 2.0 每条推送自带唯一编号
-                    //      (metadata.activeMsg2.messageId)，一条推送拆成几个气泡共用同一个编号，
-                    //      编号变了就是新来的一条，独立成轮
+                    //   3. 主动消息换了「一次对话」—— 2.0 一次对话 = 一个 sessionId
                     //
-                    //   这次删掉的：
+                    //   这几次删掉的：
                     //   - 30 分钟规则：2026-03-21 上游 e3330cb3 加的（"split message groups by time"），
                     //     照搬微信"隔很久说话算新一段"的习惯。它切的是时间不是轮，导致主动消息
                     //     时灵时不灵——够 30 分钟就断开显示，不够就并进上一条，看着像没发过。
                     //   - isProactive / proactiveRoundStart 两套标记当分组判据（8-02、8-07 的补丁）：
                     //     靠"第一条打标记后面不打"这种约定，而约定是会漏的 —— 2.0 压根没写这两个
                     //     标记（activeMsgRuntime 只写 source + activeMsg2），主动消息就一直走
-                    //     30 分钟兜底。换成推送编号是数据自带的，永远不会漏。
+                    //     30 分钟兜底。
                     //
-                    //   注 1：1.0 老数据没有推送编号，那批主动消息会并进相邻轮次显示
-                    //        （暮色 2026-09-29 确认 1.0 以后不用了，不管）。
-                    //   注 2：isProactive 字段本身仍保留 —— utils/proactiveCount.ts 靠它统计
+                    //   注 1：isProactive 字段本身仍保留 —— utils/proactiveCount.ts 靠它统计
                     //        每天主动消息条数上限，那是业务闸门不是显示逻辑。
-                    const pushIdOf = (msg: typeof m): string | undefined =>
-                        (msg.metadata as any)?.activeMsg2?.messageId || undefined;
+                    // 一次主动对话的标识 —— 用来把这一轮切开成 N 轮。
+                    //
+                    //   ⚠️ 这里必须用 sessionId，不能用 messageId（2026-09-30 暮色实测踩出来的）：
+                    //   2.0 是把「一次对话」切成 totalMessages 条 push 下发的，每条一个
+                    //   messageIndex / messageId，**而且文字和每个 [[SEND_EMOJI]] 各占一条**
+                    //   （worker/instant-push 侧这么切的，applyAssistantPostProcessing.ts:740 的
+                    //   注释也记着这件事）。这些 push 共享同一个 sessionId。
+                    //   所以 messageId 的粒度是「一个气泡」，拿它分轮 = 一轮切成 N 轮 =
+                    //   每个气泡都带头像。sessionId 的粒度才是「一次对话」。
+                    //   旁证：activeMsgRuntime 的等齐守卫 holdUntilEarlierChunksLand 和
+                    //   findPersistedChunkIndexes 都是按 (sessionId, messageIndex) 认"同一次对话"的。
+                    //
+                    //   兜底 taskId：万一某个老路径没带 sessionId，同一次唤醒任务至少算一轮。
+                    //   （2.0 现在每条 push 都带 sessionId，这条几乎不会触发。）
+                    const roundIdOf = (msg: typeof m): string | undefined => {
+                        const meta: any = msg.metadata || {};
+                        const a2 = meta.activeMsg2 || {};
+                        return meta.sessionId || a2.sessionId || a2.taskId || undefined;
+                    };
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
                         if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
@@ -3368,11 +3381,12 @@ if (keepN > 0) {
                         //     戳一戳压根不经过带头像那段代码。代价是表情包↔文字混发被拆成碎轮，
                         //     一次回复 4 个气泡顶 4 个头像 4 个时间戳。）
                         if (cur.type === 'interaction' || neighbor.type === 'interaction') return true;
-                        // 3. 主动消息：每条推送独立成轮。任一侧带推送编号就说明这头是主动消息；
-                        //    编号相同 = 同一条推送拆出来的几块气泡 = 同一轮；编号不同（含一侧为空）= 新一轮。
-                        const curPush = pushIdOf(cur);
-                        const neighborPush = pushIdOf(neighbor);
-                        if (curPush || neighborPush) return curPush !== neighborPush;
+                        // 3. 主动消息：一次对话（sessionId）= 一轮。任一侧带轮标识就说明这头
+                        //    掺了主动消息；标识相同 = 同一次对话的几条 push = 同一轮，
+                        //    不同（含一侧为空）= 换了新一轮。
+                        const curRound = roundIdOf(cur);
+                        const neighborRound = roundIdOf(neighbor);
+                        if (curRound || neighborRound) return curRound !== neighborRound;
                         return false;
                     };
                     const breaksWithPrevious = calcBreaks(m, prevMessage);

@@ -104,16 +104,20 @@ async function decryptPayload(cipherText, keyHex) {
   const key = await crypto.subtle.importKey(
     'raw', fromHex(keyHex), { name: 'AES-GCM' }, false, ['decrypt'],
   );
-  const joined = new Uint8Array(fromHex(authTagHex).length + fromHex(dataHex).length);
-  joined.set(fromHex(authTagHex), 0);
-  joined.set(fromHex(dataHex), fromHex(authTagHex).length);
+  // ⚠ 拼接顺序必须是「密文 + 标签」，不是反过来。
+  //   云端 aesGcmOpen 传的是 concatBytes(ciphertext, authTag)（见 bundle 1369 行），
+  //   WebCrypto 解密时把 trailing 那一段当 auth tag 读。顺序反了会算出完全不同的
+  //   认证标签，AES-GCM 直接判失败——症状是"钥匙错了"，但其实钥匙是对的。
+  const joined = new Uint8Array(fromHex(dataHex).length + fromHex(authTagHex).length);
+  joined.set(fromHex(dataHex), 0);
+  joined.set(fromHex(authTagHex), fromHex(dataHex).length);
   try {
     const plain = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: fromHex(ivHex), tagLength: 128 }, key, joined,
     );
     return { value: new TextDecoder().decode(plain) };
   } catch (e) {
-    return { error: `解不开（${String(e).slice(0, 60)}）——多半是 AMSG_MASTER_KEY 不是这把后端用的那把` };
+    return { error: `解不开（${String(e).slice(0, 60)}）——钥匙对但解不开，或 AMSG_MASTER_KEY 不是这把后端用的` };
   }
 }
 

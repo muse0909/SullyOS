@@ -118,17 +118,19 @@ const describeNoticeLine = (r: Amsg2ExpiredNoticeRecord, charTz: string | undefi
 };
 
 /**
- * 回执的段落（麦麦 2026-09-30 起是四段）。
+ * 回执里**要进角色上下文**的那些段（麦麦 2026-09-30）。
  *
- * 为什么一段一种说法：四种情况给角色的交代完全不同，混在一段里说"已作废"会让角色
- * 在"这轮自然带出来"和"别提了"之间随便挑——而这两条路的动作是相反的。
+ * 哪些进、哪些不进，规则是「角色能不能为它做点什么」：
  *
- *  - 到点推迟：用户刚跟它说过话，所以这次不插嘴，改在这轮对话里自然带出来。
- *  - 遇忙作废：时机不对（对话已经往前走了），别硬塞。
- *  - 没排上名额满：内容没发出去是额度用完，不是时机问题。
- *  - 手动取消：用户不要了。
+ *  - 到点推迟：进。用户刚跟它说过话所以这次没插嘴，而新规则要求"改在角色下一轮
+ *    上下文里顺口带出"——角色不知道有这件事，就没法带。必须告诉它。
+ *  - 没排上名额满：进。内容是真想说的、只是没轮上，额度恢复后值得补一次。
+ *  - 遇忙作废：**不进**。新规则里它是"直接取消、不告诉角色"。告诉它等于让它
+ *    在对话里复述"我刚才有条消息被系统取消了"，那是把系统内部动作漏给用户看。
+ *    这类只留面板（用户要知道它为什么没响），不进这段文案。
+ *  - 手动取消：进。用户主动取消的，角色该知道那些约定不再生效，否则它会继续拿
+ *    它们许诺。
  *
- * 没有 kind 的老记录按遇忙作废处理（那确实是它当年的含义）。
  * 完整排程现状块和「回执单独成块」（即时对话云端路径）共用这一份文案。
  */
 const buildNoticeSections = (
@@ -153,20 +155,10 @@ const buildNoticeSections = (
     ].join('\n'));
   }
 
-  // —— 遇忙作废 ——
-  const autoExpired = byKind('expired');
-  if (autoExpired.length) {
-    parts.push('已作废（到点时对话正在进行，为避免撞车自动取消）：');
-    for (const r of autoExpired) {
-      parts.push(describeNoticeLine(r, charTz));
-    }
-    parts.push([
-      '作废条目的处理由你判断，三选一：',
-      '1. 就地消化：只在当前时间与话题都合适时自然带进对话——先想「现在提这个还合不合适」（早安任务拖到晚上就别再道早安），不要因为看到这份回执就强行转移当前话题。',
-      '2. 续期：还想之后专门说，用 renew_active_message 换个时间（循环任务续期只补当次，原来的节奏照旧）；内容或方向变了，改用 cancel_active_message + schedule_active_message 重新创建。',
-      '3. 放弃：已经没意义就只字不提。',
-    ].join('\n'));
-  }
+  // —— 遇忙作废：刻意**不产段**（kind='expired' 在这里被静默滤掉）——
+  //   新规则（麦麦 2026-09-30 暮色定）里它是「直接取消、不告诉角色」。理由写在
+  //   buildNoticeSections 的注释里：告诉角色等于让它在对话里复述"我有条消息被系统
+  //   取消了"，那是把系统内部动作漏给用户看。它只留面板。
 
   // —— 没排上名额满 ——
   const quotaBlocked = byKind('quota-blocked');
@@ -208,10 +200,15 @@ export function buildAmsg2NoticesText(
   targetName?: string,
 ): string | null {
   if (!expired.length) return null;
+  // 段可能一段都产不出来（台账里只有遇忙作废那种"不告诉角色"的记录）。这时候
+  // 硬拼一个只剩标题的壳进 prompt 是浪费位置，还会让角色以为"有回执但内容空"，
+  // 所以按产出的段数决定：真没段就整块不出现。
+  const sections = buildNoticeSections(expired, charTz);
+  if (!sections.length) return null;
   const target = targetName?.trim() || '对方';
   return [
     '【你的主动消息排程·仅你可见】',
-    ...buildNoticeSections(expired, charTz),
+    ...sections,
     AMSG2_SCHEDULE_SECRECY_NOTE.replace('用户', target),
   ].join('\n');
 }

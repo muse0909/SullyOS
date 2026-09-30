@@ -668,6 +668,30 @@ const readEmojiLibrary = async (): Promise<EmojiLibrary> => {
 };
 
 // export 只为单测（activeMsgClient.test.ts 钉 tzId 取值与模板不烤时间）。
+/**
+ * 麦麦 2026-09-30：取这个角色**未消费**的回执，渲成给到点生成看的那段文字。
+ *
+ * 动态 import 而非静态：amsg2TaskContext 那边会用到本文件导出的东西（兜底配对那条
+ * 路经由 activeMsgRuntime 间接引），静态引容易成环。函数体内引，模块求值期互不触碰。
+ *
+ * 失败返回空串：回执晚一轮上云，最坏是这次到点看不到、下轮补上。同步本身不能因为
+ * 一段提示词拼不出来就失败——那会让这个角色连排程清单都上不了云。
+ */
+async function buildPendingNoticesBlock(char: CharacterProfile): Promise<string> {
+  try {
+    const { buildAmsg2NoticesText, collectAmsg2TaskContext } = await import('./amsg2TaskContext');
+    const result = await collectAmsg2TaskContext(char);
+    // collectAmsg2TaskContext 出来的 text 含「排程现状块 + 回执块」两半。到点这边
+    // 已经有 AMSG_SLOT_TASK_LIST 专门渲染排程清单（worker 现场按 pendingTasks 生成，
+    // 比这里的快照准），所以只取回执那半 —— 不然同一份清单在 prompt 里会出现两次，
+    // 且两份可能不一致（快照 vs 现场）。产不出段时它是 null，一律当空串。
+    return buildAmsg2NoticesText(result.notices, undefined) ?? '';
+  } catch (e) {
+    console.warn('[ActiveMsg2] 取未消费回执失败（这次到点不带，下轮补上）', char.id, e);
+    return '';
+  }
+}
+
 export const buildFirePack = async (
   char: CharacterProfile,
   userProfile: UserProfile,
@@ -683,6 +707,18 @@ export const buildFirePack = async (
      * 即时 fire 自己要读它们（sceneSong、锚点、任务清单块）。
      */
     templateStub?: boolean;
+    /**
+     * 麦麦 2026-09-30：未消费的回执块（到点推迟那种），直接拼在模板尾部。
+     *
+     * 为什么是拼尾巴而不是新加一个 AMSG_SLOT_* 槽位：worker 那边的槽位是**硬编码**
+     * 的（线上 bundle 8475 行那一串 fillSlot），客户端加一个槽位它不会填，回执就
+     * 原样留在 prompt 里带着 `{{AMSG_XXX}}` 字面量发给模型。线上代码每天自更新、
+     * 改不住（麦麦 2026-09-30 记录），所以一切绕开方案都必须在客户端做。
+     *
+     * 位置在「回到你自己」钢印**之后**：那段靠 recency 抢最后一眼，把回执压在它下面，
+     * 角色读到的是"刚才那条没说出口的话"，而不是"等下要执行的任务"。
+     */
+    pendingNoticesBlock?: string;
   },
 ): Promise<AmsgFirePack> => {
   const templateStub = opts?.templateStub === true;
@@ -857,7 +893,12 @@ export const buildFirePack = async (
     // recency 末位人声锚：上面【角色系统设定】里已带「回到你自己」钢印，但被任务说明压在后面、
     // 失了 recency。这里在最后一句把它拎回来，让主动消息也从「你这个人」长出来，而不是滑回均值腔。
     `（开口前回到你自己：这条得是 ${char.name} 会发的那一条——语气、用词、节奏都只属于你。哪怕只是随口一句，也要是你。）`,
-  ].join('\n');
+  ].concat(
+    // 未消费的回执挂在钢印后面（而不是新加槽位，理由见 buildFirePack 的 opts 注释）。
+    // 排程那一段末尾正好有一句"别在这条消息里把同一件事再排一遍"，紧跟着告诉它
+    // "刚才哪条被推迟了"，两段连读才是完整的一件事。
+    opts?.pendingNoticesBlock?.trim() ? ['', opts.pendingNoticesBlock.trim()] : [],
+  ).join('\n');
 
   return {
     // 版本号只有 amsgFirePack 那一份说了算：写死数字的话，升版时 worker 侧的 parseFirePack
@@ -3428,8 +3469,17 @@ export const ActiveMsgClient = {
     const entries = [];
     // 逐个串行：并发跑会同时开 N 个 IDB 事务，正是 instant push 那次超时的连接风暴成因。
     for (const item of items) {
+      // 麦麦 2026-09-30：未消费的回执跟着 fire_pack 一起上云。
+      //
+      // 为什么同步时就要带，而不是等到点前才带：fire_pack 是**到点那一刻** worker
+      // 现场读的那份，用户到点前有没有发消息客户端这边才知道。云端那边主动查不了
+      // 本地回执台账（那是纯客户端存储），所以回执必须提前随包上去。
+      //
+      // 失败不连累这次同步：回执晚一轮上云，最坏是这次到点的生成看不到它、下一轮才带。
+      const pendingNoticesBlock = await buildPendingNoticesBlock(item.char);
       const firePack = await buildFirePack(
         item.char, item.userProfile, item.groups, item.realtimeConfig, emojiLibrary,
+        { pendingNoticesBlock },
       );
       // 大值由 amsg-server 2.6.0-next.4+ 在 worker 存储层透明分块，整条直传，
       // 内容一个字不裁；老 worker 拒超限条目 → 设置页 capabilities 探测亮牌。

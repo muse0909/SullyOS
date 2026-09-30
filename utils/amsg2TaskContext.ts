@@ -361,6 +361,41 @@ export async function collectAmsg2TaskContext(
   };
 }
 
+/**
+ * 销账 runtime 的依赖注入点（见 consumeAmsg2Notices 的同名参数）。
+ *
+ * 做成可注入而不是在这里直接 import，是为了：
+ *   1. 这个模块被 worker bundle 引用的话不拖进 IDB / 网络那一坨；
+ *   2. 单测能造一条"请求成功 → 回执消费 → 兜底被取消"的完整链路，不碰真云端。
+ */
+export interface Amsg2NoticeConsumeRuntime {
+  /** 真正的销账动作：标已消费 + 触发配对兜底取消。 */
+  settle: (char: CharacterProfile, consumedIds: string[]) => Promise<void>;
+}
+
+/**
+ * 麦麦 2026-09-30：**消费的定义** —— 回执进了一次成功的模型请求才算消费。
+ *
+ * 请求抛错 / 被用户取消 / 被中断，都**不算**：台账原样留着，下一轮重新带上。角色
+ * 因为一次网络抖动就永远不知道自己该说那句话，比重复说一遍糟得多。
+ *
+ * 消费之后才触发兜底取消（settleFallbackForConsumedNotices 走这条）——顺序不能反：
+ * 先销兜底再发现请求其实失败了，就再也补不回来。
+ */
+export const consumeAmsg2Notices = async (
+  char: CharacterProfile,
+  consumedIds: string[],
+  runtime: Amsg2NoticeConsumeRuntime,
+): Promise<void> => {
+  if (!consumedIds.length) return;
+  try {
+    await runtime.settle(char, consumedIds);
+  } catch (e) {
+    // 销账失败不连累这一轮聊天：消息已经发出去了，回执下轮再说一遍只是多带一次。
+    console.warn('[amsg2] 回执销账失败（下一轮会重新带上）', { charId: char.id, consumedIds, error: e });
+  }
+};
+
 /** 从回执 id / occurrenceMs 找回配对的主任务。 */
 function findMainTaskForNotice(
   tasks: ActiveMsg2TaskRecord[],
@@ -389,6 +424,56 @@ export interface FallbackSettleParams {
   delayMs: number;
   nowMs?: number;
 }
+
+/**
+ * 真正的那份销账 runtime：标记已消费 → 触发配对兜底取消 → 通知面板刷新。
+ *
+ * 顺序是刻意的（先记账再销兜底）：反过来的话，先把兜底销了才发现请求其实失败了，
+ * 那条后路就再也补不回来——而"重复说一遍"和"提醒彻底丢失"两害相权，后者重得多。
+ *
+ * 事件名用字面量而不是从 activeMsgRuntime import：那个模块 import 本模块的对面
+ * （settleFallbackAfterDelivery 用到 fallbackFor 判定），从这边再 import 回去成环。
+ * 用的是 OSContext 真正在监听的那个事件名。
+ */
+export const buildNoticeConsumeRuntime = (deps: {
+  schedule: (input: { mainTask: ActiveMsg2TaskRecord; nextOccurrenceMs: number }) => Promise<ActiveMsg2TaskRecord | null>;
+  cancelRemote: (taskUuid: string) => Promise<void>;
+  persist: (charId: string, mutate: (tasks: ActiveMsg2TaskRecord[]) => ActiveMsg2TaskRecord[]) => Promise<void>;
+  delayMs: number;
+}): Amsg2NoticeConsumeRuntime => ({
+  settle: async (char, consumedIds) => {
+    // 1) 先标已消费。失败不往上抛 —— 这一步失败的后果只是下轮重复带一次回执，
+    //    而下面的销兜底照做会让"下轮又说一遍"这件事不再有后路兜着。
+    try {
+      await ActiveMsgStore.markExpiredNoticesNotified(char.id, consumedIds);
+    } catch (e) {
+      console.warn('[amsg2] 回执标记已消费失败（下轮会重复带一次）', { charId: char.id, error: e });
+    }
+
+    // 2) 再销兜底：只有 kind='deferred' 的那些意味着"角色这轮把它说出来了"。
+    const fresh = (await DB.getAllCharacters()).find((c) => c.id === char.id);
+    if (fresh?.activeMsg2Config) {
+      await settleFallbackForConsumedNotices({
+        char: fresh,
+        consumedNoticeIds: consumedIds,
+        runtime: {
+          schedule: deps.schedule,
+          cancelRemote: deps.cancelRemote,
+          persist: (mutate) => deps.persist(char.id, mutate),
+          diag: (extra) => console.info('[amsg2] 兜底配对', extra),
+        },
+        delayMs: deps.delayMs,
+      });
+    }
+
+    // 3) 面板要看得见兜底被销掉了（以及循环任务的新兜底）。
+    try {
+      window.dispatchEvent(new CustomEvent('amsg2-character-tasks-changed', {
+        detail: { charId: char.id },
+      }));
+    } catch { /* SSR-safe */ }
+  },
+});
 
 /**
  * 麦麦 2026-09-30 step 5：回执被角色消费掉了（「到点推迟」那条被带出来了）→

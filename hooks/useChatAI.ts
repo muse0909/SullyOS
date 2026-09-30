@@ -10,6 +10,14 @@ import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
+// 麦麦 2026-09-30：主动消息 2.0 排程块 + 回执注入 / 消费。
+import {
+  buildNoticeConsumeRuntime,
+  collectAmsg2TaskContext,
+  consumeAmsg2Notices,
+} from '../utils/amsg2TaskContext';
+import { AMSG_FALLBACK_DELAY_MS, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
@@ -1426,6 +1434,31 @@ let _tempImageCleanupKeys: string[] = [];
                 dynamicTailParts.push(dynamicMemoryPalace);
             }
 
+            // 麦麦 2026-09-30：主动消息 2.0 排程块 + 回执，插在**易变尾段之前**。
+            //
+            // 位置为什么是这儿（不是贴数组尾巴）：「回到你自己」钢印焊在 dynamicTail 末尾，
+            // 靠 recency 抢模型开口前的最后一眼。排程块贴在它后面时，模型最后读到的是一份
+            // 带原文的待办清单，于是把排在今晚的任务当成本轮就该办的事——用户侧的表现是
+            // 「说了今天要看书，之后每轮结尾都问看到哪了」。所以排在它**前面**。
+            //
+            // 前缀缓存一个 token 都不动：插入点在 cache 断点之后，历史前缀完整复用。
+            //
+            // 这条链路的另一半是「消费」：本轮请求成功之后才把这批回执标成已消费
+            // （见下方成功分支），失败 / 取消都留着，下一轮重新带上。
+            let amsg2TaskContextResult: Awaited<ReturnType<typeof collectAmsg2TaskContext>> | null = null;
+            if (isAmsg2EnabledForChar(char)) {
+                try {
+                    amsg2TaskContextResult = await collectAmsg2TaskContext(char);
+                    if (amsg2TaskContextResult.text) {
+                        fullMessages.push({ role: 'system', content: amsg2TaskContextResult.text });
+                    }
+                } catch (amsgCtxErr) {
+                    // 排程块丢一次不连累这一轮聊天：它只影响角色知不知道自己名下有什么，
+                    // 而聊天本身是用户此刻真正要的事。
+                    console.warn('[ChatAI] 组装主动消息排程块失败（继续聊天）', amsgCtxErr);
+                }
+            }
+
             // 暮色 2026-08-05：dynamic tail 6 段合并成 1 条 system 消息
             //   改前：每段 1 条 system 消息 → messages 末尾有 6 条 system（消息头膨胀 + cache prefix 短）
             //   改后：1 条 system 消息（6 段用 \n\n join）→ messages 里只剩 2 条 system（top + tail）
@@ -2071,6 +2104,50 @@ if (hasImageInLatest && !alreadyDescribed) {
             }
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
+
+            // 麦麦 2026-09-30：回执**消费**。定义钉死在这里 —— 回执进了一次**成功**的
+            // 模型请求才算消费；请求抛错 / 被用户取消 / 走到 catch 都不算，台账原样留着，
+            // 下一轮重新带上（角色不知道自己有话要说，比重复说一遍更糟）。
+            //
+            // 放在拿到 data 之后：safeFetchJson 抛异常时根本走不到这，catch 分支也就不会
+            // 误标。这里之前不做任何记账。
+            if (amsg2TaskContextResult?.expiredIds?.length) {
+                void consumeAmsg2Notices(char, amsg2TaskContextResult.expiredIds,
+                  buildNoticeConsumeRuntime({
+                    delayMs: AMSG_FALLBACK_DELAY_MS,
+                    schedule: async ({ mainTask: t, nextOccurrenceMs }) => {
+                      const built = await ActiveMsgClient.scheduleFallbackTask({
+                        char, config: char.activeMsg2Config!,
+                        forClientTaskId: t.clientTaskId,
+                        forSource: t.source,
+                        mainOccurrenceMs: nextOccurrenceMs,
+                        mainMode: t.mode,
+                        mainHintOrReason: t.promptHint,
+                        mainUserMessage: t.userMessage,
+                        mainRecurrence: t.recurrenceType,
+                        userProfile, groups,
+                        // 这个作用域的 realtimeConfig 是可选的（外层签名允许不传）。
+                        // 兜底是 fixed 模式、云端压根不调模型，这份只走建任务接口的
+                        // 入参校验，缺了就给一个空壳——真要靠它渲染内容的是
+                        // prompted/auto 主任务，那条在面板/工具桥里传的是真值。
+                        realtimeConfig: realtimeConfig ?? ({} as RealtimeConfig),
+                        apiConfig,
+                        enabledOverride: char.activeMsg2Config?.enabled === true,
+                      });
+                      return built?.record ?? null;
+                    },
+                    cancelRemote: async (uuid) => { await ActiveMsgClient.cancelTask(uuid); },
+                    persist: async (charId, mutate) => {
+                      const fresh = (await DB.getCharacter(charId).catch(() => null));
+                      if (!fresh?.activeMsg2Config) return;
+                      await DB.saveCharacter({
+                        ...fresh,
+                        activeMsg2Config: { ...fresh.activeMsg2Config, tasks: mutate(fresh.activeMsg2Config.tasks ?? []) } as any,
+                      });
+                    },
+                  }),
+                );
+            }
 
             // 3.4 麦当劳小程序 propose_cart_items UI 钩子工具循环
             //     不调 MCP, 只把模型的 args 作为 mcd_card kind=proposal 落库, 让小程序聊天面板渲染

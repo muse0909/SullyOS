@@ -3033,7 +3033,19 @@ export interface Amsg2ExpiredNoticeRecord {
   mode: ActiveMsg2Mode;
   promptHint?: string;
   recurrenceType: ActiveMsg2Recurrence;
-  kind?: 'expired' | 'user-cancelled';
+  /**
+   * 这次触发到底怎么了。四种，给角色的话各不相同（见 amsg2TaskContext 的 buildNoticeSections）：
+   *
+   * - `expired`         遇忙作废：到点时对话正在进行，为避免撞车直接取消。
+   * - `deferred`        到点推迟：策略是「强制发送」，到点前 10 分钟用户刚说过话，
+   *                     所以这次不插嘴，改在角色下一轮上下文里顺口带出（麦麦 2026-09-30 新规则）。
+   * - `quota-blocked`   没排上名额满：额度用完了（今日次数 / 连发条数到上限），
+   *                     内容没能发出去。跟「作废」是两回事——不是时机不对，是没轮上。
+   * - `user-cancelled`  用户手动取消。
+   *
+   * 老记录没有这个字段，按 `expired` 读。
+   */
+  kind?: 'expired' | 'deferred' | 'quota-blocked' | 'user-cancelled';
   notifiedAt?: number;
   createdAt: number;
 }

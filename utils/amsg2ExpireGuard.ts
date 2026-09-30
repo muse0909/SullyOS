@@ -142,18 +142,29 @@ export interface DetectExpiredInput {
   recurrenceType: string | undefined;
   /** ISO 字符串，任务首次触发时间。 */
   firstSendTime: string;
-  anchorMs: number | null | undefined;
+  /**
+   * 排程那一刻的最后一条真实用户消息时间戳。只对**一次性**任务有意义（判"排完之后
+   * 对话有没有往前走过"），循环任务走的是到点前后那个 10 分钟窗，用不上它。
+   * 不传 = 没有锚点，一次性任务因此判不了（宁可不产出回执，也不凭空判一个）。
+   */
+  anchorMs?: number | null;
   messages: RealUserMessageLike[];
   nowMs: number;
   lookbackMs?: number;
 }
 
 /**
- * 排程现状块的作废检出：回看期内哪些触发时刻满足作废条件。调用方需另用
+ * 排程现状块的「这次没发出去」检出：回看期内哪些触发时刻被让开了。调用方需另用
  * hasDeliveredProactiveNear 排除实际送达过的（这里不做，方便单测各管一半）。
+ *
+ * 麦麦 2026-09-30：`force` 也放行了。旧口径只认 `expire`，那是在"云端对 force
+ * 一次窗都不判"的前提下写的（客户端反正判了也白判，force 照发）。新规则下 force
+ * 同样会被让开——到点前 10 分钟用户刚说过话就不插嘴，改在下一轮顺口带出——所以
+ * 它也得有回执，只是给角色的话不一样（见 buildNoticeSections）。
+ * 窗口判据两者共用，不分策略：同一个时刻、同一段聊天，对两种策略的答案本来就该一致。
  */
 export function detectExpiredOccurrences(input: DetectExpiredInput): ExpiredNoticeCandidate[] {
-  if (input.policy !== 'expire') return [];
+  if (input.policy !== 'expire' && input.policy !== 'force') return [];
   const first = new Date(input.firstSendTime).getTime();
   if (!Number.isFinite(first)) return [];
   const horizon = input.nowMs - (input.lookbackMs ?? DEFAULT_LOOKBACK_MS);

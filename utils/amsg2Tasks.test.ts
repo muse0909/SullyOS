@@ -19,6 +19,7 @@ import {
   isForcePolicy,
   isPendingTask,
   isRemoteMissingTask,
+  noticeKindForTask,
   keepUncancelledTasks,
   parseRemoteTaskLastError,
   pruneFiredTasks,
@@ -686,5 +687,32 @@ describe('FIXED_AS_PROMPTED_PREFIX', () => {
   it('写"原话"而不是"原样发送"', () => {
     expect(FIXED_AS_PROMPTED_PREFIX).toContain('原话');
     expect(FIXED_AS_PROMPTED_PREFIX).not.toContain('原样');
+  });
+});
+
+// ─── 麦麦 2026-09-30：回执的四种类型 ───
+// 旧口径只有两种（作废 / 手动取消），把「强制发送」和「固定」一起排除了。新规则下
+// 强制发送同样会被让开，它得有一条自己的回执——说「这轮顺口带出来」，不是「别提了」。
+// 这两种给角色的动作是相反的，混在一段里说它会随便挑一条。
+describe('noticeKindForTask（这条没发出去时，角色该听到哪一种交代）', () => {
+  it('遇忙作废 → expired', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'expire' }))).toBe('expired');
+    expect(noticeKindForTask(task({ mode: 'prompted', expirePolicy: 'expire' }))).toBe('expired');
+  });
+
+  it('强制发送 → deferred（旧口径这里返回的是「不用判」，角色压根不知道被让开过）', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'force' }))).toBe('deferred');
+    expect(noticeKindForTask(task({ mode: 'prompted', expirePolicy: 'force' }))).toBe('deferred');
+  });
+
+  // 固定模式恒无条件发，真没发出去是投递失败，走 lastError 那条路。
+  // 在回执里告诉角色"你那条没发"是骗它去补一句它压根不需要说的话。
+  it('固定模式 → 不产回执（恒无条件发）', () => {
+    expect(noticeKindForTask(task({ mode: 'fixed', expirePolicy: 'force' }))).toBeNull();
+    expect(noticeKindForTask(task({ mode: 'fixed', expirePolicy: 'expire' }))).toBeNull();
+  });
+
+  it('已取消的任务 → 不产回执', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'expire', status: 'cancelled' }))).toBeNull();
   });
 });

@@ -15,6 +15,7 @@
 import {
   ActiveMsg2CharacterConfig,
   ActiveMsg2ExpirePolicy,
+  Amsg2ExpiredNoticeRecord,
   ActiveMsg2Mode,
   ActiveMsg2Recurrence,
   ActiveMsg2TaskRecord,
@@ -356,6 +357,25 @@ export const getPendingTasks = (
 /** 这个任务的触发有没有可能被防穿帮闸作废（fixed / force 永远照发）。 */
 export const canExpire = (task: ActiveMsg2TaskRecord): boolean =>
   task.status === 'scheduled' && task.mode !== 'fixed' && task.expirePolicy === 'expire';
+
+/**
+ * 这条任务的触发「没发出去」时，角色该听到哪一种交代（麦麦 2026-09-30）。
+ *
+ * 为什么要单独一个判断：旧口径只认 `expired`，把「强制发送」和「固定」一起排除了。
+ * 但新规则下**强制发送同样会被让开**（到点前 10 分钟用户刚说过话 → 改在下一轮
+ * 顺口带出），它同样需要一条回执告诉角色"刚才那条没插嘴"，只是说法不一样：
+ * 遇忙作废是「时机不对，别提了」，到点推迟是「这轮里自然带出来」。
+ *
+ * 固定模式不产回执：它恒定无条件发，真没发出去那是投递失败，走 lastError 那条路，
+ * 不是"策略让它没发"。
+ */
+export const noticeKindForTask = (
+  task: ActiveMsg2TaskRecord,
+): Amsg2ExpiredNoticeRecord['kind'] | null => {
+  if (task.status !== 'scheduled') return null;
+  if (task.mode === 'fixed') return null;
+  return resolveExpirePolicy(task.mode, task.expirePolicy) === 'force' ? 'deferred' : 'expired';
+};
 
 /** 有没有还会响的 AI 任务（amsgStateSync 的同步门用：fixed 不需要 fire_pack）。 */
 export const hasActiveAiTask = (

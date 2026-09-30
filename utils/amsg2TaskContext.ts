@@ -17,9 +17,9 @@ import { DB } from './db';
 import { resolveCharTimeZone } from './timezone';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
 import {
-  AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, canExpire, currentOccurrenceMs, describeExpirePolicy,
+  AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
-  shortTaskId, visibleTasks,
+  noticeKindForTask, shortTaskId, visibleTasks,
 } from './amsg2Tasks';
 
 /**
@@ -118,8 +118,17 @@ const describeNoticeLine = (r: Amsg2ExpiredNoticeRecord, charTz: string | undefi
 };
 
 /**
- * 回执的两个段落（闸自动作废 / 用户手动取消）。给角色的交代完全不同（前者可以续期
- * 补上，后者是用户不要了），分成两段说；没有 kind 的老记录按自动作废处理。
+ * 回执的段落（麦麦 2026-09-30 起是四段）。
+ *
+ * 为什么一段一种说法：四种情况给角色的交代完全不同，混在一段里说"已作废"会让角色
+ * 在"这轮自然带出来"和"别提了"之间随便挑——而这两条路的动作是相反的。
+ *
+ *  - 到点推迟：用户刚跟它说过话，所以这次不插嘴，改在这轮对话里自然带出来。
+ *  - 遇忙作废：时机不对（对话已经往前走了），别硬塞。
+ *  - 没排上名额满：内容没发出去是额度用完，不是时机问题。
+ *  - 手动取消：用户不要了。
+ *
+ * 没有 kind 的老记录按遇忙作废处理（那确实是它当年的含义）。
  * 完整排程现状块和「回执单独成块」（即时对话云端路径）共用这一份文案。
  */
 const buildNoticeSections = (
@@ -127,9 +136,25 @@ const buildNoticeSections = (
   charTz: string | undefined,
 ): string[] => {
   const parts: string[] = [];
-  const autoExpired = expired.filter((r) => r.kind !== 'user-cancelled');
-  const userCancelled = expired.filter((r) => r.kind === 'user-cancelled');
+  const byKind = (kind: NonNullable<Amsg2ExpiredNoticeRecord['kind']>) =>
+    expired.filter((r) => (r.kind ?? 'expired') === kind);
 
+  // —— 到点推迟（新规则里「强制发送」被让开的那一次）——
+  const deferred = byKind('deferred');
+  if (deferred.length) {
+    parts.push('已推迟（到点时用户刚跟你说过话，所以这次没有插嘴）：');
+    for (const r of deferred) {
+      parts.push(describeNoticeLine(r, charTz));
+    }
+    parts.push([
+      '这几条不是取消，是**这轮对话里换种方式说出来**——用户在跟你说话，硬插一条定时消息会撞车。',
+      '处理方式：先看当下的话题合不合适，合就顺着带一句（早安那条拖到晚上就别再道早安）；不合适就留到下一次，别为了「交代回执」生硬转移话题。',
+      '带出来之后就当这件事已经说过了，别在后面几轮里反复提。用户要是没接话，也不要追问为什么没回。',
+    ].join('\n'));
+  }
+
+  // —— 遇忙作废 ——
+  const autoExpired = byKind('expired');
   if (autoExpired.length) {
     parts.push('已作废（到点时对话正在进行，为避免撞车自动取消）：');
     for (const r of autoExpired) {
@@ -143,6 +168,22 @@ const buildNoticeSections = (
     ].join('\n'));
   }
 
+  // —— 没排上名额满 ——
+  const quotaBlocked = byKind('quota-blocked');
+  if (quotaBlocked.length) {
+    parts.push('没发出去（今天的次数或连发条数用满了）：');
+    for (const r of quotaBlocked) {
+      parts.push(describeNoticeLine(r, charTz));
+    }
+    parts.push([
+      '这几条的内容是**真的想对用户说的**，只是额度用完没轮上——跟作废不一样，别当成对方不想听。',
+      '处理方式：额度恢复后（明天，或用户回了消息之后）挑最重要的一条用 renew_active_message 补一次；一次最多补一条，别一口气全倒出来。',
+      '也别因为额度满了就改主意去说别的：额度是「少说几句」，不是「换个话头」。',
+    ].join('\n'));
+  }
+
+  // —— 用户手动取消 ——
+  const userCancelled = byKind('user-cancelled');
   if (userCancelled.length) {
     parts.push('已被手动取消：');
     for (const r of userCancelled) {
@@ -270,14 +311,17 @@ export async function collectAmsg2TaskContext(
   const tasks = config?.tasks ?? [];
   const now = Date.now();
 
-  // 逐任务检出作废（AI 任务且 expire 策略才判；force / fixed 不作废）。
+  // 逐任务检出「这次没发出去」（AI 任务且非固定模式；麦麦 2026-09-30 起强制发送也算，
+  // 它同样会被让开，只是不是叫"作废"）。固定模式恒无条件发，真没发出去是投递失败，
+  // 走 lastError 那条路，不在这套回执里。
   if (config?.enabled && tasks.length) {
     // 取够整个回看期的历史再判：证据（那条已送达的主动消息）落在窗外的话，
-    // 检出侧会把一条发过的触发当成作废，角色接着把同一件事再说一遍。
+    // 检出侧会把一条发过的触发当成没发出去，角色接着把同一件事再说一遍。
     const messages = await loadMessagesCoveringLookback(char.id, now - AMSG2_TASK_LOOKBACK_MS);
     const candidates = tasks
-      .filter(canExpire)
-      .flatMap((t) => detectExpiredOccurrences({
+      .map((t) => ({ t, kind: noticeKindForTask(t) }))
+      .filter((x): x is { t: ActiveMsg2TaskRecord; kind: NonNullable<typeof x.kind> } => x.kind != null)
+      .flatMap(({ t, kind }) => detectExpiredOccurrences({
         taskUuid: t.taskUuid,
         policy: t.expirePolicy,
         recurrenceType: t.recurrenceType,
@@ -289,7 +333,7 @@ export async function collectAmsg2TaskContext(
         .map((c) => ({
           id: c.id, charId: char.id, occurrenceMs: c.occurrenceMs,
           mode: t.mode, promptHint: t.promptHint, recurrenceType: t.recurrenceType,
-          kind: 'expired', createdAt: now,
+          kind, createdAt: now,
         } satisfies Amsg2ExpiredNoticeRecord)));
     if (candidates.length) await ActiveMsgStore.upsertExpiredNotices(char.id, candidates);
   }

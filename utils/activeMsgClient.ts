@@ -23,7 +23,7 @@ import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
   getPendingTasks, isAmsg2EnabledForChar, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
-  resolveExpirePolicy, toDatetimeLocalValue,
+  resolveCloudExpirePolicy, resolveExpirePolicy, toDatetimeLocalValue,
 } from './amsg2Tasks';
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
 import {
@@ -2475,6 +2475,14 @@ export const ActiveMsgClient = {
     // 必须在创建时就带上归属键；push 原样透传，送达归属全靠它。
     const clientTaskId = crypto.randomUUID();
 
+    // 麦麦 2026-09-30：「强制发送」在**云端那侧**一律翻成「遇忙作废」跑，
+    // 让云端那道的 10 分钟窗真正生效（它对 force 本来一次都不判）。规则与理由见
+    // amsg2Tasks.resolveCloudExpirePolicy。fixed 不翻——它不进 onBeforeFire，没有窗可判。
+    const { cloudPolicy: cloudExpirePolicy, forceAsExpire: isForceAsExpire } = resolveCloudExpirePolicy(
+      task.mode,
+      task.expirePolicy,
+    );
+
     const remoteAvatarUrl = toRemoteAvatarUrl(char.avatar);
     const payload: Record<string, any> = {
       contactName: char.name,
@@ -2499,7 +2507,19 @@ export const ActiveMsgClient = {
         // recurrenceType / occurrenceMs 不往这儿抄：库会把它们盖在每条 push 顶层，
         // 角色在 fire 里自排的任务也一样有，抄一份反而多一处会漏写的地方。
         amsgClientTaskId: clientTaskId,
-        amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
+        amsgExpirePolicy: cloudExpirePolicy,
+        // 麦麦 2026-09-30：「强制发送」翻译成「遇忙作废」发给云端 + 打这条标记。
+        //
+        // 背景：云端 shouldExpireFire 第一行就是 policy !== 'expire' → return false，
+        // 也就是说**云端对 force 一次窗都不判**，到点必推。我们要的新规则是
+        // 「force + 到点前 10 分钟用户说过话 → 不推送，改到角色下一轮上下文带出」，
+        // 那个判断云端做不了，只能由客户端把策略翻译成 expire 让它去跳。
+        //
+        // 翻译后云端照旧只留一条 last_skip（会被后写的覆盖），所以「被跳了要转回执」
+        // 这件事不能靠读它——靠本地任务记录里的真实策略 + 本地聊天记录自己判。
+        // 这条标记的作用只有一个：面板上把策略还原显示成「强制发送」，别让用户
+        // 看到自己选的「强制发送」在云端变成了「遇忙作废」。
+        ...(isForceAsExpire ? { amsgForceDeferred: true } : {}),
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不带、不受连发上限管）。
         ...(task.selfScheduled ? { amsgSelfScheduled: true } : {}),
         // 麦麦 2026-09-16 plan step B：任务来源字段，worker 据此切 system hint。

@@ -891,6 +891,25 @@ const buildFireKey = (message: ActiveMsg2InboxMessage): string =>
 
 async function evaluateScheduledPushExpired(message: ActiveMsg2InboxMessage): Promise<boolean> {
   const meta = (message.metadata || {}) as Record<string, any>;
+
+  // 麦麦 2026-09-30：「强制发送」这条**不判**。
+  //
+  // 建任务时客户端把 force 翻成了 expire 发给云端（activeMsgClient 的 isForceAsExpire），
+  // 云端在到点那一刻已经判过一次：放行 = 用户当时没说话，这条 push 就不该再被吞。
+  // 客户端拿本地聊天记录再判一次是拿「送达时刻」对「到点时刻」——生成+送达可能晚几十分钟，
+  // 用户在 8:00 点空着、8:30 才收到并说了话，本地这条会判成作废，把一条本该到点的
+  // 消息吞掉。所以这里显式放行：**云端是唯一真相**，force 的判定权不在客户端。
+  // （整套送达判定最终会在 step 11 删掉，这里先堵住这个回归，别等到那一步。）
+  if (meta.amsgForceDeferred === true) {
+    activeMsgTrace('runtime-expire-decision-pass', {
+      messageId: message.messageId,
+      charId: message.charId,
+      taskId: message.taskId,
+      reason: 'force-deferred-cloud-decides',
+    });
+    return false;
+  }
+
   const messages = await DB.getRecentMessagesByCharId(message.charId, 200);
   const input = {
     policy: meta.amsgExpirePolicy,

@@ -20,6 +20,7 @@ import {
   pruneFiredTasks,
   pruneStaleTasks,
   reconcileTasksWithRemote,
+  resolveCloudExpirePolicy,
   shortTaskId,
   toDatetimeLocalValue,
 } from './amsg2Tasks';
@@ -538,5 +539,30 @@ describe('currentOccurrenceMs 跨夏令时', () => {
     });
     const now = Date.parse('2026-03-20T00:00:00.000Z');
     expect(currentOccurrenceMs(stale, now)).toBeGreaterThan(now);
+  });
+});
+
+// 麦麦 2026-09-30：发往云端那份的策略翻译。
+//
+// 云端 shouldExpireFire 对 force 一次窗口都不判（`policy !== 'expire' → false`），
+// 所以「force + 到点前 10 分钟用户说过话就不推」这条新规则只能靠翻译让云端去跳。
+// 本地记录始终是真策略，翻译只发生在发给云端的那份 metadata 上。
+describe('resolveCloudExpirePolicy（force 翻成 expire 发给云端）', () => {
+  it('提示词/自动 + 强制发送 → 云端收到 expire，且标记被翻过', () => {
+    for (const mode of ['prompted', 'auto'] as const) {
+      expect(resolveCloudExpirePolicy(mode, 'force')).toEqual({ cloudPolicy: 'expire', forceAsExpire: true });
+    }
+  });
+
+  it('没写策略（默认）→ 原样 expire，不标翻过', () => {
+    expect(resolveCloudExpirePolicy('auto', undefined)).toEqual({ cloudPolicy: 'expire', forceAsExpire: false });
+    expect(resolveCloudExpirePolicy('prompted', 'expire')).toEqual({ cloudPolicy: 'expire', forceAsExpire: false });
+  });
+
+  // fixed 压根不进 onBeforeFire（上游按 taskNeedsLlm 把关），云端没有窗口可判，
+  // 翻它等于凭空塞一个没人读的字段，还会让面板把「固定」显示成别的。
+  it('固定模式不翻：恒 force，也不标翻过', () => {
+    expect(resolveCloudExpirePolicy('fixed', 'expire')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
+    expect(resolveCloudExpirePolicy('fixed', 'force')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
   });
 });

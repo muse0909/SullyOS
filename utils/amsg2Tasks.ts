@@ -57,6 +57,31 @@ export const resolveExpirePolicy = (
   policy: ActiveMsg2ExpirePolicy | undefined,
 ): ActiveMsg2ExpirePolicy => (mode === 'fixed' ? 'force' : (policy ?? 'expire'));
 
+/**
+ * **发给云端那份**的作废策略：非 fixed 的「强制发送」一律翻成「遇忙作废」。
+ *
+ * 麦麦 2026-09-30。为什么必须翻、翻的代价是什么：
+ *
+ * 1. 云端 shouldExpireFire 第一行就是 `policy !== 'expire' → return false`。也就是说
+ *    **云端对 force 一次窗口都不判**，到点必推。我们要的新规则是
+ *    「force + 到点前 10 分钟用户说过话 → 不推送，改到角色下一轮上下文带出」，
+ *    那个判断在线上代码里不存在，只能靠翻译让云端去跳。
+ * 2. 翻完之后，本地任务记录仍然是 force——面板显示、客户端到点判定、兜底联动
+ *    一律按真策略走，翻译只发生在发给云端的那一份 metadata 上。
+ * 3. fixed 不翻：它压根不进 onBeforeFire（上游按 taskNeedsLlm 把关），云端没有窗口
+ *    可判，翻译它等于凭空多一个字段没人读。
+ *
+ * 判定是不是被翻过，看 metadata 上的 `amsgForceDeferred`（面板靠它还原显示）。
+ */
+export const resolveCloudExpirePolicy = (
+  mode: ActiveMsg2Mode,
+  policy: ActiveMsg2ExpirePolicy | undefined,
+): { cloudPolicy: ActiveMsg2ExpirePolicy; forceAsExpire: boolean } => {
+  const effective = resolveExpirePolicy(mode, policy);
+  const forceAsExpire = effective === 'force' && mode !== 'fixed';
+  return { cloudPolicy: forceAsExpire ? 'expire' : effective, forceAsExpire };
+};
+
 // ─── 任务的人读文案 ───
 // 角色的排程现状块、list_active_messages 的返回、设置面板的任务列表都显示同一批任务，
 // 三处必须说同一套词——角色在上下文里看到的和它用工具查到的对不上，模型是会当成两回事的。

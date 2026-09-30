@@ -34,6 +34,8 @@ import {
 import { dispatchAmsgResult } from './amsgResults';
 import { flushAmsgState } from './amsgStateSync';
 import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError } from './amsg2Tasks';
+import { AMSG_FALLBACK_DELAY_MS } from './amsg2Tasks';
+import { resolveOccurrenceForPairing, retireFallbackForOccurrence } from './amsg2FallbackPair';
 // 线协议常量的唯一出处是 shared（amsg-sw 只是 re-export 同一份）。
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import { appendInstantTraceEntry } from './instantTraceLog';
@@ -1063,6 +1065,91 @@ async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise
 }
 
 /**
+ * 麦麦 2026-09-30 step 5：一条主任务真说出来了，销掉它那条 +30 分钟兜底。
+ *
+ * 触发点是"确实上屏了"（调用点在 landedMessageIds.push 之后），所以闸吞掉的那批
+ * 不会走到这里——闸吞掉恰恰是兜底该顶上的场合，销了它消息就真的没了。
+ *
+ * 三个触发点（这里 / 回执被消费 / 面板手动改）共用 amsg2FallbackPair 的判定和执行，
+ * 抄三遍的代价是以后改配对逻辑要改三个地方，漏一个就出现「每天早安说完话，
+ * 30 分钟后又说一遍」。本函数只负责把运行时上下文（角色、API 配置、写回）备齐。
+ */
+async function settleFallbackAfterDelivery(message: ActiveMsg2InboxMessage): Promise<void> {
+  const meta = (message.metadata || {}) as Record<string, any>;
+  const clientTaskId = meta.amsgClientTaskId;
+  // 没有归属键就配不上对：兜底是按主任务的 clientTaskId 建的（amsgFallbackFor），
+  // 拿不到主任务身份时宁可什么都不做，也不要瞎销掉别人的兜底。
+  if (typeof clientTaskId !== 'string' || !clientTaskId) return;
+  if (meta.amsgFallbackFor) return;   // 这条自己就是兜底，别把主任务的兜底再销一遍
+
+  const char = (await DB.getAllCharacters()).find((c) => c.id === message.charId);
+  if (!char) return;
+  const mainTask = (char.activeMsg2Config?.tasks ?? [])
+    .find((t) => t.clientTaskId === clientTaskId && !t.fallbackFor);
+  if (!mainTask) return;
+
+  const nowMs = Date.now();
+  // 拿「当前这一次」而不是首次：循环任务每天都在响，拿首次当 occurrence 会让
+  // 每天都在销第一天的兜底，真正的后路留着不管。
+  const occurrenceMs = resolveOccurrenceForPairing(mainTask, nowMs)
+    ?? message.occurrenceMs
+    ?? new Date(mainTask.firstSendTime).getTime();
+  if (!Number.isFinite(occurrenceMs)) return;
+
+  // 运行时上下文照本文件既有取法（loadApiConfigFromLocalStorage 等）：收件箱这条路
+  // 不在 React 树里，拿不到 useOS 传下来的那套。别从 ActiveMsg2GlobalConfig 里找——
+  // 那是后端连接配置，不含角色运行时。
+  const userProfile: UserProfile = (await DB.getUserProfile())
+    ?? { name: 'User', avatar: '', bio: '' };
+  const groups = await DB.getGroups();
+  const apiConfig = loadApiConfigFromLocalStorage();
+  const realtimeConfig = loadRealtimeConfigFromLocalStorage()!;
+
+  await retireFallbackForOccurrence({
+    char,
+    schedule: async ({ mainTask: t, nextOccurrenceMs }) => {
+      const built = await ActiveMsgClient.scheduleFallbackTask({
+        char,
+        config: char.activeMsg2Config!,
+        forClientTaskId: t.clientTaskId,
+        forSource: t.source,
+        mainOccurrenceMs: nextOccurrenceMs,
+        // 重建时那句话从主任务重算：面板上改过兜底内容的话，会在这里被覆盖回
+        // 模板句。刻意这么做——用户改的是"这一次的兜底说什么"，不是"以后每句都这么写"。
+        mainMode: t.mode,
+        // 落盘的任务记录里没有 reason 字段（那是建任务入参，worker 专用 metadata），
+        // 提示方向统一走 promptHint。固定模式取原文。
+        mainHintOrReason: t.promptHint,
+        mainUserMessage: t.userMessage,
+        mainRecurrence: t.recurrenceType,
+        userProfile,
+        groups,
+        realtimeConfig,
+        apiConfig,
+        enabledOverride: char.activeMsg2Config?.enabled === true,
+      });
+      return built?.record ?? null;
+    },
+    cancelRemote: async (uuid) => { await ActiveMsgClient.cancelTask(uuid); },
+    persist: async (mutate) => {
+      const fresh = (await DB.getAllCharacters()).find((c) => c.id === message.charId);
+      if (!fresh?.activeMsg2Config) return;
+      const nextTasks = mutate(fresh.activeMsg2Config.tasks ?? []);
+      await DB.saveCharacter({
+        ...fresh,
+        activeMsg2Config: { ...fresh.activeMsg2Config, tasks: nextTasks } as any,
+      });
+      try {
+        window.dispatchEvent(new CustomEvent(AMSG2_TASKS_ADOPTED_EVENT, { detail: { charId: message.charId } }));
+      } catch { /* SSR-safe */ }
+    },
+    diag: (extra) => {
+      amsgDiag({ stage: 'fallback-cancelled', charId: message.charId, ...(extra as any) });
+    },
+  }, { mainTask, occurrenceMs, delayMs: AMSG_FALLBACK_DELAY_MS, nowMs });
+}
+
+/**
  * 把 worker 带回来的「角色取消 / 改期了既有任务」落到本地清单（amsgTaskMutations，
  * 与 adoptSelfScheduledTasks 对称的消账侧）。
  *
@@ -2067,6 +2154,19 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       // 走到这里 = 这条真的落进聊天流了（主路径落库完 / 降级存了原稿）。上面每一个
       // continue 都是「没上屏」：闸吞了、跟已有的重了、等前面的分段、压回收件箱重试。
       landedMessageIds.push(message.messageId);
+
+      // 麦麦 2026-09-30：这条真说出来了 → 它那条 +30 分钟兜底就多余了。
+      // 不取消的话，30 分钟后角色会把同一件事再说一遍（"刚不是说了吗"）。
+      // 循环任务取消的同时按下个周期重建——今天这条说完了，明天的后路还得在。
+      // 排在 landedMessageIds 之后：兜底是「没说出来时补一句」，说出来了才轮到它退场；
+      // 排在它前面的话，闸吞掉的那批（上面 continue 掉的）会连兜底一起取消。
+      if (message.source === 'scheduled') {
+        void settleFallbackAfterDelivery(message).catch((e) => {
+          log.warn('推送送达后取消兜底失败（兜底会照常到点补一条，重复一句）', {
+            messageId: message.messageId, error: e,
+          });
+        });
+      }
 
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',
       // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。

@@ -17,6 +17,7 @@ import { DB } from './db';
 import { resolveCharTimeZone } from './timezone';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
 import { scanAndRecordDeferred } from './amsg2DeferredScan';
+import { retireFallbackForOccurrence } from './amsg2FallbackPair';
 import {
   AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
@@ -359,3 +360,76 @@ export async function collectAmsg2TaskContext(
     notices: unnotified,
   };
 }
+
+/** 从回执 id / occurrenceMs 找回配对的主任务。 */
+function findMainTaskForNotice(
+  tasks: ActiveMsg2TaskRecord[],
+  notice: Amsg2ExpiredNoticeRecord,
+): ActiveMsg2TaskRecord | null {
+  if (notice.recurrenceType === 'none') {
+    return tasks.find((t) => t.taskUuid === notice.id && !t.fallbackFor) ?? null;
+  }
+  // 循环的 id 带触发时刻，对不上就宁可不做（宁可兜底多留 30 分钟，也别销错那条）。
+  return tasks.find((t) => `${t.taskUuid}:${notice.occurrenceMs}` === notice.id && !t.fallbackFor) ?? null;
+}
+
+/** 销兜底要用的运行时能力（建任务 / 取消远端 / 写回本地清单）。 */
+interface FallbackSettleRuntime {
+  schedule: (input: { mainTask: ActiveMsg2TaskRecord; nextOccurrenceMs: number }) => Promise<ActiveMsg2TaskRecord | null>;
+  cancelRemote: (taskUuid: string) => Promise<void>;
+  persist: (mutate: (tasks: ActiveMsg2TaskRecord[]) => ActiveMsg2TaskRecord[]) => Promise<void>;
+  diag?: (extra: Record<string, unknown>) => void;
+}
+
+export interface FallbackSettleParams {
+  char: CharacterProfile;
+  /** 本轮注入并成功发出的那些回执 id。 */
+  consumedNoticeIds: string[];
+  runtime: FallbackSettleRuntime;
+  delayMs: number;
+  nowMs?: number;
+}
+
+/**
+ * 麦麦 2026-09-30 step 5：回执被角色消费掉了（「到点推迟」那条被带出来了）→
+ * 销掉对应的兜底。
+ *
+ * 为什么这是独立的一个触发点：推迟的消息**从来没进过聊天流**（云端跳过了，客户端
+ * 压根没收到推送），所以推送送达那条路不会经过它。唯一"角色说出来了"的证据就是
+ * 这次回执被注入并消费——注入的 prompt 消失（下次组请求不带它了）就是消费完成。
+ *
+ * 循环任务同样按下个周期重建，口径跟推送送达那条完全一致（共用 amsg2FallbackPair）。
+ *
+ * 幂等：回执台账按 id 记账，同一条被消费两次也只销一次兜底。
+ *
+ * 参数类型写成具名 interface 而不是内联对象：`}): Promise<T> => {` 这一行里的 `>`
+ * 会被解析成 JSX 结束符（内联写法在本项目里踩过，见其它函数的 `(params: {...})` 写法）。
+ */
+export async function settleFallbackForConsumedNotices(
+  params: FallbackSettleParams,
+): Promise<number> {
+  if (!params.consumedNoticeIds.length) return 0;
+  const nowMs = params.nowMs ?? Date.now();
+  const consumed = new Set(params.consumedNoticeIds);
+  const all = await ActiveMsgStore.getExpiredNotices(params.char.id);
+  // 只认「到点推迟」：只有它意味着"角色这轮把这件事说出来了"。遇忙作废是直接取消、
+  // 不告诉角色（见 buildNoticeSections），那条没被消费，别拿来销兜底。
+  const deferreds = all.filter((r) => consumed.has(r.id) && r.kind === 'deferred');
+  if (!deferreds.length) return 0;
+
+  const tasks = params.char.activeMsg2Config?.tasks ?? [];
+  let settled = 0;
+  for (const notice of deferreds) {
+    // 找配着这次触发的主任务。循环的 id 是 `${taskUuid}:${occurrenceMs}`，靠 occurrence
+    // 对回主任务；一次性的 id 直接就是 taskUuid。
+    const mainTask = findMainTaskForNotice(tasks, notice);
+    if (!mainTask) continue;
+    const result = await retireFallbackForOccurrence(
+      { char: params.char, ...params.runtime },
+      { mainTask, occurrenceMs: notice.occurrenceMs, delayMs: params.delayMs, nowMs },
+    );
+    settled += result.cancelled + result.rebuilt;
+  }
+  return settled;
+}
+

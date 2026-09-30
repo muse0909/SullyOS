@@ -24,6 +24,7 @@ import {
   pruneFiredTasks,
   pruneStaleTasks,
   reconcileTasksWithRemote,
+  FIXED_AS_PROMPTED_PREFIX,
   resolveCloudExpirePolicy,
   shortTaskId,
   toDatetimeLocalValue,
@@ -552,25 +553,6 @@ describe('currentOccurrenceMs 跨夏令时', () => {
 // 云端 shouldExpireFire 对 force 一次窗口都不判（`policy !== 'expire' → false`），
 // 所以「force + 到点前 10 分钟用户说过话就不推」这条新规则只能靠翻译让云端去跳。
 // 本地记录始终是真策略，翻译只发生在发给云端的那份 metadata 上。
-describe('resolveCloudExpirePolicy（force 翻成 expire 发给云端）', () => {
-  it('提示词/自动 + 强制发送 → 云端收到 expire，且标记被翻过', () => {
-    for (const mode of ['prompted', 'auto'] as const) {
-      expect(resolveCloudExpirePolicy(mode, 'force')).toEqual({ cloudPolicy: 'expire', forceAsExpire: true });
-    }
-  });
-
-  it('没写策略（默认）→ 原样 expire，不标翻过', () => {
-    expect(resolveCloudExpirePolicy('auto', undefined)).toEqual({ cloudPolicy: 'expire', forceAsExpire: false });
-    expect(resolveCloudExpirePolicy('prompted', 'expire')).toEqual({ cloudPolicy: 'expire', forceAsExpire: false });
-  });
-
-  // fixed 压根不进 onBeforeFire（上游按 taskNeedsLlm 把关），云端没有窗口可判，
-  // 翻它等于凭空塞一个没人读的字段，还会让面板把「固定」显示成别的。
-  it('固定模式不翻：恒 force，也不标翻过', () => {
-    expect(resolveCloudExpirePolicy('fixed', 'expire')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
-    expect(resolveCloudExpirePolicy('fixed', 'force')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
-  });
-});
 
 // ─── 麦麦 2026-09-30：30 分钟兜底 ───
 // 兜底是「强制发送」被让开、角色又一直没顺口带出来时的最终保证。三个判定都纯，
@@ -615,15 +597,20 @@ describe('buildFallbackText（兜底到点原样发的那句）', () => {
     expect(buildFallbackText('fixed', '别太油', undefined)).toBe('');
   });
 
-  it('提示词/自动：短的方向词当提醒语用（"记得提醒我"）', () => {
-    expect(buildFallbackText('prompted', '记得提醒我吃药', undefined)).toBe('记得提醒我吃药');
+  // 暮色 2026-09-30 拍板：提示词/自动**不能丢掉原文换默认句**。丢了的话兜底推过来
+  // 就是一句看不出在提醒什么的话，等于没提醒。方向词（"别太油"）照样原样带进去。
+  it('提示词/自动：方向词原样带进模板', () => {
+    expect(buildFallbackText('prompted', '别太油', undefined)).toBe('到点啦：别太油');
+    expect(buildFallbackText('auto', '记得提醒我吃药', undefined)).toBe('到点啦：记得提醒我吃药');
   });
 
-  // 方向词原样弹出去读起来是空的（「别太油」「自然一点」——发给谁看？）。
-  it('方向词（长句/带标点）不当提醒语，退回默认句', () => {
-    expect(buildFallbackText('prompted', '别太油，自然一点，像平时聊天那样', undefined))
-      .toBe('你之前定的那件事，到点啦。');
-    expect(buildFallbackText('auto', '嗯嗯，', undefined)).toBe('你之前定的那件事，到点啦。');
+  it('提示词/自动：长句也带，一字不改', () => {
+    const hint = '别太油，自然一点，像平时聊天那样';
+    expect(buildFallbackText('prompted', hint, undefined)).toBe(`到点啦：${hint}`);
+  });
+
+  it('首尾空白先去掉再拼（免得模板里出现"到点啦：  "这种空隙）', () => {
+    expect(buildFallbackText('prompted', '  记得提醒我吃药  ', undefined)).toBe('到点啦：记得提醒我吃药');
   });
 
   it('什么都没给 → 兜底默认句', () => {
@@ -645,5 +632,59 @@ describe('isFallbackTask / visibleTasks（兜底不给人看）', () => {
     expect(visibleTasks([main, fb, other])).toEqual([main, other]);
     // 原数组不能被就地改——面板拿 allTasks 还要用来关 2.0 时取消全部。
     expect(visibleTasks([main, fb, other])).not.toBe([main, fb, other]);
+  });
+});
+
+// ─── 麦麦 2026-09-30：发给云端那份的形态 ───
+// 云端那道到点判定的真实长相（对着线上 bundle 逐行核过）：
+//   shouldExpireFire 第一行 `policy !== 'expire' → return false` —— 对 force 一次不判；
+//   taskNeedsLlm 只放 prompted / auto 进 onBeforeFire —— fixed 连门都摸不到。
+// 所以「force + 到点前 10 分钟用户说过话就不推」这条新规则，客户端只能靠翻译
+// 让云端去跳。本地记录始终是真策略，翻译只发生在发给云端的那一份上。
+describe('resolveCloudExpirePolicy（翻译成云端认得的形态）', () => {
+  it('提示词/自动 + 强制发送 → 云端收到 expire，标记被翻过', () => {
+    for (const mode of ['prompted', 'auto'] as const) {
+      expect(resolveCloudExpirePolicy(mode, 'force')).toEqual({
+        cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: false,
+      });
+    }
+  });
+
+  it('没写策略（默认）→ 原样 expire，两条标记都不打', () => {
+    expect(resolveCloudExpirePolicy('auto', undefined))
+      .toEqual({ cloudPolicy: 'expire', forceAsExpire: false, fixedAsPrompted: false });
+    expect(resolveCloudExpirePolicy('prompted', 'expire'))
+      .toEqual({ cloudPolicy: 'expire', forceAsExpire: false, fixedAsPrompted: false });
+  });
+
+  // 固定 + 强制发送：光翻策略没用（taskNeedsLlm 挡着），必须连模式一起翻成 prompted。
+  // 这是钙片那类提醒第一次真正走进新规则——代价是每个周期多一次模型调用。
+  it('固定 + 强制发送 → 策略翻 expire，且模式也翻成 prompted（附提示词前缀）', () => {
+    for (const policy of [undefined, 'force'] as const) {
+      const r = resolveCloudExpirePolicy('fixed', policy);
+      expect(r.cloudPolicy).toBe('expire');
+      expect(r.forceAsExpire).toBe(true);
+      expect(r.fixedAsPrompted).toBe(true);
+      expect(r.cloudHint).toBe(FIXED_AS_PROMPTED_PREFIX);
+    }
+  });
+
+  // 固定模式恒 force（resolveExpirePolicy 钉死，面板上它永远显示「强制发送」），
+  // 所以"固定 + 遇忙作废"这个组合压根不存在 —— 每一条固定任务都会走翻译。
+  // 这不是 bug，是暮色 9-30 定的规则本身：固定模式也要走 10 分钟窗、不接受照发。
+  it('固定模式无论调用方写什么策略，一律翻成 prompted + expire', () => {
+    for (const policy of [undefined, 'expire', 'force'] as const) {
+      const r = resolveCloudExpirePolicy('fixed', policy);
+      expect(r).toMatchObject({ cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: true });
+    }
+  });
+});
+
+describe('FIXED_AS_PROMPTED_PREFIX', () => {
+  // 「原话」不是「原样发送」：模型没法逐字复读，说「原样发送」它会理解成照着意思说，
+  // 措辞飘得更远；约束"内容不许变"、放它决定语气，才是暮色接受的那点代价。
+  it('写"原话"而不是"原样发送"', () => {
+    expect(FIXED_AS_PROMPTED_PREFIX).toContain('原话');
+    expect(FIXED_AS_PROMPTED_PREFIX).not.toContain('原样');
   });
 });

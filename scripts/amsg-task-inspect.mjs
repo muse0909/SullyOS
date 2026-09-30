@@ -186,10 +186,16 @@ if (!rows.length) {
         const md = payload.metadata || {};
         console.log(`      策略=${md.amsgExpirePolicy ?? '(没写)'}  `
           + `推迟标记=${md.amsgForceDeferred === true ? '有' : '无'}  `
+          + `固定转提示词=${md.amsgFixedAsPrompted === true ? '有' : '无'}  `
+          + `云端模式=${md.amsgMode ?? '(没写)'}  `
           + `循环=${payload.recurrenceType ?? 'none'}  `
           + `来源=${md.amsgSource ?? '(没写)'}`);
         const mode = payload.messageType;
         if (md.amsgForceDeferred === true) console.log('      ↑ 原本是「强制发送」，发给云端翻成了遇忙作废');
+        if (md.amsgFixedAsPrompted === true) {
+          console.log('      ↑ 原本是「固定」，连模式一起翻成了提示词（云端要调模型，走 10 分钟窗）');
+          console.log(`      翻译成的提示词: ${String(md.amsgTaskInstruction || '(没写)').slice(0, 90)}`);
+        }
         if (mode === 'fixed') {
           console.log(`      固定内容: ${String(payload.userMessage || '(空)').slice(0, 60)}`);
         }

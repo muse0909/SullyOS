@@ -145,6 +145,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   //   暮色 2026-09-18 12:42：列表只看一行根本看不出实际设置（reason/promptHint 都截断），
   //   点 row 展开内联详情比弹窗顺。
   const [expandedTaskUuid, setExpandedTaskUuid] = useState<string | null>(null);
+  // 麦麦 2026-09-30：正在编辑兜底内容的那条主任务 uuid。兜底内容是建任务时冻进
+  // 加密 payload 的，云端没有改内容的接口（只有 schedule/cancel/list），所以改它
+  // 走「取消旧兜底 + 按原时刻重建」——见 ActiveMsgClient.updateFallbackTaskText。
+  const [editingFallbackFor, setEditingFallbackFor] = useState<string | null>(null);
+  const [fallbackDraft, setFallbackDraft] = useState('');
+  const [savingFallbackUuid, setSavingFallbackUuid] = useState<string | null>(null);
   // 麦麦 2026-09-24 13:48：诊断日志 viewer 开关（从全局弹窗迁过来的唯一入口）
   const [diagLogOpen, setDiagLogOpen] = useState(false);
   const [expirePolicy, setExpirePolicy] = useState<ActiveMsg2ExpirePolicy>('expire');
@@ -385,6 +391,40 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       ? `任务 [${shortTaskId(t.taskUuid)}] 在远端已不存在（多半已经发过了），已从列表移除。`
       : `任务 [${shortTaskId(t.taskUuid)}] 已取消。`, 'info');
     trackEvent('取消定时消息', { result: alreadyGone ? '远端已不存在' : 'ok' });
+  };
+
+  // 兜底内容改了要同步到云端那条 —— 改的是"30 分钟后推过来的那句话"，不是本地显示。
+  // 时刻和循环由 updateFallbackTaskText 原样带走，动的不该是这两样。
+  const handleSaveFallbackText = async (mainTask: ActiveMsg2TaskRecord, fb: ActiveMsg2TaskRecord) => {
+    const text = fallbackDraft.trim();
+    if (!text) { addToast('兜底内容不能为空。', 'error'); return; }
+    if (text === (fb.userMessage || '').trim()) { setEditingFallbackFor(null); return; }
+    setSavingFallbackUuid(fb.taskUuid);
+    try {
+      const config = buildConfig(saved, () => allTasks);
+      const { record } = await ActiveMsgClient.updateFallbackTaskText({
+        char, config, fallback: fb, newText: text,
+        userProfile, groups, realtimeConfig, apiConfig,
+        enabledOverride: enabled,
+      });
+      onSave((prev) => buildConfig(
+        prev,
+        // 整条换掉：uuid / clientTaskId / 时刻都变了，只改内容字段会留下一条指向
+        // 已取消任务的记录，第 5 步按 uuid 取消时取消的是那个不存在的旧号。
+        (list) => list.map((t) => (t.taskUuid === fb.taskUuid ? record : t)),
+        { lastSyncedAt: Date.now() },
+      ));
+      setKnownRemoteUuids((prev) => applyRemoteTaskDelta(prev, {
+        present: [record.taskUuid], gone: [fb.taskUuid],
+      }));
+      setEditingFallbackFor(null);
+      addToast('兜底内容已改，云端那条也换了。', 'success');
+    } catch (error) {
+      // 取消成功、重建失败的话旧那条已经没了：这条要让用户知道，否则兜底就此消失。
+      addToast(`改兜底失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+    } finally {
+      setSavingFallbackUuid(null);
+    }
   };
 
   const handleSubmit = async () => {
@@ -639,6 +679,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             {/* 一次 render 内所有任务用同一个 now，免得同屏卡片踩在不同的时刻上判定。 */}
             <div className="space-y-2">
               {tasks.map((t) => {
+                // 麦麦 2026-09-30：兜底挂在主任务这一行下面，不单独占一行、也不算名额。
+                // 面板上要看得见也改得动 —— 用户得知道"到点没响还有一次 30 分钟后的替补"，
+                // 替补那句不对他能改。只对角色隐藏（到点上下文 / 排程块都滤掉了）。
+                const fb = allTasks.find((x) => x.fallbackFor === t.clientTaskId) ?? null;
                 // 循环任务显示的是「下一次」，不是创建时那个锚点（见 currentOccurrenceMs）。
                 const occurrenceMs = currentOccurrenceMs(t, now);
                 const missingRemote = isRemoteMissingTask(t, knownRemoteUuids, now);
@@ -734,6 +778,77 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                         {t.lastError ? (
                           <div className="text-red-500 text-[11px]">{t.lastError}</div>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {/* 兜底挂在主任务里面（不另起一行）：它是这条任务的后路，
+                        单独列一行的话用户会以为系统多排了一条他没排过的任务。
+                        时间用主任务的 + 30 分钟算出来，不单独存——那个值就是
+                        updateFallbackText 重建时原样带走的那个 firstSendTime。 */}
+                    {t.expirePolicy === 'force' ? (
+                      <div className="mt-2 pt-2 border-t border-dashed border-slate-200">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold">
+                            兜底
+                          </span>
+                          <span className="text-slate-400 text-[11px]">
+                            到点没发出去的话，30 分钟后原样补一条（不算名额）
+                          </span>
+                        </div>
+                        {fb ? (
+                          editingFallbackFor === t.clientTaskId ? (
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <textarea
+                                value={fallbackDraft}
+                                onChange={(e) => setFallbackDraft(e.target.value)}
+                                rows={2}
+                                className="w-full px-2.5 py-2 rounded-lg border border-slate-200 text-[11px] text-slate-700 focus:border-amber-300 focus:outline-none resize-none"
+                                placeholder="30 分钟后推过来的那句话"
+                              />
+                              <div className="flex gap-2 mt-1.5">
+                                <button
+                                  onClick={() => void handleSaveFallbackText(t, fb)}
+                                  disabled={savingFallbackUuid === fb.taskUuid}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-700 font-bold disabled:opacity-50"
+                                >
+                                  {savingFallbackUuid === fb.taskUuid ? '保存中…' : '保存'}
+                                </button>
+                                <button
+                                  onClick={() => setEditingFallbackFor(null)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 font-bold"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFallbackDraft(fb.userMessage || '');
+                                setEditingFallbackFor(t.clientTaskId);
+                              }}
+                              className="flex items-start gap-2"
+                            >
+                              <div className="flex-1 min-w-0 text-slate-600 text-[11px] leading-relaxed break-words">
+                                {fb.userMessage || <span className="text-slate-400">（还没内容）</span>}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setFallbackDraft(fb.userMessage || '');
+                                  setEditingFallbackFor(t.clientTaskId);
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 font-bold shrink-0"
+                              >
+                                改
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                          <div className="text-slate-400 text-[11px]">
+                            这次没建成（建任务那次没成功，可以取消这条重排一次）
+                          </div>
+                        )}
                       </div>
                     ) : null}
                   </div>

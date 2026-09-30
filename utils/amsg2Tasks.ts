@@ -58,29 +58,77 @@ export const resolveExpirePolicy = (
 ): ActiveMsg2ExpirePolicy => (mode === 'fixed' ? 'force' : (policy ?? 'expire'));
 
 /**
- * **发给云端那份**的作废策略：非 fixed 的「强制发送」一律翻成「遇忙作废」。
+ * **发给云端那份**的形态：作废策略 + 模式 + 提示词。
  *
  * 麦麦 2026-09-30。为什么必须翻、翻的代价是什么：
  *
- * 1. 云端 shouldExpireFire 第一行就是 `policy !== 'expire' → return false`。也就是说
- *    **云端对 force 一次窗口都不判**，到点必推。我们要的新规则是
- *    「force + 到点前 10 分钟用户说过话 → 不推送，改到角色下一轮上下文带出」，
- *    那个判断在线上代码里不存在，只能靠翻译让云端去跳。
- * 2. 翻完之后，本地任务记录仍然是 force——面板显示、客户端到点判定、兜底联动
- *    一律按真策略走，翻译只发生在发给云端的那一份 metadata 上。
- * 3. fixed 不翻：它压根不进 onBeforeFire（上游按 taskNeedsLlm 把关），云端没有窗口
- *    可判，翻译它等于凭空多一个字段没人读。
+ * 背景是云端那道到点判定的真实长相：
+ *   - `shouldExpireFire` 第一行就是 `policy !== 'expire' → return false` —— 云端对
+ *     force 一次窗口都不判，到点必推。
+ *   - `taskNeedsLlm` 只让 `prompted` / `auto` 进 `onBeforeFire` —— fixed 连那道门的
+ *     边都摸不到。
+ * 也就是说「force + 到点前 10 分钟用户说过话 → 不推送，改在角色下一轮上下文带出」
+ * 这条新规则，云端对 force 和 fixed **都做不到**。只能靠客户端翻译，让云端去跳。
  *
- * 判定是不是被翻过，看 metadata 上的 `amsgForceDeferred`（面板靠它还原显示）。
+ * 两种翻译：
+ *
+ * 1. **提示词/自动 + 强制发送** → 策略翻成「遇忙作废」。模式不动，云端进得了那道门，
+ *    策略是 expire 就会被那道 10 分钟窗判。代价只有"可能被跳过"这一条本来就要的。
+ *
+ * 2. **固定 + 强制发送** → **整个模式翻成「提示词」**。光翻策略没用：fixed 压根不进
+ *    onBeforeFire（`taskNeedsLlm` 写死），翻译它等于凭空塞一个没人读的字段。
+ *    连模式一起翻才进得了门。提示词写「把这句原话发给她：{content}」，把原文塞进
+ *    指令里让模型照着说。
+ *
+ * 代价（2）比（1）重，都摆在这里，不是权衡后的结论之外的隐藏成本：
+ *   - **多一次模型调用**，每个周期都多。固定模式本来是纯投递、零 token。
+ *     注意固定模式恒 force（resolveExpirePolicy 钉死，面板上永远显示「强制发送」），
+ *     所以「固定 + 遇忙作废」这个组合压根不存在 —— 每一条固定任务都会走这条翻译。
+ *   - **措辞可能有细微变化**：模型是"照着原文说"，不是逐字复读。
+ *   - **多一次网络往返**：提示词模式建任务前必须先上传 fire_pack（固定模式不用），
+ *     所以建一条钙片提醒从 1 次请求变成 2 次。
+ *   - **欠着即时对话回复时 fire_pack 不覆盖**（utils/activeMsgClient 的 owesChat 分支），
+ *     翻译后的任务到点读到的可能是旧包。极端情况（新角色、云端一份包都没有）会硬失败
+ *     ——但那条已经配了真 fixed 兜底，30 分钟后原话照送，这条是自愈的。
+ *
+ * 判定有没有被翻过，看 metadata 上的 `amsgForceDeferred` / `amsgFixedAsPrompted`。
  */
 export const resolveCloudExpirePolicy = (
   mode: ActiveMsg2Mode,
   policy: ActiveMsg2ExpirePolicy | undefined,
-): { cloudPolicy: ActiveMsg2ExpirePolicy; forceAsExpire: boolean } => {
+): {
+  cloudPolicy: ActiveMsg2ExpirePolicy;
+  /** 本地记录 / 面板显示用这个——始终是真策略。 */
+  forceAsExpire: boolean;
+  /** 固定模式被翻成提示词模式：云端 messageType 跟本地 mode 不一致了。 */
+  fixedAsPrompted: boolean;
+  /** 翻成提示词模式时，原文塞进指令的那段提示词。 */
+  cloudHint?: string;
+} => {
   const effective = resolveExpirePolicy(mode, policy);
-  const forceAsExpire = effective === 'force' && mode !== 'fixed';
-  return { cloudPolicy: forceAsExpire ? 'expire' : effective, forceAsExpire };
+  if (effective !== 'force') {
+    return { cloudPolicy: effective, forceAsExpire: false, fixedAsPrompted: false };
+  }
+  if (mode === 'fixed') {
+    return {
+      cloudPolicy: 'expire',
+      forceAsExpire: true,
+      fixedAsPrompted: true,
+      cloudHint: FIXED_AS_PROMPTED_PREFIX,
+    };
+  }
+  return { cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: false };
 };
+
+/**
+ * 固定模式被翻成提示词模式时，提示词的前缀（麦麦 2026-09-30 暮色拍板）。
+ *
+ * 写「原话」而不是「原样发送」：模型没法逐字复读，说「原样发送」它会理解成
+ * "照着这个意思"，于是措辞飘得更远。说「把这句原话发给她」是在约束"内容不许变"，
+ * 允许它决定语气和连接词——这正是暮色接受的那点代价。
+ */
+export const FIXED_AS_PROMPTED_PREFIX = '把这句原话发给她：';
+
 
 /** 「强制发送」被让开后，兜底任务隔多久补那条消息（麦麦 2026-09-30 暮色定的 30 分钟）。 */
 export const AMSG_FALLBACK_DELAY_MS = 30 * 60_000;
@@ -88,13 +136,15 @@ export const AMSG_FALLBACK_DELAY_MS = 30 * 60_000;
 /**
  * 兜底任务到点时原样发出的那句话。
  *
- * 兜底走 fixed 模式（不调模型），所以这句话必须是**写死的**——它不是"到点让角色
- * 重新说一遍"，而是"到点了，该说的那句"。
+ * 兜底走 fixed 模式（不调模型），所以这句话必须在**建的时候**就定死。它要解决的是
+ * 「到点了，该说的那句」——不是让角色重新发挥一次。所以**必须带上原文**：
+ * 兜底是 30 分钟前那次被让开的消息的替补，替补里如果不写清在提醒什么，用户收到的
+ * 是一句无头无尾的「到点啦」，等于没提醒。
  *
- * 取值优先级：
- *  1. fixed 主任务：主任务自己的原文，一字不改（钙片提醒这种本来就没有发挥空间）
- *  2. 用户/角色给过的一句提醒语（hint 本身就是一句成品话时用它）
- *  3. 兜底默认句（上面两种都没有时的最后兜底，面板上可改）
+ * 取值：
+ *  1. 固定模式：主任务自己的原文，一字不改（钙片提醒这种本来就没有发挥空间）
+ *  2. 提示词/自动：把方向或理由**原样**带进模板 —— 「到点啦：{原文}」
+ *  3. 上面两种都没有 → 默认句
  *
  * 刻意**不**在这里调模型：那会让"建一条任务"变成一次网络往返，卡界面、还多一个
  * 失败面，而兜底要的恰恰是"确定的一句"，不是 AI 临场发挥。面板上这一句可以改。
@@ -107,10 +157,10 @@ export const buildFallbackText = (
   if (mode === 'fixed') {
     return userMessage?.trim() || '';
   }
-  const given = hintOrReason?.trim();
-  // 方向词（"别太油"、"自然一点"）当提醒语读起来是空的，留着反而会原样弹出去。
-  if (given && given.length <= 12 && !/[，。！？,.!?]/.test(given)) return given;
-  return '你之前定的那件事，到点啦。';
+  const given = (hintOrReason || '').trim();
+  // 方向词也带（"别太油"照样原样拼进模板）。曾经在这里判"太短/是方向词就丢掉换默认句"，
+  // 那是错的：丢了原文，兜底推过去就成了一句看不出在提醒什么的话。
+  return given ? `到点啦：${given}` : '你之前定的那件事，到点啦。';
 };
 
 /** 这个任务策略是不是「强制发送」——决定要不要给它配兜底。 */

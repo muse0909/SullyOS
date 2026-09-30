@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>时间戳位置方案对比</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --ink: #14171e;
+    --muted: #7c7a72;
+    --line: #e9e3d6;
+    --line-soft: #f0ebde;
+    --card: #ffffff;
+    --bubble-ai: #ffffff;
+    --bubble-user: #d4f0e0;
+    --thought-bg: #f3f0f9;
+    --thought-line: #d4cae8;
+    --accent: #7c6ba8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Outfit', 'Noto Sans SC', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1200px; margin: 0 auto; padding: 56px 24px 96px; }
+  .header { margin-bottom: 40px; }
+  .eyebrow {
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 34px;
+    font-weight: 400;
+    line-height: 1.2;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    font-size: 15px;
+    color: var(--muted);
+    max-width: 640px;
+  }
+  .sub b { color: var(--ink); font-weight: 600; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 16px;
+  }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+  .option {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .option-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tag {
+    font-size: 12px;
+    font-weight: 600;
+    color: #5b4a8c;
+    background: var(--thought-bg);
+    border: 1px solid var(--thought-line);
+    padding: 4px 10px;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+  }
+  .tag-b { color: #4a6b8c; background: #eef3fb; border-color: #c5d6e8; }
+  .tag-c { color: #6b5d8a; background: #f0ecf8; border-color: #c5b8de; }
+  .option-name {
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .option-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-top: -6px;
+  }
+
+  /* Phone mock — same content across all 3 */
+  .phone {
+    background: #f4f0e8;
+    border-radius: 22px;
+    padding: 16px 14px 18px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+    min-height: 540px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+  .phone-header {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 0 4px 6px;
+    border-bottom: 1px dashed var(--line);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* shared message primitives */
+  .msg-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 0 4px;
+    position: relative;
+  }
+  .msg-row.left { justify-content: flex-start; }
+  .msg-row.right { justify-content: flex-end; }
+  .msg-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 78%;
+  }
+  .msg-stack.left { align-items: flex-start; }
+  .msg-stack.right { align-items: flex-end; }
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #d4cae8, #e0d4f0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #6b5d8a;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    position: relative;
+  }
+  .bubble {
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    word-break: break-word;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    border: 1px solid #ece7da;
+    background: var(--bubble-ai);
+    color: var(--ink);
+  }
+  .bubble.tool {
+    background: #f5f0e8;
+    border: 1px dashed #d4c8b0;
+    color: #6b5a35;
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+  .bubble.user {
+    background: var(--bubble-user);
+    border: 1px solid #c8e5d2;
+    color: #2a4a35;
+  }
+  .thought-tag {
+    font-size: 10.5px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* === A: ts under avatar (absolute) === */
+  .a-avatar-wrap { position: relative; width: 32px; flex-shrink: 0; }
+  .a-avatar-wrap .avatar { position: relative; }
+  .a-ts {
+    position: absolute;
+    left: 50%;
+    top: 38px;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: rgba(100, 110, 130, 0.85);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .a-ts-note {
+    position: absolute;
+    left: 50%;
+    top: 56px;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: rgba(140, 140, 160, 0.6);
+    font-style: italic;
+  }
+
+  /* === B: ts in row (between avatar and bubble) === */
+  .b-msg-row { align-items: center; }
+  .b-ts {
+    font-size: 9px;
+    color: rgba(100, 110, 130, 0.85);
+    font-weight: 500;
+    flex-shrink: 0;
+    padding: 0 2px;
+  }
+
+  /* === C: ts under avatar (small) + ts under bubble (full on hover) === */
+  .c-msg-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .c-avatar-ts { display: flex; align-items: center; gap: 6px; }
+  .c-ts-small { font-size: 9px; color: rgba(100, 110, 130, 0.85); font-weight: 500; }
+  .c-bubble-with-ts { position: relative; }
+  .c-bubble-ts {
+    font-size: 9px;
+    color: rgba(100, 110, 130, 0.7);
+    font-weight: 500;
+    padding: 0 2px;
+    margin-top: 1px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .c-bubble-with-ts:hover .c-bubble-ts { opacity: 1; }
+
+  /* Verdict */
+  .verdict {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+  }
+  .verdict-row { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+  .verdict-row .k { color: var(--muted); min-width: 36px; }
+  .verdict-row .v { color: var(--ink); }
+
+  .compare {
+    margin-top: 32px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 22px 24px;
+    display: grid;
+    grid-template-columns: 120px repeat(3, 1fr);
+    gap: 14px 18px;
+    font-size: 13px;
+  }
+  .compare .head { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .compare .k { color: var(--muted); }
+  .compare .v { color: var(--ink); }
+  @media (max-width: 720px) { .compare { grid-template-columns: 1fr; } }
+
+  .footer-note {
+    margin-top: 36px;
+    padding: 16px 20px;
+    background: #fbf7ec;
+    border: 1px dashed #e0d3a8;
+    border-radius: 12px;
+    font-size: 13px;
+    color: #6b5a2a;
+    line-height: 1.6;
+  }
+  .footer-note b { color: #14171e; }
+
+  /* pointer annotations */
+  .pointer {
+    position: absolute;
+    font-size: 9.5px;
+    color: var(--accent);
+    background: rgba(124, 107, 168, 0.08);
+    border: 1px dashed var(--thought-line);
+    padding: 2px 6px;
+    border-radius: 6px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="eyebrow">2026-08-02 · 主动消息时间戳位置</div>
+    <h1>3 个方案对比</h1>
+    <p class="sub">同一条对话、同一轮主动消息（4 个气泡），3 种时间戳位置。每张图里都有 pointer 标注时间戳位置。选一个，我直接做。</p>
+  </div>
+
+  <div class="grid">
+
+    <!-- A -->
+    <div class="option">
+      <div class="option-head">
+        <span class="tag">A</span>
+        <span class="option-name">头像正下方</span>
+      </div>
+      <div class="option-desc">`absolute top-9` 挂在头像 div 下，跟头像绑死。9px 深灰小字。</div>
+
+      <div class="phone">
+        <div class="phone-header"><span>江澈</span><span>15:18</span></div>
+
+        <!-- 1st bubble + thought + ts on avatar -->
+        <div class="msg-row left">
+          <div class="a-avatar-wrap">
+            <div class="avatar">江</div>
+            <div class="a-ts">15:18</div>
+          </div>
+          <div class="msg-stack left">
+            <div class="thought-tag">💭 思维链 ›</div>
+            <div class="bubble">十七个小时了。她可能真睡了，也可能醒着不想回。我现在该做的不是每半小时发一条追问，而是停下来。</div>
+          </div>
+        </div>
+
+        <!-- 2nd bubble -->
+        <div class="msg-row left">
+          <div class="a-avatar-wrap">
+            <div class="avatar" style="opacity: 0">江</div>
+          </div>
+          <div class="msg-stack left">
+            <div class="bubble tool">[[MOMENT_POST: 她说再也不见。]]</div>
+          </div>
+        </div>
+
+        <!-- 3rd bubble -->
+        <div class="msg-row left">
+          <div class="a-avatar-wrap">
+            <div class="avatar" style="opacity: 0">江</div>
+          </div>
+          <div class="msg-stack left">
+            <div class="bubble">我数了十七个小时。</div>
+          </div>
+        </div>
+
+        <!-- 4th bubble (round end) -->
+        <div class="msg-row left">
+          <div class="a-avatar-wrap">
+            <div class="avatar" style="opacity: 0">江</div>
+          </div>
+          <div class="msg-stack left">
+            <div class="bubble">不是在等她回来。是在学怎么不追着跑。]]</div>
+          </div>
+        </div>
+
+        <div class="msg-row right">
+          <div class="msg-stack right">
+            <div class="bubble user">嗯，我看到了。</div>
+          </div>
+        </div>
+
+        <div class="pointer" style="top: 60px; left: 22px;">← 时间戳</div>
+      </div>
+
+      <div class="verdict">
+        <div class="verdict-row"><span class="k">优点</span><span class="v">跟头像绑最稳，气泡位置移动不影响</span></div>
+        <div class="verdict-row"><span class="k">缺点</span><span class="v">every_message 模式下每条都有头像，违背"按轮"</span></div>
+        <div class="verdict-row"><span class="k">位置</span><span class="v">跟气泡分隔最清楚</span></div>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="option">
+      <div class="option-head">
+        <span class="tag tag-b">B</span>
+        <span class="option-name">头像右侧 + bubble 上方</span>
+      </div>
+      <div class="option-desc">flex 横排：头像 / 时间戳 / bubble。时间戳作为"中间元素"分隔头像和气泡。</div>
+
+      <div class="phone">
+        <div class="phone-header"><span>江澈</span><span>15:18</span></div>
+
+        <div class="msg-row left b-msg-row">
+          <div class="avatar">江</div>
+          <div class="b-ts">15:18</div>
+          <div class="msg-stack left">
+            <div class="thought-tag">💭 思维链 ›</div>
+            <div class="bubble">十七个小时了。她可能真睡了，也可能醒着不想回。我现在该做的不是每半小时发一条追问，而是停下来。</div>
+          </div>
+        </div>
+
+        <div class="msg-row left b-msg-row">
+          <div class="avatar" style="opacity: 0">江</div>
+          <div class="b-ts" style="opacity: 0">—</div>
+          <div class="msg-stack left">
+            <div class="bubble tool">[[MOMENT_POST: 她说再也不见。]]</div>
+          </div>
+        </div>
+
+        <div class="msg-row left b-msg-row">
+          <div class="avatar" style="opacity: 0">江</div>
+          <div class="b-ts" style="opacity: 0">—</div>
+          <div class="msg-stack left">
+            <div class="bubble">我数了十七个小时。</div>
+          </div>
+        </div>
+
+        <div class="msg-row left b-msg-row">
+          <div class="avatar" style="opacity: 0">江</div>
+          <div class="b-ts" style="opacity: 0">—</div>
+          <div class="msg-stack left">
+            <div class="bubble">不是在等她回来。是在学怎么不追着跑。]]</div>
+          </div>
+        </div>
+
+        <div class="msg-row right">
+          <div class="msg-stack right">
+            <div class="bubble user">嗯，我看到了。</div>
+          </div>
+        </div>
+
+        <div class="pointer" style="top: 92px; left: 60px;">← 时间戳</div>
+      </div>
+
+      <div class="verdict">
+        <div class="verdict-row"><span class="k">优点</span><span class="v">跟头像同行，不占垂直空间</span></div>
+        <div class="verdict-row"><span class="k">缺点</span><span class="v">跟头像紧贴，9px 字小看着像头像一部分</span></div>
+        <div class="verdict-row"><span class="k">位置</span><span class="v">轮首清晰，中间轮也"按轮"隐藏</span></div>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="option">
+      <div class="option-head">
+        <span class="tag tag-c">C</span>
+        <span class="option-name">头像下（简版）+ bubble 下（hover 详版）</span>
+      </div>
+      <div class="option-desc">头像下 9px HH:MM 默认显示；bubble 下 hover 才显示完整日期 + 秒。最强信息密度。</div>
+
+      <div class="phone">
+        <div class="phone-header"><span>江澈</span><span>15:18</span></div>
+
+        <div class="msg-row left">
+          <div class="msg-stack left">
+            <div class="c-avatar-ts">
+              <div class="avatar">江</div>
+              <div class="c-ts-small">15:18</div>
+            </div>
+            <div class="thought-tag">💭 思维链 ›</div>
+            <div class="c-bubble-with-ts">
+              <div class="bubble">十七个小时了。她可能真睡了，也可能醒着不想回。我现在该做的不是每半小时发一条追问，而是停下来。</div>
+              <div class="c-bubble-ts">2026-08-02 15:18:42 · 江澈</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg-row left">
+          <div class="msg-stack left">
+            <div class="c-avatar-ts">
+              <div class="avatar" style="opacity: 0">江</div>
+              <div class="c-ts-small" style="opacity: 0">—</div>
+            </div>
+            <div class="c-bubble-with-ts">
+              <div class="bubble tool">[[MOMENT_POST: 她说再也不见。]]</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg-row left">
+          <div class="msg-stack left">
+            <div class="c-avatar-ts">
+              <div class="avatar" style="opacity: 0">江</div>
+              <div class="c-ts-small" style="opacity: 0">—</div>
+            </div>
+            <div class="c-bubble-with-ts">
+              <div class="bubble">我数了十七个小时。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg-row left">
+          <div class="msg-stack left">
+            <div class="c-avatar-ts">
+              <div class="avatar" style="opacity: 0">江</div>
+              <div class="c-ts-small" style="opacity: 0">—</div>
+            </div>
+            <div class="c-bubble-with-ts">
+              <div class="bubble">不是在等她回来。是在学怎么不追着跑。]]</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg-row right">
+          <div class="msg-stack right">
+            <div class="bubble user">嗯，我看到了。</div>
+          </div>
+        </div>
+
+        <div class="pointer" style="top: 92px; left: 50px;">← 简版（常显）</div>
+        <div class="pointer" style="top: 122px; left: 145px;">↘ 详版（hover）</div>
+      </div>
+
+      <div class="verdict">
+        <div class="verdict-row"><span class="k">优点</span><span class="v">信息密度最高：常显 + 详情可查</span></div>
+        <div class="verdict-row"><span class="k">缺点</span><span class="v">双位置 + hover 机制复杂；用户得 hover 才知道有详情</span></div>
+        <div class="verdict-row"><span class="k">位置</span><span class="v">hover 才看完整日期，跟 7-22 既有逻辑冲突</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="compare">
+    <div></div>
+    <div class="head">A 头像正下方</div>
+    <div class="head">B 头像右侧</div>
+    <div class="head">C 头像下 + bubble 下</div>
+
+    <div class="k">视觉强度</div>
+    <div class="v">⭐⭐ 中</div>
+    <div class="v">⭐ 弱</div>
+    <div class="v">⭐⭐⭐ 强</div>
+
+    <div class="k">占空间</div>
+    <div class="v">中</div>
+    <div class="v">少</div>
+    <div class="v">多</div>
+
+    <div class="k">跟"按轮"配合</div>
+    <div class="v">跟头像绑；every_message 模式会冲</div>
+    <div class="v">轮首清，中段不显示</div>
+    <div class="v">简版/详版分两层</div>
+
+    <div class="k">改动量</div>
+    <div class="v">小</div>
+    <div class="v">中（flex 重排）</div>
+    <div class="v">大（hover 机制）</div>
+  </div>
+
+  <div class="footer-note">
+    我倾向 <b>A</b>。理由：
+    <br>① 最贴暮色说的"头像底下"字面意思
+    <br>② 跟头像绑死，bubble 移位 / 文字长度变化都不影响位置
+    <br>③ 改动小
+    <br>④ <b>跟"按轮"配合</b>：即使 every_message 头像模式每条都画头像，时间戳渲染条件是 <code>proactiveRoundStart</code>，所以中间轮头像下不会出现时间戳
+    <br>⑤ B 看着像头像标签、C 太复杂
+  </div>
+
+</div>
+</body>
+</html>

@@ -2186,6 +2186,70 @@ export const ActiveMsgClient = {
   },
 
   /**
+   * 麦麦 2026-09-30：改一条兜底任务的内容。
+   *
+   * 为什么是「取消 + 重建」而不是改字段：固定模式那句 `userMessage` 是**建任务时**
+   * 就冻进加密 payload 的，云端那条路由没有改内容的接口（我查过 bundle，只有
+   * schedule / cancel / list）。所以改内容 = 取消旧的那条 + 按同样的时刻、循环、
+   * 归属重建一条新的。
+   *
+   * 时刻和循环必须原样带走：兜底的意义是"主任务 + 30 分钟那一刻补上"，
+   * 改个文案把它挪到别的时间，改的就不是这件事了。
+   *
+   * 返回新记录（旧 uuid 换新的，面板要拿它替换本地那条）。
+   * 取消失败时**不重建**：远端新旧并存会让同一个提醒在两个时刻各来一次。
+   */
+  async updateFallbackTaskText(params: {
+    char: CharacterProfile;
+    config: ActiveMsg2CharacterConfig;
+    fallback: ActiveMsg2TaskRecord;
+    newText: string;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    apiConfig: APIConfig;
+    enabledOverride?: boolean;
+  }): Promise<{ record: ActiveMsg2TaskRecord; firstSendAt: string }> {
+    const text = params.newText.trim();
+    if (!text) throw new Error('兜底内容不能为空。');
+
+    await this.cancelTask(params.fallback.taskUuid);
+
+    const created = await this.scheduleCharacterTask({
+      char: params.char,
+      config: params.config,
+      task: {
+        mode: 'fixed',
+        userMessage: text,
+        firstSendTime: params.fallback.firstSendTime,
+        recurrenceType: params.fallback.recurrenceType,
+        // 记录里的 source 是 user/character，云端 metadata 要的是 manual/character。
+        source: params.fallback.source === 'character' ? 'character' : 'manual',
+        // 归属和跳名额一起带走：新那条还是这条主任务的兜底，还是不吃名额。
+        fallbackFor: params.fallback.fallbackFor,
+        skipTaskQuota: true,
+      },
+      userProfile: params.userProfile,
+      groups: params.groups,
+      realtimeConfig: params.realtimeConfig,
+      apiConfig: params.apiConfig,
+      enabledOverride: params.enabledOverride,
+    });
+
+    return {
+      record: {
+        ...params.fallback,
+        taskUuid: created.uuid,
+        clientTaskId: created.clientTaskId,
+        firstSendTime: created.firstSendAt,
+        userMessage: text,
+        createdAt: Date.now(),
+      },
+      firstSendAt: created.firstSendAt,
+    };
+  },
+
+  /**
    * 查一条任务此刻的状态（即时对话「一直等」的判定器）。
    * 比 listAllTasks（全表分页 + 逐行解密）便宜得多，适合回前台时点名查一条。
    *
@@ -2506,30 +2570,48 @@ export const ActiveMsgClient = {
         console.warn('[ActiveMsg2] 任务级去重的远端查失败，按新建处理', error);
       }
     }
+    // 麦麦 2026-09-30：「强制发送」在**云端那侧**翻译成「遇忙作废」跑，
+    // 让云端那道的 10 分钟窗真正生效（它对 force 本来一次都不判）。规则与全部代价见
+    // amsg2Tasks.resolveCloudExpirePolicy 的注释。
+    //
+    // fixed 连策略一起翻成 prompted 模式——光翻策略没用，它压根不进 onBeforeFire。
+    // 翻译出来的提示词要把原文带上，否则模型无从知道要发什么。
+    const {
+      cloudPolicy: cloudExpirePolicy,
+      forceAsExpire: isForceAsExpire,
+      fixedAsPrompted: isFixedAsPrompted,
+      cloudHint: fixedAsPromptedPrefix,
+    } = resolveCloudExpirePolicy(task.mode, task.expirePolicy);
+    //
+    // 兜底任务（真 fixed、无条件推）**不翻**：它的职责就是"这次不许再让一次"，
+    // 翻它等于让后路也让路，那条提醒就此彻底没了。这一条同时把"翻译过的任务"
+    // 和"兜底"天然分开了：一个是 prompted+expire（会进 10 分钟窗），一个是 fixed。
+    const isFixedTranslated = isForceAsExpire && isFixedAsPrompted && !task.fallbackFor;
+    const cloudMode: ActiveMsg2Mode = isFixedTranslated ? 'prompted' : task.mode;
+    const cloudPromptHint = isFixedTranslated
+      ? `${fixedAsPromptedPrefix}${task.userMessage?.trim() || ''}`
+      : task.promptHint;
+    // 翻译成 prompted 的任务要调模型、要凭据、也要 fire_pack 到点现场填槽。
+    // 判据统一走云端真跑的那个模式，别再各处拿 task.mode 各判一遍——
+    // 上一版就是这里漏了，导致 fixed 翻译过去没传包，到点硬失败。
+    const needsFirePack = cloudMode !== 'fixed';
+
     // AI 模式的 prompt 只有一条来源：firePack 上传 client_state，worker 到点现场填槽。
     // 任务体里不再冻结一份渲染好的 prompt——读不到 fire_pack 就直接报错，没有第二条路，
     // 留着那份快照只是白占请求体（完整角色卡 + 世界书）。
-    const firePack = task.mode === 'fixed'
-      ? null
-      : await buildFirePack(char, userProfile, groups, realtimeConfig);
+    const firePack = needsFirePack
+      ? await buildFirePack(char, userProfile, groups, realtimeConfig)
+      : null;
     // 任务身份：客户端自造 clientTaskId——远端 uuid 要创建成功后才有，而 metadata
     // 必须在创建时就带上归属键；push 原样透传，送达归属全靠它。
     const clientTaskId = crypto.randomUUID();
-
-    // 麦麦 2026-09-30：「强制发送」在**云端那侧**一律翻成「遇忙作废」跑，
-    // 让云端那道的 10 分钟窗真正生效（它对 force 本来一次都不判）。规则与理由见
-    // amsg2Tasks.resolveCloudExpirePolicy。fixed 不翻——它不进 onBeforeFire，没有窗可判。
-    const { cloudPolicy: cloudExpirePolicy, forceAsExpire: isForceAsExpire } = resolveCloudExpirePolicy(
-      task.mode,
-      task.expirePolicy,
-    );
 
     const remoteAvatarUrl = toRemoteAvatarUrl(char.avatar);
     const payload: Record<string, any> = {
       contactName: char.name,
       // 本地 base64 头像过不了 worker 的校验，不合格干脆不带这个字段（见 toRemoteAvatarUrl）。
       ...(remoteAvatarUrl ? { avatarUrl: remoteAvatarUrl } : {}),
-      messageType: task.mode,
+      messageType: cloudMode,
       messageSubtype: 'chat',
       firstSendTime,
       recurrenceType: task.recurrenceType,
@@ -2542,9 +2624,10 @@ export const ActiveMsgClient = {
         source: 'active_msg_2',
         // worker 满血链路的 onLLMOutput 拿不到任务顶层的 messageType，靠 metadata 透传
         // 还原 push.messageType（老任务没这字段时 worker 回退 'auto'，收侧只展示不路由）。
-        amsgMode: task.mode,
+        // 这里报的是**云端真跑的那个**模式：fixed 被翻成 prompted 时就是 prompted，
+        // 报 fixed 会让送达侧按"纯投递"处理，而它实际是模型生成出来的。
+        amsgMode: cloudMode,
         // 防穿帮闸字段：worker onBeforeFire 与客户端送达兜底都从这里读。
-        // fixed 恒为 force——它走不了 worker 闸（taskNeedsLlm=false），语义统一钉死。
         // recurrenceType / occurrenceMs 不往这儿抄：库会把它们盖在每条 push 顶层，
         // 角色在 fire 里自排的任务也一样有，抄一份反而多一处会漏写的地方。
         amsgClientTaskId: clientTaskId,
@@ -2561,6 +2644,10 @@ export const ActiveMsgClient = {
         // 这条标记的作用只有一个：面板上把策略还原显示成「强制发送」，别让用户
         // 看到自己选的「强制发送」在云端变成了「遇忙作废」。
         ...(isForceAsExpire ? { amsgForceDeferred: true } : {}),
+        // 麦麦 2026-09-30：fixed 被翻成 prompted 模式那条独有。云端 messageType 跟
+        // 本地 mode 不一致的唯一情形，面板 / 核对脚本据此还原显示成「固定」。
+        // 兜底任务不打这条——它是真的 fixed，云端 messageType 就是 fixed。
+        ...(isFixedTranslated ? { amsgFixedAsPrompted: true } : {}),
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不带、不受连发上限管）。
         ...(task.selfScheduled ? { amsgSelfScheduled: true } : {}),
         // 麦麦 2026-09-16 plan step B：任务来源字段，worker 据此切 system hint。
@@ -2579,17 +2666,18 @@ export const ActiveMsgClient = {
 
     // 凭据这一轮走哪条路：能存表就只带引用，老 worker 照旧内联三件套。
     // 引用那条路要先把行传上去（下面的 credRow），传成功才建任务。
-    const useCredRefs = task.mode !== 'fixed' && await isLlmCredentialsReady();
+    // 按**云端真跑的模式**判，不是按本地 mode：fixed 翻成 prompted 后要调模型、要凭据。
+    const useCredRefs = cloudMode !== 'fixed' && await isLlmCredentialsReady();
     let credRow: LlmCredentialRow | null = null;
 
-    if (task.mode === 'fixed') {
+    if (cloudMode === 'fixed') {
       const userMessage = task.userMessage?.trim();
       if (!userMessage) throw new Error('固定消息模式需要填写消息内容。');
       payload.userMessage = userMessage;
     } else {
       const activeApi = resolveApiConfig(char, config, apiConfig);
       // 「本次任务」指令随任务 metadata 走，worker 到点拿它填 fire_pack 的指令槽。
-      payload.metadata.amsgTaskInstruction = buildTaskInstruction(task.mode, task.promptHint);
+      payload.metadata.amsgTaskInstruction = buildTaskInstruction(cloudMode, cloudPromptHint);
       // 服务端要求「completePrompt 或 messages」二选一，且 messages 必须非空、
       // content 必须非空字符串，所以这里给一条占位。到点真正发给 LLM 的 messages 由
       // worker 的 onBeforeFire 返回值覆盖（库用 { ...payload, messages } 调 LLM），

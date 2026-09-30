@@ -16,6 +16,7 @@ import { ActiveMsgStore } from './activeMsgStore';
 import { DB } from './db';
 import { resolveCharTimeZone } from './timezone';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
+import { scanAndRecordDeferred } from './amsg2DeferredScan';
 import {
   AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
@@ -315,9 +316,18 @@ export async function collectAmsg2TaskContext(
     // 取够整个回看期的历史再判：证据（那条已送达的主动消息）落在窗外的话，
     // 检出侧会把一条发过的触发当成没发出去，角色接着把同一件事再说一遍。
     const messages = await loadMessagesCoveringLookback(char.id, now - AMSG2_TASK_LOOKBACK_MS);
+
+    // 麦麦 2026-09-30：「强制发送」走**新判据**，不跟遇忙作废共用那个。
+    // 差别不是措辞而是结论：旧的循环任务看"到点前后对称窗"、一次性看"锚点之后有
+    // 任何消息"，而新规则只有"到点**前** 10 分钟"这一段。用旧判据会漏判最该让开的
+    // 那种（到点前 10 分钟用户刚说过话），还会把"用户隔了半天后来说话"这种压根
+    // 不该拦的拦掉。细节见 amsg2DeferredScan 的头注释。
+    await scanAndRecordDeferred(char, messages, now);
+
+    // 遇忙作废 / 名额满仍走旧检出（那条规则是"直接取消、不告诉角色"，判据没变）。
     const candidates = tasks
       .map((t) => ({ t, kind: noticeKindForTask(t) }))
-      .filter((x): x is { t: ActiveMsg2TaskRecord; kind: NonNullable<typeof x.kind> } => x.kind != null)
+      .filter((x): x is { t: ActiveMsg2TaskRecord; kind: NonNullable<typeof x.kind> } => x.kind === 'expired')
       .flatMap(({ t, kind }) => detectExpiredOccurrences({
         taskUuid: t.taskUuid,
         policy: t.expirePolicy,

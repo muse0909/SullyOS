@@ -19,7 +19,7 @@ import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2Expi
 import {
   AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, canExpire, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
-  shortTaskId,
+  shortTaskId, visibleTasks,
 } from './amsg2Tasks';
 
 /**
@@ -295,7 +295,9 @@ export async function collectAmsg2TaskContext(
   }
 
   const unnotified = (await ActiveMsgStore.getExpiredNotices(char.id)).filter((r) => !r.notifiedAt);
-  const pending = getPendingTasks(config, now);
+  // 兜底不给角色看（跟 buildFireTaskListBlock 同一把尺）：看得见它就够得着它，
+  // 角色能用自己的任务工具把这条后路取消掉，提醒就此丢失。理由见 visibleTasks。
+  const pending = visibleTasks(getPendingTasks(config, now));
   return {
     // 时间按角色的钟写：这一段是给角色看的，到点 worker 渲染的那份也是角色时区，
     // 两边对不上的话，纽约角色会在同一轮里读到差一个时差的两个「同一条任务」。

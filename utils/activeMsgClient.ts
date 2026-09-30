@@ -21,9 +21,11 @@ import { amsgDiag } from './amsgDiag';
 import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
-  getPendingTasks, isAmsg2EnabledForChar, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
+  AMSG_FALLBACK_DELAY_MS,
+  buildFallbackText,
+  getPendingTasks, isAmsg2EnabledForChar, isForcePolicy, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
-  resolveCloudExpirePolicy, resolveExpirePolicy, toDatetimeLocalValue,
+  resolveCloudExpirePolicy, resolveExpirePolicy, toDatetimeLocalValue, visibleTasks,
 } from './amsg2Tasks';
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
 import {
@@ -1694,6 +1696,20 @@ const OUTBOX_MAX_PAGES = 20;
 /** 单次 ack 的条数上限（服务端 200，超了自己分批）。 */
 const OUTBOX_ACK_BATCH_SIZE = 200;
 
+/**
+ * 麦麦 2026-09-30：「强制发送」任务 30 分钟后那条兜底的建好结果。
+ *
+ * record 直接给调用方落账用——三个建任务入口（面板 / 角色工具 / schedule_next_wakeup）
+ * 各有各的落账写法，让它们复用这一份拼好的记录，别各拼一次。
+ */
+export interface Amsg2FallbackResult {
+  taskUuid: string;
+  clientTaskId: string;
+  /** 兜底的绝对触发时刻（UTC ISO），主任务 + 30 分钟。 */
+  firstSendAt: string;
+  record: ActiveMsg2TaskRecord;
+}
+
 export const ActiveMsgClient = {
   async registerNativePushToken(token: string): Promise<void> {
     if (!nativePushBuildEnabled()) throw new Error('当前构建未开启 Capacitor 原生推送');
@@ -2374,6 +2390,22 @@ export const ActiveMsgClient = {
        * "你之前安排的理由是：[reason]" 那段提示词里。省略时自动从 promptHint 兜底。
        */
       reason?: string;
+      /**
+       * 麦麦 2026-09-30：这是「强制发送」任务 30 分钟后的**兜底**任务，值是主任务的
+       * clientTaskId。写进 metadata 后：
+       *   - 送达侧认得它 → 到点无条件推，不受「到点前 10 分钟有消息就顺口带出」那套影响
+       *     （兜底自己的职责就是补那条被让开的消息，再被让开就自相矛盾了）；
+       *   - 核对脚本按 amsgFallbackFor 打出归属关系。
+       */
+      fallbackFor?: string;
+      /**
+       * 兜底任务不占「同时最多 5 个」的名额（麦麦 2026-09-30 暮色拍板）。
+       *
+       * 名额是用户手排任务的预算，兜底是系统替强制发送补后路的；一个每天早安会让
+       * 用户的可用名额从 5 变 4，这笔账不该用户承担。也**不**写进 fire_pack 的
+       * 待触发清单——云端 fire 时那道「还能排几条」的闸读的就是那份清单。
+       */
+      skipTaskQuota?: boolean;
     };
     /** 编辑/续期时传旧任务 uuid：先取消它再新建（不传 = 纯新建）。 */
     replaceTaskUuid?: string;
@@ -2405,10 +2437,16 @@ export const ActiveMsgClient = {
     else await this.registerPushSubscription();
 
     // 数量封顶：待触发任务（不含被替换的那个）满 5 个就拒绝，让角色/用户先清。
-    const pendingOthers = getPendingTasks(config, Date.now())
-      .filter((t) => t.taskUuid !== replaceTaskUuid);
-    if (pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
-      throw new Error(`该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`);
+    // 兜底任务跳过这道（见 task.skipTaskQuota）——它是系统替强制发送补的后路，
+    // 不该吃掉用户手排任务的名额。
+    // 计数时也要把**别的**兜底排除：用户手排到第 5 条时，他自己那条的兜底还挂着，
+    // 算进去就变成"其实你只能排 4 条"——名额是用户手排任务的预算，兜底不参与。
+    if (!task.skipTaskQuota) {
+      const pendingOthers = visibleTasks(getPendingTasks(config, Date.now()))
+        .filter((t) => t.taskUuid !== replaceTaskUuid);
+      if (pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
+        throw new Error(`该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`);
+      }
     }
 
     // 角色的时间参照系：任务行、fire_pack、worker 渲染全用这一个，解析 send_at 也一样。
@@ -2458,6 +2496,9 @@ export const ActiveMsgClient = {
             clientTaskId: matched.clientTaskId ?? '',
             replacedCancelFailed: false,
             firstSendAt: firstSendTime,
+            // 复用命中意味着这条任务早就在云端躺着了，它的兜底（若有）当初也建好了。
+            // 这里不重复配一条，否则同一件提醒会有两个 30 分钟后的后路。
+            fallback: null,
           };
         }
       } catch (error) {
@@ -2531,6 +2572,8 @@ export const ActiveMsgClient = {
         // 仅 source='character' 时有意义：worker 把这段拼进"你当时安排的理由是 [reason]"。
         // 留空时 from promptHint 兜底，再空就用任务 ID 占位。
         ...(task.reason ? { amsgReason: task.reason } : {}),
+        // 兜底归属（麦麦 2026-09-30）：送达侧凭它认「这条是后路、到点无条件推」。
+        ...(task.fallbackFor ? { amsgFallbackFor: task.fallbackFor } : {}),
       },
     };
 
@@ -2642,13 +2685,154 @@ export const ActiveMsgClient = {
       }
     }
 
+    // 麦麦 2026-09-30：主任务是「强制发送」→ 顺手配一条 30 分钟后的兜底。
+    //
+    // 递归防护：兜底自己是 fixed（恒 force），不拿 fallbackFor 挡住的话会无限自我复制。
+    // 顺带把 fixed 主任务也纳入（钙片这类提醒本来就该有兜底）。
+    //
+    // **await 而不是 fire-and-forget**：兜底是「系统替这条任务补的后路」，不是可有可无的
+    // 装饰。挂成后台 Promise 再靠调用方读字段，调用方在同一 tick 里读到的必然是 null，
+    // 本地账本就会漏记这条兜底 —— 而漏记的代价是第 5 步取消不掉它：主任务推送了、
+    // 兜底照样在 30 分钟后补一条，角色一句话说两遍。
+    // 兜底建失败由 scheduleFallbackTask 自己吞掉（只记诊断），所以 await 不会连累主任务。
+    const fallback = (isForcePolicy(task.mode, task.expirePolicy) && !task.fallbackFor)
+      ? await this.scheduleFallbackTask({
+        char, config,
+        forClientTaskId: clientTaskId,
+        forSource: task.source === 'character' ? 'character' : 'user',
+        mainOccurrenceMs: Date.parse(firstSendTime),
+        mainMode: task.mode,
+        mainHintOrReason: task.reason || task.promptHint,
+        mainUserMessage: task.userMessage,
+        mainRecurrence: task.recurrenceType,
+        enabledOverride: charEnabled,
+        userProfile, groups, realtimeConfig, apiConfig,
+      })
+      : null;
+
     return {
       ...(response.data as { uuid: string; status: string; nextSendAt?: string }),
       clientTaskId,
       replacedCancelFailed,
       // 解析好的绝对时刻（UTC ISO）。任务记录存这一份，字段口径才只有一种。
       firstSendAt: firstSendTime,
+      // 「强制发送」任务 30 分钟后的兜底（已带好可直接落账的 record）。非强制发送 / 兜底
+      // 任务自身 / 压根建不出来时为 null。各调用方**必须**把它跟主任务一起写进本地账本。
+      fallback,
     };
+  },
+
+  /**
+   * 麦麦 2026-09-30：给「强制发送」任务配一条 30 分钟后的兜底。
+   *
+   * 背景（新规则）：强制发送 = 到点前 10 分钟用户说过话就不推送，改成在角色下一轮
+   * 上下文里顺口带出；但角色那一轮可能一直不触发（用户说完就走了）。这条兜底就是
+   * 那个「一直没触发」的最终保证——主任务被让开、也没人顺口提，30 分钟后原样补一条。
+   *
+   * 为什么兜底走 fixed：
+   *   - 固定模式压根不进云端那道到点判定（上游按 taskNeedsLlm 分流），所以云端
+   *     不会二次让路，30 分钟到了就一定发出去；
+   *   - 不调模型、不烧 token，而且角色到点上下文根本不存在 → 拿不到任务管理工具，
+   *     不会「我把提醒改到明天去」这种自我操作把提醒搞没（这条对**兜底**是刚需：
+   *     兜底被角色取消就等于提醒丢了）。
+   *
+   * 建失败不抛：主任务已经建成功了，兜底是加分项，为它把整次建任务搞失败不划算。
+   * 失败只留一条诊断，主任务照常走（最坏情况 = 没兜底，退回旧行为）。
+   */
+  async scheduleFallbackTask(params: {
+    char: CharacterProfile;
+    config: ActiveMsg2CharacterConfig;
+    /** 主任务的 clientTaskId，写进兜底 metadata 做配对。 */
+    forClientTaskId: string;
+    /** 兜底记谁的名下：主任务谁排的，兜底就是谁的（取消链路 / 面板文案都读它）。 */
+    forSource: 'user' | 'character';
+    /** 主任务的真实触发时刻（UTC ISO），兜底 = 它 + 30 分钟。 */
+    mainOccurrenceMs: number;
+    /** 主任务要说什么（fixed 取原文，prompted/auto 取方向或理由）。 */
+    mainMode: ActiveMsg2Mode;
+    mainHintOrReason?: string;
+    mainUserMessage?: string;
+    /** 主任务是循环的话，兜底跟着循环（每天早安 → 每天 8 点半那条后路）。 */
+    mainRecurrence: ActiveMsg2Recurrence;
+    enabledOverride?: boolean;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    apiConfig: APIConfig;
+  }): Promise<Amsg2FallbackResult | null> {
+    const text = buildFallbackText(params.mainMode, params.mainHintOrReason, params.mainUserMessage);
+    if (!text) {
+      // fixed 主任务没写原文时不该建兜底——兜底是"原样补那句"，没有那句可补。
+      return null;
+    }
+
+    const fireAtMs = params.mainOccurrenceMs + AMSG_FALLBACK_DELAY_MS;
+    if (fireAtMs <= Date.now()) return null;
+
+    try {
+      const result = await this.scheduleCharacterTask({
+        char: params.char,
+        config: params.config,
+        task: {
+          mode: 'fixed',
+          userMessage: text,
+          // 固定模式恒 force（resolveExpirePolicy 钉死），云端到点必推。
+          firstSendTime: new Date(fireAtMs).toISOString(),
+          recurrenceType: params.mainRecurrence,
+          // 记录里的 source 记「谁排的」（user/character），云端 metadata 记的是
+          // 提示词分支（manual/character）——本地账本那一套以 user 为准。
+          source: params.forSource === 'character' ? 'character' : 'manual',
+          fallbackFor: params.forClientTaskId,
+          skipTaskQuota: true,
+        },
+        userProfile: params.userProfile,
+        groups: params.groups,
+        realtimeConfig: params.realtimeConfig,
+        apiConfig: params.apiConfig,
+        enabledOverride: params.enabledOverride,
+      });
+      amsgDiag({
+        stage: 'fallback-scheduled',
+        charId: params.char.id,
+        ok: true,
+        extra: {
+          forClientTaskId: params.forClientTaskId,
+          fallbackUuid: result.uuid,
+          fireAtMs,
+        },
+      });
+      // record 一并拼好返回：三个调用方各自有自己那套落账写法（面板 onSave、工具桥
+      // persistTasks、自排那条动态 import('./db')），让它们顺手 applyScheduledTask 一次，
+      // 而不是各写一份字段拼装——拼装口径一散，配对字段就会在某一条路上漏掉。
+      return {
+        taskUuid: result.uuid,
+        clientTaskId: result.clientTaskId,
+        firstSendAt: result.firstSendAt,
+        record: {
+          taskUuid: result.uuid,
+          clientTaskId: result.clientTaskId,
+          mode: 'fixed',
+          firstSendTime: result.firstSendAt,
+          recurrenceType: params.mainRecurrence,
+          userMessage: text,
+          expirePolicy: 'force',
+          source: params.forSource,
+          status: 'scheduled',
+          createdAt: Date.now(),
+          fallbackFor: params.forClientTaskId,
+        },
+      };
+    } catch (error) {
+      // 兜底建不出来不该连累主任务（主任务已经躺在云端了）。
+      amsgDiag({
+        stage: 'fallback-schedule-failed',
+        charId: params.char.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        extra: { forClientTaskId: params.forClientTaskId },
+      });
+      return null;
+    }
   },
 
   /**

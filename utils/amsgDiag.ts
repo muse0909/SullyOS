@@ -46,7 +46,12 @@ export type AmsgDiagStage =
   | 'wakeup-trigger-start'       // triggerAI 入口：写 triggerId + callSite
   | 'wakeup-aicontent-snapshot'  // 每次 aiContent = data.choices[0].message.content 重赋值后写一次
   | 'wakeup-token-parse-skip'    // 60 秒同 (charId,fireAt,reason) 内存 ring 命中跳过时写
-  | 'wakeup-dedup-skip-local';   // 麦麦 2026-09-24 v3：A 严格入口闸 — 同角色已有 source='character' pending 时拒绝新建
+  | 'wakeup-dedup-skip-local'     // 麦麦 2026-09-24 v3：A 严格入口闸 — 同角色已有 source='character' pending 时拒绝新建
+  // 麦麦 2026-09-30：强制发送的 30 分钟兜底
+  | 'fallback-scheduled'          // 兜底建成了
+  | 'fallback-schedule-failed'    // 兜底没建成（主任务不受影响，退回无兜底）
+  | 'fallback-cancelled'          // 主任务推送了 / 被顺口带出 → 取消配对兜底
+  | 'fallback-rebuilt'            // 循环兜底取消后按下一个周期重建
 
 export interface AmsgDiagEntry {
   ts: string;

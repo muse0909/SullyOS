@@ -3,9 +3,11 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_ACTIVE_TASKS_PER_CHAR,
   REPLACE_CANCEL_FAILED_NOTE,
+  AMSG_FALLBACK_DELAY_MS,
   applyRemoteTaskDelta,
   applyScheduledTask,
   AMSG2_SCHEDULE_SECRECY_NOTE,
+  buildFallbackText,
   buildFireTaskListBlock,
   currentOccurrenceMs,
   describeRemoteLastError,
@@ -13,6 +15,8 @@ import {
   findTaskByShortId,
   getPendingTasks,
   hasActiveAiTask,
+  isFallbackTask,
+  isForcePolicy,
   isPendingTask,
   isRemoteMissingTask,
   keepUncancelledTasks,
@@ -23,6 +27,7 @@ import {
   resolveCloudExpirePolicy,
   shortTaskId,
   toDatetimeLocalValue,
+  visibleTasks,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
 
@@ -564,5 +569,81 @@ describe('resolveCloudExpirePolicy（force 翻成 expire 发给云端）', () =>
   it('固定模式不翻：恒 force，也不标翻过', () => {
     expect(resolveCloudExpirePolicy('fixed', 'expire')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
     expect(resolveCloudExpirePolicy('fixed', 'force')).toEqual({ cloudPolicy: 'force', forceAsExpire: false });
+  });
+});
+
+// ─── 麦麦 2026-09-30：30 分钟兜底 ───
+// 兜底是「强制发送」被让开、角色又一直没顺口带出来时的最终保证。三个判定都纯，
+// 单测能锁住；真正建任务的编排（排程 + 落账）靠联调看诊断和 D1。
+describe('isForcePolicy（谁需要配兜底）', () => {
+  it('提示词/自动 + 强制发送 → 要兜底', () => {
+    for (const mode of ['prompted', 'auto'] as const) {
+      expect(isForcePolicy(mode, 'force')).toBe(true);
+    }
+  });
+
+  it('遇忙作废 → 不要兜底（没有需要补的后路）', () => {
+    expect(isForcePolicy('auto', 'expire')).toBe(false);
+    expect(isForcePolicy('auto', undefined)).toBe(false);
+  });
+
+  // 钙片这类提醒多是固定模式。固定恒 force，之前不会走「到点让路」那套，
+  // 但它在云端压根不进判定闸 —— 到点必推，也就永远等不到兜底接手。
+  // 把它纳进来才是「固定模式 + 强制发送」这条新规则真正落地的样子。
+  it('固定模式恒 force → 要兜底（哪怕调用方没写策略）', () => {
+    expect(isForcePolicy('fixed', undefined)).toBe(true);
+    expect(isForcePolicy('fixed', 'expire')).toBe(true);
+    expect(isForcePolicy('fixed', 'force')).toBe(true);
+  });
+});
+
+describe('AMSG_FALLBACK_DELAY_MS', () => {
+  it('就是 30 分钟', () => {
+    expect(AMSG_FALLBACK_DELAY_MS).toBe(30 * 60_000);
+  });
+});
+
+describe('buildFallbackText（兜底到点原样发的那句）', () => {
+  // 固定模式就是「原样补那句」，一个字都不能改——补的是钙片提醒，就还得是那句提醒。
+  it('固定模式用主任务原文，不改一个字', () => {
+    expect(buildFallbackText('fixed', '别太油', '该吃钙片了')).toBe('该吃钙片了');
+  });
+
+  // 没有那句可补就不该建兜底（返回空串，由调用方跳过），总比补一句不相干的话强。
+  it('固定模式没原文 → 空串（调用方据此不建兜底）', () => {
+    expect(buildFallbackText('fixed', '别太油', '   ')).toBe('');
+    expect(buildFallbackText('fixed', '别太油', undefined)).toBe('');
+  });
+
+  it('提示词/自动：短的方向词当提醒语用（"记得提醒我"）', () => {
+    expect(buildFallbackText('prompted', '记得提醒我吃药', undefined)).toBe('记得提醒我吃药');
+  });
+
+  // 方向词原样弹出去读起来是空的（「别太油」「自然一点」——发给谁看？）。
+  it('方向词（长句/带标点）不当提醒语，退回默认句', () => {
+    expect(buildFallbackText('prompted', '别太油，自然一点，像平时聊天那样', undefined))
+      .toBe('你之前定的那件事，到点啦。');
+    expect(buildFallbackText('auto', '嗯嗯，', undefined)).toBe('你之前定的那件事，到点啦。');
+  });
+
+  it('什么都没给 → 兜底默认句', () => {
+    expect(buildFallbackText('auto', undefined, undefined)).toBe('你之前定的那件事，到点啦。');
+  });
+});
+
+describe('isFallbackTask / visibleTasks（兜底不给人看）', () => {
+  it('带 fallbackFor 的是兜底，其余不是', () => {
+    expect(isFallbackTask({ fallbackFor: 'cid-main' })).toBe(true);
+    expect(isFallbackTask({})).toBe(false);
+  });
+
+  // 兜底躺在本地清单里是第 5 步取消它的前提，但它不该在面板列表里冒充用户排的任务。
+  it('visibleTasks 滤掉兜底，其余原样保留（顺序不变）', () => {
+    const main = task({ clientTaskId: 'cid-main' });
+    const fb = task({ clientTaskId: 'cid-fb', fallbackFor: 'cid-main' });
+    const other = task({ clientTaskId: 'cid-other' });
+    expect(visibleTasks([main, fb, other])).toEqual([main, other]);
+    // 原数组不能被就地改——面板拿 allTasks 还要用来关 2.0 时取消全部。
+    expect(visibleTasks([main, fb, other])).not.toBe([main, fb, other]);
   });
 });

@@ -27,6 +27,7 @@ import {
   applyScheduledTask, currentOccurrenceMs, describeExpirePolicy, describeRecurrence,
   describeTaskMode, describeTaskProgress, findTaskByShortId, formatTaskTime,
   getPendingTasks, isAmsg2EnabledForChar, isPendingTask, pruneStaleTasks, resolveExpirePolicy, shortTaskId,
+  visibleTasks,
 } from './amsg2Tasks';
 import { resolveMaxUnansweredSends } from './amsgFirePack';
 import { EXPIRE_POLICY_DESCRIPTION } from './amsgFireSchedule';
@@ -279,7 +280,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
   // 改期/补当次（__replaceTaskUuid / __makeupForTaskUuid）不新占额度，放行。
   if (!args.__replaceTaskUuid && !args.__makeupForTaskUuid) {
     const unansweredLimit = resolveMaxUnansweredSends(char.activeMsg2Config?.maxUnansweredSends);
-    const plannedSelfSends = config.tasks
+    const plannedSelfSends = visibleTasks(config.tasks)
       .filter((t) => t.source === 'character' && isPendingTask(t, Date.now()))
       .length;
     if (plannedSelfSends + 1 > unansweredLimit) {
@@ -323,12 +324,17 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
   };
   // 并清单的规则（替换成功才移除旧记录；远端取消失败则保留旧记录并标错，短 id 还在、
   // 角色和用户都还能再取消一次）与设置面板共用 applyScheduledTask。
-  persistTasks(deps, config, applyScheduledTask(
+  // 兜底（麦麦 2026-09-30）跟主任务同一次落账：persistTasks 走的是 setConfig 整份覆盖，
+  // 分两次写的话第二次那份 config.tasks 是旧快照，会把先写进去的兜底抹掉。
+  const mergedTasks = applyScheduledTask(
     config.tasks,
     record,
     { replaceTaskUuid: args.__replaceTaskUuid, replacedCancelFailed: result.replacedCancelFailed },
     Date.now(),
-  ));
+  );
+  persistTasks(deps, config, result.fallback
+    ? applyScheduledTask(mergedTasks, result.fallback.record, {}, Date.now())
+    : mergedTasks);
 
   // 只报枚举构成（模式/频率都是写死的取值集合）。内容、时间、编号一概不带。
   // 这份文件只在浏览器聊天侧运行（不进 amsg worker bundle），引 analytics 安全。

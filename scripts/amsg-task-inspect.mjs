@@ -164,6 +164,10 @@ const selfLogs = await query(
 console.log(`库 ${dbId}（账号 ${accountId}）`);
 console.log(`任务 ${rows.length} 条${willDecrypt ? '' : '（没给密钥，只看调度状态）'}\n`);
 
+// 兜底配对表：主任务 clientTaskId → 那条 30 分钟后的兜底。收尾时单独打一段，
+// 免得两条任务隔着几十行输出、靠肉眼去对时间。声明放在 if 外面——下面那段汇总要用。
+const fallbackByFor = new Map();
+
 if (!rows.length) {
   console.log('一条都没有。');
 } else {
@@ -189,7 +193,12 @@ if (!rows.length) {
         if (mode === 'fixed') {
           console.log(`      固定内容: ${String(payload.userMessage || '(空)').slice(0, 60)}`);
         }
-        if (md.amsgFallbackFor) console.log(`      ★ 这是兜底任务，兜着 ${md.amsgFallbackFor}`);
+        if (md.amsgFallbackFor) {
+          console.log(`      ★ 这是兜底任务，兜着 ${md.amsgFallbackFor}`);
+          fallbackByFor.set(md.amsgFallbackFor, {
+            id: r.id, uuid: r.uuid, at: r.next_send_at, text: payload.userMessage,
+          });
+        }
       }
     }
     console.log('');
@@ -209,6 +218,25 @@ if (skipped.length) {
     console.log(`  角色 ${s.user_id}  原因 ${v.reason}  本该在 ${new Date(v.occurrenceMs).toLocaleString('zh-CN')}  实际跳于 ${new Date(v.skippedAt).toLocaleString('zh-CN')}`);
   }
   console.log('  ⚠ 云端只保留**最近一条**，后跳过的会把先跳的顶掉。');
+  console.log('');
+}
+
+// ── 兜底配对（麦麦 2026-09-30）──────────────────────────
+// 规则：每条「强制发送」任务，建的时候都该顺带出一条 30 分钟后的固定兜底。
+// 核对方式：主任务那一行的「推迟标记」应该是有，兜底那行带 ★，两者时间差正好 30 分钟。
+if (willDecrypt) {
+  console.log('── 兜底配对 ──');
+  if (!fallbackByFor.size) {
+    console.log('  一条兜底都没有。');
+    console.log('  · 库里没有「强制发送」任务时这是对的；');
+    console.log('  · 有推迟标记=有 却没兜底 → 建兜底那步失败了，查诊断里的 fallback-schedule-failed。');
+  } else {
+    for (const [forId, fb] of fallbackByFor) {
+      const at = fb.at ? new Date(fb.at).toLocaleString('zh-CN') : '(没写)';
+      console.log(`  兜着 ${forId.slice(0, 8)}  →  #${fb.id} ${at}`);
+      console.log(`      内容: ${String(fb.text || '(空)').slice(0, 60)}`);
+    }
+  }
   console.log('');
 }
 

@@ -3012,6 +3012,17 @@ export interface ActiveMsg2TaskRecord {
   status: ActiveMsg2TaskStatus;
   createdAt: number;
   lastError?: string;
+  /**
+   * 麦麦 2026-09-30：这是「强制发送」任务 30 分钟后那条**兜底**，值是主任务的 clientTaskId。
+   *
+   * 有这个字段 = 这条是系统补的后路，不是用户/角色亲手排的：
+   *   - 面板任务列表不显示它（用户没排过，凭什么让他看见一条不认识的「重复任务」）；
+   *   - 第 5 步靠它配对：主任务真推送了 / 真顺口带出了 → 取消这条；
+   *   - 循环任务每推进一个周期，取消后按下一个周期重建。
+   *
+   * 没有这个字段的普通任务，两条规则都不适用。
+   */
+  fallbackFor?: string;
 }
 
 /** 任务"作废"回执记录：闸自动作废 / 用户手动取消 */

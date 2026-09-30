@@ -82,6 +82,56 @@ export const resolveCloudExpirePolicy = (
   return { cloudPolicy: forceAsExpire ? 'expire' : effective, forceAsExpire };
 };
 
+/** 「强制发送」被让开后，兜底任务隔多久补那条消息（麦麦 2026-09-30 暮色定的 30 分钟）。 */
+export const AMSG_FALLBACK_DELAY_MS = 30 * 60_000;
+
+/**
+ * 兜底任务到点时原样发出的那句话。
+ *
+ * 兜底走 fixed 模式（不调模型），所以这句话必须是**写死的**——它不是"到点让角色
+ * 重新说一遍"，而是"到点了，该说的那句"。
+ *
+ * 取值优先级：
+ *  1. fixed 主任务：主任务自己的原文，一字不改（钙片提醒这种本来就没有发挥空间）
+ *  2. 用户/角色给过的一句提醒语（hint 本身就是一句成品话时用它）
+ *  3. 兜底默认句（上面两种都没有时的最后兜底，面板上可改）
+ *
+ * 刻意**不**在这里调模型：那会让"建一条任务"变成一次网络往返，卡界面、还多一个
+ * 失败面，而兜底要的恰恰是"确定的一句"，不是 AI 临场发挥。面板上这一句可以改。
+ */
+export const buildFallbackText = (
+  mode: ActiveMsg2Mode,
+  hintOrReason: string | undefined,
+  userMessage: string | undefined,
+): string => {
+  if (mode === 'fixed') {
+    return userMessage?.trim() || '';
+  }
+  const given = hintOrReason?.trim();
+  // 方向词（"别太油"、"自然一点"）当提醒语读起来是空的，留着反而会原样弹出去。
+  if (given && given.length <= 12 && !/[，。！？,.!?]/.test(given)) return given;
+  return '你之前定的那件事，到点啦。';
+};
+
+/** 这个任务策略是不是「强制发送」——决定要不要给它配兜底。 */
+export const isForcePolicy = (
+  mode: ActiveMsg2Mode,
+  policy: ActiveMsg2ExpirePolicy | undefined,
+): boolean => resolveExpirePolicy(mode, policy) === 'force';
+
+/**
+ * 这条是不是「强制发送」30 分钟后的兜底（麦麦 2026-09-30）。
+ *
+ * 兜底是系统替主任务补的后路：面板不列它、用户不该看见一条不认识的重复任务，
+ * 但它得真躺在本地清单里——第 5 步要靠它跟主任务配对取消。
+ */
+export const isFallbackTask = (task: Pick<ActiveMsg2TaskRecord, 'fallbackFor'>): boolean =>
+  Boolean(task.fallbackFor);
+
+/** 面板 / 角色上下文里给人看的清单：滤掉兜底（它不是谁排的任务）。 */
+export const visibleTasks = (tasks: ActiveMsg2TaskRecord[]): ActiveMsg2TaskRecord[] =>
+  tasks.filter((t) => !isFallbackTask(t));
+
 // ─── 任务的人读文案 ───
 // 角色的排程现状块、list_active_messages 的返回、设置面板的任务列表都显示同一批任务，
 // 三处必须说同一套词——角色在上下文里看到的和它用工具查到的对不上，模型是会当成两回事的。
@@ -280,7 +330,11 @@ export const buildFireTaskListBlock = (
   opts: { nowMs: number; tzId: string; excludeClientTaskId?: string },
 ): string => {
   const tz: AmsgTzRef = { tzId: opts.tzId };
-  const listed = tasks
+  // 兜底（麦麦 2026-09-30）不给角色看。两个理由，缺一不可：
+  //   1. 它是系统补的后路，角色从没排过——列出来等于凭空多一条它不认识的承诺；
+  //   2. 更要紧的是角色手里有任务管理工具，看得见就够得着，它能把给自己的后路取消掉，
+  //      兜底被取消 = 那条提醒彻底丢了，比没有兜底更糟。
+  const listed = visibleTasks(tasks)
     .filter((t) => isPendingTask(t, opts.nowMs))
     .filter((t) => !opts.excludeClientTaskId || t.clientTaskId !== opts.excludeClientTaskId);
   if (listed.length === 0) return '';

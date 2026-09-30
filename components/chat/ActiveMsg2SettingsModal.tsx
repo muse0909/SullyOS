@@ -41,6 +41,7 @@ import {
   type RemoteTaskProjection,
   shortTaskId,
   toDatetimeLocalValue,
+  visibleTasks,
 } from '../../utils/amsg2Tasks';
 // 麦麦 2026-09-24 13:48：诊断日志 viewer（从全局弹窗迁过来的）
 import { AmsgDiagLogViewer } from '../settings/AmsgDiagLogViewer';
@@ -106,7 +107,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   addToast,
 }) => {
   const saved = char.activeMsg2Config;
-  const tasks = saved?.tasks ?? [];
+  // 兜底（麦麦 2026-09-30）是系统替「强制发送」补的后路，不列给用户看：用户没排过它，
+  // 面板里冒出一条自己没建过的重复任务只会让人以为系统出错。
+  // 底下这一份保持完整——关 2.0 时要把它一并取消掉（远端拉清单失败时的兜底路径靠它）。
+  const allTasks = saved?.tasks ?? [];
+  const tasks = visibleTasks(allTasks);
   // 任务列表的判定基准时刻：一次 render 只取一次，同屏卡片不会踩在不同的时刻上。
   const now = Date.now();
 
@@ -388,9 +393,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       if (!enabled) {
         // 关闭 2.0 = 取消该角色全部远端任务（远端清单优先的口径见 cancelAllTasksForChar，
         // 与删角色共用一份）。取消失败的保留在本地清单里，下次重开面板可重试。
+        // 用 allTasks 而不是给人看的 tasks：兜底用户没建过，但关 2.0 就该跟着一起没，
+        // 不然远端清单那次拉取失败时它会留在云端继续响（麦麦 2026-09-30）。
         const { targets, failed } = await ActiveMsgClient.cancelAllTasksForChar(
           char.id,
-          tasks.map((t) => t.taskUuid),
+          allTasks.map((t) => t.taskUuid),
         );
         const attempted = new Set(targets);
         // 真被取消掉的那些（试过且没失败）要给角色一句交代，否则关掉 2.0 之后它还挂着
@@ -451,10 +458,18 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       onSave((prev) => buildConfig(
         prev,
         // 并清单的规则（含替换失败时保留旧记录）与角色工具路径共用 applyScheduledTask。
-        (list) => applyScheduledTask(list, record, {
-          replaceTaskUuid: editingTaskUuid ?? undefined,
-          replacedCancelFailed: result.replacedCancelFailed,
-        }, Date.now()),
+        // 兜底（麦麦 2026-09-30）跟主任务**同一次**落账：拆成两次写会跟面板自己的
+        // setTasks 抢先后——面板拿的是渲染时的旧 tasks，晚一步的那次会把先写进去的兜底盖掉，
+        // 本地清单就此少一条兜底，第 5 步再也取消不掉它。
+        (list) => {
+          const merged = applyScheduledTask(list, record, {
+            replaceTaskUuid: editingTaskUuid ?? undefined,
+            replacedCancelFailed: result.replacedCancelFailed,
+          }, Date.now());
+          return result.fallback
+            ? applyScheduledTask(merged, result.fallback.record, {}, Date.now())
+            : merged;
+        },
         { lastSyncedAt: Date.now() },
       ));
       // 排程接口回了 success = 这条在远端确实存在，记进底账，别让它被当成「远端不存在」。

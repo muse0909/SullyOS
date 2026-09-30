@@ -408,6 +408,12 @@ async function persistCharacterWakeupToLocal(params: {
     reason: string;
     source: 'character';
   };
+  /**
+   * 「强制发送」30 分钟后的兜底（麦麦 2026-09-30）。跟主任务**同一次**落账。
+   * 这条路是先 DB.getCharacter 重读再 DB.saveCharacter 整份盖回去的，分两次写的话
+   * 第二次盖的是没读到自己那条的旧值，兜底就此从本地清单消失、第 5 步取消不掉。
+   */
+  fallbackRecord?: ActiveMsg2TaskRecord;
 }): Promise<void> {
   const { charId, result } = params;
   // 入参 taskInput 里的字段是固定那一组（schedule_next_wakeup token 永远 mode=prompted、
@@ -439,12 +445,15 @@ async function persistCharacterWakeupToLocal(params: {
     const existingConfig = freshChar.activeMsg2Config ?? { enabled: true } as any;
     // applyScheduledTask 按 taskUuid 防重复（同 uuid 二次落账是覆盖而不是新增）。
     // 替换语义不传 replaceTaskUuid，行为是「并入清单」。
-    const nextTasks = applyScheduledTask(
+    const afterMain = applyScheduledTask(
       existingConfig.tasks ?? [],
       record,
       { replacedCancelFailed: false },
       Date.now(),
     );
+    const nextTasks = params.fallbackRecord
+      ? applyScheduledTask(afterMain, params.fallbackRecord, {}, Date.now())
+      : afterMain;
     // 清过点 48h 的一次性任务（跟 persistTasks 一致）。
     const cleanedTasks = pruneStaleTasks(nextTasks, Date.now());
 
@@ -639,6 +648,7 @@ export async function registerCharacterWakeup(
         reason,
         source: 'character',
       },
+      fallbackRecord: result.fallback?.record,
     });
 
     return true;

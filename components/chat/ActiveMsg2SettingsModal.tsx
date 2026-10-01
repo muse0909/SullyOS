@@ -20,6 +20,9 @@ import { isInstantChatReady } from '../../utils/amsgInstantChat';
 import { syncAmsgLlmCredentials } from '../../utils/amsgStateSync';
 import { buildUserCancelledNotices } from '../../utils/amsg2TaskContext';
 import { describeMissedOccurrence, matchSkipToMissed, scanMissedOccurrences, type MissedOccurrence } from '../../utils/amsg2DeferredScan';
+import { runFallbackReconcile } from '../../utils/amsg2FallbackPair';
+import { AMSG_FALLBACK_DELAY_MS } from '../../utils/amsg2Tasks';
+import { amsgDiag } from '../../utils/amsgDiag';
 import { trackEvent } from '../../utils/analytics';
 import {
   applyRemoteTaskDelta,
@@ -259,7 +262,14 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
     // 防穿帮闸最近拦下了哪次触发。闸是静默的，不说一声的话「让路了」在用户看来
     // 跟「没发出去」一模一样。
-    void (async () => setLastSkip(await ActiveMsgClient.readLastSkip(char.id)))();
+    // 兜底对账紧跟着它跑：主任务是不是被云端那道「连续几声没回」停了，只有这条
+    // 记录说得出来。放在同一个块里是因为要等它读完才能判，而单独开一个 effect
+    // 就得多存一份"读没读完"的状态。
+    void (async () => {
+      const skip = await ActiveMsgClient.readLastSkip(char.id);
+      setLastSkip(skip);
+      await reconcileFallbacks(skip);
+    })();
 
     void (async () => {
       let remote: Set<string>;
@@ -352,7 +362,71 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     setEnabled(!enabled);
     // 顺手把面板上其它角色级设置（maxTokens / 连发上限 / 单独 API）一起带上，与
     // buildConfig 的口径一致：这几项本来就只有面板会写。
-    if (turningOn) onSave((prev) => buildConfig(prev, (list) => list));
+    if (turningOn) {
+      onSave((prev) => buildConfig(prev, (list) => list));
+      // 开关保存时对一次账：开着的角色不该留着孤儿兜底，也该给缺后路的强制发送
+      // 补上。（走"关闭 2.0"关掉的那一侧不用在这里补——那条路已经把远端任务连
+      // 兜底一起取消了，本地清单是空的，这里自然是个空计划。）
+      void reconcileFallbacks(lastSkip);
+    }
+  };
+
+  /**
+   * 兜底对账（麦麦 2026-10-01 step 7）。
+   *
+   * 兜底是独立的一条云端任务，跟主任务各活各的，所以有两条断链没人管：
+   *   - 用户手动取消了主任务 → 兜底还在，到点照响（用户以为全取消了）
+   *   - 主任务被云端那道「连续几声没回」停了 → 兜底照响（用户根本没取消过）
+   * 另一半是建兜底失败之后没人重试，主任务从此没有后路。
+   *
+   * **计划为空时一次网络请求都不发**（planFallbackReconcile 内部短路），所以每次
+   * 开面板都跑一遍没有代价，兜底真出了问题下一轮就自己对上。
+   *
+   * 落盘走 onSave → OSContext.updateCharacter，跟取消/新建任务同一条路：那边落库成功
+   * 后会打脏 amsg2 快照，fire_pack 里的排程清单不会还留着已经取消的兜底。
+   */
+  const reconcileFallbacks = async (skipForPlan: AmsgLastSkip | null) => {
+    if (!globalReady) return;
+    try {
+      const result = await runFallbackReconcile({
+        char,
+        delayMs: AMSG_FALLBACK_DELAY_MS,
+        schedule: async ({ mainTask: t, nextOccurrenceMs }) => {
+          const built = await ActiveMsgClient.scheduleFallbackTask({
+            char,
+            config: char.activeMsg2Config!,
+            forClientTaskId: t.clientTaskId,
+            forSource: t.source,
+            mainOccurrenceMs: nextOccurrenceMs,
+            mainMode: t.mode,
+            // 落盘的任务记录里没有 reason 字段（那是建任务入参，worker 专用 metadata），
+            // 提示方向统一走 promptHint；固定模式取原文。见 activeMsgRuntime 同款调用。
+            mainHintOrReason: t.promptHint,
+            mainUserMessage: t.userMessage,
+            mainRecurrence: t.recurrenceType,
+            userProfile, groups, realtimeConfig, apiConfig,
+            enabledOverride: char.activeMsg2Config?.enabled === true,
+          });
+          return built?.record ?? null;
+        },
+        cancelRemote: async (uuid) => { await ActiveMsgClient.cancelTask(uuid); },
+        persist: async (mutate) => {
+          onSave((prev) => buildConfig(prev, mutate, { lastSyncedAt: Date.now() }));
+        },
+        diag: (extra) => amsgDiag({ stage: 'fallback-reconciled', charId: char.id, extra }),
+        lastSkip: skipForPlan,
+      });
+      // 只在真的动了手才打扰用户：建兜底是系统行为不该刷屏，取消失败必须让他知道。
+      if (result.rebuilt > 0) {
+        addToast(`已给 ${result.rebuilt} 条「强制发送」任务补上 30 分钟后的兜底。`, 'success');
+      }
+      if (result.failed.length > 0) {
+        addToast(`有 ${result.failed.length} 条兜底在远端取消失败（主任务已经不在了），请稍后重开面板重试。`, 'error');
+      }
+    } catch (e) {
+      // 对账失败绝不能挡住面板：它只是"把状态拉齐"，不是这次操作本身。
+      console.warn('[ActiveMsg2Modal] 兜底对账失败', e);
+    }
   };
 
   /**

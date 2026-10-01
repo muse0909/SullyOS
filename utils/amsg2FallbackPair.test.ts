@@ -10,11 +10,14 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   findFallbackFor,
   nextFallbackOccurrenceMs,
+  planFallbackReconcile,
   resolveOccurrenceForPairing,
   retireFallbackForOccurrence,
+  runFallbackReconcile,
   shouldRebuildFallback,
   type FallbackPairDeps,
 } from './amsg2FallbackPair';
+import type { AmsgLastSkip } from './amsgFirePack';
 import type { ActiveMsg2TaskRecord, CharacterProfile } from '../types';
 
 const H = 3600_000;
@@ -210,5 +213,175 @@ describe('resolveOccurrenceForPairing（拿哪一次）', () => {
   it('一次性任务就是它自己那一次', () => {
     const t = mainTask({ recurrenceType: 'none' });
     expect(resolveOccurrenceForPairing(t, T0 + 10 * MIN)).toBe(T0);
+  });
+});
+
+// ─── 对账（step 7）───
+const skipOf = (extra: Record<string, unknown> = {}) => ({
+  v: 1 as const,
+  taskUuid: 'main-uuid',
+  occurrenceMs: T0,
+  reason: 'recurring-unanswered' as const,
+  skippedAt: T0,
+  ...extra,
+}) as AmsgLastSkip;
+
+const planAt = (
+  tasks: ActiveMsg2TaskRecord[],
+  nowMs: number,
+  lastSkip?: AmsgLastSkip | null,
+) => planFallbackReconcile({ tasks, nowMs, delayMs: DELAY, lastSkip });
+
+describe('planFallbackReconcile — 该取消的', () => {
+  // 这条最要紧：对账是每次开面板都会跑的，一旦误伤就把好好的后路删了。
+  it('主任务在、兜底也在 → 什么都不动', () => {
+    const plan = planAt([mainTask(), fallbackTask()], T0 + 10 * MIN);
+    expect(plan.cancel).toEqual([]);
+    expect(plan.build).toEqual([]);
+  });
+
+  // 用户手动取消主任务后，兜底是独立的一条云端任务，还在，到点照响。
+  it('主任务被手动取消了 → 取消那条孤儿兜底', () => {
+    const plan = planAt([fallbackTask()], T0 + 10 * MIN);
+    expect(plan.cancel).toHaveLength(1);
+    expect(plan.cancel[0].reason).toBe('orphan');
+  });
+
+  it('主任务被标记取消 → 同样当孤儿清掉', () => {
+    const plan = planAt([mainTask({ status: 'cancelled' }), fallbackTask()], T0 + 10 * MIN);
+    expect(plan.cancel.map((c) => c.reason)).toEqual(['orphan']);
+  });
+
+  it('主任务被「连续几声没回」停掉 → 取消它的兜底', () => {
+    const plan = planAt([mainTask(), fallbackTask()], T0 + 10 * MIN, skipOf());
+    expect(plan.cancel).toHaveLength(1);
+    expect(plan.cancel[0].reason).toBe('main-stopped');
+  });
+
+  // 云端可写的跳过原因还有九种，只有这一种会让主任务永久停摆；其余的照删会误伤。
+  it('last_skip 是别的原因 → 不动', () => {
+    for (const reason of ['daily-limit', 'min-gap', 'stale', 'schedule-off'] as const) {
+      const plan = planAt([mainTask(), fallbackTask()], T0 + 10 * MIN, skipOf({ reason }));
+      expect(plan.cancel).toEqual([]);
+    }
+  });
+
+  // 停掉的是哪条任务只能靠 uuid 反查，对不上就宁可漏一次对账——把还在正常响的
+  // 主任务误判成停掉的，代价比漏一次大得多。
+  it('last_skip 的 uuid 对不上任何任务 → 不动', () => {
+    const plan = planAt([mainTask(), fallbackTask()], T0 + 10 * MIN, skipOf({ taskUuid: 't-别的' }));
+    expect(plan.cancel).toEqual([]);
+  });
+
+  it('last_skip 压根没有 → 不动', () => {
+    expect(planAt([mainTask(), fallbackTask()], T0 + 10 * MIN, null).cancel).toEqual([]);
+  });
+
+  it('兜底自己是「被停掉」的那条 → 不当主任务处理（不连锁取消）', () => {
+    const plan = planAt(
+      [mainTask(), fallbackTask({ taskUuid: 'fb-uuid2' })],
+      T0 + 10 * MIN,
+      skipOf({ taskUuid: 'fb-uuid2' }),
+    );
+    expect(plan.cancel).toEqual([]);
+  });
+});
+
+describe('planFallbackReconcile — 该补建的', () => {
+  it('强制发送的主任务没有兜底 → 补一条，时刻 = 下次触发 + 30 分钟', () => {
+    const plan = planAt([mainTask()], T0 + 10 * MIN);
+    expect(plan.build).toHaveLength(1);
+    // 下一次触发是明天 8:00，兜底落在 8:30。
+    expect(plan.build[0].fireAtMs).toBe(T0 + 24 * H + DELAY);
+  });
+
+  // 遇忙作废的那次是直接取消，本来就没人来说这句，配后路没意义。
+  it('遇忙作废的主任务 → 不补', () => {
+    const plan = planAt([mainTask({ expirePolicy: 'expire' })], T0 + 10 * MIN);
+    expect(plan.build).toEqual([]);
+  });
+
+  it('固定模式但没写原文 → 建不出兜底，不补', () => {
+    const plan = planAt([mainTask({ mode: 'fixed', userMessage: '' })], T0 + 10 * MIN);
+    expect(plan.build).toEqual([]);
+  });
+
+  it('主任务被停掉 → 不补（等用户回话复活后下一次对账会补上）', () => {
+    const plan = planAt([mainTask()], T0 + 10 * MIN, skipOf());
+    expect(plan.build).toEqual([]);
+  });
+
+  // 兜底是跟主任务同循环的，一条记录代表所有周期。拿 firstSendTime 判"这次过去了"
+  // 会把好好的每日兜底误删——那正是 step 5 刚修好的"按下个周期重建"。
+  it('每日兜底的首次时刻已过 → 仍然保留，不当废的删', () => {
+    const plan = planAt([mainTask(), fallbackTask()], T0 + 3 * 24 * H);
+    expect(plan.cancel).toEqual([]);
+  });
+
+  it('已取消的兜底记录 → 当没有处理，主任务该补还是补', () => {
+    const plan = planAt([mainTask(), fallbackTask({ status: 'cancelled' })], T0 + 10 * MIN);
+    expect(plan.build).toHaveLength(1);
+  });
+
+  it('下一次触发 + 30 分钟已经过去 → 不补（补出来落地就白发）', () => {
+    // 一次性任务触发在 35 分钟前，兜底那一刻也早过了。
+    const plan = planAt([mainTask({ recurrenceType: 'none' })], T0 + 35 * MIN);
+    expect(plan.build).toEqual([]);
+  });
+
+  it('一次性任务、兜底那一刻还没到 → 补', () => {
+    const plan = planAt([mainTask({ recurrenceType: 'none' })], T0 + 5 * MIN);
+    expect(plan.build).toHaveLength(1);
+  });
+
+  it('一次性任务、触发还没到 → 补', () => {
+    const plan = planAt([mainTask({ recurrenceType: 'none' })], T0 - 10 * MIN);
+    expect(plan.build).toHaveLength(1);
+    expect(plan.build[0].fireAtMs).toBe(T0 + DELAY);
+  });
+});
+
+describe('runFallbackReconcile（真的去动云端）', () => {
+  it('计划为空 → 一次网络请求都不发', async () => {
+    const deps = makeDeps([mainTask(), fallbackTask()]);
+    const r = await runFallbackReconcile({ ...deps, delayMs: DELAY, nowMs: T0 + 10 * MIN });
+    expect(r).toMatchObject({ cancelled: 0, rebuilt: 0, failed: [], buildFailed: [] });
+    expect(deps.cancelRemote).not.toHaveBeenCalled();
+    expect(deps.schedule).not.toHaveBeenCalled();
+    expect(deps.persist).not.toHaveBeenCalled();
+  });
+
+  it('孤儿兜底 → 远端取消 + 本地出清单', async () => {
+    const deps = makeDeps([fallbackTask()]);
+    const r = await runFallbackReconcile({ ...deps, delayMs: DELAY, nowMs: T0 + 10 * MIN });
+    expect(r.cancelled).toBe(1);
+    expect(deps.cancelRemote).toHaveBeenCalledWith('fb-uuid');
+    expect(deps.saved()).toEqual([]);
+  });
+
+  // 取消失败就把记录留着：远端那条还在响，本地清单里得看得见还能重试。
+  it('远端取消失败 → 记录留在清单里，不当成功', async () => {
+    const deps = makeDeps([fallbackTask()]);
+    (deps.cancelRemote as any).mockRejectedValueOnce(new Error('boom'));
+    const r = await runFallbackReconcile({ ...deps, delayMs: DELAY, nowMs: T0 + 10 * MIN });
+    expect(r.cancelled).toBe(0);
+    expect(r.failed).toHaveLength(1);
+    expect(deps.saved().map((t) => t.taskUuid)).toEqual(['fb-uuid']);
+  });
+
+  it('缺兜底 → 建一条并进清单', async () => {
+    const deps = makeDeps([mainTask()]);
+    const r = await runFallbackReconcile({ ...deps, delayMs: DELAY, nowMs: T0 + 10 * MIN });
+    expect(r.rebuilt).toBe(1);
+    expect(deps.saved().map((t) => t.taskUuid).sort()).toEqual(['fb-new', 'main-uuid']);
+  });
+
+  it('建兜底失败 → 记进 buildFailed，不写进清单', async () => {
+    const deps = makeDeps([mainTask()]);
+    (deps.schedule as any).mockResolvedValueOnce(null);
+    const r = await runFallbackReconcile({ ...deps, delayMs: DELAY, nowMs: T0 + 10 * MIN });
+    expect(r.rebuilt).toBe(0);
+    expect(r.buildFailed).toHaveLength(1);
+    expect(deps.saved().map((t) => t.taskUuid)).toEqual(['main-uuid']);
   });
 });

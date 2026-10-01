@@ -9,12 +9,17 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  describeMissedOccurrence,
   isDeferrable,
+  matchSkipToMissed,
   scanDeferredCandidates,
+  scanMissedOccurrences,
   shouldDeferOccurrence,
   shouldHavePushed,
+  type MissedOccurrence,
 } from './amsg2DeferredScan';
 import { ACTIVE_CHAT_WINDOW_MS } from './amsg2ExpireGuard';
+import type { AmsgLastSkip } from './amsgFirePack';
 import type { ActiveMsg2TaskRecord, Message } from '../types';
 
 const MIN = 60_000;
@@ -197,5 +202,175 @@ describe('shouldHavePushed（面板上「该推送却没来」）', () => {
       const pushed = shouldHavePushed({ occurrenceMs: T0, nowMs: T0 + 30 * MIN, messages });
       expect(deferred).toBe(!pushed);
     }
+  });
+});
+
+/** 已送达的定时主动消息（hasDeliveredProactiveNear 按 clientTaskId 精确归属）。 */
+const delivered = (clientTaskId: string, at: number): Message => ({
+  role: 'assistant',
+  timestamp: at,
+  metadata: { activeMsg2: { taskId: 'uuid-x' }, amsgClientTaskId: clientTaskId },
+}) as unknown as Message;
+
+const skip = (extra: Partial<AmsgLastSkip> = {}): AmsgLastSkip => ({
+  v: 1,
+  taskUuid: 't-1',
+  occurrenceMs: T0,
+  reason: 'daily-limit',
+  skippedAt: T0,
+  ...extra,
+});
+
+const scanMissed = (
+  tasks: ActiveMsg2TaskRecord[],
+  messages: Message[],
+  nowMs: number,
+  extra: { graceMs?: number; lookbackMs?: number } = {},
+) => scanMissedOccurrences({ tasks, messages, nowMs, ...extra });
+
+describe('scanMissedOccurrences（面板上「到点了却什么都没来」）', () => {
+  it('到点 + 宽限期过了、什么都没收到 → 报一次没响', () => {
+    const out = scanMissed([task()], [], T0 + 10 * MIN);
+    expect(out).toHaveLength(1);
+    expect(out[0].occurrenceMs).toBe(T0);
+  });
+
+  // 刚过点就报"没响"= 每次都误报，这条闸比漏报重要。
+  it('还在宽限期内（刚过点）→ 不报，推送还在路上', () => {
+    expect(scanMissed([task()], [], T0 + 2 * MIN)).toEqual([]);
+  });
+
+  it('到了点而且确实送达了 → 不报', () => {
+    expect(scanMissed([task()], [delivered('c-1', T0 + 60_000)], T0 + 10 * MIN)).toEqual([]);
+  });
+
+  // 归属按 clientTaskId 走：别的任务发过不算这条发过。
+  it('送达的是**别的**任务 → 照样报这条没响', () => {
+    expect(scanMissed([task()], [delivered('c-OTHER', T0 + 60_000)], T0 + 10 * MIN)).toHaveLength(1);
+  });
+
+  it('该让开的（到点前用户说过话）→ 报没响，但 shouldPush=false', () => {
+    const out = scanMissed([task()], [userMsg(5)], T0 + 10 * MIN);
+    expect(out).toHaveLength(1);
+    expect(out[0].shouldPush).toBe(false);
+  });
+
+  it('到点前用户没说话 → shouldPush=true（这才是要查的那种没响）', () => {
+    const out = scanMissed([task()], [userMsg(30)], T0 + 10 * MIN);
+    expect(out).toHaveLength(1);
+    expect(out[0].shouldPush).toBe(true);
+  });
+
+  // 面板要分清"用户当时在聊天"和"功能坏了"，所以两种策略都得扫——
+  // 遇忙作废同样会"没响"，只是原因不同。
+  it('遇忙作废的任务也扫（原因不同，但一样会没响）', () => {
+    const out = scanMissed([task({ expirePolicy: 'expire' })], [], T0 + 10 * MIN);
+    expect(out).toHaveLength(1);
+  });
+
+  it('已取消 → 不扫（本来就不该再响）', () => {
+    expect(scanMissed([task({ status: 'cancelled' })], [], T0 + 10 * MIN)).toEqual([]);
+  });
+
+  it('循环任务：回看期内每一次没响各报一条，按时间倒序', () => {
+    const out = scanMissed(
+      [task({ recurrenceType: 'daily' })],
+      [],
+      T0 + 3 * 24 * 3600_000,
+      { lookbackMs: 4 * 24 * 3600_000 },
+    );
+    expect(out.map((o) => o.occurrenceMs)).toEqual([T0 + 2 * 24 * 3600_000, T0 + 24 * 3600_000, T0]);
+  });
+
+  // 默认只回看 48 小时：更早的触发即使用户想看，面板上也不该摆着。
+  it('默认回看期外的不报（48 小时是默认上限）', () => {
+    const out = scanMissed([task({ recurrenceType: 'daily' })], [], T0 + 3 * 24 * 3600_000);
+    expect(out.map((o) => o.occurrenceMs)).toEqual([T0 + 2 * 24 * 3600_000, T0 + 24 * 3600_000]);
+  });
+
+  it('循环任务里已经送达过的那几次不报', () => {
+    const out = scanMissed(
+      [task({ recurrenceType: 'daily' })],
+      [delivered('c-1', T0 + 24 * 3600_000 + 60_000)],
+      T0 + 2 * 24 * 3600_000 + 10 * MIN,
+      { lookbackMs: 4 * 24 * 3600_000 },
+    );
+    expect(out.map((o) => o.occurrenceMs)).toEqual([T0 + 2 * 24 * 3600_000, T0]);
+  });
+
+  it('还没到的循环任务不报（那是未来的事）', () => {
+    expect(scanMissed([task()], [], T0 - 10 * MIN)).toEqual([]);
+  });
+
+  it('回看期外的不报', () => {
+    const out = scanMissed([task()], [], T0 + 40 * 3600_000, { lookbackMs: 2 * 3600_000 });
+    expect(out).toEqual([]);
+  });
+
+  it('扫到 0 条不报错', () => {
+    expect(scanMissed([], [], T0)).toEqual([]);
+  });
+});
+
+describe('matchSkipToMissed（把云端那条记录对到这次没响上）', () => {
+  it('uuid 相同 → 对上了', () => {
+    const missed = scanMissed([task()], [], T0 + 10 * MIN)[0];
+    expect(matchSkipToMissed(skip(), missed)).not.toBeNull();
+  });
+
+  // 这条是整个函数存在的理由：拿别的时刻的记录来解释这次 = 凭空编个原因，
+  // 用户会照着假原因去排查，比"云端没记原因"糟糕得多。
+  it('uuid 不同 → 对不上（宁可说没记原因）', () => {
+    const missed = scanMissed([task()], [], T0 + 10 * MIN)[0];
+    expect(matchSkipToMissed(skip({ taskUuid: 't-OTHER' }), missed)).toBeNull();
+  });
+
+  it('云端拿不到 uuid 时按时刻就近（cron 可能比到点晚几分钟）', () => {
+    const missed = scanMissed([task()], [], T0 + 10 * MIN)[0];
+    expect(matchSkipToMissed(skip({ taskUuid: null, occurrenceMs: T0 + 3 * MIN }), missed)).not.toBeNull();
+  });
+
+  it('uuid 拿不到、时刻又差太远 → 对不上', () => {
+    const missed = scanMissed([task()], [], T0 + 10 * MIN)[0];
+    expect(matchSkipToMissed(skip({ taskUuid: null, occurrenceMs: T0 + 5 * 3600_000 }), missed)).toBeNull();
+  });
+
+  it('压根没有记录 → 对不上', () => {
+    const missed = scanMissed([task()], [], T0 + 10 * MIN)[0];
+    expect(matchSkipToMissed(null, missed)).toBeNull();
+  });
+});
+
+describe('describeMissedOccurrence（面板上那一行字）', () => {
+  const missedAt = (shouldPush: boolean): MissedOccurrence => ({
+    task: task(), occurrenceMs: T0, shouldPush,
+  });
+
+  // 云端写下了原因就照它的话实说——云端比客户端更清楚它自己经历了什么，
+  // 这里自作聪明改写只会把真原因说歪。
+  it('有云端记录 → 照云端的话实说', () => {
+    const text = describeMissedOccurrence(missedAt(true), skip({ reason: 'daily-limit' }));
+    expect(text).toContain('到上限');
+  });
+
+  it('本地判本来就该让开 → 说清是规矩内的结果', () => {
+    const text = describeMissedOccurrence(missedAt(false), null);
+    expect(text).toContain('让开');
+    expect(text).not.toContain('云端没留下原因');
+  });
+
+  // 这一档是整个函数的重点：宁可显得无能也不能猜。猜出来的原因会把用户
+  // 引到完全不相干的地方去排查，比"我不知道"费时间得多。
+  it('该响却没响 + 云端没记 → 明说没记原因，不编', () => {
+    const text = describeMissedOccurrence(missedAt(true), null);
+    expect(text).toContain('云端没留下原因');
+    expect(text).toContain('连上云端');
+  });
+
+  it('每句话都带得上触发时刻（不然用户对不上是哪次）', () => {
+    for (const push of [true, false]) {
+      expect(describeMissedOccurrence(missedAt(push), null).length).toBeGreaterThan(0);
+    }
+    expect(describeMissedOccurrence(missedAt(true), null)).not.toMatch(/undefined|NaN|\[object/);
   });
 });

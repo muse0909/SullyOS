@@ -26,16 +26,26 @@
  */
 
 import { ActiveMsg2TaskRecord, CharacterProfile, Message } from '../types';
+import { describeLastSkip, type AmsgLastSkip } from './amsgFirePack';
 import {
   ACTIVE_CHAT_WINDOW_MS,
   hasDeliveredProactiveNear,
   hasRealUserMessageBetween,
   recurrencePeriodMs,
 } from './amsg2ExpireGuard';
-import { isForcePolicy } from './amsg2Tasks';
+import { formatTaskTime, isForcePolicy } from './amsg2Tasks';
 
 /** 扫多久以前的触发。太早的回执用户和角色都不关心，台账也只留 48h。 */
 const DEFAULT_SCAN_LOOKBACK_MS = 48 * 3600_000;
+
+/**
+ * 到点后这么久还没收到东西，才算「没响」（面板上报用）。
+ *
+ * 不能取 0：云端是 cron 每分钟扫一次，生成 + 推送送达本身要十几秒，刚过点就下结论
+ * 会把每次都报成"没响"。也不能太大——30 分钟那是兜底候补的时间，兜底一到点本来就
+ * 该响，那时候还算"主任务没响"就对不上了。
+ */
+const DEFAULT_MISSED_GRACE_MS = 5 * 60_000;
 
 export interface DeferredCandidate {
   /** 一次性 = taskUuid；循环 = `${taskUuid}:${occurrenceMs}`。 */
@@ -182,3 +192,119 @@ export const shouldHavePushed = (input: {
     messages: input.messages,
     lookbackMs: Number.MAX_SAFE_INTEGER,
   });
+
+/** 面板上「这次没响」的一行。 */
+export interface MissedOccurrence {
+  task: ActiveMsg2TaskRecord;
+  occurrenceMs: number;
+  /**
+   * 本地按新规矩判「该推送」——到点前 10 分钟用户没在说话。
+   *
+   * 这一栏是这张表存在的意义：**没响有两种，得分开说**。false = 用户当时正在跟
+   * 这个角色聊天，按新规矩本来就该让开，"没响"是规矩内的结果；true = 这次压根
+   * 不该被让开却还是没响，那才是要查的问题（连不上云端 / 次数到顶 / 云端自己丢了）。
+   * 不分这一栏的话，面板会把"用户当时在聊天"和"功能坏了"写成同一句话。
+   */
+  shouldPush: boolean;
+}
+
+/**
+ * 面板「为什么没响」的数据源：回看期内哪些触发到点了、宽限期过了、却什么都没收到。
+ *
+ * 跟 scanDeferredCandidates 的分工：
+ *   - 那条扫的是「该让开、也确实让开了、但得让角色知道」（强制发送的推迟回执）
+ *   - 这条扫的是「到点了、什么都没来」——不管该让开还是不该让开，面板都要有个说法
+ *
+ * 送达判定复用 hasDeliveredProactiveNear（按 clientTaskId 精确归属），跟回执那条
+ * 是同一把尺：两处对"送达了"的看法分家的话，面板会说"没响"而角色那边其实已经说了。
+ */
+export const scanMissedOccurrences = (input: {
+  tasks: ActiveMsg2TaskRecord[];
+  messages: Pick<Message, 'role' | 'timestamp' | 'metadata'>[];
+  nowMs?: number;
+  lookbackMs?: number;
+  graceMs?: number;
+}): MissedOccurrence[] => {
+  const nowMs = input.nowMs ?? Date.now();
+  const lookbackMs = input.lookbackMs ?? DEFAULT_SCAN_LOOKBACK_MS;
+  const graceMs = input.graceMs ?? DEFAULT_MISSED_GRACE_MS;
+  const out: MissedOccurrence[] = [];
+
+  for (const task of input.tasks) {
+    // 状态只有 scheduled / cancelled 两种（见 ActiveMsg2TaskStatus）。已取消的本来
+    // 就不该再响，扫它只会报一堆假警。
+    if (task.status !== 'scheduled') continue;
+    const first = new Date(task.firstSendTime).getTime();
+    if (!Number.isFinite(first)) continue;
+
+    const consider = (occurrenceMs: number) => {
+      if (occurrenceMs > nowMs - graceMs) return;
+      if (occurrenceMs < nowMs - lookbackMs) return;
+      if (hasDeliveredProactiveNear(input.messages as any, occurrenceMs, task.clientTaskId)) return;
+      out.push({
+        task,
+        occurrenceMs,
+        shouldPush: shouldHavePushed({ occurrenceMs, nowMs, messages: input.messages }),
+      });
+    };
+
+    const periodMs = recurrencePeriodMs(task.recurrenceType);
+    if (periodMs === null) {
+      if (first > nowMs) continue;
+      consider(first);
+      continue;
+    }
+    // 快进到回看期起点，别从几个月前逐个迭代。
+    let t = first;
+    if (t < nowMs - lookbackMs) {
+      t = first + Math.ceil((nowMs - lookbackMs - first) / periodMs) * periodMs;
+    }
+    for (; t <= nowMs; t += periodMs) consider(t);
+  }
+
+  // 面板上要按时间倒序排——用户关心的是"最近那次为什么没响"，不是三个月前的。
+  out.sort((a, b) => b.occurrenceMs - a.occurrenceMs);
+  return out;
+};
+
+/**
+ * 把云端那条 last_skip 对到某次「没响」上。对不上返回 null。
+ *
+ * **宁可返回 null 也不能乱对**：last_skip 只留最近一条，拿它去解释一次不相关的
+ * 没响，等于凭空编一个原因给用户看——那比"云端没记原因"糟糕得多（用户会照着
+ * 假原因去排查）。所以只认两种对得上的方式：uuid 精确相等，或云端拿不到 uuid
+ * 时按时刻就近（cron 可能比到点晚几分钟，窗口给 10 分钟，跟 ACTIVE_CHAT_WINDOW_MS
+ * 同一个量级）。
+ */
+export const matchSkipToMissed = (
+  skip: AmsgLastSkip | null | undefined,
+  missed: Pick<MissedOccurrence, 'task' | 'occurrenceMs'>,
+): AmsgLastSkip | null => {
+  if (!skip) return null;
+  if (skip.taskUuid) return skip.taskUuid === missed.task.taskUuid ? skip : null;
+  return Math.abs(skip.occurrenceMs - missed.occurrenceMs) <= ACTIVE_CHAT_WINDOW_MS ? skip : null;
+};
+
+/**
+ * 面板上那一行「为什么没响」。
+ *
+ * 三档，从确定到不确定往下排：
+ *   1. 云端写下了原因 → 照它的话实说，一字不改（云端比客户端更清楚它自己经历了什么）
+ *   2. 本地判"本来就该让开" → 说清楚这是规矩内的结果，不是故障
+ *   3. 其余 → 明说"云端没记原因"，并把最可能的几种摆出来
+ *
+ * 第 3 档宁可显得无能也不能猜一个原因：用户是照着这句话去排查的，猜出来的原因
+ * 会把他引到完全不相干的地方去，比"我不知道"费时间得多。
+ */
+export const describeMissedOccurrence = (
+  missed: MissedOccurrence,
+  skip: AmsgLastSkip | null,
+): string => {
+  if (skip) return describeLastSkip(skip, (ms) => formatTaskTime(ms));
+  const when = formatTaskTime(missed.occurrenceMs);
+  if (!missed.shouldPush) {
+    return `${when} 那次没响——到点前十分钟你正跟 ta 聊天，按规矩这次让开了。`;
+  }
+  return `${when} 那次没响——按规矩这次该响的，但云端没留下原因`
+    + '（多半是没连上云端、任务没传上去，或者云端自己丢了一次）。';
+};

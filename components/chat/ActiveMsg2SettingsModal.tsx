@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Modal from '../os/Modal';
 import {
   ActiveMsg2CharacterConfig,
@@ -9,6 +9,7 @@ import {
   APIConfig,
   CharacterProfile,
   GroupProfile,
+  Message,
   RealtimeConfig,
   UserProfile,
 } from '../../types';
@@ -18,6 +19,7 @@ import { type AmsgLastSkip, DEFAULT_MAX_UNANSWERED_SENDS, AMSG_LAST_SKIP_KEY, am
 import { isInstantChatReady } from '../../utils/amsgInstantChat';
 import { syncAmsgLlmCredentials } from '../../utils/amsgStateSync';
 import { buildUserCancelledNotices } from '../../utils/amsg2TaskContext';
+import { describeMissedOccurrence, matchSkipToMissed, scanMissedOccurrences, type MissedOccurrence } from '../../utils/amsg2DeferredScan';
 import { trackEvent } from '../../utils/analytics';
 import {
   applyRemoteTaskDelta,
@@ -54,6 +56,14 @@ interface ActiveMsg2SettingsModalProps {
   userProfile: UserProfile;
   groups: GroupProfile[];
   realtimeConfig: RealtimeConfig;
+  /**
+   * 这个角色当前的聊天记录（Chat.tsx 那边已经在内存里的那份）。
+   *
+   * 面板要判「这次到点、本地算不算该响」就必须有它——判据是"到点前 10 分钟用户
+   * 有没有说过话"，而"说过话"只存在于聊天记录里，面板自己再去数据库捞一份会跟
+   * 屏幕上的对不上（聊天是刚发出去、还没落库的话，那份就少一条）。
+   */
+  messages: Message[];
   /**
    * 落盘任务清单与角色级设置。
    *
@@ -99,6 +109,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   isOpen,
   onClose,
   char,
+  messages,
   apiConfig,
   userProfile,
   groups,
@@ -167,6 +178,30 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
   }> | null>(null);
   // 防穿帮闸最近一次跳过的记录（worker 写的）。null = 没有记录 / 没读到。
   const [lastSkip, setLastSkip] = useState<AmsgLastSkip | null>(null);
+
+  // 「到点了却什么都没来」——面板上每条任务都要能说清这次为什么没响。
+  // 扫的是全部任务（含兜底）：兜底恒定无条件推，它没响同样是问题。
+  //
+  // 放在 lastSkip 之后是必须的：上面那两个 memo 要读它，写在前面就是 TDZ ——
+  // 这个项目 2026-07-31 被同一个坑炸过一次（useEffect 放错位置导致聊天页崩）。
+  const missedByTask = useMemo(() => {
+    const map = new Map<string, MissedOccurrence[]>();
+    for (const m of scanMissedOccurrences({ tasks: allTasks, messages, nowMs: now })) {
+      const list = map.get(m.task.taskUuid);
+      if (list) list.push(m);
+      else map.set(m.task.taskUuid, [m]);
+    }
+    return map;
+  }, [allTasks, messages, now]);
+  // 每个 taskUuid 记它最近那次没响对应的云端记录（对不上就是 null = 云端没记原因）。
+  // last_skip 只留最近一条，所以这里只对得上一次；更早的那些统一显示"云端没记原因"。
+  const missedSkip = useMemo(() => {
+    const map = new Map<string, AmsgLastSkip | null>();
+    for (const [uuid, list] of missedByTask) {
+      map.set(uuid, list.length ? matchSkipToMissed(lastSkip, list[0]) : null);
+    }
+    return map;
+  }, [missedByTask, lastSkip]);
 
   // 表单值重置：面板打开或切换编辑对象时，用被编辑任务的字段填表单（新建则填默认值）。
   // 角色级共享设置（maxTokens / 单独 API）始终跟随保存值。
@@ -690,6 +725,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 // 远端记录的「上一次没发出去」——worker 只在失败时写、成功不清，
                 // 文案里带时间就不会把老记录读成「现在还坏着」。
                 const remoteErrorText = describeRemoteLastError(remoteInfo?.lastError, formatTaskTime);
+                // 「到点了却什么都没来」：本地按新规矩判这次该不该响 + 云端记没记原因。
+                // 展开态把回看期内每一次都列出来，折叠态只给最近那一次。
+                const missedList = missedByTask.get(t.taskUuid) ?? [];
+                const missedText = missedList.length
+                  ? describeMissedOccurrence(missedList[0], missedSkip.get(t.taskUuid) ?? null)
+                  : null;
                 const isExpanded = expandedTaskUuid === t.taskUuid;
                 const isEditing = editingTaskUuid === t.taskUuid;
                 // 编辑中的任务条用主题色描边；展开中用浅灰边，不再叠合编辑/普通两种样式。
@@ -725,6 +766,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                         ) : null}
                         {missingRemote && !isExpanded ? (
                           <div className="text-slate-400 mt-1 text-[11px]">⚠ 远端不存在（可能已发送或在别处取消）</div>
+                        ) : null}
+                        {/* 「为什么没响」放折叠态也看得见：用户在外面点进设置就是为了
+                            找这句话，藏进展开区等于让他自己猜该点哪里。 */}
+                        {missedText && !isExpanded ? (
+                          <div className="text-amber-600 mt-1 text-[11px]">⚠ {missedText}</div>
                         ) : null}
                       </div>
                       {/* 按钮区放右侧，stopPropagation 防止点按钮触发外层 row 的展开切换。 */}
@@ -774,6 +820,22 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                         ) : null}
                         {remoteErrorText ? (
                           <div className="text-amber-600 text-[11px]">⚠ {remoteErrorText}</div>
+                        ) : null}
+                        {missedList.length ? (
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                              为什么没响
+                            </div>
+                            {/* 循环任务攒下好几次没响时全列出来——只说最近一次的话，
+                                每天的任务连着好几天没响，用户会以为只有一次。 */}
+                            <ul className="mt-0.5 space-y-0.5">
+                              {missedList.map((m) => (
+                                <li key={`${m.task.taskUuid}:${m.occurrenceMs}`} className="text-amber-600 text-[11px]">
+                                  ⚠ {describeMissedOccurrence(m, missedSkip.get(t.taskUuid) ?? null)}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         ) : null}
                         {t.lastError ? (
                           <div className="text-red-500 text-[11px]">{t.lastError}</div>

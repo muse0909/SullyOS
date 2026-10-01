@@ -3,6 +3,7 @@ import Modal from '../os/Modal';
 import {
   ActiveMsg2CharacterConfig,
   ActiveMsg2ExpirePolicy,
+  Amsg2ExpiredNoticeRecord,
   ActiveMsg2Mode,
   ActiveMsg2Recurrence,
   ActiveMsg2TaskRecord,
@@ -21,6 +22,12 @@ import { syncAmsgLlmCredentials } from '../../utils/amsgStateSync';
 import { buildUserCancelledNotices } from '../../utils/amsg2TaskContext';
 import { describeMissedOccurrence, matchSkipToMissed, scanMissedOccurrences, type MissedOccurrence } from '../../utils/amsg2DeferredScan';
 import { runFallbackReconcile } from '../../utils/amsg2FallbackPair';
+import {
+  buildMissedSummary,
+  isAfterDismissal,
+  readDismissedAt,
+  writeDismissedAt,
+} from '../../utils/amsg2MissedSummary';
 import { AMSG_FALLBACK_DELAY_MS } from '../../utils/amsg2Tasks';
 import { amsgDiag } from '../../utils/amsgDiag';
 import { trackEvent } from '../../utils/analytics';
@@ -268,6 +275,14 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     void (async () => {
       const skip = await ActiveMsgClient.readLastSkip(char.id);
       setLastSkip(skip);
+      // 作废台账一起拉：它是「最近没响的」那张卡另一半的素材（见 missedSummary）。
+      // 读失败不挡面板——云端那条照样能显示，只是少了几行。
+      try {
+        setExpiredNotices(await ActiveMsgStore.getExpiredNotices(char.id));
+      } catch (e) {
+        console.warn('[ActiveMsg2Modal] 读作废台账失败', e);
+      }
+      setDismissedAt(readDismissedAt(char.id));
       await reconcileFallbacks(skip);
     })();
 
@@ -678,13 +693,35 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     }
   };
 
+  // 「最近没响的」要合三处来源：云端那条 last_skip + 客户端自己记的作废台账。
+  // 台账以前只有角色读得到（它进角色的排程现状块），用户这一侧是出口都没有 ——
+  // 任务被名额顶掉了、角色记了一条"顺口带出"，用户只看到"到点了没响"，只能猜。
+  const [expiredNotices, setExpiredNotices] = useState<Amsg2ExpiredNoticeRecord[]>([]);
+  const [dismissedAt, setDismissedAt] = useState(() => readDismissedAt(char.id));
+  const missedSummary = useMemo(
+    () => buildMissedSummary({
+      lastSkip,
+      notices: expiredNotices,
+      // 挂在任务上的已经由下面每条任务那行说过了（step 6），这张卡不再重复。
+      coveredOccurrences: [...missedByTask.values()].flat().map((m) => m.occurrenceMs),
+    }).filter((e) => isAfterDismissal(e.occurrenceMs, dismissedAt)),
+    [lastSkip, expiredNotices, missedByTask, dismissedAt],
+  );
+
   const handleDismissLastSkip = async () => {
     setLastSkip(null);
+    // 本地台账**不删**——它里面还有角色没读走的记录，删了等于抹掉这 48 小时的账。
+    // 只把水位线推到最后一条的面：用户看过的就不再冒出来，没看过的下次还在。
+    const newest = missedSummary[0]?.occurrenceMs ?? 0;
+    if (newest) {
+      writeDismissedAt(char.id, newest);
+      setDismissedAt(readDismissedAt(char.id));
+    }
     try {
       await ActiveMsgClient.clearClientStateValue(amsgStateNamespace(char.id), AMSG_LAST_SKIP_KEY);
     } catch (error) {
       console.warn('[ActiveMsg2Modal] 清除最近一次未发送说明失败', error);
-      addToast('这条提示已先从面板隐藏，云端清除失败时下次打开可能还会回来。', 'error');
+      addToast('这些提示已先从面板隐藏，云端清除失败时下次打开可能还会回来。', 'error');
     }
   };
 
@@ -761,20 +798,35 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
           </button>
         </div>
 
-        {/* 闸拦下一次触发时不发任何推送，远端那行任务却照样被消费掉——不说一声的话，
-            「让路了」在用户看来跟「没发出去 / 功能坏了」完全一样。 */}
-        {enabled && lastSkip ? (
+        {/* 「最近没响的」：闸拦下一次触发时不发任何推送，远端那行任务却照样被消费
+            掉——不说一声的话「让路了」在用户看来跟「没发出去 / 功能坏了」完全一样。
+            麦麦 2026-10-01 step 8：把云端那条 last_skip 和本地作废台账合成一张卡
+            （以前只有前者，而台账里那些用户压根看不见），挂在任务上的那些交给下面
+            每条任务自己的那行，这里不重复。 */}
+        {enabled && missedSummary.length > 0 ? (
           <div className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-xs leading-relaxed text-slate-600">
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
-                {describeLastSkip(lastSkip, (ms) => formatTaskTime(new Date(ms).toISOString()))}
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                  最近没响的
+                </div>
+                <ul className="space-y-1">
+                  {missedSummary.map((e) => (
+                    <li key={e.key} className="flex items-start gap-1.5">
+                      <span className="shrink-0 mt-[1px] text-[10px] px-1.5 py-0.5 rounded-full bg-white border border-slate-200 text-slate-400">
+                        {e.source === 'cloud' ? '云端' : '本地'}
+                      </span>
+                      <span className="min-w-0">{e.text}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
               <button
                 type="button"
                 onClick={handleDismissLastSkip}
                 className="shrink-0 px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[11px] font-bold text-slate-500 active:scale-95 transition-transform"
               >
-                关闭
+                知道了
               </button>
             </div>
           </div>

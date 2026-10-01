@@ -50,3 +50,7 @@ worker/proactive-push/worker.bundle.js
 .dev.vars
 .wrangler/
 
+# 麦麦 2026-10-01：测试环境密钥（暮色手动放 Cloudflare token / account id，
+# 麦麦生成的 VAPID 密钥对）。绝不能进 git。
+.secrets/
+

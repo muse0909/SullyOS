@@ -183,6 +183,41 @@ export const isFallbackTask = (task: Pick<ActiveMsg2TaskRecord, 'fallbackFor'>):
 export const visibleTasks = (tasks: ActiveMsg2TaskRecord[]): ActiveMsg2TaskRecord[] =>
   tasks.filter((t) => !isFallbackTask(t));
 
+/**
+ * 角色自排的任务里，哪一条允许被「新排的那条」顶掉（麦麦 2026-10-01 step 9）。
+ *
+ * ## 三个条件缺一不可
+ *
+ * - **自排**（source='character'）：用户自己排的任务谁都不许动。角色没有资格替用户
+ *   改主意。
+ * - **一次性**（recurrenceType='none'）：循环的是长期约定（"每天早上叫你"），悄悄换成
+ *   另一条等于单方面撕毁。只有一次性的承诺才谈得上"改口"。
+ * - **遇忙作废**（expire）：这条本来就不是保证——到点时你在聊天它就不插嘴。既然没
+ *   保证，顶掉它就不算食言。**强制发送**恰恰相反：它的全部意义就是"这句一定送到"，
+ *   角色能把它顶掉，这条保证就没有了。
+ *
+ * ## 为什么要有这条判据
+ *
+ * 以前角色想改口只能靠"用户发一条消息"——那条链路（cancelCharacterWakeups）已经
+ * 随 step 9 删掉了：判断只该在到点那一刻做一次，用户什么时候说话不该影响已排好的
+ * 事（更要命的是它把「强制发送」的任务也一起删了，那条本来就该到点送达）。
+ * 改口能力因此收进入口闸自己。
+ *
+ * ## fallbackFor 为什么也在判据里
+ *
+ * 兜底是系统替「强制发送」补的后路，而 `scheduleFallbackTask` 会把主任务的来源
+ * 抄过来 —— 主任务是角色自排时，这条兜底的 source **也是 'character'**。只看
+ * source 会把兜底一起顶掉，那正是 step 5 刚接好的配对（顶掉之后就没人给它让路了）。
+ */
+export const isReplaceableCharacterWakeup = (
+  task: Pick<ActiveMsg2TaskRecord, 'source' | 'status' | 'recurrenceType' | 'mode' | 'expirePolicy' | 'fallbackFor'>,
+): boolean =>
+  task.source === 'character'
+  && task.status === 'scheduled'
+  && task.recurrenceType === 'none'
+  && !isFallbackTask(task)
+  && resolveExpirePolicy(task.mode, task.expirePolicy) === 'expire';
+
 // ─── 任务的人读文案 ───
 // 角色的排程现状块、list_active_messages 的返回、设置面板的任务列表都显示同一批任务，
 // 三处必须说同一套词——角色在上下文里看到的和它用工具查到的对不上，模型是会当成两回事的。

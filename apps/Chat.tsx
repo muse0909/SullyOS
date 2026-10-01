@@ -1363,15 +1363,13 @@ const Chat: React.FC = () => {
             console.warn('[Chat] cancelDynamicScheduleOnWorker 失败:', e);
         });
 
-        // 麦麦 2026-09-24：暮色 9-24 拍板 — 用户发消息取消该角色的 2.0 character wakeup
-        //   老 cancelDynamicScheduleOnWorker 只走 1.x /cancel-dynamic-schedule（暮色已确认
-        //   1.0 老路径不动），但 schedule_next_wakeup 9-17 之后走的是 2.0 amsg 通道，老接口
-        //   碰不到。本接口走 2.0 cancelTask（删 D1 行 + 标 cancelled），跟面板取消同一条路径。
-        //   范围：source='character' + 未触发。手动排的（source='manual'）不动。
-        //   fire-and-forget — 同 1.x 那条，不阻塞消息保存 / triggerAI；失败静默。
-        void ActiveMsgClient.cancelCharacterWakeups(char).catch((e) => {
-            console.warn('[Chat] ActiveMsgClient.cancelCharacterWakeups 失败:', e);
-        });
+        // 麦麦 2026-10-01 step 9：这里原来会调 ActiveMsgClient.cancelCharacterWakeups
+        //   （用户发消息 → 取消该角色所有未触发的角色自排任务），已删。
+        //   删除理由：新规矩把判断收在「到点那一刻」——用户什么时候说话不该影响已经
+        //   排好的事。更要命的是它连「强制发送」的任务一起删了：那条的定义就是到点
+        //   一定送达，被用户随手一条消息吞掉，兜底也就跟着失去意义。
+        //   角色自己改口的能力收进了 schedule_next_wakeup 的入口闸
+        //   （isReplaceableCharacterWakeup：只顶掉 自排 + 一次性 + 遇忙作废）。
 
         // 麦麦 2026-09-06：用户说"晚安"短句 → 触发该角色今晚的日记
         //   暮色原话："这个时间改成说晚安后吧，现在设置的是 10 点有点太早了"

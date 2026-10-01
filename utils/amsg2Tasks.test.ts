@@ -30,6 +30,7 @@ import {
   shortTaskId,
   toDatetimeLocalValue,
   visibleTasks,
+  isReplaceableCharacterWakeup,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
 
@@ -714,5 +715,54 @@ describe('noticeKindForTask（这条没发出去时，角色该听到哪一种�
 
   it('已取消的任务 → 不产回执', () => {
     expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'expire', status: 'cancelled' }))).toBeNull();
+  });
+});
+
+// ─── 入口闸「只替换 自排+once+遇忙作废」（麦麦 2026-10-01 step 9）───
+describe('isReplaceableCharacterWakeup（角色改口时能顶掉哪一条）', () => {
+  // task() 的默认值恰好就是「自排 + 一次性 + 遇忙作废」这一组，下面每条只改一个字段。
+  it('自排 + 一次性 + 遇忙作废 → 可以顶掉', () => {
+    expect(isReplaceableCharacterWakeup(task())).toBe(true);
+  });
+
+  // 用户自己排的任务，角色没资格替他改主意。
+  it('手动排的 → 不许顶', () => {
+    expect(isReplaceableCharacterWakeup(task({ source: 'user' }))).toBe(false);
+  });
+
+  // 循环是长期约定，悄悄换成另一条等于单方面撕毁。
+  it('循环的 → 不许顶（每天早安那种）', () => {
+    for (const r of ['daily', 'weekly'] as const) {
+      expect(isReplaceableCharacterWakeup(task({ recurrenceType: r }))).toBe(false);
+    }
+  });
+
+  // 强制发送的保证就是"到点一定送到"，角色能自己撤掉，这条保证就没了。
+  it('强制发送 → 不许顶', () => {
+    expect(isReplaceableCharacterWakeup(task({ expirePolicy: 'force' }))).toBe(false);
+  });
+
+  // 兜底抄了主任务的 source（主任务是自排时兜底也是 'character'），只看来源会误顶。
+  it('兜底 → 不许顶（它 source 看着也是 character）', () => {
+    expect(isReplaceableCharacterWakeup(task({ fallbackFor: 'cid-main' }))).toBe(false);
+  });
+
+  it('已取消的 → 不在考虑范围（入口闸那边本来就先滤掉了，这里兜住）', () => {
+    expect(isReplaceableCharacterWakeup(task({ status: 'cancelled' }))).toBe(false);
+  });
+
+  // 固定模式恒 force（resolveExpirePolicy 钉死），哪怕记录里写着 expire 也算强制发送。
+  it('固定模式 → 恒不许顶（恒 force）', () => {
+    expect(isReplaceableCharacterWakeup(task({ mode: 'fixed' }))).toBe(false);
+  });
+
+  // 三种"不许顶"和一种"可以顶"必须互不重叠：判据的四个条件各自都在挡一类，
+  // 任一条写松了就会让角色撤掉它没资格撤的承诺。
+  it('四条判据各自都能单独挡住（逐个放宽就放行了）', () => {
+    expect(isReplaceableCharacterWakeup(task({ source: 'user' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ recurrenceType: 'daily' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ expirePolicy: 'force' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ fallbackFor: 'x' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task())).toBe(true);
   });
 });

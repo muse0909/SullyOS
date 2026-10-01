@@ -14,7 +14,7 @@
 import { amsgDiag } from './amsgDiag';
 // 麦麦 2026-09-24：把角色自排的 2.0 任务同步到本地 char.activeMsg2Config.tasks
 //   需要 ActiveMsg2TaskRecord 类型 + applyScheduledTask/pruneStaleTasks 工具。
-import { applyScheduledTask, pruneStaleTasks, isPendingTask } from './amsg2Tasks';
+import { applyScheduledTask, isReplaceableCharacterWakeup, pruneStaleTasks, isPendingTask } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord, CharacterProfile } from '../types';
 
 /**
@@ -373,7 +373,7 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
  * char.activeMsg2Config.tasks。
  *
  * 暮色 9-24 拍板第 2 项修复：scheduleCharacterTask 只往远端 D1 写一行，不动本地账本。
- * 后果：面板看不到、cancelCharacterWakeups 查不到、用户发消息时无法取消，
+ * 后果：面板看不到、任务无法从面板取消，
  * 到点照样触发（用户被通知却找不到这条任务是怎么来的）。
  *
  * 数据结构跟工具桥那条 schedule_active_message 完全一致
@@ -386,7 +386,7 @@ export async function registerDynamicScheduleOnWorker(charId: string, fireAt: nu
  *
  * React state 同步：写完 IDB 后 dispatchEvent amsg2-character-tasks-changed，
  * OSContext 监听 + 重读 IDB + setCharacters。面板 / Chat.tsx 都靠 characters
- * state 拿 char，不刷新就用旧 activeMsg2Config.tasks，cancelCharacterWakeups
+ * state 拿 char，不刷新面板就一直用旧 activeMsg2Config.tasks，
  * 还是找不到这条任务。
  *
  * 失败静默：写本地账本是补账动作（远端已经存在），写不进不该阻塞整个流程。
@@ -414,6 +414,15 @@ async function persistCharacterWakeupToLocal(params: {
    * 第二次盖的是没读到自己那条的旧值，兜底就此从本地清单消失、第 5 步取消不掉。
    */
   fallbackRecord?: ActiveMsg2TaskRecord;
+  /**
+   * 入口闸顶掉的那一条（麦麦 2026-10-01 step 9）。传了就走替换语义：旧的出本地清单。
+   * 不传 = 并入清单（首次建任务）。
+   *
+   * 远端那一侧由 scheduleCharacterTask 的 replaceTaskUuid 负责取消；这里只管本地账本，
+   * 两边各做各的、都不做对方的活——远端取消失败时 scheduleCharacterTask 会把
+   * replacedCancelFailed 抛上来（见 applyScheduledTask 的用法），不会假装成功。
+   */
+  replaceTaskUuid?: string;
 }): Promise<void> {
   const { charId, result } = params;
   // 入参 taskInput 里的字段是固定那一组（schedule_next_wakeup token 永远 mode=prompted、
@@ -444,11 +453,14 @@ async function persistCharacterWakeupToLocal(params: {
 
     const existingConfig = freshChar.activeMsg2Config ?? { enabled: true } as any;
     // applyScheduledTask 按 taskUuid 防重复（同 uuid 二次落账是覆盖而不是新增）。
-    // 替换语义不传 replaceTaskUuid，行为是「并入清单」。
+    // 传了 replaceTaskUuid 就是替换语义：旧的出清单；没传是「并入清单」。
     const afterMain = applyScheduledTask(
       existingConfig.tasks ?? [],
       record,
-      { replacedCancelFailed: false },
+      {
+        replaceTaskUuid: params.replaceTaskUuid,
+        replacedCancelFailed: false,
+      },
       Date.now(),
     );
     const nextTasks = params.fallbackRecord
@@ -467,7 +479,7 @@ async function persistCharacterWakeupToLocal(params: {
     await DB.saveCharacter(updatedChar);
 
     // 通知 OSContext 同步 React state — Chat.tsx 拿 characters state 的 char 调
-    // cancelCharacterWakeups，面板 ActiveMsg2SettingsModal 也读 characters[].activeMsg2Config。
+    // 面板 ActiveMsg2SettingsModal 也读 characters[].activeMsg2Config。
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('amsg2-character-tasks-changed', {
         detail: { charId, taskUuid: result.uuid },
@@ -568,18 +580,34 @@ export async function registerCharacterWakeup(
     //   enabled 是用户主权，性质不同（暮色 9-24 拍板）。
     const charEnabled = (storedChar?.activeMsg2Config?.enabled === true);
 
-    // 麦麦 2026-09-24 v3：A 严格入口闸 — 同角色已有未触发的 source='character' 任务时拒绝新建（暮色 9-24 23:09 拍板）
-    //   理由：prompt chatPrompts.ts:308 承诺"新的回复会覆盖之前未触发的 dynamic（同一角色只有 1 条 dynamic 在册）"。
-    //     老实现让 LLM 自己克制，但 9-24 触发 AI 的连排两条任务就是 LLM 反复思考的结果 —— 不靠 LLM 自己克制。
-    //   闸条件：本地 activeMsg2Config.tasks 里 source='character' + status='scheduled' + 触发点未过，等于同角色还有未消费 dynamic。
-    //   命中 → 静默拒绝 + 写一条 wakeup-dedup-skip-local 诊断 + 不调 scheduleCharacterTask + 不写本地账。
-    //   不影响用户主动发消息路径：handleSendText 先 cancelCharacterWakeups → 闸空了 → 下一条自然放行。
-    //   不影响 schedule_active_message 工具调用：本接口只服务 schedule_next_wakeup token 路径，工具路径独立（amsg2ToolBridge.ts）。
+    // 麦麦 2026-09-24 v3 + 2026-10-01 step 9：入口闸。
+    //   理由：prompt chatPrompts.ts:308 承诺"新的回复会覆盖之前未触发的 dynamic
+    //   （同一角色只有 1 条 dynamic 在册）"。以前这个承诺靠两件事兜住：
+    //     ① 本闸 —— 同角色已有未触发的 character 任务时直接拒绝新建；
+    //     ② 用户发一条消息 → cancelCharacterWakeups 取消掉旧的。
+    //   ② 已经随 step 9 删掉（判断只该在到点那一刻做一次，用户什么时候说话不该
+    //   影响已排好的事），所以"改口"的能力收回到本闸自己。
+    //
+    //   现在的规则：命中时**分成两拨**——
+    //     - 自排 + 一次性 + 遇忙作废 → 顶掉旧的，建新的（isReplaceableCharacterWakeup
+    //       写了为什么只要这三种；强制发送那条是保证，角色没资格单方面撤）
+    //     - 其余（循环 / 强制发送 / 手动排的）→ 照旧拒绝新建，提示它已有几条。
+    //
+    //   命中可替换的那一档时传 replaceTaskUuid 给 scheduleCharacterTask：远端取消旧行、
+    //   跳过"同一时刻去重"短路、本地清单也走替换语义（而不是并入两条）。
     const existingPendingCharacterWakeups = (storedChar?.activeMsg2Config?.tasks ?? []).filter(
       (t) => t.source === 'character' && t.status === 'scheduled' && isPendingTask(t, Date.now())
     );
-    if (existingPendingCharacterWakeups.length > 0) {
-      const existingFireAts = existingPendingCharacterWakeups.map((t) => {
+    const replaceable = existingPendingCharacterWakeups
+      .filter(isReplaceableCharacterWakeup)
+      // 有多条时取触发时刻最晚的那条：入口闸一直保证同角色只有一条，多出来的是异常
+      // 数据（面板手工改过之类），顶掉最新的、其余原样留着，不在这里做清理。
+      .sort((a, b) => new Date(b.firstSendTime).getTime() - new Date(a.firstSendTime).getTime());
+    const blocking = existingPendingCharacterWakeups
+      .filter((t) => !isReplaceableCharacterWakeup(t));
+
+    if (blocking.length > 0) {
+      const existingFireAts = blocking.map((t) => {
         const tFirstSend = (t as any).firstSendTime;
         return typeof tFirstSend === 'string' ? tFirstSend : '?';
       }).join(' / ');
@@ -590,10 +618,28 @@ export async function registerCharacterWakeup(
         reason,
         source: 'character',
         ok: false,
-        error: `入口闸：同角色已有 ${existingPendingCharacterWakeups.length} 条未触发的 source='character' wakeup（firstSendTime=${existingFireAts}），本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}" 一律拒绝。prompt 承诺"新覆盖旧"在这里硬约束实现。`,
+        error: `入口闸：同角色已有 ${blocking.length} 条不该被顶掉的 character wakeup`
+          + `（循环 / 强制发送，firstSendTime=${existingFireAts}），本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}" 一律拒绝。`
+          + '这些是承诺不是草稿，要改由用户在面板里取消。',
       });
-      console.warn(`⏰ [ScheduleNextWakeup] 入口闸拒绝：char=${charId} 已有 ${existingPendingCharacterWakeups.length} 条未触发的 character wakeup,本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}"`);
+      console.warn(`⏰ [ScheduleNextWakeup] 入口闸拒绝：char=${charId} 已有 ${blocking.length} 条未触发的 character wakeup（循环/强制发送）,本次 fireAt=${new Date(fireAt).toISOString()} reason="${reason}"`);
       return false;
+    }
+
+    const replaceTaskUuid = replaceable[0]?.taskUuid;
+    if (replaceable.length > 0) {
+      amsgDiag({
+        stage: 'wakeup-dedup-hit',
+        charId: String(charId),
+        taskId: replaceTaskUuid,
+        fireAt,
+        reason,
+        source: 'character',
+        ok: true,
+        error: `入口闸：顶掉同角色上一条自排的一次性「遇忙作废」wakeup`
+          + `（${replaceable[0].taskUuid}），建新的 fireAt=${new Date(fireAt).toISOString()}。`
+          + `（待替换的共 ${replaceable.length} 条，顶掉最晚的那条）`,
+      });
     }
 
     const result = await ActiveMsgClient.scheduleCharacterTask({
@@ -616,11 +662,15 @@ export async function registerCharacterWakeup(
       realtimeConfig: baseConfig as any,
       apiConfig: (apiConfig ?? { baseUrl: '', apiKey: '', model: '' }) as any,
       enabledOverride: charEnabled,
+      // step 9：顶掉上一条自排的一次性「遇忙作废」wakeup。scheduleCharacterTask
+      // 收到它会远端取消旧行、跳过"同一时刻去重"短路，并把名额计数里那条排除掉。
+      // 没传（replaceable 为空）时行为与以前完全一致。
+      ...(replaceTaskUuid ? { replaceTaskUuid } : {}),
     });
 
     // 麦麦 2026-09-24：暮色拍板第 2 项修复 — 把任务记录写进本地 char.activeMsg2Config.tasks。
     //   scheduleCharacterTask 这条路只往远端 D1 写一行 + 返回 uuid，不动本地账本。
-    //   后果：角色主动消息面板看不到、cancelCharacterWakeups 查不到、用户发消息时无法取消，
+    //   后果：角色主动消息面板看不到、用户无法从面板取消它，
     //   到点照样触发（面板按钮一行都看不到，用户只能被通知）。
     //   工具桥那条路（schedule_active_message）本来就会写本地账本（amsg2ToolBridge.ts:309），
     //   这里补齐 schedule_next_wakeup 的缺失，让两条创建路径数据结构一致。
@@ -630,8 +680,7 @@ export async function registerCharacterWakeup(
     //   去重，同 uuid 二次落账是覆盖而不是新增 —— 不会产生重复本地记录。
     //
     //   写完 IDB 后 dispatchEvent 让 OSContext 同步刷新 React state（面板 / Chat.tsx 都靠
-    //   characters state 拿 char，没刷新就用旧 activeMsg2Config.tasks，调 cancelCharacterWakeups
-    //   还是找不到这条任务）。
+    //   characters state 拿 char，没刷新就用旧 activeMsg2Config.tasks，面板就找不到这条任务）。
     await persistCharacterWakeupToLocal({
       charId: String(charId),
       storedChar,
@@ -649,6 +698,7 @@ export async function registerCharacterWakeup(
         source: 'character',
       },
       fallbackRecord: result.fallback?.record,
+      replaceTaskUuid,
     });
 
     return true;

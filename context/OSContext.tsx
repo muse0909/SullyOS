@@ -783,7 +783,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // 麦麦 2026-09-24：监听 amsg2-character-tasks-changed — scheduleCharacterTask 写远端成功后
   //   会 dispatchEvent，把新任务同步进 char.activeMsg2Config.tasks。React state 里 characters
-  //   是面板 / Chat.tsx 拿 char 的唯一来源，不刷新就用旧 tasks —— cancelCharacterWakeups
+  //   是面板拿 char 的唯一来源，不刷新面板就一直显示旧 tasks（step 9 起用户发消息
+  //   不再取消任何任务，只有面板和入口闸会动清单）
   //   查不到、面板看不到。这里重读 IDB + setCharacters 同步。
   useEffect(() => {
     const onTasksChanged = async (e: Event) => {

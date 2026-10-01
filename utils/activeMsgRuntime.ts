@@ -1150,6 +1150,73 @@ async function settleFallbackAfterDelivery(message: ActiveMsg2InboxMessage): Pro
 }
 
 /**
+ * 麦麦 2026-09-30（方向二）：这条真上屏了 → 这一包里带过的回执算「角色已经说出来了」。
+ *
+ * ## 为什么需要
+ *
+ * 回执有两条出口：普通聊天注入（那边销，见 buildNoticeConsumeRuntime）和到点推送。
+ * 到点这条路上，回执是**提前混在 fire_pack 里**送上云的（同步那一刻就把当次未消费的
+ * 回执拼进模板尾部），到点时角色读着它把话说出来。话说完了，本地台账却还挂着这条
+ * 「未告知」——下一轮普通聊天就会把同一件事再交代一遍。
+ *
+ * ## 台账从哪来
+ *
+ * 同步 fire_pack 成功之后写（activeMsgClient.syncCharFirePacks 末尾）：包里带了哪几条
+ * 回执的 id，逐角色记一份。取用就是这里 —— 一条推送真落进聊天流才取，取一次就清。
+ * 口径跟即时对话那条路完全一致（amsgInstantChat 的 staged notices + settle…）。
+ *
+ * ## 什么情况不算
+ *
+ * 生成失败、闸吞掉、还在收件箱里排队 —— 那几种都走不到这个函数（调用点在
+ * landedMessageIds.push 之后），台账原样留着，下轮该带的还得带。
+ *
+ * 精度上的已知缺口（先按「上屏即消费」实现，不猜）：台账是**按角色**记的，不是按任务。
+ * 另一条不相干的主动消息先落地的话，会把这份包里所有回执一并销掉。多数时候这正是
+ * 想要的（新规则本来就是「在角色下一轮回复里带出」，主动消息也是回复），但严格说
+ * 判不了「角色这轮到底有没有提起那件事」。真要判准得让 worker 回传它实际引用了哪条，
+ * 那边不能改（方案一）。
+ */
+async function settleShippedNoticesAfterDelivery(message: ActiveMsg2InboxMessage): Promise<number> {
+  const charId = message.charId;
+  if (!charId) return 0;
+  let shipped: string[];
+  let pick: (ids: string[], ledger: any[]) => string[];
+  try {
+    // 动态 import：amsg2TaskContext 那边会引本模块的对面（buildNoticeConsumeRuntime
+    // 走的是 activeMsgClient），静态引容易成环。函数体内引，模块求值期互不触碰。
+    const mod = await import('./amsg2TaskContext');
+    shipped = mod.takeShippedNoticeIds(charId);
+    pick = mod.pickConsumableShippedIds;
+  } catch (e) {
+    log.warn('取这包里带过的回执失败（下一轮会再说一遍）', { messageId: message.messageId, error: e });
+    return 0;
+  }
+  if (!shipped.length) return 0;
+  // 只销还在台账里、且没被别的路销掉的那几条。读台账失败就按原样销：多销一条已不在的
+  // 是 no-op，少销一条才会让角色多说一遍。
+  let target = shipped;
+  try {
+    target = pick(shipped, await ActiveMsgStore.getExpiredNotices(charId));
+  } catch { /* 见上 */ }
+  if (!target.length) return 0;
+  try {
+    await ActiveMsgStore.markExpiredNoticesNotified(charId, target);
+  } catch (e) {
+    log.warn('到点推送带的回执销账失败（下一轮会再说一遍）', {
+      messageId: message.messageId, charId, ids: target, error: e,
+    });
+    return 0;
+  }
+  amsgDiag({
+    stage: 'shipped-notices-consumed',
+    charId,
+    // extra 是这个诊断表留给临时字段的口子（ids / messageId 都不在固定字段里）。
+    extra: { ids: target.join(','), messageId: message.messageId, count: target.length },
+  });
+  return target.length;
+}
+
+/**
  * 把 worker 带回来的「角色取消 / 改期了既有任务」落到本地清单（amsgTaskMutations，
  * 与 adoptSelfScheduledTasks 对称的消账侧）。
  *
@@ -2163,6 +2230,14 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       if (message.source === 'scheduled') {
         void settleFallbackAfterDelivery(message).catch((e) => {
           log.warn('推送送达后取消兜底失败（兜底会照常到点补一条，重复一句）', {
+            messageId: message.messageId, error: e,
+          });
+        });
+        // 麦麦 2026-09-30（方向二）：同一次上屏，把这一包里带过的回执也销掉。
+        // 不销的话下一轮普通聊天会把同一件事再交代一遍。跟上面那条各管各的：
+        // 一个销兜底任务，一个销回执台账，谁失败都不连累谁。
+        void settleShippedNoticesAfterDelivery(message).catch((e) => {
+          log.warn('到点推送带的回执销账失败（下一轮会再说一遍）', {
             messageId: message.messageId, error: e,
           });
         });

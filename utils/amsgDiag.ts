@@ -52,6 +52,8 @@ export type AmsgDiagStage =
   | 'fallback-schedule-failed'    // 兜底没建成（主任务不受影响，退回无兜底）
   | 'fallback-cancelled'          // 主任务推送了 / 被顺口带出 → 取消配对兜底
   | 'fallback-rebuilt'            // 循环兜底取消后按下一个周期重建
+  // 麦麦 2026-09-30：回执走唤醒路径（提前混在 fire_pack 里上云）被角色说出来之后销账
+  | 'shipped-notices-consumed'    // 到点推送真上屏 → 这一包里带过的回执标成已消费
 
 export interface AmsgDiagEntry {
   ts: string;

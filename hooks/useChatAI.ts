@@ -17,6 +17,8 @@ import {
   consumeAmsg2Notices,
 } from '../utils/amsg2TaskContext';
 import { AMSG_FALLBACK_DELAY_MS, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
+// 麦麦 2026-09-30：回执被消费后立刻重传一份不带它的 fire_pack（方向一）。
+import { flushAmsgState, markAmsgStateDirty } from '../utils/amsgStateSync';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -2144,6 +2146,14 @@ if (hasImageInLatest && !alreadyDescribed) {
                         ...fresh,
                         activeMsg2Config: { ...fresh.activeMsg2Config, tasks: mutate(fresh.activeMsg2Config.tasks ?? []) } as any,
                       });
+                    },
+                    // 麦麦 2026-09-30：回执刚被消费掉，云端那份 fire_pack 里的旧快照也得换掉
+                    // （到点时角色会把同一件事再说一遍）。这一轮本来就会打脏，但打脏走的是
+                    // 合并窗口 + 微任务，等它落地之前到点可能已经到了，所以这里立刻冲一次。
+                    // 传不上去有冲刷自己的退避重排和底账兜着（amsgStateSync），不另起一套。
+                    resync: () => {
+                      markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                      void flushAmsgState('amsg2-notice-consumed');
                     },
                   }),
                 );

@@ -190,6 +190,17 @@ const buildNoticeSections = (
 };
 
 /**
+ * 这些回执**会进角色的上下文**（buildNoticeSections 产得出段的那几类）。
+ *
+ * 跟文案共用同一份判据的口径：kind='expired'（遇忙作废）刻意不产段，所以带过包、
+ * 也就没被角色读出来，销账时不能算它。调用方拿它裁「包里带了哪几条」——
+ * 按台账原样记的话，到点销账会把压根没进包的那几条也销掉。
+ */
+export const noticesRenderedForRole = (
+  records: Amsg2ExpiredNoticeRecord[],
+): Amsg2ExpiredNoticeRecord[] => records.filter((r) => (r.kind ?? 'expired') !== 'expired');
+
+/**
  * 作废回执单独成块（即时对话云端路径用）。
  *
  * 云端到点会自己渲染排程清单和「给自己排下一条」（instant timely block），chat 段里
@@ -396,6 +407,96 @@ export const consumeAmsg2Notices = async (
   }
 };
 
+// ─── 方向一：消费后立刻重传一份不带这条回执的包 ───
+//
+// 为什么必须有：fire_pack 是**同步那一刻**的快照，存云端、到点被 worker 读。普通聊天把
+// 回执带出来之后本地台账销了，云端那份还留着同一条 —— 到点时角色会把同一件事再说一遍。
+// （纯客户端唯一能做的就是这个。彻底干净的做法是到点 fire 成功后让 worker 回传一个
+// 「这批已消费」的信号，但 worker 不能改：自更新是整包覆盖，见方案一的理由。）
+//
+// 同步失败怎么办：**不再另起一套台账**。现成的冲刷机制（amsgStateSync.flushAmsgState）
+// 已经把这件事做全了，一处都不缺：
+//   - 失败 → requeue 把快照放回队列 + 30s/60s/120s 退避重排（MAX_RETRIES=3）；
+//   - 传成功了才清 localStorage 底账（AMSG2_PENDING_SYNC_LS_KEY），失败不清；
+//   - 退避打光还没传上去 → 快照留在 dirty 里，下次打脏 / 切后台 / 下次启动
+//     （resumeAmsgStateSync 从底账重建快照）都会再试。
+// 所以这里只做一件事：消费成功那一刻**主动打脏 + 立刻冲刷**，把「等下一轮聊天顺路
+// 带上」换成「现在就去」。要不要立刻冲刷是调用方的事（那边才拿得到 userProfile /
+// groups / realtimeConfig 拼快照），所以做成注入的 resync 回调。
+
+// ─── 方向二：包里带了哪些回执，到点上屏后销账 ───
+//
+// syncCharFirePacks 同步那一刻，包里带的是**当次未消费**的回执。记下是哪几条，
+// 到点那条主动消息真的上屏之后（activeMsgRuntime 的 settledFallbackAfterDelivery
+// 同一处）才把它们标成已消费——不标的话，下一轮普通聊天会拿同一条回执再说一遍。
+//
+// 不标的情况（生成失败 / 没上屏 / 被闸吞掉）都不算消费：那一轮角色压根没说出来，
+// 下轮该带的还得带。这也是为什么这个台账写在客户端而不是"同步成功就销"。
+
+const FIRED_NOTICES_KEY = 'amsg2_fired_notices';
+
+interface FiredNoticeRecord {
+  /** charId → 这一包里带过的回执 id。 */
+  byChar: Record<string, string[]>;
+  at: number;
+}
+
+const readFiredNotices = (): FiredNoticeRecord => {
+  try {
+    const raw = localStorage.getItem(FIRED_NOTICES_KEY);
+    if (!raw) return { byChar: {}, at: 0 };
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.byChar === 'object' ? parsed : { byChar: {}, at: 0 };
+  } catch {
+    return { byChar: {}, at: 0 };
+  }
+};
+
+const writeFiredNotices = (v: FiredNoticeRecord): void => {
+  try {
+    if (!Object.keys(v.byChar).length) { localStorage.removeItem(FIRED_NOTICES_KEY); return; }
+    localStorage.setItem(FIRED_NOTICES_KEY, JSON.stringify(v));
+  } catch { /* 存不下：这一条漏销的后果是下轮多说一句 */ }
+};
+
+/** 同步 fire_pack 时记下这次带了哪些回执。 */
+export const recordNoticesShippedInPack = (charId: string, noticeIds: string[]): void => {
+  if (!noticeIds.length) return;
+  const cur = readFiredNotices();
+  // 同一角色多次同步取并集：包里带过就算"到点时可能还在里面"，
+  // 销账是整批销的，少记一条就等于那次到点会再说一遍。
+  const merged = Array.from(new Set([...(cur.byChar[charId] ?? []), ...noticeIds]));
+  writeFiredNotices({ byChar: { ...cur.byChar, [charId]: merged }, at: Date.now() });
+};
+
+/** 取走并清掉该角色这一批 id（只取一次，重复调用返回空）。 */
+export const takeShippedNoticeIds = (charId: string): string[] => {
+  const cur = readFiredNotices();
+  const ids = cur.byChar[charId] ?? [];
+  if (!ids.length) return [];
+  const { [charId]: _dropped, ...rest } = cur.byChar;
+  writeFiredNotices({ byChar: rest, at: Date.now() });
+  return ids;
+};
+
+/**
+ * 这一批「包里带过的」里，真正该销的是哪几条。
+ *
+ * 三道筛，各有各的理由：
+ *  - 台账里根本没这条 → 早被别的路销掉了（或压根没落账），销它是空转。
+ *  - 台账里已经 notifiedAt → 已经有人交代过角色了，再销一次没意义。
+ *  - kind='expired'（遇忙作废）→ 压根不产段、从没进过包，不该因为同包里有别的回执
+ *    就被算成"角色说过了"（见 noticesRenderedForRole）。这条是兜底：正常路径上
+ *    recordNoticesShippedInPack 记进来之前就已经滤掉了。
+ */
+export const pickConsumableShippedIds = (
+  shipped: string[],
+  ledger: Amsg2ExpiredNoticeRecord[],
+): string[] => {
+  const pending = new Set(ledger.filter((r) => !r.notifiedAt).map((r) => r.id));
+  return shipped.filter((id) => pending.has(id) && (ledger.find((r) => r.id === id)?.kind ?? 'expired') !== 'expired');
+};
+
 /** 从回执 id / occurrenceMs 找回配对的主任务。 */
 function findMainTaskForNotice(
   tasks: ActiveMsg2TaskRecord[],
@@ -440,14 +541,33 @@ export const buildNoticeConsumeRuntime = (deps: {
   cancelRemote: (taskUuid: string) => Promise<void>;
   persist: (charId: string, mutate: (tasks: ActiveMsg2TaskRecord[]) => ActiveMsg2TaskRecord[]) => Promise<void>;
   delayMs: number;
+  /**
+   * 方向一：消费成功之后**立刻**重传一份不带这几条回执的包（见本文件顶部「方向一」段）。
+   *
+   * 做成注入而不是在这里直接调冲刷：拼 fire_pack 快照要 userProfile / groups /
+   * realtimeConfig，只有调用方（useChatAI）手上有。传不传都行——不传就退回旧行为
+   * （等下一轮聊天打脏时顺路补上），代价是到点可能多说一遍。
+   */
+  resync?: (charId: string) => void;
 }): Amsg2NoticeConsumeRuntime => ({
   settle: async (char, consumedIds) => {
     // 1) 先标已消费。失败不往上抛 —— 这一步失败的后果只是下轮重复带一次回执，
     //    而下面的销兜底照做会让"下轮又说一遍"这件事不再有后路兜着。
+    let markedOk = false;
     try {
       await ActiveMsgStore.markExpiredNoticesNotified(char.id, consumedIds);
+      markedOk = true;
     } catch (e) {
       console.warn('[amsg2] 回执标记已消费失败（下轮会重复带一次）', { charId: char.id, error: e });
+    }
+
+    // 1.5) 让云端那份不带这几条。**只有标成功才需要**——标记失败的话本地台账里这几条
+    //      还挂着，下一次同步照样会带进新包，现在重传是白跑一趟。
+    //      失败/重试全交给冲刷自己的机制（requeue + 退避 + 底账），这里不重试也不抛。
+    if (markedOk) {
+      try { deps.resync?.(char.id); } catch (e) {
+        console.warn('[amsg2] 回执重传的触发抛错了（云端那份可能还带着旧回执）', { charId: char.id, error: e });
+      }
     }
 
     // 2) 再销兜底：只有 kind='deferred' 的那些意味着"角色这轮把它说出来了"。

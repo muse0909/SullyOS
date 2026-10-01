@@ -671,24 +671,55 @@ const readEmojiLibrary = async (): Promise<EmojiLibrary> => {
 /**
  * 麦麦 2026-09-30：取这个角色**未消费**的回执，渲成给到点生成看的那段文字。
  *
+ * 返回 `[文字, 本次带了哪几条回执的 id]`。第二个值是方向二要用的：到点那条主动
+ * 消息真的上屏之后，靠它把台账销掉——不销的话下一轮普通聊天会拿同一条再说一遍。
+ *
  * 动态 import 而非静态：amsg2TaskContext 那边会用到本文件导出的东西（兜底配对那条
  * 路经由 activeMsgRuntime 间接引），静态引容易成环。函数体内引，模块求值期互不触碰。
  *
- * 失败返回空串：回执晚一轮上云，最坏是这次到点看不到、下轮补上。同步本身不能因为
- * 一段提示词拼不出来就失败——那会让这个角色连排程清单都上不了云。
+ * 失败返回 `['', []]`：回执晚一轮上云，最坏是这次到点看不到、下轮补上。同步本身
+ * 不能因为一段提示词拼不出来就失败——那会让这个角色连排程清单都上不了云。
  */
-async function buildPendingNoticesBlock(char: CharacterProfile): Promise<string> {
+async function buildPendingNoticesBlock(char: CharacterProfile): Promise<[string, string[]]> {
   try {
-    const { buildAmsg2NoticesText, collectAmsg2TaskContext } = await import('./amsg2TaskContext');
+    const {
+      buildAmsg2NoticesText, collectAmsg2TaskContext, noticesRenderedForRole,
+    } = await import('./amsg2TaskContext');
     const result = await collectAmsg2TaskContext(char);
     // collectAmsg2TaskContext 出来的 text 含「排程现状块 + 回执块」两半。到点这边
     // 已经有 AMSG_SLOT_TASK_LIST 专门渲染排程清单（worker 现场按 pendingTasks 生成，
     // 比这里的快照准），所以只取回执那半 —— 不然同一份清单在 prompt 里会出现两次，
     // 且两份可能不一致（快照 vs 现场）。产不出段时它是 null，一律当空串。
-    return buildAmsg2NoticesText(result.notices, undefined) ?? '';
+    const text = buildAmsg2NoticesText(result.notices, undefined) ?? '';
+    if (!text) return ['', []];
+    // 上云前的自检（麦麦 2026-09-30）：worker 那边填槽就一句
+    // `fillSlot = (text, slot, value) => text.split(slot).join(value)`，**只认 9 个
+    // 写死的槽位字面量**、而且是单趟替换（填进去的值不会被再展开）。所以这一段里
+    // 只要带 `{{`：
+    //   - 带的正好是那 9 个之一 → 到点会被**替换**成时间 / 场景 / 任务说明那一坨，
+    //     角色读到一句莫名其妙的话；
+    //   - 带的是别的 `{{ }}` → 没人填，原样当字面量发给模型，它可能照着念出来。
+    // 两种都不会崩，但都是把内部记号漏给模型看。今天这段文字全是固定文案拼的
+    // （用户写的提示词不进回执行，只有任务号和时间），碰不到 `{{`——所以这是保险：
+    // 真撞上了宁可这轮不带（下一轮普通聊天照样会带、照样会销账），也不把带字面量的
+    // 包传上去。
+    if (/\{\{|\}\}/.test(text)) {
+      console.warn(
+        '[ActiveMsg2] 回执块里带 {{ }} 字面量，这轮不带（到点会照填或原样漏给模型），下轮补上',
+        char.id,
+      );
+      return ['', []];
+    }
+    // 这里**不**记 shipped：销账机会要等调用方那边 putClientState 真成功才落
+    // （见 syncCharFirePacks）。建包这一步就记的话，包还没上云、到点时云端读的还是旧包，
+    // 这次回执压根没机会生成，销账机会却已经白用掉了。
+    // 返回的 id 只取**真进了这段文字**的那些：遇忙作废压根不产段（按新规则不告诉角色），
+    // 把它算成"包里带过"的话，到点销账会把一条从没给角色看过的回执也销掉。
+    const shipped = noticesRenderedForRole(result.notices).map((r) => r.id);
+    return [text, shipped];
   } catch (e) {
     console.warn('[ActiveMsg2] 取未消费回执失败（这次到点不带，下轮补上）', char.id, e);
-    return '';
+    return ['', []];
   }
 }
 
@@ -2640,8 +2671,18 @@ export const ActiveMsgClient = {
     // AI 模式的 prompt 只有一条来源：firePack 上传 client_state，worker 到点现场填槽。
     // 任务体里不再冻结一份渲染好的 prompt——读不到 fire_pack 就直接报错，没有第二条路，
     // 留着那份快照只是白占请求体（完整角色卡 + 世界书）。
+    //
+    // 麦麦 2026-09-30：排程这条路**也会重写**云端那份包，所以它同样得带未消费的回执。
+    // 之前只让批量同步带，出现过一次「面板里排个任务，云端那份包里的回执就被抹掉了」——
+    // 包里没有、台账却说带过（到点销了个空），或者反过来台账空着（下一轮普通聊天把同一件
+    // 事再说一遍）。凡写 fire_pack 的路都得带，记账（方向二）也跟着一份。
+    // 只在真要传包时才去取：collectAmsg2TaskContext 带副作用（会扫一遍「到点推迟」并落
+    // 台账），fixed 任务压根不传包，不该为它触发一次扫描。
+    const [pendingNoticesBlock, shippedNoticeIds] = needsFirePack
+      ? await buildPendingNoticesBlock(char)
+      : ['', [] as string[]];
     const firePack = needsFirePack
-      ? await buildFirePack(char, userProfile, groups, realtimeConfig)
+      ? await buildFirePack(char, userProfile, groups, realtimeConfig, undefined, { pendingNoticesBlock })
       : null;
     // 任务身份：客户端自造 clientTaskId——远端 uuid 要创建成功后才有，而 metadata
     // 必须在创建时就带上归属键；push 原样透传，送达归属全靠它。
@@ -2767,6 +2808,19 @@ export const ActiveMsgClient = {
         ...(owesChat ? charEntries.filter((entry) => entry.key !== AMSG_FIRE_PACK_KEY) : charEntries),
         buildToolConfigEntry(realtimeConfig, now),
       ], '上传云端状态');
+      // 方向二：这份包真的上去了，才把「带过哪几条」记进待销账台账（到点上屏后才销）。
+      // owesChat 那一支把 fire_pack 整条抽掉了，包压根没上去，不能记。
+      if (shippedNoticeIds.length && !owesChat) {
+        try {
+          const { recordNoticesShippedInPack } = await import('./amsg2TaskContext');
+          recordNoticesShippedInPack(char.id, shippedNoticeIds);
+        } catch (e) {
+          console.warn(
+            `${ACTIVE_MSG_RUNTIME_HEADER} 回执销账台账记不上（这一批到点后不会销，下轮可能多说一遍）`,
+            e,
+          );
+        }
+      }
     }
 
     // 凭据行要先在云端存在：上游建任务前会挨个查引用，缺一个就 409 CREDENTIAL_NOT_FOUND。
@@ -3467,6 +3521,10 @@ export const ActiveMsgClient = {
     // getAll（表情记录带图片数据），拿回来的还是同一份。
     const emojiLibrary = await readEmojiLibrary();
     const entries = [];
+    // 麦麦 2026-09-30（方向二）：这批包里带了哪几条回执，等 putClientState 真成功才落
+    // 「待销账」台账（见本函数末尾）。中途建在循环里是因为 id 必须跟着角色走——谁带的
+    // 只能销给谁。
+    const shippedByChar = new Map<string, string[]>();
     // 逐个串行：并发跑会同时开 N 个 IDB 事务，正是 instant push 那次超时的连接风暴成因。
     for (const item of items) {
       // 麦麦 2026-09-30：未消费的回执跟着 fire_pack 一起上云。
@@ -3476,7 +3534,8 @@ export const ActiveMsgClient = {
       // 本地回执台账（那是纯客户端存储），所以回执必须提前随包上去。
       //
       // 失败不连累这次同步：回执晚一轮上云，最坏是这次到点的生成看不到它、下一轮才带。
-      const pendingNoticesBlock = await buildPendingNoticesBlock(item.char);
+      const [pendingNoticesBlock, shippedNoticeIds] = await buildPendingNoticesBlock(item.char);
+      if (shippedNoticeIds.length) shippedByChar.set(item.char.id, shippedNoticeIds);
       const firePack = await buildFirePack(
         item.char, item.userProfile, item.groups, item.realtimeConfig, emojiLibrary,
         { pendingNoticesBlock },
@@ -3515,6 +3574,30 @@ export const ActiveMsgClient = {
         skipped.map((s) => `${s.namespace}/${s.key}`),
       );
       await alignStateClockWithRemote(client, [...new Set(skipped.map((s) => s.namespace))]);
+    }
+    // 麦麦 2026-09-30（方向二）：走到这里才算「云端真的收到了这些回执」，把 id 记进
+    // 待销账台账 —— 到点那条主动消息真上屏之后（activeMsgRuntime 那侧）才销。
+    //
+    // 被拒和被条件写拦下的**不算收到**：前者是这一条压根没写进去，后者是云端留着另一份
+    // 更新的（里面有没有这条回执我们说了不算）。这两种角色销不了账，回执留在台账里等
+    // 下一轮 sync 重新带 —— 晚一轮说，好过在没送达的那一轮里销掉、之后谁都不再说。
+    if (shippedByChar.size > 0) {
+      const notLanded = new Set([
+        ...(rejected || []).map((r) => `${r.namespace}/${r.key}`),
+        ...(skipped || []).map((s) => `${s.namespace}/${s.key}`),
+      ]);
+      try {
+        const { recordNoticesShippedInPack } = await import('./amsg2TaskContext');
+        for (const [charId, noticeIds] of shippedByChar) {
+          if (notLanded.has(`${amsgStateNamespace(charId)}/${AMSG_FIRE_PACK_KEY}`)) continue;
+          recordNoticesShippedInPack(charId, noticeIds);
+        }
+      } catch (e) {
+        console.warn(
+          `${ACTIVE_MSG_RUNTIME_HEADER} 回执销账台账记不上（这一批到点后不会销，下轮可能多说一遍）`,
+          e,
+        );
+      }
     }
     // 同步已经落定，顺路把这几个角色的存量空壳清一遍（每角色一次，失败只 warn）。
     await sweepSidechannelShells(client, items.map((item) => item.char.id));

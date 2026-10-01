@@ -1,0 +1,74 @@
+## 主动消息 2.0 · **测试环境** 部署配置（2026-10-01 新增）
+##
+## 用途：给 fix/amsg2-realign 的 11 步改造建一套**独立的**云端，跟暮色日常用的
+## 那套（正式账号 af81f…cc1 / worker sullyos / 库 sully-amsg2）完全隔离。
+## 正式环境一行都没动。
+##
+## 跟 wrangler.toml 的区别（别混）：
+##   - name      = sullyos-test        （正式是 sullyos）
+##   - 数据库     = sully-amsg2-test    （正式是 sully-amsg2）
+##   - main      = 原作者发布的当前 bundle（见下），不是仓库里那份构建产物
+##   - 兼容日期   = 2026-01-01 + global_fetch_strictly_public（照抄线上实测值）
+##
+## 部署命令（凭证在 .secrets/test-env/，那个目录已被 .gitignore 排除）：
+##   export all_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890
+##   export CLOUDFLARE_API_TOKEN="$(cat .secrets/test-env/cf-api-token.txt)"
+##   export CLOUDFLARE_ACCOUNT_ID="$(cat .secrets/test-env/cf-account-id.txt)"
+##   npx wrangler deploy -c wrangler.test.toml
+##
+## 密钥（5 个，全部走 `wrangler secret put`，不写进本文件）：
+##   AMSG_MASTER_KEY      64 位十六进制。注意名字带 AMSG_ 前缀——wrangler.toml
+##                        顶上那段注释写的 "MASTER_KEY" 是原作者留下的旧写法，
+##                        云端代码实际读的是 env.AMSG_MASTER_KEY，照旧名填不认。
+##   AMSG_SERVER_TOKEN    客户端鉴权。缺了云端只在自检里给个警告，但地址就公开了。
+##   VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_EMAIL   推送用，三件一套不能只配两件。
+
+name = "sullyos-test"
+
+# 用原作者发布的那份，不是仓库里 worker/amsg/worker.bundle.js。
+# 原因（2026-10-01 实测）：线上正式云端会自己去 GitHub 拉原作者的最新 bundle
+# 自更新，早上 06:33 拉到 2026-10-01.2，sha256 前 12 位 3bcc8e259345。
+# 仓库源码里 utils/amsgBundleVersion.ts 还写着 2026-09-02，比线上旧；
+# 仓库那份构建产物（worker/amsg/worker.bundle.js，9-17 打的）也停在 09-02。
+# 测试环境要跟线上一模一样才测得准，所以装同一份。
+# 换新版本：重新下载后核对 sha256 前 12 位与正式云端 /config-check 报的
+# selfUpdate.state.bundleHash 一致，再部署。
+main = ".secrets/test-env/worker.bundle.js"
+
+# 跟正式云端实测值一致（正式是仪表盘注入的，见 wrangler.toml 顶注）。
+compatibility_date = "2026-01-01"
+compatibility_flags = ["global_fetch_strictly_public"]
+
+workers_dev = true
+preview_urls = true
+
+## D1：测试账号里独立建的一个库，正式库 sully-amsg2 完全不碰
+[[d1_databases]]
+binding = "DB"
+database_name = "sully-amsg2-test"
+database_id = "832bd291-219e-46cb-b2ec-acbd00277209"
+
+## Cron：每分钟扫一次到期任务
+[triggers]
+crons = ["* * * * *"]
+
+## Durable Object：即时对话的「起跳器」
+##   这里跟 wrangler.toml 那段注释的处境**不一样**，必须补 migrations：
+##   注释里说「不能加 migrations」是因为正式云端早就 apply 过
+##   amsg-instant-tick-v1，再加会撞 10074。测试云端是全新的，InstantTickDO
+##   这个类还不存在，不写 migrations 的话 CF 不会建类，
+##   env.INSTANT_TICK 永远 undefined → /config-check 的 instantTick=false
+##   → 前端 resolveInstantChatBlocker 判「云端太旧」→ 即时对话按钮一直灰着。
+[[durable_objects.bindings]]
+name = "INSTANT_TICK"
+class_name = "InstantTickDO"
+
+[[migrations]]
+tag = "amsg-instant-tick-v1"
+new_sqlite_classes = ["InstantTickDO"]
+
+## 明文变量。
+##   注意：云端代码里没有读 CORS_ALLOWED_ORIGIN，跨域头是写死的 '*'。
+##   wrangler.toml 顶上关于 CORS_ALLOWED_ORIGIN 的说明是原作者留下的，
+##   对这份 bundle 不生效，所以这里也不设。真正的门是 AMSG_SERVER_TOKEN。
+[vars]

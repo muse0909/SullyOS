@@ -40,6 +40,7 @@ import {
   describeRemoteLastError,
   describeTaskMode,
   describeTaskProgress,
+  EXPIRE_POLICY_OPTIONS,
   formatTaskTime,
   fromDatetimeLocalValue,
   isAmsg2EnabledForChar,
@@ -1139,10 +1140,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: 'expire', label: '自动作废', desc: '转为对话里自然带出' },
-                    { id: 'force', label: '强制发送', desc: '闹钟型，照发' },
-                  ] as const).map((option) => (
+                  {EXPIRE_POLICY_OPTIONS.map((option) => (
                     <button
                       key={option.id}
                       onClick={() => setExpirePolicy(option.id)}

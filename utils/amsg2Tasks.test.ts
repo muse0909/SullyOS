@@ -31,6 +31,8 @@ import {
   toDatetimeLocalValue,
   visibleTasks,
   isReplaceableCharacterWakeup,
+  EXPIRE_POLICY_OPTIONS,
+  describeExpirePolicy,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
 
@@ -764,5 +766,43 @@ describe('isReplaceableCharacterWakeup（角色改口时能顶掉哪一条）', 
     expect(isReplaceableCharacterWakeup(task({ expirePolicy: 'force' }))).toBe(false);
     expect(isReplaceableCharacterWakeup(task({ fallbackFor: 'x' }))).toBe(false);
     expect(isReplaceableCharacterWakeup(task())).toBe(true);
+  });
+});
+
+// ─── 策略选项的文案（麦麦 2026-10-01 step 10）───
+describe('EXPIRE_POLICY_OPTIONS（面板上那两个按钮）', () => {
+  const opt = (id: 'expire' | 'force') => EXPIRE_POLICY_OPTIONS.find((o) => o.id === id)!;
+
+  it('两个都在，顺序是「遇忙作废」在前', () => {
+    expect(EXPIRE_POLICY_OPTIONS.map((o) => o.id)).toEqual(['expire', 'force']);
+  });
+
+  // 任务列表、那张「最近没响的」卡、兜底提示用的都是 describeExpirePolicy。
+  // 选择器叫「自动作废」而别处叫「遇忙作废」时，用户会当成两种策略。
+  it('标签跟 describeExpirePolicy 用同一对词', () => {
+    for (const o of EXPIRE_POLICY_OPTIONS) {
+      expect(o.label).toBe(describeExpirePolicy(o.id));
+    }
+  });
+
+  // 这两条描述原来挂反了：expire 挂着"转为对话里自然带出"。用户按那句去等，
+  // 等不到就以为功能坏了——所以两个方向都要盯住。
+  it('遇忙作废 → 明说取消、聊天里不会出现，且不提"带出"', () => {
+    const d = opt('expire').desc;
+    expect(d).toContain('取消');
+    expect(d).toContain('不会出现');
+    expect(d).not.toContain('带出');
+  });
+
+  it('强制发送 → 说清顺口带出 + 30 分钟兜底', () => {
+    const d = opt('force').desc;
+    expect(d).toContain('顺口带出');
+    expect(d).toContain('30 分钟');
+  });
+
+  it('两条都不许承诺"作废了会在聊天里出现"', () => {
+    for (const o of EXPIRE_POLICY_OPTIONS) {
+      expect(o.desc).not.toContain('转为对话里');
+    }
   });
 });

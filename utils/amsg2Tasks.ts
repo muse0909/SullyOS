@@ -250,6 +250,28 @@ export const AMSG2_SCHEDULE_NOT_YET_NOTE = '排在未来的事到点自己会响
 export const describeExpirePolicy = (policy: ActiveMsg2ExpirePolicy): string =>
   policy === 'force' ? '强制发送' : '遇忙作废';
 
+/**
+ * 面板上那两个策略选项的文案（麦麦 2026-10-01 step 10）。
+ *
+ * 提到这里而不是留在面板里，是为了让文案有**一个出处**：任务列表用 describeExpirePolicy
+ * 显示「遇忙作废 / 强制发送」，选择器也得用同一对词；两处各写一份早晚会跑偏（这次就是
+ * 面板写「自动作废」、别处写「遇忙作废」，同一个东西两个名，用户会当成两种策略）。
+ *
+ * 两条描述原来**挂反了**：expire 挂着"转为对话里自然带出"，force 挂着"闹钟型，照发"。
+ * 写反的代价很直接——用户按"作废了我会在聊天里看到"去等，等不到就以为功能坏了。
+ * 现在的规矩（见 utils/amsgFireSchedule 的 EXPIRE_POLICY_DESCRIPTION，角色读那份）：
+ *   - expire = 直接取消，**不告诉角色**，聊天里永远不会出现
+ *   - force  = 到点前十分钟你在说话就改在下一轮顺口带出；一直没带出来，30 分钟后兜底补一句
+ */
+export const EXPIRE_POLICY_OPTIONS: ReadonlyArray<{
+  id: ActiveMsg2ExpirePolicy;
+  label: string;
+  desc: string;
+}> = [
+  { id: 'expire', label: '遇忙作废', desc: '直接取消，聊天里不会出现' },
+  { id: 'force', label: '强制发送', desc: '顺口带出，30 分钟后还没带就补一句' },
+];
+
 /** 任务「要说什么」的一句话描述。fixed 有固定内容、prompted 有方向、auto 可带灵感。 */
 export const describeTaskMode = (
   task: { mode: ActiveMsg2Mode; promptHint?: string },

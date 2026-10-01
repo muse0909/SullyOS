@@ -207,3 +207,38 @@ describe('buildTaskInstruction', () => {
     expect(buildTaskInstruction('auto')).toContain('可选灵感补充：无');
   });
 });
+
+// ─── 角色读的那份策略说明（麦麦 2026-10-01 step 10）───
+describe('EXPIRE_POLICY_DESCRIPTION 不能跟实现说两套话', () => {
+  const D = EXPIRE_POLICY_DESCRIPTION;
+
+  // 旧判据是「排程之后对话有新进展」，那会让角色在完全不该让路的时候以为该让路
+  // （用户早上聊过、晚上八点才到点，按旧判据算"有新进展"）。判据只有一条。
+  it('判据是「到点前十分钟」，旧的「排程之后有新进展」不许残留', () => {
+    expect(D).toContain('十分钟');
+    expect(D).not.toContain('排程之后对话已有新进展');
+  });
+
+  // 作废现在是**不告诉角色**的（buildNoticeSections 滤掉 expired 段）。承诺它能看到，
+  // 角色就会在下一轮真去"自然带出"一件根本没发生过的事，或者一直等一条不存在的消息。
+  it('不许承诺作废的角色能看到回执', () => {
+    expect(D).not.toContain('由你决定自然带出');
+    expect(D).not.toContain('你会在排程现状里看到');
+  });
+
+  it('明说作废在聊天里不会出现', () => {
+    expect(D).toContain('不会');
+  });
+
+  // 顺口带出是 force 的事，而且要带上兜底那句，否则角色会以为"记下来"就等于一定会说。
+  it('顺口带出归 force，且要提 30 分钟兜底', () => {
+    const forceLine = D.slice(D.indexOf('force：'));
+    expect(forceLine).toContain('顺口带出来');
+    expect(forceLine).toContain('30 分钟');
+  });
+
+  it('force 在用户没说话时跟 expire 一样照发（保证没缩水）', () => {
+    const forceLine = D.slice(D.indexOf('force：'));
+    expect(forceLine).toContain('照发');
+  });
+});

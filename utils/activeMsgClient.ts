@@ -2720,7 +2720,7 @@ export const ActiveMsgClient = {
         // 这里报的是**云端真跑的那个**模式：fixed 被翻成 prompted 时就是 prompted，
         // 报 fixed 会让送达侧按"纯投递"处理，而它实际是模型生成出来的。
         amsgMode: cloudMode,
-        // 防穿帮闸字段：worker onBeforeFire 与客户端送达兜底都从这里读。
+        // 防穿帮闸字段：worker onBeforeFire 从这里读。
         // recurrenceType / occurrenceMs 不往这儿抄：库会把它们盖在每条 push 顶层，
         // 角色在 fire 里自排的任务也一样有，抄一份反而多一处会漏写的地方。
         amsgClientTaskId: clientTaskId,

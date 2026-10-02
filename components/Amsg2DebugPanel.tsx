@@ -60,9 +60,6 @@ type TraceEntry = ReturnType<typeof readRecentInstantTraces>[number];
 
 // 送达相关的事件挑出来上色：作废 / 吞没 / 失败是橙的（消息没发出去），收到是绿的。
 function traceColor(event: string): string {
-    // 防穿帮闸的「放行了」和「没跑」都是正常结局，名字里带 expire 但不该刷成告警色——
-    // 一屏橙色的话，真正要找的那条（吞掉）反而不显眼了。这两条排在下面那行之前。
-    if (/expire-decision-pass|expire-gate-skipped/i.test(event)) return C.dim;
     if (/expire|swallow|fail|error|timeout/i.test(event)) return C.orange;
     if (/receiv|deliver|ok|success/i.test(event)) return C.green;
     return C.dim;

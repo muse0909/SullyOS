@@ -356,12 +356,25 @@ application-label: Solly                     ← 跟「拾光机」不同
 1. **step 11 没写单测**。闸是模块私有函数，唯一可观测效果是 flush 循环里那个
    `continue`；要钉住它得把整条冲刷管线连 DB 带后处理全 mock 出来，测出来的东西不比
    真机验收更真。真正的验收是装测试包实测。
-2. **`shouldDeferOccurrence`（`amsg2DeferredScan.ts:79`）的判据与云端仍不完全一致**：
-   它的窗口是 `(occurrence-10min, occurrence]`（右端就是到点那一刻），云端是
-   `(occurrence-10min, occurrence+10min]` 再夹 `nowMs`。准点 fire 时两者等价；
-   fire 延迟时云端会作废、它判 false → **云端作废了但没回执**。量级是「fire 延迟那
-   几分钟内用户说了话」这一种情况，面板上表现为该次没出现在「最近没响」里。
-   这次没动（暮色只点名了 `detectExpiredOccurrences`），要不要一起对齐等他定。
+2. **⚠️ `shouldDeferOccurrence`（`utils/amsg2DeferredScan.ts:79`）与云端判据差
+   0~60 秒，暮色 2026-10-02 定：先不改，记在这里。**
+
+   - 客户端的窗口是 `(occurrence-10min, occurrence]`（右端就是**设定时间**那一刻）；
+     云端是 `(occurrence-10min, occurrence+10min]` 再夹 `nowMs`，而 `nowMs` 最多比设定
+     时间晚 **60 秒**（cron 一分钟一跳，见 1a 节）。
+   - **后果（暮色点名要写清的那条）**：在那 0~60 秒里用户发了消息 → 云端**作废**这次触发
+     （不推送），但客户端 `shouldDeferOccurrence` 判 false → **不记回执**。于是
+     - 面板「最近没响」里**不会出现**这一次（查不到原因）；
+     - 角色**不知道**自己有条话没说出口，也就无从"顺口带出"；
+     - **更实际的一条：「强制发送」任务的那条 +30 分钟兜底不会被销掉**，到点会照常推
+       一条出去。而原任务已经被云端作废了——结果就是同一天、同一条早安，兜底在 30 分钟后
+       单独冒出来，角色并不知道它本该在 8:00 说的话是什么（回执没进它上下文）。
+   - 触发条件苛刻：必须恰好在设定时间到定时器跳之间的那不到一分钟里说话。准点 fire 的
+     绝大多数情况不涉及。
+   - 修法：把 `shouldDeferOccurrence` 的右端从 `occurrenceMs` 改成
+     `min(occurrenceMs + ACTIVE_CHAT_WINDOW_MS, occurrenceMs + 实际延迟)` —— 但客户端
+     事后扫历史**拿不到**当时的实际延迟（`presence` 早就过期），只能近似。是否值得做、
+     怎么近似，等暮色定。**本轮明确不改。**
 3. `source='manual'` 与类型 `'user' | 'character'` 不符（不影响任何判断）。
 
 

@@ -110,8 +110,11 @@ describe('occurrenceIsExpired — 跟云端 shouldExpireFire 逐条对应', () =
     })).toBe(false);
   });
 
-  // 上面的反面：fire 延迟了的话，到点后那几**分钟**内说的话会被算进去。
-  // 延迟超过 10 分钟则被 occurrence + 10min 那道上界挡掉。
+  // 上面的反面：fire 延迟了的话，到点后、判定前说的话会被算进去。
+  // ⚠️ 实测**延迟上限约 60 秒**（cron `* * * * *` 一跳一分钟，捞任务的条件是
+  // `next_send_at <= now`），所以现实中只可能覆盖到点后那一分钟上下。
+  // 下面 3 分钟 / 20 分钟两个值是**把判据边界钉死**——真机跑不到那么久，但改错了
+  // 总得有人逮得住（删掉 `+10min` 那道上界，这两条就会红）。
   it('fire 延迟时：到点后、判定前说的话算进去（延迟 3 分钟）', () => {
     expect(occurrenceIsExpired({
       lastUserMessageAt: T0 + 2 * MIN,
@@ -126,6 +129,15 @@ describe('occurrenceIsExpired — 跟云端 shouldExpireFire 逐条对应', () =
       occurrenceMs: T0,
       nowMs: T0 + 20 * MIN,
     })).toBe(false);
+  });
+
+  // 把「现实中真会发生的那个量级」单独钉一条，别让上面两条把它盖过去。
+  it('现实中真会发生的量级：延迟 60 秒、到点后 30 秒说话 → 算进去', () => {
+    expect(occurrenceIsExpired({
+      lastUserMessageAt: T0 + 30_000,
+      occurrenceMs: T0,
+      nowMs: T0 + 60_000,
+    })).toBe(true);
   });
 
   it('last 晚于判定时刻 → 不作废（`last <= nowMs` 那一条真的在挡东西）', () => {

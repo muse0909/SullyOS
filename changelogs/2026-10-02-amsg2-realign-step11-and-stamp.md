@@ -102,9 +102,13 @@ git -c http.proxy=http://127.0.0.1:7891 -c https.proxy=http://127.0.0.1:7891 \
 
 ### 五、留在清单里没做的三件
 
-1. **`worker/amsg/src/index.ts:1696` 那句注释现在是错的**——它写「这点残余竞态由客户端
-   送达兜底闸兜住（activeMsgRuntime 的 runtime-expire-swallow）」，那道闸已经没了。
-   同属 worker 源码，方案一定的是不碰 worker，本轮没动。**下次读到别被误导。**
+1. **⚠️ `worker/amsg/src/index.ts:1696` 那句注释已过时 —— 客户端送达兜底闸已删除。**
+   原文写的是「fire_pack 上传滞后的那点残余竞态由客户端送达兜底闸兜住
+   （activeMsgRuntime 的 runtime-expire-swallow）」。那道闸连同
+   `runtime-expire-swallow`、`runtime-expire-swallow-unknown`、
+   `runtime-expire-decision-pass/swallow`、`runtime-expire-gate-skipped` 几个
+   trace stage，已在 `76b16fa0` 整条删除。**下次读到这个文件别被这句话误导。**
+   按暮色 2026-10-02 决定：worker 继续不碰，这句注释也不改，只在此记一笔。
 2. **回执侧的 `detectExpiredOccurrences`（`amsg2TaskContext.ts:343`）仍用旧判据**
    （对称窗 + 一次性走锚点），跟新规则对不上。它只喂面板的「最近没响」，且有
    `hasDeliveredProactiveNear` 送达过滤兜着，影响限于面板文案可能偏保守。

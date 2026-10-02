@@ -100,22 +100,212 @@ git -c http.proxy=http://127.0.0.1:7891 -c https.proxy=http://127.0.0.1:7891 \
   push origin fix/amsg2-realign
 ```
 
-### 五、留在清单里没做的三件
+### 五、暮色 2026-10-02 复核后的补充（commit `7fcd34f5`）
 
-1. **⚠️ `worker/amsg/src/index.ts:1696` 那句注释已过时 —— 客户端送达兜底闸已删除。**
-   原文写的是「fire_pack 上传滞后的那点残余竞态由客户端送达兜底闸兜住
-   （activeMsgRuntime 的 runtime-expire-swallow）」。那道闸连同
-   `runtime-expire-swallow`、`runtime-expire-swallow-unknown`、
-   `runtime-expire-decision-pass/swallow`、`runtime-expire-gate-skipped` 几个
-   trace stage，已在 `76b16fa0` 整条删除。**下次读到这个文件别被这句话误导。**
-   按暮色 2026-10-02 决定：worker 继续不碰，这句注释也不改，只在此记一笔。
-2. **回执侧的 `detectExpiredOccurrences`（`amsg2TaskContext.ts:343`）仍用旧判据**
-   （对称窗 + 一次性走锚点），跟新规则对不上。它只喂面板的「最近没响」，且有
-   `hasDeliveredProactiveNear` 送达过滤兜着，影响限于面板文案可能偏保守。
-   到点推迟那条路走的是 step 4 的 `amsg2DeferredScan`（新判据），不受影响。
-3. **step 11 没写单测**。闸是模块私有函数，唯一可观测效果是 flush 循环里那个
+暮色看完 step 11 的结果提了 7 个问题，逐条处理如下。
+
+#### 1. 线上判据到底算不算「到点之后的消息」——**我上一条讲得不够严谨，认**
+
+原文照抄（`worker.bundle.js` 8889-8899 行，未压缩，共 16916 行；sha256 前 12 位
+`3bcc8e259345`，worker 自报 `2026-10-01.2`）：
+
+```js
+var ACTIVE_CHAT_WINDOW_MS = 10 * 6e4;                    // 8889
+function shouldExpireFire(input) {                      // 8894
+  if (input.policy !== "expire") return false;
+  if (input.occurrenceMs == null) return false;
+  const last = input.lastUserMessageAt;
+  if (last == null) return false;
+  return last > input.occurrenceMs - ACTIVE_CHAT_WINDOW_MS
+      && last <= input.occurrenceMs + ACTIVE_CHAT_WINDOW_MS
+      && last <= input.nowMs;                           // 8898
+}
+```
+
+调用现场（15844-15867）：
+
+```js
+const occurrenceMs = Date.parse(String(ctx.task.nextSendAt));   // 15844 计划触发时刻
+const presenceLastUserMessageAt = presence?.charId === charId ? presence.lastUserMessageAt : null;
+const expireInput = {
+  policy,
+  lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
+  nowMs: ctx.now.getTime(),                                        // 15852 fire 真实执行时刻
+  occurrenceMs
+};
+if (!instant && shouldExpireFire(expireInput)) {                   // 15863
+  await recordSkip(ctx, charId, "conversation-moved-on", occurrenceMs);
+  return { skip: true };
+}
+```
+
+**关键在 `nowMs` 是 fire 的真实执行时刻**（`ctx.now.getTime()`），它把 `+10min`
+那半边夹住了：
+
+- **准时 fire**：`nowMs ≈ occurrenceMs`，于是 `last <= occurrence+10min && last <= nowMs`
+  等价于 `last <= nowMs`——**「到点后」那半边永远不生效，实际只看「到点前 10 分钟」**。符合规则。
+- **fire 延迟**：延迟 3 分钟就在到点后 3 分钟内生效，超过 10 分钟被上界挡掉。
+
+**所以我上一条写的真机验收场景「到点前没说话、到点后说了话必须送达」有前提**：
+那次 fire 得准点跑完。准点的情况下云端判放行，删掉客户端闸之后消息照常送达——这点成立；
+但不能像上次那样说得那么绝对。
+
+**还有第二道门我上次漏了**（15813 行，在 15863 那道**之前**执行）：
+
+```js
+if (!instant && policy === "expire" && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+  await recordSkip(ctx, charId, "active-chat-presence", ...);
+  return { skip: true };
+}
+```
+
+`isFreshChatPresence`（9230 行）= `activeAt <= nowMs + 10s && nowMs - activeAt <= 45s`。
+它判的是「此刻 45 秒内用户正在打字」，比「到点前 10 分钟说过话」更近也更严。
+**客户端不复制这道门**（见第 5 项）。
+
+#### 2. 这套判据是谁写的——**原作者的，我们没碰过**
+
+链路查实了：
+
+```
+qegj567-cloud/SullyOS（= 本仓库 upstream，原作者）
+        ↓ GitHub Actions 自动同步（作者 github-actions[bot]，
+          commit message 全是 "chore: sync worker bundles from qegj567-cloud/SullyOS@<sha>"）
+Tosd0/sullyos-workers（纯镜像仓库，我们不部署它）
+        ↓ 线上 worker 每天自更新去拉
+线上 sullyos（正式）/ sullyos-test（测试）
+```
+
+三方 sha256 **完全一致**（`3bcc8e259345` / 771898 字节）：镜像当前那份、本地
+`.secrets/test-env/worker.bundle.js`、线上正式云端自报的 `bundleHash`。方案一
+（不碰 worker）站得住。
+
+#### 3. 强制发送那条路删闸后还通不通——**通，零影响**
+
+因为**云端判「这次别发」时压根不推 push**，客户端那道闸从来没机会参与。
+被推迟时客户端能看到的只有"没有消息"，检出靠自己的扫描器。
+
+每一环都在（都在客户端，都没被 step 11 碰到）：
+
+| 环节 | 代码 |
+|---|---|
+| 建任务时把 force 翻成 expire + 打标记 | `activeMsgClient.ts:2663` / `:2739` |
+| 建任务时同步建 +30 分钟兜底 | `activeMsgClient.ts:2893` → `scheduleFallbackTask`（`:2936`），`AMSG_FALLBACK_DELAY_MS` 在 `amsg2Tasks.ts:135` |
+| 检出「这次被让开了」 | `amsg2TaskContext.ts:337` → `amsg2DeferredScan.ts` 的 `shouldDeferOccurrence` |
+| 顺口带出（注入角色上下文） | `amsg2TaskContext.ts` 的 `buildNoticeSections` deferred 段 |
+| 消费 + 销兜底 | `amsg2TaskContext.ts:396` `consumeAmsg2Notices`，调用点 `useChatAI.ts:2117` |
+| 30 分钟后兜底自己响 | 兜底任务 `nextSendAt` = occurrence + 30min |
+| 兜底对账 | `amsg2FallbackPair.ts:322` `runFallbackReconcile`，调用点 `ActiveMsg2SettingsModal.tsx:287` |
+
+顺带一提：原闸里那段 `if (meta.amsgForceDeferred === true) return false;` 短路
+（当时注释写着"整套送达判定最终会在 step 11 删掉"）现在随闸一起没了，效果一样
+（都不吞）。
+
+#### 4. worker 注释——**已在本文件第 105 行记一笔，worker 继续不碰**
+
+#### 5. `detectExpiredOccurrences` 跟云端对齐（`7fcd34f5`）
+
+抽了 `occurrenceIsExpired` 作**唯一实现**，`shouldExpireFire`（推送侧）和
+`detectExpiredOccurrences`（面板侧）都调它。抄两份必然漂，而这正是 7-31 之前的现状。
+
+**改出来一个副产品**：一次性任务以前**恒返回空数组**——老实现第一行
+`if (input.anchorMs == null) return [];` 而调用方 `amsg2TaskContext.ts:343`
+从来不传这个参数。面板上关于「一次性任务为什么没响」只剩云端 `last_skip` 一条撑着。
+现在这条兜底路径通了。
+
+**另一个自己踩出来的坑**（第一版写错了，被自己的测试当场逮住）：我一开始用
+`getLastRealUserMessageAt(messages)` 取**全局**最后一条喂进去。原因——云端是
+**一次 fire 判一次**（`last` = 那一刻已知的最后一条，`nowMs` = 那一刻），而这里是
+**回头扫一整段历史**。每格都拿全局最后一条判的话，用户今天下午随口回一句，昨天早上
+那次触发就被误判成「当时有人在说话」。
+
+改成每格取「**该次触发时刻当时**的最后一条真实用户消息」，`nowMs` 代入该次触发
+时刻——准点 fire 的等价回放。代价明确写在代码注释里：云端 fire **延迟**时能看见
+「到点后到判定前」那几分钟的消息，事后回看补不出，宁可少报也不凭空报。
+
+**测试**：新增 `utils/amsg2ExpireGuard.test.ts`，25 条。三个变异都验过能被抓住：
+逐格 lastAt 换成全局最后一条 → 2 条红；去掉 `+10min` 上界 → 2 条红；去掉
+`last <= nowMs` → 2 条红。
+
+> 踩了个坑：用 bash 里的 python 改文件做变异，**改完回读发现根本没写进去**，连跑三遍
+> 都以为「测试不灵」。后来改用编辑工具做变异才准。**验测试抓不抓得住回归，一定要先
+> 回读确认变异真的写进去了。**
+
+#### 6. 一直红的那 5 条测试
+
+| 文件 | 用例 | 失败原因 |
+|---|---|---|
+| `utils/amsg2Tasks.test.ts` | `describeRemoteLastError` > reason 是一长串原始报错时截断 | 截断后长度 135，断言要 <120 |
+| `utils/amsgFirePack.test.ts` | `renderFirePack — 把 includeClock 透传给场景块` > includeClock=false 时钟点消失，活动还在 | 关掉 includeClock 后场景块仍带 `22:00` |
+| `utils/vrWorld/vrWorld.test.ts` | `VRScheduler.reconcile` > 补建 enabled 但缺调度的角色 | 测试自己没 stub `localStorage`，`ReferenceError: localStorage is not defined`（`vrWorld.test.ts:15`） |
+| `utils/vrWorld/vrWorld.test.ts` | `VRScheduler.reconcile` > 清掉已删除/已关闭角色的残留调度 | 同上 |
+| `utils/vrWorld/vrWorld.test.ts` | `VRScheduler.reconcile` > 间隔被改过 → 跟随最新设定，且不重置已有首火时间 | 同上 |
+
+全是本轮之前就红的，跟这 11 步没关系。
+
+#### 7. 测试环境
+
+**测试云端已部署且体检全绿**（直连查询）：
+
+```json
+{"ok": true, "missing": [], "warnings": [], "instantChat": true,
+ "instantTick": true, "backgroundJobs": true, "workerVersion": "2026-10-01.2",
+ "selfUpdate": {"supported": false, "state": null}}
+```
+
+- worker `sullyos-test`，子域 `solly-test-5f67c4`，地址
+  `https://sullyos-test.solly-test-5f67c4.workers.dev`
+- `workerVersion 2026-10-01.2` = 我分析的那份，一字不差
+- `selfUpdate.supported: false` = 自更新关着（暮色 2026-10-01 定的）
+
+**测试包已打好并验过身份**：
+
+```
+android/app/build/outputs/apk/debug/拾光机-2026-10-02-7fcd34f5-test-debug.apk   (43.8 MB)
+package: com.aetheros.simulator.amsgtest    ← 跟正式包不同
+versionName: 2026-10-02-7fcd34f5-test        ← 跟 HEAD 对得上
+application-label: Solly                     ← 跟「拾光机」不同
+```
+
+**applicationId 不同 = 可以跟正式包同时装在手机上，数据完全隔离**（各自独立的
+存储、独立的 userId）。这解决了清单里挂了很久的「修身份撞车」那条——它本来就已经是
+解决好的，只是没人确认过。桌面图标名字也不一样，暮色一眼能分辨。
+
+包里确实是新代码（解开 APK 的 assets 核过）：
+
+| 符号 | 结果 |
+|---|---|
+| `runtime-expire-swallow` | ✅ 已不在 |
+| `runtime-expire-decision` | ✅ 已不在 |
+| `evaluateScheduledPushExpired` | ✅ 已不在 |
+| `revokeSwallowedSelfLogEntry` | ✅ 已不在 |
+| `lastUserMessageAt` / `occurrenceMs` | ✅ 在 |
+
+（函数名本身查不到是因为压缩时被重命名，整个模块 5 个导出名在包里都查不到；
+对象属性名不压缩，用它复核。）
+
+**没推 master / preview**，两个远端都还在 `ef17e1aa`。
+
+### 六、这一轮新踩的坑：workers.dev 现在**直连能通，走代理反而断**
+
+代理活着（GitHub 200），但 `sullyos-test.solly-test-5f67c4.workers.dev` 和正式
+`sullyos.1812038909.workers.dev` **走代理一律 5 秒超时（code 000），直连反而 200**。
+
+跟之前记的「workers.dev 必须走代理」正好相反。判断方法：两种都试一遍，谁通用谁。
+
+### 七、留在清单里没做的
+
+1. **step 11 没写单测**。闸是模块私有函数，唯一可观测效果是 flush 循环里那个
    `continue`；要钉住它得把整条冲刷管线连 DB 带后处理全 mock 出来，测出来的东西不比
    真机验收更真。真正的验收是装测试包实测。
+2. **`shouldDeferOccurrence`（`amsg2DeferredScan.ts:79`）的判据与云端仍不完全一致**：
+   它的窗口是 `(occurrence-10min, occurrence]`（右端就是到点那一刻），云端是
+   `(occurrence-10min, occurrence+10min]` 再夹 `nowMs`。准点 fire 时两者等价；
+   fire 延迟时云端会作废、它判 false → **云端作废了但没回执**。量级是「fire 延迟那
+   几分钟内用户说了话」这一种情况，面板上表现为该次没出现在「最近没响」里。
+   这次没动（暮色只点名了 `detectExpiredOccurrences`），要不要一起对齐等他定。
+3. `source='manual'` 与类型 `'user' | 'character'` 不符（不影响任何判断）。
+
 
 ---
 

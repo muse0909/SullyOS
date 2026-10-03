@@ -154,43 +154,79 @@
 
 ### 测试包
 
+**最新那个（带租约调用点，验 13 条用这个）：**
+
 ```
-android/app/build/outputs/apk/debug/拾光机-2026-10-02-fe71839b-test-debug.apk   43.8 MB
-package:        com.aetheros.simulator.amsgtest     ← 跟正式包不同，可共存、数据隔离
-versionName:    2026-10-02-fe71839b-test
-application-label: Solly                              ← 桌面名跟「拾光机」不同
+android/app/build/outputs/apk/debug/拾光机-2026-10-03-634071a0-test-debug.apk   43.9 MB
+package:           com.aetheros.simulator.amsgtest    ← 跟正式包不同，可共存、数据隔离
+versionName:       2026-10-03-634071a0-test             ← 带 commit
+application-label: Solly                               ← 桌面名跟「拾光机」不同
 ```
 
+`aapt2 dump badging` 实测输出（aapt2 在 gradle 缓存里，SDK 那个路径没有）：
+```
+package: name='com.aetheros.simulator.amsgtest' versionCode='1791012455' versionName='2026-10-03-634071a0-test' ...
+application-label:'Solly'
+```
+
+**上一个（没有租约调用点，已作废）：** `拾光机-2026-10-02-fe71839b-test-debug.apk`
 ⚠️ `changelogs/2026-10-02-amsg2-realign-step11-and-stamp.md` 里写的包名是
-`2026-10-02-7fcd34f5-test-debug.apk`，**跟磁盘上实际这个对不上**（实际是 `fe71839b`）。
+`2026-10-02-7fcd34f5-test-debug.apk`，**磁盘上从来没有过那个文件**（实际是 `fe71839b`）。
 以磁盘为准。
 
-**⚠️ 没装到手机上。**
+**⚠️ 两个包都没装到手机上。**
 
-解开 APK 实测，**11 步全在包里**。这里有个坑要记下来：
+### 包内容怎么验的（这套方法下轮直接用）
 
-> 主动消息的代码**不在主 bundle 里**。主文件 `index.Cc4qfyNl.js`（5.3 MB）搜「回到你自己」
-> 是 **0 命中** —— 看着像"包是旧代码"。实际它在 **`memory-palace.qRObfyEk.js`** 这个
-> chunk 里（chunk 名跟内容无关）。在主 bundle 里搜主动消息的东西一律会误判。
+**先踩的坑：主动消息代码不在主 bundle 里。** 主文件 `index.*.js` 里搜「回到你自己」
+是 0 命中 —— 看着像"包是旧代码"。实际它在 **`memory-palace.*.js`** 那个 chunk
+（chunk 名跟内容无关）。**在主 bundle 里搜主动消息的东西一律会误判。**
 
-在正确的文件里实测（`fe71839b` 那个包）：
+**光搜符号不够** —— 压缩会把函数名改成 `Q9`、`K9` 这样的短名，搜不到不代表没打进去。
+真正能用的是**先确认 APK 里的 chunk 跟本地 `dist/` 的一致**：
 
-| 查什么 | 在哪个文件 | 结果 |
+```bash
+shasum -a 256 <解包出来的 chunk> dist/assets/<同名 chunk>
+```
+
+这次两边都是 `4a5063be8ebd1de8…` → 一样，就说明 APK 里跑的就是本地这份 build。
+先锁死这一点，再去 dist 里找符号。
+
+在 dist 主 bundle 里找到的证据（`useChatAI` 的 `triggerAI` 入口，压缩后）：
+
+```js
+if(j||!t)return;                                    // if (isTyping || !char) return;
+const Ye=t.activeMsg2Config;
+Ye!=null&&Ye.enabled&&Ej(Ye)&&K9(t.id,V8(We));     // 前置条件 + start(char.id, getLastReal(userMsgs))
+const ge=`tr_${Date.now().toString(36)}_...`;       // 紧接着就是 triggerId 那行 → 位置对得上
+```
+
+以及 `finally` 块开头：
+
+```js
+}finally{Q9(t.id);const qt=Hs=>{...}}                // stopAmsgChatPresence(char.id)
+```
+
+短名对应（各「1 处定义 + 1 处调用」，用 `(?<![A-Za-z0-9_$.])名(?![A-Za-z0-9_$])` 数）：
+
+| 短名 | 是谁 | 计数 |
 |---|---|---|
-| step 11 删的 5 个符号 | `memory-palace` chunk | `runtime-expire-swallow` / `runtime-expire-decision` / `evaluateScheduledPushExpired` / `revokeSwallowedSelfLogEntry` / `canExpire` **全 0 命中** ✅ |
-| 钢印位置（`e0e59ea2`） | `memory-palace` chunk | 压缩后是 `...]).concat((S=r?.pendingNoticesBlock)!=null&&S.trim()?["",...,""]:[],\`（开口前回到你自己：...\`)` —— **回执确实拼在钢印前面** ✅ |
-| step 3 回执 4 种 kind | 主 bundle | `quota-blocked` 2 次、`user-cancelled` 3 次 ✅ |
-| step 6/8 面板文案 | 主 bundle | 「遇忙作废」1、「强制发送」3、「最近没响」1 ✅ |
-| 判据 | `memory-palace` chunk | `occurrenceMs` 4 次、`lastUserMessageAt` 4 次 ✅ |
+| `K9` | `startAmsgChatPresence` | 2（定义+调用） |
+| `Q9` | `stopAmsgChatPresence` | 2（定义+调用） |
+| `V8` | `getLastRealUserMessageAt` | 2（定义+调用） |
+| `Ej` | `hasActiveAiTask` | 5（定义 + 4 处调用，含我这处） |
 
-**`fe71839b` 之后的 2 个提交对运行时零影响**：`62d53471` 虽然改了
-`utils/amsg2ExpireGuard.ts` 14 行，但**全是注释**（在 `/** */` 块里，逻辑一行没动，
-diff 逐行核过）；`89efaf61` 只改 changelog。所以那个包的运行时代码 = HEAD。
+11 步的代码也逐条核过（`memory-palace` chunk + 主 bundle）：
+step 11 删的 5 个符号（`runtime-expire-swallow` / `runtime-expire-decision` /
+`evaluateScheduledPushExpired` / `revokeSwallowedSelfLogEntry` / `canExpire`）**全 0 命中**；
+钢印位置（`e0e59ea2`）实测是
+`...]).concat((S=r?.pendingNoticesBlock)!=null&&S.trim()?["",...,""]:[],\`（开口前回到你自己：...\`)`，
+**回执确实拼在钢印前面**；`quota-blocked` 2 次、`user-cancelled` 3 次、`最近没响` 1 次、
+`遇忙作废` 1 次、`强制发送` 2 次、`occurrenceMs`、`lastUserMessageAt` 都在。
 
-**唯一不在包里的**：那 18 行租约调用点（工作区改动，包之后才做）。
-→ 验 11 条时云端那道 `active-chat-presence` 门**不会触发**，因为没人写 `chat_presence`。
-补上调用点重打包后，这道门才会开始起作用（第 1 条的原因可能因此显示成
-`active-chat-presence` 而不是 `conversation-moved-on`）。
+**云端那道 `active-chat-presence` 门从这一个包开始会生效**（前面那些包里没人写
+`chat_presence`，那道门等于不存在）。第 1 条的原因可能因此显示
+`active-chat-presence` 而不是 `conversation-moved-on`。
 
 ### 正式环境（**没动过**，只是记录位置）
 

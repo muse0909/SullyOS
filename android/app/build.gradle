@@ -47,9 +47,13 @@ android {
         //   2026-09-29 麦麦：测试版桌面上改个名字（暮色要求），否则两个图标一模一样分不清。
         //     名字在 resValue 里覆盖 strings.xml 的 app_name / title_activity_main。
         //     resValue 只对当前变体生效，资源优先级高于 res/values/strings.xml。
-        //     -PtestAppName=xxx 可以临时换名字（暮色 9-29 打语音测试包时要求叫「语音测试」），
-        //     不传就还是默认的 Solly，所以不影响之前 amsg2 那套既有流程。
-        def testAppName = project.findProperty('testAppName') ?: "Solly"
+        //   -PtestAppName=xxx 可以临时换名字（暮色 9-29 打语音测试包时要求叫「语音测试」），
+        //     不传就用下面这个默认值，所以不影响之前 amsg2 那套既有流程。
+        //   麦麦 2026-10-03 更正：默认值原来写成 Solly（多一个 o）。项目里到处是 Sully
+        //     ——index.html 的 title 就是 SullyOS、全仓 274 处 Sully 对 4 处 Solly，
+        //     那 4 处全是这个名字自己写出来的。正式包名「拾光机」是 strings.xml 里的，
+        //     不受这里影响。
+        def testAppName = project.findProperty('testAppName') ?: "Sully"
         resValue "string", "app_name", (project.hasProperty('testBuild') ? testAppName : "拾光机")
         resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? testAppName : "拾光机")
         minSdkVersion rootProject.ext.minSdkVersion

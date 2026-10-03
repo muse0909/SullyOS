@@ -109,13 +109,19 @@ android {
         }
     }
 
-    // 暮色 2026-09-10：APK 文件名带版本号 + 应用名（"拾光机-xxxx"）
-    //   xxxx = versionName（例如 2026-09-10-6b76cac3）
+    // 暮色 2026-09-10：APK 文件名带版本号；2026-10-03 更正前缀为 sully
+    //   xxxx = versionName（例如 2026-10-03-67b8defc）
     //   debug 包后缀加 -debug，release 包不加后缀
+    //   为什么从「拾光机」改成 sully（暮色 10-03 原话「省得搞错了」）：
+    //     文件名是给暮色看的，桌面上真正显示的是 app_name 那个「拾光机」。两个名字
+    //     长得不一样，每次发包都要解释一遍哪个是哪个——「怎么还是拾光机，不是 sully
+    //     吗」这句话 10-03 就说过一次。统一成 sully，文件名和包名对得上，也跟
+    //     index.html 的 title（SullyOS）一致。
+    //     正式包桌面名**不改**，仍是 strings.xml 里的「拾光机」——那是你自己在用的名字。
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             def versionName = variant.versionName
-            def apkName = "拾光机-${versionName}"
+            def apkName = "sully-${versionName}"
             if (variant.buildType.name == 'debug') {
                 apkName += '-debug'
             }

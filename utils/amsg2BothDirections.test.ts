@@ -37,13 +37,38 @@ vi.stubGlobal('localStorage', {
   get length() { return mem.size; },
 });
 
+/**
+ * 时间锚点（麦麦 2026-10-03 新增）。
+ *
+ * ## 原来这里写死的是 `2026-10-01T08:00:00Z`，那是一条会自己过期的测试
+ *
+ * 任务 recurrenceType='daily'，而 `pruneStaleTasks` 的规则是「过点 48h 出清单」。
+ * 锚点 2026-10-01 16:00（北京时间）一过 2026-10-03 16:00 整，任务就被判出清单，
+ * 两条「两条路各走一遍」立刻红。2026-10-03 下午就撞上了：vitest 从 452/5 变
+ * 450/7，用 `git stash` 回到改动之前的提交跑**同样红**，排除了是新引入的。
+ *
+ * 这类失败比没有测试更糟——它是「日历走到那一天就自己亮红灯」，会把真回归淹掉。
+ *
+ * ## 现在锚在「今天本地 08:00」
+ *
+ * 任何时刻跑都在 48h 回看窗内：最坏是刚过午夜（8 小时前），最好是 23:59
+ * （16 小时前），都远在 48 小时以内。测试**内部的时间相对关系一个字没改**
+ * （回执 createdAt 仍是 occurrenceMs + 5s、任务 createdAt 仍是 T - 1h、
+ * 消费时机仍是 T + 10min），改的只是那个绝对锚点本身。
+ */
+const TODAY_8AM = (() => {
+  const d = new Date();
+  d.setHours(8, 0, 0, 0);
+  return d.getTime();
+})();
+
 const notice = (over: Partial<Amsg2ExpiredNoticeRecord> & { id: string }): Amsg2ExpiredNoticeRecord => ({
   charId: 'char-a',
-  occurrenceMs: Date.parse('2026-10-01T08:00:00Z'),
+  occurrenceMs: TODAY_8AM,
   mode: 'auto',
   recurrenceType: 'daily',
   kind: 'deferred',
-  createdAt: Date.parse('2026-10-01T08:00:05Z'),
+  createdAt: TODAY_8AM + 5_000,
   ...over,
 });
 
@@ -119,7 +144,7 @@ describe('方向一 · 消费成功才触发重传', () => {
   const dep = { delayMs: 30 * 60_000 };
 
   const notice = (id: string) => ({
-    id, charId: CHAR, occurrenceMs: Date.parse('2026-10-01T08:00:00Z'),
+    id, charId: CHAR, occurrenceMs: TODAY_8AM,
     mode: 'auto' as const, recurrenceType: 'daily' as const,
     kind: 'deferred' as const, createdAt: Date.now(),
   });
@@ -172,7 +197,7 @@ describe('方向一 · 消费成功才触发重传', () => {
 describe('两条路各走一遍 · 确认都只说一次（暮色第 4 条）', () => {
   // 这一组是端到端的：真文案 + 真台账 + 真销账函数，只有时间用假的。
   // 两个方向都验，验的是「同一条回执在两条路上加起来只出现一次」。
-  const T = Date.parse('2026-10-01T08:00:00Z');
+  const T = TODAY_8AM;
   const task: ActiveMsg2TaskRecord = {
     taskUuid: 'uuid-7f3a', clientTaskId: 'cid-7f3a', mode: 'auto',
     firstSendTime: new Date(T).toISOString(), recurrenceType: 'daily',

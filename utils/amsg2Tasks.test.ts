@@ -480,7 +480,9 @@ describe('buildFireTaskListBlock', () => {
     const block = buildFireTaskListBlock([fireTask({ expirePolicy: 'force', mode: 'prompted', promptHint: '叫他起床' })], {
       nowMs: NOW, tzId: 'UTC',
     });
-    expect(block).toContain('强制发送');
+    // 麦麦 2026-10-03：这条断言盯的是"到点那份清单里带着策略名"。策略名当天换了措辞
+    // （强制发送 → 你在忙就晚点提），跟着改断言，别改成「只要有字就行」那种糊弄版。
+    expect(block).toContain(describeExpirePolicy('force'));
     expect(block).toContain('叫他起床');
   });
 });
@@ -787,16 +789,21 @@ describe('EXPIRE_POLICY_OPTIONS（面板上那两个按钮）', () => {
 
   // 这两条描述原来挂反了：expire 挂着"转为对话里自然带出"。用户按那句去等，
   // 等不到就以为功能坏了——所以两个方向都要盯住。
-  it('遇忙作废 → 明说取消、聊天里不会出现，且不提"带出"', () => {
+  //
+  // 麦麦 2026-10-03：文案又换了一轮（标签 + 描述都重写），断言跟着换成新措辞，
+  // **盯的规矩一个字没松**：expire 必须说清"这次不说了、聊天里不会出现"，force 必须
+  // 说清"改成顺口提一句"外加 30 分钟兜底。这里盯的是**语义**不是具体某几个字，
+  // 下次再调措辞时记得同步这两条。
+  it('你在忙就算了 → 明说这次不说了、聊天里不会出现，且不提"带出"', () => {
     const d = opt('expire').desc;
-    expect(d).toContain('取消');
-    expect(d).toContain('不会出现');
+    expect(d).toContain('这次就不说了');
+    expect(d).toContain('聊天里也不会提到');
     expect(d).not.toContain('带出');
   });
 
-  it('强制发送 → 说清顺口带出 + 30 分钟兜底', () => {
+  it('你在忙就晚点提 → 说清顺口提一句 + 30 分钟兜底', () => {
     const d = opt('force').desc;
-    expect(d).toContain('顺口带出');
+    expect(d).toContain('顺口提一句');
     expect(d).toContain('30 分钟');
   });
 

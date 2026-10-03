@@ -16,6 +16,9 @@ import {
 } from '../../types';
 import { ActiveMsgClient, getDefaultActiveMsgFirstSendTime } from '../../utils/activeMsgClient';
 import { ActiveMsgStore } from '../../utils/activeMsgStore';
+// 麦麦 2026-10-03：设置页底部的折叠版本信息。LOADED_HOST 是「手机实际在连的域名」，
+// 跟 BUILD_LABEL（网页代码从哪个分支构建的）必须对着看，详见 buildInfo.ts 的注释。
+import { APP_VERSION, BUILD_LABEL, BUILD_TIME_LABEL, LOADED_HOST } from '../../utils/buildInfo';
 import { type AmsgLastSkip, DEFAULT_MAX_UNANSWERED_SENDS, AMSG_LAST_SKIP_KEY, amsgStateNamespace, describeLastSkip } from '../../utils/amsgFirePack';
 import { isInstantChatReady } from '../../utils/amsgInstantChat';
 import { syncAmsgLlmCredentials } from '../../utils/amsgStateSync';
@@ -89,15 +92,24 @@ interface ActiveMsg2SettingsModalProps {
   addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+// 麦麦 2026-10-03（暮色拍板）：第四选项「角色自设」删掉。
+//
+//   它是 2026-09-18 加的 `disabled: true` 占位项——永远点不亮，只为让用户知道
+//   「角色也能自己排任务」这件事。一个选不了的选项占掉四分之一的格子，信息价值
+//   抵不上占位，暮色原话「把多余的去掉」。
+//
+//   信息没丢，两处都还在：
+//     1. 「新建任务」按钮下面那行字（本次新加）——建任务时看得到；
+//     2. 任务列表每行的来源标注（`t.source === 'character' ? '角色自设'`）——
+//        角色排的那些照样列出来、照样标着「角色自设」。
+//
+//   ⚠️ 别再把这个选项加回来。角色自排走 schedule_next_wakeup → mode='prompted'
+//   + source='character'，手动建任务会跟已存在的 character 任务产生归属歧义
+//   （标记/计费/防穿帮闸的语义都不一样）。
 const MODE_OPTIONS = [
-  { id: 'fixed', label: '固定', desc: '到点直接发你写好的内容' },
-  { id: 'auto', label: '自动', desc: '用当前角色设定和聊天快照自己生成' },
-  { id: 'prompted', label: '提示词', desc: '围绕你写的方向生成主动消息' },
-  // 暮色 2026-09-18 12:42：第四选项"角色自设" — 仅展示给用户看，让 ta 知道这种模式存在。
-  //   入口 disabled：schedule_next_wakeup 是麦麦在 chat 里解析 token 后调
-  //   registerCharacterWakeup 自动创建任务的，手动建任务会跟已经存在的 source='character'
-  //   任务产生归属歧义（标记/计费/防穿帮闸的语义不一样）。编辑/取消任务行还是照常。
-  { id: 'character', label: '角色自设', desc: '由角色在聊天里用 schedule_next_wakeup 排；不能手动创建。', disabled: true },
+  { id: 'fixed', label: '固定', desc: '闹钟模式，不调用模型，到点直接发写好的内容' },
+  { id: 'auto', label: '自动', desc: '用当前角色设定和聊天快照生成。调用模型。' },
+  { id: 'prompted', label: '提示词', desc: '围绕提前写好的提示词方向生成主动消息。调用模型。' },
 ] as const;
 
 const RECURRENCE_OPTIONS = [
@@ -434,7 +446,10 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       });
       // 只在真的动了手才打扰用户：建兜底是系统行为不该刷屏，取消失败必须让他知道。
       if (result.rebuilt > 0) {
-        addToast(`已给 ${result.rebuilt} 条「强制发送」任务补上 30 分钟后的兜底。`, 'success');
+        // 麦麦 2026-10-03：原来这里写死「强制发送」。标签当天已经换成「你在忙就晚点提」
+        //   了，提示里还冒旧名字，用户会以为是另一种任务。策略名一律走 describeExpirePolicy，
+        //   别再在这手写一份。
+        addToast(`已给 ${result.rebuilt} 条「${describeExpirePolicy('force')}」任务补上 30 分钟后的兜底。`, 'success');
       }
       if (result.failed.length > 0) {
         addToast(`有 ${result.failed.length} 条兜底在远端取消失败（主任务已经不在了），请稍后重开面板重试。`, 'error');
@@ -1060,34 +1075,35 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               </label>
               <div className="space-y-2">
                 {MODE_OPTIONS.map((option) => {
-                  // 暮色 2026-09-18 12:42：character 选项 disabled，渲染时灰掉且不可点。
-                  //   用 'disabled' in option 而不是 option.disabled 是因为 TS union narrowing
-                  //   在 'as const' 数组里推不出来，统一用 'in' 判断避免类型报错。
+                  // 麦麦 2026-10-03：原来这里还渲染过一个 disabled 的「角色自设」占位项
+                  //   （2026-09-18 加的），已经删掉，所以现在没有 isDisabled 分支了。
+                  //   角色自排的任务照样会出现在下面的列表里、照样标「角色自设」。
                   const isSelected = mode === option.id;
-                  const isDisabled = 'disabled' in option;
                   return (
                     <button
                       key={option.id}
-                      disabled={isDisabled}
                       onClick={() => {
-                        if (isDisabled) return;
                         setMode(option.id);
                         // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
                         if (option.id === 'fixed') setExpirePolicy('force');
                       }}
                       className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${
-                        isDisabled
-                          ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200'
-                          : isSelected
-                            ? 'bg-violet-300 text-white border-violet-300'
-                            : 'bg-white border-slate-200 text-slate-600'
+                        isSelected
+                          ? 'bg-violet-300 text-white border-violet-300'
+                          : 'bg-white border-slate-200 text-slate-600'
                       }`}
                     >
                       <div className="font-bold">{option.label}</div>
-                      <div className={`text-xs mt-1 ${isSelected ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
+                      <div className={`text-xs mt-1 leading-relaxed ${isSelected ? 'text-violet-50' : 'text-slate-400'}`}>{option.desc}</div>
                     </button>
                   );
                 })}
+              </div>
+              {/* 麦麦 2026-10-03（暮色拍板）：「角色自设」那个点不亮的选项删掉之后，
+                  「角色也能自己排任务」这句信息不能跟着没。角色在聊天里用
+                  schedule_next_wakeup 排的会出现在下面列表里，标「角色自设」。 */}
+              <div className="text-[11px] text-slate-400 mt-2 pl-1">
+                角色和用户均可排主动消息任务
               </div>
             </div>
 
@@ -1138,16 +1154,24 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
             {mode !== 'fixed' ? (
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
+                {/* 麦麦 2026-10-03（暮色拍板）：标题原来写「到点时用户正在聊天」——
+                    判据其实是「到点前 10 分钟内有没有用户发的真实消息」，两回事。租约
+                    只覆盖 AI 生成中那几秒，用户在聊天页纯阅读超 45 秒云端就判不在场了，
+                    照那个标题理解会以为「我只要开着页面就永远不插话」。 */}
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点前 10 分钟你说过话</label>
                 <div className="grid grid-cols-2 gap-2">
                   {EXPIRE_POLICY_OPTIONS.map((option) => (
                     <button
                       key={option.id}
                       onClick={() => setExpirePolicy(option.id)}
-                      className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${expirePolicy === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                      /* 麦麦 2026-10-03：原来只有 py-2.5、没有左右内边距，描述文字直接
+                         贴着边框（暮色截图里「强制发送」那句挤成两行顶到边上）。这里补
+                         px-3 + py-3，描述降到 10px 并给 leading-relaxed，标签和描述之间
+                         也拉开 mt-1。 */
+                      className={`py-3 px-3 rounded-xl text-xs font-bold border transition-all text-left ${expirePolicy === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
                     >
                       {option.label}
-                      <div className={`font-normal mt-0.5 ${expirePolicy === option.id ? 'text-violet-100' : 'text-slate-400'}`}>{option.desc}</div>
+                      <div className={`font-normal text-[10px] leading-relaxed mt-1.5 ${expirePolicy === option.id ? 'text-violet-100' : 'text-slate-400'}`}>{option.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -1234,6 +1258,27 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 </div>
               ) : null}
             </div>
+
+            {/* 麦麦 2026-10-03（暮色拍板，原话「这条比改文案重要」）：折叠版本信息。
+                为什么值得单独做一块——2026-10-03 暮色在 fix 分支上测 11 步规则，屏幕上
+                跑的却是 master 的代码，因为 capacitor.config 的 server.url 指错了。
+                查清这件事花了五条独立证据（APK 内 config / git 历史 / 截图旧文案 /
+                远端 bundle 符号 / CDP 读 url）。而这里只要一眼：
+                「网页代码」是哪个分支构建的，「加载网址」是手机实际在连哪个域名，
+                两者对上就说明跑的就是你以为的代码。
+
+                折叠是因为平时没人要看，报障时一戳就有。 */}
+            <details className="pt-1 border-t border-slate-100">
+              <summary className="text-[10px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer select-none pl-1 py-1.5">
+                版本信息
+              </summary>
+              <div className="text-[11px] text-slate-400 pl-1 pb-1 space-y-0.5 break-all font-mono">
+                <div>网页代码：{BUILD_LABEL}</div>
+                {LOADED_HOST ? <div>加载网址：{LOADED_HOST}</div> : null}
+                <div>构建时间：{BUILD_TIME_LABEL}</div>
+                <div>应用版本：{APP_VERSION}</div>
+              </div>
+            </details>
           </>
         ) : null}
       </div>

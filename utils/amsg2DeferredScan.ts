@@ -33,7 +33,7 @@ import {
   hasRealUserMessageBetween,
   recurrencePeriodMs,
 } from './amsg2ExpireGuard';
-import { formatTaskTime, isForcePolicy } from './amsg2Tasks';
+import { formatTaskTime, isDeferToNextTurn } from './amsg2Tasks';
 
 /** 扫多久以前的触发。太早的回执用户和角色都不关心，台账也只留 48h。 */
 const DEFAULT_SCAN_LOOKBACK_MS = 48 * 3600_000;
@@ -64,7 +64,7 @@ export interface DeferredCandidate {
 export const isDeferrable = (task: ActiveMsg2TaskRecord): boolean =>
   task.status === 'scheduled'
   && !task.fallbackFor
-  && isForcePolicy(task.mode, task.expirePolicy);
+  && isDeferToNextTurn(task.mode, task.expirePolicy);
 
 /**
  * 这次触发该让开吗 —— 新规则的全部判据。

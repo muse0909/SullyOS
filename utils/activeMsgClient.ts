@@ -23,7 +23,7 @@ import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
   AMSG_FALLBACK_DELAY_MS,
   buildFallbackText,
-  getPendingTasks, isAmsg2EnabledForChar, isForcePolicy, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
+  getPendingTasks, isAmsg2EnabledForChar, isDeferToNextTurn, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
   resolveCloudExpirePolicy, resolveExpirePolicy, toDatetimeLocalValue, visibleTasks,
 } from './amsg2Tasks';
@@ -2889,7 +2889,7 @@ export const ActiveMsgClient = {
     // 本地账本就会漏记这条兜底 —— 而漏记的代价是第 5 步取消不掉它：主任务推送了、
     // 兜底照样在 30 分钟后补一条，角色一句话说两遍。
     // 兜底建失败由 scheduleFallbackTask 自己吞掉（只记诊断），所以 await 不会连累主任务。
-    const fallback = (isForcePolicy(task.mode, task.expirePolicy) && !task.fallbackFor)
+    const fallback = (isDeferToNextTurn(task.mode, task.expirePolicy) && !task.fallbackFor)
       ? await this.scheduleFallbackTask({
         char, config,
         forClientTaskId: clientTaskId,

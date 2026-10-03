@@ -50,13 +50,28 @@ export const isAmsg2EnabledForChar = (char: CharacterProfile): boolean =>
 export const shortTaskId = (taskUuid: string): string => taskUuid.slice(0, 8);
 
 /**
- * fixed 任务恒为 force：它没有 AI 生成环节，防穿帮闸的「作废」对它没有意义，
- * 而且 worker 的闸压根不会看到 fixed 任务。写任务记录的地方都过这里，别各写各的三元。
+ * 这条任务实际生效的触发规则。
+ *
+ * **2026-10-03 拆掉了原来那条「fixed 恒为 force」的钉死**。它为什么在那儿：以前固定
+ * 模式只有一个用途——到点原样发那句话，压根不给用户选策略，于是代码替用户钉死。
+ * 现在固定模式也归「触发规则」管了（三个都能配），这条钉死就成了**给用户偷偷改
+ * 掉选择**的那类 hack：面板上写着「自动取消」，落到任务记录里却是「转入下轮」。
+ *
+ * 拆掉它的连带好处：`isForcePolicy` / `isDeferToNextTurn` 那些「只认 force」的
+ * 下游判断（延后扫描、兜底配对、建兜底）**自动就对了**，不用逐处打补丁去抵消
+ * 上面这个钉死。原来 fixed 恒 force 的时候，配兜底的条件是「转入下轮 或 固定」，
+ * 现在 fixed 不再被偷偷算成 force，配兜底的自然就只剩「转入下轮」这一种。
+ *
+ * 留 `mode` 参数不删：调用点有 4 处都传了它，删了要连带改签名；`void mode` 是
+ * 明写"这参数现在用不上了"，不是忘了删。
  */
 export const resolveExpirePolicy = (
   mode: ActiveMsg2Mode,
   policy: ActiveMsg2ExpirePolicy | undefined,
-): ActiveMsg2ExpirePolicy => (mode === 'fixed' ? 'force' : (policy ?? 'expire'));
+): ActiveMsg2ExpirePolicy => {
+  void mode;
+  return policy ?? 'expire';
+};
 
 /**
  * **发给云端那份**的形态：作废策略 + 模式 + 提示词。
@@ -107,9 +122,20 @@ export const resolveCloudExpirePolicy = (
   cloudHint?: string;
 } => {
   const effective = resolveExpirePolicy(mode, policy);
+  // 「强制触发」是三个里唯一**不翻译**的：云端看到 force 一次都不判、到点必推，
+  // 正好就是它要的行为，原样发过去就完事。
+  //
+  // 翻译这一步是为「自动取消 / 转入下轮」存在的——云端只认 expire 会判那 10 分钟，
+  // 这俩都得靠翻成 expire 才能让云端去判。所以条件是"是不是要云端去判"，
+  // 不是"是不是 force"。暮色 2026-10-03 批过这个改法：原来"只要 force 就翻"是个
+  // 一刀切的 hack，加了强制触发之后一刀切就切错了，得按用途分。
+  if (effective === 'always') {
+    return { cloudPolicy: 'force', forceAsExpire: false, fixedAsPrompted: false };
+  }
   if (effective !== 'force') {
     return { cloudPolicy: effective, forceAsExpire: false, fixedAsPrompted: false };
   }
+  // 转入下轮：翻成 expire 让云端去判。固定模式还得连模式一起翻（下面注释有原因）。
   if (mode === 'fixed') {
     return {
       cloudPolicy: 'expire',
@@ -164,17 +190,31 @@ export const buildFallbackText = (
   return given ? `到点啦：${given}` : '你之前定的那件事，到点啦。';
 };
 
-/** 这个任务策略是不是「强制发送」——决定要不要给它配兜底。 */
-export const isForcePolicy = (
+/**
+ * 这个任务的触发规则是不是「转入下轮」——**只有它配 30 分钟兜底**（暮色 2026-10-03 定）。
+ *
+ * 为什么只有它：三个策略里只有它承诺"这件事一定会说到"。到点前 10 分钟你正在说话，
+ * 这次先不插嘴、改在下一轮带出来；万一那一轮一直没提，30 分钟后还有一次机会。
+ * 另外两个不需要：
+ *   - 自动取消：本来说好到点前说过话就不发，压根没有"这次没说成"这回事；
+ *   - 强制触发：到点必发，压根不会被让开，兜什么底。
+ *
+ * 改名前叫 `isForcePolicy`。那个名字是这套设计里最容易看错的一处：**客户端的
+ * `force` 指「转入下轮」，云端的 `force` 指「强制触发」**，同名反义。所以改掉。
+ */
+export const isDeferToNextTurn = (
   mode: ActiveMsg2Mode,
   policy: ActiveMsg2ExpirePolicy | undefined,
 ): boolean => resolveExpirePolicy(mode, policy) === 'force';
 
 /**
- * 这条是不是「强制发送」30 分钟后的兜底（麦麦 2026-09-30）。
+ * 这条是不是「转入下轮」30 分钟后的兜底（麦麦 2026-09-30）。
  *
  * 兜底是系统替主任务补的后路：面板不列它、用户不该看见一条不认识的重复任务，
  * 但它得真躺在本地清单里——第 5 步要靠它跟主任务配对取消。
+ *
+ * ⚠️ 只有「转入下轮」的主任务才配兜底（2026-10-03 暮色定）。这个函数判断的是
+ * 「**自己是不是兜底**」，不是「该给谁配兜底」——后者看 `isDeferToNextTurn`。
  */
 export const isFallbackTask = (task: Pick<ActiveMsg2TaskRecord, 'fallbackFor'>): boolean =>
   Boolean(task.fallbackFor);
@@ -248,64 +288,64 @@ export const AMSG2_SCHEDULE_SECRECY_NOTE = '不要向用户复述或提及这份
 export const AMSG2_SCHEDULE_NOT_YET_NOTE = '排在未来的事到点自己会响，不用你现在提前替它开口——还没到那个时刻的就让它安静待着，别每轮都拿它起话头、追着问进展。对方自己提起，或者真到了那个点，才是说它的时候。';
 
 export const describeExpirePolicy = (policy: ActiveMsg2ExpirePolicy): string =>
-  policy === 'force' ? '转入下轮' : '自动取消';
+  policy === 'always' ? '强制触发' : policy === 'force' ? '转入下轮' : '自动取消';
 
 /**
- * 面板上那两个策略选项的文案（麦麦 2026-10-01 step 10；2026-10-03 暮色改了两轮）。
+ * 面板上「触发规则」那三行的文案（麦麦 2026-10-01 step 10；10-03 暮色改了三轮）。
  *
  * 提到这里而不是留在面板里，是为了让文案有**一个出处**：任务列表用 describeExpirePolicy
  * 显示同一个词，选择器也得用同一对词；两处各写一份早晚会跑偏（这次就是
  * 面板写「自动作废」、别处写「遇忙作废」，同一个东西两个名，用户会当成两种策略）。
  *
- * ## 标签换过三轮，每轮都是暮色看实物之后否的
+ * ## 名字换过三轮，每轮都是暮色看实物之后否的
  *
- * | 轮次 | expire | force |
- * |---|---|---|
- * | step 10 | 遇忙作废 | 强制发送 |
- * | 10-03 上午 | 你在忙就算了 | 你在忙就晚点提 |
- * | 10-03 傍晚（当前） | **自动取消** | **转入下轮** |
+ * | 轮次 | expire | force | always |
+ * |---|---|---|---|
+ * | step 10 | 遇忙作废 | 强制发送 | （没有第三个） |
+ * | 10-03 上午 | 你在忙就算了 | 你在忙就晚点提 | — |
+ * | 10-03 傍晚 | 自动取消 | 转入下轮 | — |
+ * | 10-03 深夜（当前） | 自动取消 | 转入下轮 | **强制触发** |
  *
  * 上午那轮的原话是「『到点不说话』我不喜欢，读起来像是你不说话，有歧义」。
- * 傍晚这轮他直接给了这两个名字：「自动取消」讲的是**动作**（到点那次不发了），
- * 「转入下轮」讲的是**去向**（不发的那次挪到下一轮说），两个名字各自把
- * 用户真正关心的那件事说清楚了，而且不用读描述就知道按下去会发生什么。
+ * 傍晚他直接给了那两个名字：「自动取消」讲的是**动作**（到点那次不发了），
+ * 「转入下轮」讲的是**去向**（不发的那次挪到下一轮说）。
+ * 深夜加的第三个，原话是「增加一个强制发送按钮…不受 10 分钟影响，到时间就强制触发。
+ * 适合闹钟型提醒」——他要的是"这件事必须准点发生"这个意思，名字就叫**强制触发**。
  *
- * ## 描述为什么从「每个按钮各一段」改成「两个按钮共用一段」
+ * ## 这一版改回「每个策略自带一段介绍」
  *
- * 上午那版每个按钮底下挂自己的描述，两段并排显示，暮色截图里「强制发送」那句
- * 挤成两行顶在边框上（他自己嫌挤）。傍晚他定了样式照「重复方式」那一组来：
- * **上面一排按钮、下面一段小字**，两个按钮不再各带描述。
+ * 傍晚那版照「重复方式」那一组做成了"上面一排按钮、下面一整段小字"，当晚他就否了，
+ * 发了张图改成**竖着三行、每行一个勾选框 + 加粗名字 + 自己那段介绍**。理由从图上看得
+ * 出来：三个策略的适用场景差得远（没事 / 不着急 / 卡时间），挤在一段里谁也分不清哪个
+ * 配哪个。三个各有各的处境，就得各有各的一句话。
  *
- * 所以 `desc` 这个字段整个删了，说明文字合并成下面那一个 `EXPIRE_POLICY_HINT`。
- * 删掉而不是留着不用：留着一份没人渲染的文案，下次改文案的人改到那份上，
- * 界面上一个字都不会变——这是比没有更坏的坑。
- *
- * 底层标识符 expire / force 一个字没动，只换说给用户听的话。
+ * 底层标识符 expire / force 没动（老任务存的就是它们），新策略叫 always。
  * 现在的规矩（见 utils/amsgFireSchedule 的 EXPIRE_POLICY_DESCRIPTION，角色读那份）：
  *   - expire = 直接取消，**不告诉角色**，聊天里永远不会出现
  *   - force  = 到点前十分钟你在说话就改在下一轮顺口带出；一直没带出来，30 分钟后兜底补一句
+ *   - always = 不看那十分钟，到点必发，不配兜底
  */
 export const EXPIRE_POLICY_OPTIONS: ReadonlyArray<{
   id: ActiveMsg2ExpirePolicy;
   label: string;
+  desc: string;
 }> = [
-  { id: 'expire', label: '自动取消' },
-  { id: 'force', label: '转入下轮' },
+  {
+    id: 'expire',
+    label: '自动取消',
+    desc: '到点前 10 分钟用户说过话，这次取消，不通知角色。到点没互动正常调模型、触发。适合角色自己排任务用。',
+  },
+  {
+    id: 'force',
+    label: '转入下轮',
+    desc: '到点前 10 分钟用户说过话，这次不插嘴，改在你们下一轮聊天里顺口提一句。催喝水、催吃饭这种不着急的，用这个。到点没互动正常调模型、触发。',
+  },
+  {
+    id: 'always',
+    label: '强制触发',
+    desc: '不看那 10 分钟，到点一定发。订票这种卡时间的，用这个。',
+  },
 ];
-
-/**
- * 两个策略按钮下面那一整段小字（暮色 2026-10-03 傍晚逐字给的）。
- *
- * 一段话把两个方向都讲全了：自动取消什么样（不叫醒角色、没有提示）、
- * 什么时候该选转入下轮（下一轮对话里自然带出）、转了但一直没聊到会怎样
- * （30 分钟后再自动触发一次）、以及还有个更省心的选择（到点定时发就用「固定」模式）。
- *
- * 「30 分钟后」中间那个空格是麦麦按全站数字排版习惯加的，暮色原话写的是「30分钟后」，
- * 字面意思一个字没改。
- */
-export const EXPIRE_POLICY_HINT =
-  '自动取消，不会叫醒角色，也没有提示。如不想遇忙取消的任务选「转入下轮」转为下一轮对话里自然带出。'
-  + '如没触发，30 分钟后继续自动触发主动消息。如果是想要到点定时就发的选「固定」模式任务。';
 
 
 /** 任务「要说什么」的一句话描述。fixed 有固定内容、prompted 有方向、auto 可带灵感。 */
@@ -447,9 +487,9 @@ export const getPendingTasks = (
 ): ActiveMsg2TaskRecord[] =>
   (config?.tasks ?? []).filter((t) => isPendingTask(t, nowMs));
 
-/** 这个任务的触发有没有可能被防穿帮闸作废（fixed / force 永远照发）。 */
+/** 这个任务的触发有没有可能被防穿帮闸作废（只有「自动取消」会）。 */
 export const canExpire = (task: ActiveMsg2TaskRecord): boolean =>
-  task.status === 'scheduled' && task.mode !== 'fixed' && task.expirePolicy === 'expire';
+  task.status === 'scheduled' && task.expirePolicy === 'expire';
 
 /**
  * 这条任务的触发「没发出去」时，角色该听到哪一种交代（麦麦 2026-09-30）。

@@ -21,7 +21,7 @@
 import { ActiveMsg2TaskRecord, CharacterProfile } from '../types';
 import type { AmsgLastSkip } from './amsgFirePack';
 import { recurrencePeriodMs } from './amsg2ExpireGuard';
-import { buildFallbackText, currentOccurrenceMs, isFallbackTask, isForcePolicy } from './amsg2Tasks';
+import { buildFallbackText, currentOccurrenceMs, isFallbackTask, isDeferToNextTurn } from './amsg2Tasks';
 
 /** 循环任务推迟了 n 个周期后，下一次的兜底该排在哪。 */
 export const nextFallbackOccurrenceMs = (params: {
@@ -285,7 +285,7 @@ export const planFallbackReconcile = (params: {
     // 兜底自己没有兜底；已取消的也不管。
     if (isFallbackTask(main) || main.status !== 'scheduled') continue;
     // 只有「强制发送」才配兜底：遇忙作废的那次是直接取消，本来就不会有人来说这句。
-    if (!isForcePolicy(main.mode, main.expirePolicy)) continue;
+    if (!isDeferToNextTurn(main.mode, main.expirePolicy)) continue;
     if (liveFallbacks.has(main.clientTaskId)) continue;
     // 主任务被云端停了的不补——等用户回一句话它自己就复活了，那时候下一次对账会补上。
     if (stoppedClientTaskId && main.clientTaskId === stoppedClientTaskId) continue;

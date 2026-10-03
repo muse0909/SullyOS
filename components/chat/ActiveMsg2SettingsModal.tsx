@@ -44,7 +44,6 @@ import {
   describeTaskMode,
   describeTaskProgress,
   EXPIRE_POLICY_OPTIONS,
-  EXPIRE_POLICY_HINT,
   formatTaskTime,
   fromDatetimeLocalValue,
   isAmsg2EnabledForChar,
@@ -988,7 +987,13 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                     {/* 兜底挂在主任务里面（不另起一行）：它是这条任务的后路，
                         单独列一行的话用户会以为系统多排了一条他没排过的任务。
                         时间用主任务的 + 30 分钟算出来，不单独存——那个值就是
-                        updateFallbackText 重建时原样带走的那个 firstSendTime。 */}
+                        updateFallbackText 重建时原样带走的那个 firstSendTime。
+
+                        麦麦 2026-10-03 深夜：条件从 `t.expirePolicy === 'force'` 保持不变，
+                        但语义变了——以前 fixed 被钉死成 force，所以**每一条固定任务**都
+                        挂着一个「兜底」标签（暮色当时问的就是这个：「固定任务到点就发，
+                        用不着兜底呀」）。现在固定模式能自己选策略了，只有选了
+                        「转入下轮」的固定任务才真配兜底、才显示这个标签。 */}
                     {t.expirePolicy === 'force' ? (
                       <div className="mt-2 pt-2 border-t border-dashed border-slate-200">
                         <div className="flex items-center gap-1.5 mb-1">
@@ -1096,9 +1101,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                     <button
                       key={option.id}
                       onClick={() => {
+                        // 麦麦 2026-10-03 深夜：原来这里是 `if (option.id === 'fixed')
+                        // setExpirePolicy('force')`——选固定模式就偷偷把策略改成转入下轮。
+                        // 那是代码替用户改选择（面板上写一套、落库是另一套），现在固定
+                        // 模式三个策略都能配（暮色原话「能配」），**不再替他改**。
                         setMode(option.id);
-                        // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
-                        if (option.id === 'fixed') setExpirePolicy('force');
                       }}
                       className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${
                         isSelected
@@ -1159,35 +1166,63 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               </div>
             </div>
 
-            {mode !== 'fixed' ? (
-              <div>
-                {/* 麦麦 2026-10-03 傍晚（暮色指着截图说的两件事）：
-                    1. 标题改成「到点前 10 分钟用户说过话」。上午写的是「到点前 10 分钟
-                       你说过话」，暮色这轮亲手写的是「用户说过话」，照他写的来。
-                       ⚠️ 底下两个按钮用的还是「你」（你在忙 / 你定时发），所以这块
-                       现在是「用户」跟「你」混着。要统一成一边说一声。
-                    2. 样式照上面「重复方式」那一组来：上面一排按钮、下面一段小字。
-                       上午那版每个按钮底下挂一段自己的描述，两段并排，暮色嫌挤。 */}
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点前 10 分钟用户说过话</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {EXPIRE_POLICY_OPTIONS.map((option) => (
+            {/* 麦麦 2026-10-03 深夜（暮色拍了图定样式）：
+                1. 标题从「到点前 10 分钟用户说过话」改成「触发规则」。原来那个标题把
+                   判据（那 10 分钟）写进了标题，但三个策略里「强制触发」压根不看
+                   那 10 分钟，标题就成了假话。
+                2. 竖排三行，每行左边一个勾选框（选中的是紫底白勾），右边加粗名字 +
+                   冒号 + 自己那段介绍。三个策略的适用场景差得远（没事 / 不着急 /
+                   卡时间），挤成一整段谁也分不清哪个配哪个。
+                3. 固定模式**不再藏这一块**了——三个策略固定都能配（暮色原话「能配」）。
+                   以前藏它是因为 fixed 被代码钉死成 force，选了也没用；钉死那条拆了
+                   之后就没有理由藏了。
+
+                字号：名字 text-sm 加粗，介绍 text-[11px] 灰。名字要压得住介绍——图上
+                暮色强调的就是"名字大一点、介绍小一点"，一行里那个层次差就是可读性。 */}
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">触发规则</label>
+              <div className="space-y-2">
+                {EXPIRE_POLICY_OPTIONS.map((option) => {
+                  const isSelected = expirePolicy === option.id;
+                  return (
                     <button
                       key={option.id}
+                      type="button"
                       onClick={() => setExpirePolicy(option.id)}
-                      /* 按钮文字居中（暮色点名要的）。button 默认就居中，这里写出来是
-                         为了跟下面那行小字一样把意图钉死——以后谁加个 flex 容器进来
-                         也不会把它挤到左边去。 */
-                      className={`py-2.5 rounded-xl text-xs font-bold border transition-all text-center ${expirePolicy === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                      className={`w-full flex items-start gap-2.5 text-left rounded-2xl border px-3 py-3 transition-all ${
+                        isSelected
+                          ? 'bg-violet-50 border-violet-300'
+                          : 'bg-white border-slate-200'
+                      }`}
                     >
-                      {option.label}
+                      {/* 勾选框自己画，不用原生 checkbox：原生那个在移动端点击区太小，
+                          暮色图上那一行是整行可点的。 */}
+                      <span
+                        aria-hidden
+                        className={`shrink-0 mt-0.5 w-4 h-4 rounded-[5px] border-2 flex items-center justify-center ${
+                          isSelected ? 'bg-violet-400 border-violet-400' : 'bg-white border-slate-300'
+                        }`}
+                      >
+                        {isSelected ? (
+                          <svg viewBox="0 0 12 12" className="w-2.5 h-2.5" fill="none">
+                            <path d="M2.5 6.2l2.4 2.4 4.6-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        ) : null}
+                      </span>
+                      <span className="min-w-0">
+                        <span className={`block text-sm font-bold leading-snug ${isSelected ? 'text-violet-700' : 'text-slate-700'}`}>
+                          {option.label}
+                          <span className="text-slate-300 mx-1 font-bold">·</span>
+                        </span>
+                        <span className="block mt-1 text-[11px] leading-relaxed text-slate-400">
+                          {option.desc}
+                        </span>
+                      </span>
                     </button>
-                  ))}
-                </div>
-                <div className="text-[11px] text-slate-400 mt-2 pl-1 leading-relaxed">
-                  {EXPIRE_POLICY_HINT}
-                </div>
+                  );
+                })}
               </div>
-            ) : null}
+            </div>
 
             {mode === 'fixed' ? (
               <div>

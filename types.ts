@@ -2987,8 +2987,25 @@ export interface VRApiCall {
 //   TaskRecord/ExpiredNoticeRecord/InboxMessage），不重复定义 GlobalConfig/CharacterConfig
 // ============================================================================
 
-/** 任务过期策略：到期让路 / 强制触发 */
-export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
+/**
+ * 任务触发规则（2026-10-03 暮色拍板，从两个值加到三个）。
+ *
+ * ⚠️ **这三个值跟云端那两个值语义是反的，看之前先看这段**：
+ *
+ *   客户端（这三个，用户在面板上看到的）      云端（这两个，worker 认识的）
+ *     自动取消 expire  ──原样发──▶              expire  会判那 10 分钟，判中就跳过
+ *     转入下轮 force  ──翻译成──▶              expire  会判那 10 分钟，判中就跳过
+ *     强制触发 always ──原样发──▶              force   **一次都不判**，到点必推
+ *
+ * 所以客户端的 `force`（转入下轮）发给云端会变成 `expire`，客户端的 `always`
+ * （强制触发）发给云端才是 `force`。**同名不同义，是这套设计里最容易踩的坑**。
+ * 名字保持 `force` 不改，是为了老任务存的值（localStorage / D1 里都是它）还能读；
+ * 读代码时看到 `resolveCloudExpirePolicy` 的翻译就明白为什么了。
+ *
+ * 三者只有「转入下轮」配 30 分钟兜底：它承诺"一定会说到"，所以要留后路。
+ * 另两个要么到点就发（不需要），要么本来就不发（兜什么）。
+ */
+export type ActiveMsg2ExpirePolicy = 'expire' | 'force' | 'always';
 
 /** 任务来源：用户排的 / 角色自己排的 */
 export type ActiveMsg2TaskSource = 'user' | 'character';

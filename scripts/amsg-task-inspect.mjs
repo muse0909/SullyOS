@@ -165,6 +165,20 @@ const selfLogs = await query(
   `SELECT user_id, key, value, updated_at FROM client_state WHERE key = 'self_log'`,
 );
 
+// 麦麦 2026-10-03 加：真机验收时最该一眼看到的一段——**这一条到底推出去没有**。
+//
+// scheduled_messages.status 只说"云端处理了没有"，不说"手机收到了没有"。
+// 实测过一次推送投递失败（522）时，任务那行干干净净写着 sent，而 message_outbox
+// 里那两段的 delivered_at 全是 NULL——不看这张表就会把失败当成功。
+const outbox = await query(
+  dbId,
+  `SELECT id, message_id, task_uuid, session_id, message_index, total_messages,
+          created_at, delivered_at, acked_at
+     FROM message_outbox
+    ORDER BY id DESC
+    LIMIT 30`,
+);
+
 console.log(`库 ${dbId}（账号 ${accountId}）`);
 console.log(`任务 ${rows.length} 条${willDecrypt ? '' : '（没给密钥，只看调度状态）'}\n`);
 
@@ -195,7 +209,7 @@ if (!rows.length) {
           + `循环=${payload.recurrenceType ?? 'none'}  `
           + `来源=${md.amsgSource ?? '(没写)'}`);
         const mode = payload.messageType;
-        if (md.amsgForceDeferred === true) console.log('      ↑ 原本是「强制发送」，发给云端翻成了遇忙作废');
+        if (md.amsgForceDeferred === true) console.log('      ↑ 面板上是「转入下轮」，发给云端翻成了「自动取消」（云端只认后一种，延后那步在客户端做）');
         if (md.amsgFixedAsPrompted === true) {
           console.log('      ↑ 原本是「固定」，连模式一起翻成了提示词（云端要调模型，走 10 分钟窗）');
           console.log(`      翻译成的提示词: ${String(md.amsgTaskInstruction || '(没写)').slice(0, 90)}`);
@@ -231,14 +245,46 @@ if (skipped.length) {
   console.log('');
 }
 
+// ── 推送投递（麦麦 2026-10-03 加）────────────────────────
+console.log('── 到底推出去没有（最近 30 条）──');
+if (!outbox.length) {
+  console.log('  一条推送都没有。到点后这里还是空的 = 云端压根没生成推送，别急着查手机。');
+} else {
+  let undelivered = 0;
+  for (const o of outbox) {
+    const when = o.created_at ? new Date(o.created_at).toLocaleString('zh-CN') : '(没写)';
+    const idx = o.total_messages > 1 ? ` ${o.message_index + 1}/${o.total_messages}` : '';
+    let mark;
+    if (o.delivered_at) {
+      mark = `已送达 +${Math.round((o.delivered_at - o.created_at) / 1000)} 秒`;
+    } else if (o.acked_at) {
+      // 麦麦 2026-10-03 修正：起先这里一律写「★ 没送达」，拿真数据一跑就发现不对——
+      // 历史上有 4 条 delivered_at 是空的，可 acked_at 明明有值，也就是**手机收到了**、
+      // 只是云端没记下送达时刻。这两种得分开，不然会把"没记时间"报成"没送到"。
+      mark = '· 送达时间没记上（客户端已确认收到）';
+      undelivered += 1;
+    } else {
+      mark = '★ 真没收到';
+      undelivered += 1;
+    }
+    console.log(`  ${when}  任务 ${(o.task_uuid || '(没挂任务)').slice(0, 8)}`
+      + `${idx}  ${mark}${o.acked_at ? '  已确认' : ''}`);
+  }
+  if (undelivered) {
+    console.log(`  · ${undelivered} 条 delivered_at 是空的——其中带「已确认」的是"收到了但云端没记时间"，`);
+    console.log('    只有标「★ 真没收到」的才要查投递链路。任务那行写着 sent 不等于手机收到了。');
+  }
+}
+console.log('');
+
 // ── 兜底配对（麦麦 2026-09-30）──────────────────────────
-// 规则：每条「强制发送」任务，建的时候都该顺带出一条 30 分钟后的固定兜底。
+// 规则：每条面板上选「转入下轮」的任务，建的时候都该顺带出一条 30 分钟后的固定兜底。
 // 核对方式：主任务那一行的「推迟标记」应该是有，兜底那行带 ★，两者时间差正好 30 分钟。
 if (willDecrypt) {
   console.log('── 兜底配对 ──');
   if (!fallbackByFor.size) {
     console.log('  一条兜底都没有。');
-    console.log('  · 库里没有「强制发送」任务时这是对的；');
+    console.log('  · 库里没有「转入下轮」的任务时这是对的；');
     console.log('  · 有推迟标记=有 却没兜底 → 建兜底那步失败了，查诊断里的 fallback-schedule-failed。');
   } else {
     for (const [forId, fb] of fallbackByFor) {

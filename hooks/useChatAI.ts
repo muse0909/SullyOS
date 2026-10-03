@@ -16,9 +16,15 @@ import {
   collectAmsg2TaskContext,
   consumeAmsg2Notices,
 } from '../utils/amsg2TaskContext';
-import { AMSG_FALLBACK_DELAY_MS, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
+import { AMSG_FALLBACK_DELAY_MS, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 // 麦麦 2026-09-30：回执被消费后立刻重传一份不带它的 fire_pack（方向一）。
 import { flushAmsgState, markAmsgStateDirty } from '../utils/amsgStateSync';
+// 麦麦 2026-10-02：补上「活跃会话租约」的调用点（startAmsgChatPresence 此前从无调用者，
+//   云端 client_state 的 chat_presence 一直是 0 行 → worker 那道 active-chat-presence 门
+//   等于不存在）。函数体与心跳逻辑在 amsgStateSync 里是现成的，只缺这里两个调用。
+import { startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+// 「真实用户消息」判定复用同一个叶子 helper（不自己另写一套，见 amsg2ExpireGuard）。
+import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -834,6 +840,31 @@ export const useChatAI = ({
 
     const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }, callSite?: string) => {
         if (isTyping || !char) return;
+        // 麦麦 2026-10-02：活跃会话租约。位置和前置条件都照搬原作者
+        //   （upstream/master:hooks/useChatAI.ts:1352-1355），一个字没改语义：
+        //   - 就在主请求即将发出前开，finally 里停 —— 租约的语义是「这一轮生成期间用户在这边」，
+        //     生成一结束就该停，剩下的清库交给远端 45s TTL 自然失效。
+        //   - 只对「开了主动消息 2.0 且还有会响的 AI 任务」的角色开：其余角色云端没有对应
+        //     任务，开了纯浪费一次 PUT 还刷 warn。
+        //   云端 expire 任务到点先读它：新鲜（45s TTL 内）就直接 skip，reason 记
+        //   'active-chat-presence'，别在用户正聊天时插一条定时消息（worker bundle 15813 行那道门）。
+        //
+        //   TDZ 三点都在上面查过，不会崩：
+        //     1. `char` —— 上一行 `if (isTyping || !char) return;` 已经判过空；
+        //     2. `hasActiveAiTask` —— 模块顶层 import，模块初始化时就绑好了；
+        //     3. `activeMsg2Config` —— types.ts:1427 的可选字段，`?.` 兜住。
+        //
+        //   为什么用 currentMsgs 而不是原作者的 contextMsgs：本地 contextMsgs 在本函数
+        //   1092 行才定义（可能换成 fullHistory），在本行引用会是 TDZ。这里取的是
+        //   triggerAI 的入参，触发本轮生成的那批消息。
+        //   ⚠️ 与原作者的已知差异（暮色 2026-10-03 拍板：接受，记成遗留项）：若
+        //   currentMsgs 里一条真实用户消息都没有（全是角色主动发的 / 卡片 / 转发），
+        //   这里算出 null，而原作者会从完整历史里翻出最后一条真实用户消息。
+        //   lastUserMessageAt 传 null 时，worker 侧 laterOf 会退回用 fire_pack 里的旧值。
+        const amsg2Cfg = char.activeMsg2Config;
+        if (amsg2Cfg?.enabled && hasActiveAiTask(amsg2Cfg)) {
+            startAmsgChatPresence(char.id, getLastRealUserMessageAt(currentMsgs));
+        }
         // 麦麦 2026-09-24 v2：临时诊断 — 给每次 triggerAI 一个 triggerId，写入 wakeup-trigger-start。
         //   排查 20:14 和 20:15 两条任务时用来对应「同次 triggerAI」vs「跨次 triggerAI」。
         //   callSite 由调用方（Chat.tsx 多处 triggerAI 调用）传入字符串标签；未传则记 'unknown'。
@@ -5201,6 +5232,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            // 麦麦 2026-10-02：活跃会话租约到此结束（生成成功 / 抛错 / 被中断都算结束）。
+            //   放在 finally 开头，早于本块里那些后台异步任务：租约的语义是「这一轮生成
+            //   期间用户在这边」，生成一结束就该停，剩下的清库交给远端 45s TTL 自然失效。
+            //   stop 只清本地的 interval，不发「离线」写入（见 amsgStateSync 的注释）。
+            stopAmsgChatPresence(char.id);
             // 麦麦 2026-09-27：主回复完成（catch 块 setMessages 已经跑了）→ finally 块启动后台识图 IIFE
             //   - 暮色 9-27 拍板：原识别 API 触发时机从"请求前阻塞"改为"主回复完成后后台异步"
             //   - 之前在主请求前 fire-and-forget 启动，导致 IIFE 跑得快时识别完成日志出现在主请求响应之前

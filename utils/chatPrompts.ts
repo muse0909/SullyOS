@@ -295,7 +295,15 @@ export const ChatPrompts = {
                 // 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
                 //   所有角色都能用（不限江澈）— 在聊天末尾输出 token
                 //   Worker D1 schedules 表注册 dynamic record，到点按混合方案触发主动消息
-                //   暮色发消息会自动取消当前 dynamic（不需要管取消逻辑）
+                // 麦麦 2026-10-03（暮色拍板）：原来这行写的是「暮色发消息会自动取消当前
+                //   dynamic（不需要管取消逻辑）」——**那已经是假话了**。它描述的是 9-6 的老行为，
+                //   取消函数 cancelCharacterWakeups 在 step 9（217282e1）里整个删掉了。
+                //   现在角色改口只剩入口闸这一条路：再排一条，三条件命中（自排 + 一次性 +
+                //   遇忙作废）就会顶掉旧的，见 isReplaceableCharacterWakeup。
+                //   顺带记一笔：老 1.x 通道的 cancelDynamicScheduleOnWorker 还在（打
+                //   /cancel-dynamic-schedule），但 schedule_next_wakeup 现在落的是 2.0 的
+                //   D1，1.x 那条只对迁移前排的老记录有效 —— 同一句提示词下两条通道行为
+                //   不一样，别拿 1.x 的行为去推断 2.0。
                 //   优先级高于固定梯度（30/60/240 分钟）— 存在 dynamic 时只走 dynamic
                 //
                 //   麦麦 2026-09-16 plan step B：搬到了主动消息 2.0 后端。
@@ -312,7 +320,7 @@ export const ChatPrompts = {
                 '- reason 写一句简短的触发原因（"该写日记了" / "她好久没回" / "提醒她吃饭"等），会写到任务的 metadata，到点 Worker 拼到 system hint "你当时安排的理由是 [reason]" 让你知道这是你自己定的',
                 '- 输出位置：在普通回复**末尾**（不要在中间，会被 strip 漏掉）',
                 '- 别 5 分钟调一次，太频繁反而像骚扰',
-                '- 暮色在 dynamic 时间到达前发任何消息，当前 dynamic 自动取消（不需要你自己处理）',
+                '- 暮色在 dynamic 到点前发消息不会取消它，到点照样会响；想改时间就再排一条，新的会覆盖旧的',
                 '- 新的回复会覆盖之前未触发的 dynamic（同一角色只有 1 条 dynamic 在册）',
                 '',
                 '示例：',

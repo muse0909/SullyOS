@@ -997,11 +997,14 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                     {t.expirePolicy === 'force' ? (
                       <div className="mt-2 pt-2 border-t border-dashed border-slate-200">
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold">
+                          {/* 麦麦 2026-10-03 深夜（暮色截图说的）：这两个字原来被挤成
+                              「兜」「额」竖着排——行宽不够时中文会被逐字折行。标签加
+                              nowrap + shrink-0，窄屏宁可让右边那句让位也不折它。 */}
+                          <span className="shrink-0 whitespace-nowrap px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold">
                             兜底
                           </span>
                           <span className="text-slate-400 text-[11px]">
-                            到点没发出去的话，30 分钟后原样补一条（不算名额）
+                            到点转入下轮的任务，30 分钟没触发下轮自动触发一次唤醒
                           </span>
                         </div>
                         {fb ? (

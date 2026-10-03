@@ -35,6 +35,51 @@ def readCfg = { String key, String fallback ->
     return fallback                                                // 4. 占位符兜底
 }
 
+// 麦麦 2026-10-03：测试包指向 fix 分支的网页部署，正式包继续指 master。
+//
+// ## 为什么需要这个
+//
+// capacitor.config.json 里写着 server.url，Capacitor 有它就会**从远程加载网页**，
+// APK 里那份本地 assets 根本不参与。于是「打一个 fix 分支的包」拿到的还是 master 的
+// 代码——2026-10-03 就在这上面栽了：暮色装上 67b8defc 测了半天，屏幕上跑的是 master。
+// 五条独立证据都对上了（APK 内 config / git 历史 / 截图旧文案 / 远端 bundle 符号 /
+// D1 数据），最后才定位到这里。
+//
+// ## 为什么放在 gradle 而不是手动改 assets
+//
+// android/app/src/main/assets/capacitor.config.json 是 `npx cap copy` 的产物，
+// 而且**在 .gitignore 里**（android/.gitignore:99），从没提交过。手动改它有两个坏处：
+// 一是 `npx cap sync` 每次都会用根目录那份覆盖回去（2026-10-03 那次就是这么丢的）；
+// 二是没有任何记录，回头没人说得清当时指向的是哪个分支。
+//
+// 改成 build 时按 property 选：
+//   ./gradlew assembleDebug -PtestBuild              → 用 capacitor.config.test.json
+//   ./gradlew assembleDebug                          → 用 capacitor.config.json
+// **两个方向都写**，所以不管上一次 build 留下了什么，每次都会纠正回正确的那份。
+//
+// ## 两份文件的差异只有 server.url 和 allowNavigation 多一行
+//   capacitor.config.json        → https://sully-muse-vert.vercel.app（master，暮色手机在用）
+//   capacitor.config.test.json   → https://sully-os-git-fix-amsg2-realign-...vercel.app（fix）
+// 改其中一份时记得用 python 从另一份重新生成，别手抄整个文件。
+
+def syncCapacitorConfig = tasks.register('syncCapacitorConfig') {
+    def isTest = project.hasProperty('testBuild')
+    def rootDir = rootProject.projectDir.parentFile
+    def target = new File(project.projectDir, 'src/main/assets/capacitor.config.json')
+    def source = new File(rootDir, isTest ? 'capacitor.config.test.json' : 'capacitor.config.json')
+    inputs.file(source)
+    outputs.file(target)
+    doLast {
+        if (!source.exists()) {
+            throw new GradleException("找不到 ${source} —— 服务器地址配置读不到，拒绝构建")
+        }
+        target.parentFile.mkdirs()
+        target.bytes = source.bytes
+        def which = isTest ? '测试包' : '正式包'
+        logger.lifecycle("[amsg] ${which} 的 capacitor.config 来自 ${source.name}（server.url 指向 ${which == '测试包' ? 'fix 分支' : 'master'}）")
+    }
+}
+
 android {
     namespace "com.aetheros.simulator"
     compileSdk rootProject.ext.compileSdkVersion
@@ -129,6 +174,11 @@ android {
             output.outputFileName = apkName
         }
     }
+
+    // 麦麦 2026-10-03：把 server.url 的选择挂到 preBuild 上，保证「打包时读到的 config」
+    //   一定是这次 build 该用的那份。用 dependsOn 而不是直接写在 assets 任务里，是因为
+    //   mergeDebugAssets 跑在 preBuild 之后——顺序反了 assets 目录里就会留着上一份。
+    preBuild.dependsOn syncCapacitorConfig
 }
 
 // 麦麦 2026-09-03：占位符 build-time 警告

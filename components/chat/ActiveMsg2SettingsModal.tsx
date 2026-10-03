@@ -1055,7 +1055,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                             </div>
                           )
                         ) : (
-                          <div className="text-slate-400 text-[11px]">
+                          /* 麦麦 2026-10-03 深夜（暮色指着截图说的）：这行原本紧贴在
+                             「兜底」那块下面，看着像兜底说明的一部分，其实是另一件事
+                             ——主任务在云端建失败了。中间补一条虚线分开。
+                             `mt-2 pt-2` 跟上面「兜底」那块自己的 `mt-2 pt-2` 对齐，
+                             两条分割线的间距一样，整块看起来是同一套节奏。 */
+                          <div className="mt-2 pt-2 border-t border-dashed border-slate-200 text-slate-400 text-[11px]">
                             这次没建成（建任务那次没成功，可以取消这条重排一次）
                           </div>
                         )}

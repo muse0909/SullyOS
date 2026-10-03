@@ -32,6 +32,7 @@ import {
   visibleTasks,
   isReplaceableCharacterWakeup,
   EXPIRE_POLICY_OPTIONS,
+  EXPIRE_POLICY_HINT,
   describeExpirePolicy,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
@@ -771,45 +772,56 @@ describe('isReplaceableCharacterWakeup（角色改口时能顶掉哪一条）', 
   });
 });
 
-// ─── 策略选项的文案（麦麦 2026-10-01 step 10）───
+// ─── 策略选项的文案（麦麦 2026-10-01 step 10；10-03 改过两轮）───
 describe('EXPIRE_POLICY_OPTIONS（面板上那两个按钮）', () => {
   const opt = (id: 'expire' | 'force') => EXPIRE_POLICY_OPTIONS.find((o) => o.id === id)!;
 
-  it('两个都在，顺序是「遇忙作废」在前', () => {
+  it('两个都在，顺序是「自动取消」在前', () => {
     expect(EXPIRE_POLICY_OPTIONS.map((o) => o.id)).toEqual(['expire', 'force']);
   });
 
   // 任务列表、那张「最近没响的」卡、兜底提示用的都是 describeExpirePolicy。
-  // 选择器叫「自动作废」而别处叫「遇忙作废」时，用户会当成两种策略。
+  // 选择器叫一个名而别处叫另一个名时，用户会当成两种策略。
   it('标签跟 describeExpirePolicy 用同一对词', () => {
     for (const o of EXPIRE_POLICY_OPTIONS) {
       expect(o.label).toBe(describeExpirePolicy(o.id));
     }
   });
 
-  // 这两条描述原来挂反了：expire 挂着"转为对话里自然带出"。用户按那句去等，
-  // 等不到就以为功能坏了——所以两个方向都要盯住。
-  //
-  // 麦麦 2026-10-03：文案又换了一轮（标签 + 描述都重写），断言跟着换成新措辞，
-  // **盯的规矩一个字没松**：expire 必须说清"这次不说了、聊天里不会出现"，force 必须
-  // 说清"改成顺口提一句"外加 30 分钟兜底。这里盯的是**语义**不是具体某几个字，
-  // 下次再调措辞时记得同步这两条。
-  it('你在忙就算了 → 明说这次不说了、聊天里不会出现，且不提"带出"', () => {
-    const d = opt('expire').desc;
-    expect(d).toContain('这次就不说了');
-    expect(d).toContain('聊天里也不会提到');
-    expect(d).not.toContain('带出');
+  // 这条 2026-10-03 一天之内已经红过两回：上午「遇忙作废/强制发送」换成
+  // 「你在忙就算了/你在忙就晚点提」，傍晚又换成「自动取消/转入下轮」。每换一次
+  // 底下那些断言就得跟着改一遍——那就干脆把名字本身钉住：将来谁再改标签，
+  // 这里先红，提醒他同一次提交里把 describeExpirePolicy 和这块说明一起改了。
+  it('按钮名就是「自动取消」/「转入下轮」', () => {
+    expect(opt('expire').label).toBe('自动取消');
+    expect(opt('force').label).toBe('转入下轮');
   });
 
-  it('你在忙就晚点提 → 说清顺口提一句 + 30 分钟兜底', () => {
-    const d = opt('force').desc;
-    expect(d).toContain('顺口提一句');
-    expect(d).toContain('30 分钟');
-  });
-
-  it('两条都不许承诺"作废了会在聊天里出现"', () => {
+  // 每个按钮底下的 desc 已经删掉了，说明文字合并成下面那一整段小字。
+  // 盯这条是防"有人把 desc 加回来"：留一份没人渲染的文案，下次改文案的人改到
+  // 那份上，界面上一个字都不会变。
+  it('按钮上不再挂自己的描述（说明合并成一段小字）', () => {
     for (const o of EXPIRE_POLICY_OPTIONS) {
-      expect(o.desc).not.toContain('转为对话里');
+      expect((o as { desc?: string }).desc).toBeUndefined();
     }
+  });
+
+  // 这一整段是暮色逐字给的，四个承诺缺一不可，少说一条用户就会按错的预期去等：
+  //   1. 自动取消 = 不叫醒角色、没有提示（否则他会等一条提示，白等）
+  //   2. 想遇忙不取消就选「转入下轮」→ 下一轮对话里自然带出
+  //   3. 一直没带出来 → 30 分钟后再自动触发一次（兜底是用户真的会收到的）
+  //   4. 想干脆到点定时发 → 用「固定」模式任务（最容易漏的一条）
+  it('小字说明把四件事都讲全了', () => {
+    expect(EXPIRE_POLICY_HINT).toContain('不会叫醒角色');
+    expect(EXPIRE_POLICY_HINT).toContain('也没有提示');
+    expect(EXPIRE_POLICY_HINT).toContain('「转入下轮」');
+    expect(EXPIRE_POLICY_HINT).toContain('自然带出');
+    expect(EXPIRE_POLICY_HINT).toContain('30 分钟');
+    expect(EXPIRE_POLICY_HINT).toContain('「固定」');
+  });
+
+  // 老规矩继续盯着：小字不许把"自动取消"说成"会在聊天里出现"。
+  it('不许承诺"自动取消了会在聊天里出现"', () => {
+    expect(EXPIRE_POLICY_HINT).not.toContain('转为对话里');
   });
 });

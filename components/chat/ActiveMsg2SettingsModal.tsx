@@ -44,6 +44,7 @@ import {
   describeTaskMode,
   describeTaskProgress,
   EXPIRE_POLICY_OPTIONS,
+  EXPIRE_POLICY_HINT,
   formatTaskTime,
   fromDatetimeLocalValue,
   isAmsg2EnabledForChar,
@@ -1073,6 +1074,18 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">
                 {editingTaskUuid ? '编辑任务' : '新建任务'}
               </label>
+              {/* 麦麦 2026-10-03 傍晚（暮色指着截图说的）：这行字要在这三个模式**上面**。
+                  上午那版放在模式按钮下面，暮色在下面翻策略区时压根没看见，回了一句
+                  「新建任务下面的说明没有写」——位置太靠下、跟标题隔着一整个
+                  「首次发送时间」，等于没说。放到标题正下方，视线从「新建任务」往下
+                  扫第一眼就能撞上。
+
+                  这句话是删掉「角色自设」那个占位选项之后的信息补偿（暮色原话「把多余
+                  的去掉」），所以不能没有：角色在聊天里用 schedule_next_wakeup 排的
+                  任务照样出现在下面列表里、照样标「角色自设」。 */}
+              <div className="text-[11px] text-slate-400 mb-2 pl-1">
+                角色和用户均可排主动消息任务
+              </div>
               <div className="space-y-2">
                 {MODE_OPTIONS.map((option) => {
                   // 麦麦 2026-10-03：原来这里还渲染过一个 disabled 的「角色自设」占位项
@@ -1098,12 +1111,6 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                     </button>
                   );
                 })}
-              </div>
-              {/* 麦麦 2026-10-03（暮色拍板）：「角色自设」那个点不亮的选项删掉之后，
-                  「角色也能自己排任务」这句信息不能跟着没。角色在聊天里用
-                  schedule_next_wakeup 排的会出现在下面列表里，标「角色自设」。 */}
-              <div className="text-[11px] text-slate-400 mt-2 pl-1">
-                角色和用户均可排主动消息任务
               </div>
             </div>
 
@@ -1154,26 +1161,30 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
             {mode !== 'fixed' ? (
               <div>
-                {/* 麦麦 2026-10-03（暮色拍板）：标题原来写「到点时用户正在聊天」——
-                    判据其实是「到点前 10 分钟内有没有用户发的真实消息」，两回事。租约
-                    只覆盖 AI 生成中那几秒，用户在聊天页纯阅读超 45 秒云端就判不在场了，
-                    照那个标题理解会以为「我只要开着页面就永远不插话」。 */}
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点前 10 分钟你说过话</label>
+                {/* 麦麦 2026-10-03 傍晚（暮色指着截图说的两件事）：
+                    1. 标题改成「到点前 10 分钟用户说过话」。上午写的是「到点前 10 分钟
+                       你说过话」，暮色这轮亲手写的是「用户说过话」，照他写的来。
+                       ⚠️ 底下两个按钮用的还是「你」（你在忙 / 你定时发），所以这块
+                       现在是「用户」跟「你」混着。要统一成一边说一声。
+                    2. 样式照上面「重复方式」那一组来：上面一排按钮、下面一段小字。
+                       上午那版每个按钮底下挂一段自己的描述，两段并排，暮色嫌挤。 */}
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点前 10 分钟用户说过话</label>
                 <div className="grid grid-cols-2 gap-2">
                   {EXPIRE_POLICY_OPTIONS.map((option) => (
                     <button
                       key={option.id}
                       onClick={() => setExpirePolicy(option.id)}
-                      /* 麦麦 2026-10-03：原来只有 py-2.5、没有左右内边距，描述文字直接
-                         贴着边框（暮色截图里「强制发送」那句挤成两行顶到边上）。这里补
-                         px-3 + py-3，描述降到 10px 并给 leading-relaxed，标签和描述之间
-                         也拉开 mt-1。 */
-                      className={`py-3 px-3 rounded-xl text-xs font-bold border transition-all text-left ${expirePolicy === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
+                      /* 按钮文字居中（暮色点名要的）。button 默认就居中，这里写出来是
+                         为了跟下面那行小字一样把意图钉死——以后谁加个 flex 容器进来
+                         也不会把它挤到左边去。 */
+                      className={`py-2.5 rounded-xl text-xs font-bold border transition-all text-center ${expirePolicy === option.id ? 'bg-violet-300 text-white border-violet-300' : 'bg-white border-slate-200 text-slate-600'}`}
                     >
                       {option.label}
-                      <div className={`font-normal text-[10px] leading-relaxed mt-1.5 ${expirePolicy === option.id ? 'text-violet-100' : 'text-slate-400'}`}>{option.desc}</div>
                     </button>
                   ))}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-2 pl-1 leading-relaxed">
+                  {EXPIRE_POLICY_HINT}
                 </div>
               </div>
             ) : null}

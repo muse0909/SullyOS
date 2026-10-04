@@ -111,13 +111,43 @@
 
 ## 踩的坑（下次别再踩）
 
-**`buildSystemPrompt` 的 `chatMode` 是第 12 个参数。**
+### ① `buildSystemPrompt` 的 `chatMode` 是第 12 个参数
+
 `char / userProfile / groups / emojis / categories / currentMsgs / realtimeConfig /
 evolvedNarrative / userListeningContext / isListeningTogether / musicCfg / chatMode / ...`
 
 写测试时我少传两个，`'full'` 落到了 `realtimeConfig` 头上，测试红。**项目里已经踩过这个坑**
 ——`chatPrompts.ts` 的 `chatMode` 参数被放宽成 `string | object` 就是为 22 个错位调用点
 兜的底（`isProactive` 的对象传到了 `chatMode` 位置）。**新写调用点时数一遍参数。**
+
+### ② 更要命的：不传 chatMode 会 fallback 到角色开关（`e40dfff9` 修的）
+
+纯聊天判定是 `chatMode ?? char.chatMode ?? 'full'`。那个 `?? char.chatMode` 是 2026-07-18
+就有的（老角色不传时按自己的设置判），一直没问题。但**改成早返回的独立短路径之后，它变成
+一个陷阱：任何不传 chatMode 的调用点都会跟着角色的开关走。**
+
+当时正好有三个这样的调用点，都是要完整上下文的路：
+
+| 调用点 | 走的是什么 | 后果 |
+|---|---|---|
+| `context/OSContext.tsx` | 主动消息到点生成 | 主动消息变贫瘠版 |
+| `utils/chatRequestPayload.ts` | 即时对话回复 | 同上 |
+| `utils/activeMsgClient.ts` | fire_pack 模板 | 碰巧安全（options 对象正好落在 chatMode 位，`{forFirePack:true} === 'pure'` 判不等）——**碰巧不能当保证** |
+
+三个都改成显式传 `'full'` 了。
+
+`OSContext.tsx` 那条顺便写清了「主动消息用不上 chatMode」这句旧注释**为什么在旧实现下成立**：
+当时纯聊天只关 awareness，而主动消息本来就不吃 awareness，两个模式对它没差别。新实现下
+就不成立了。**不写清楚的话，下一个人会照着旧注释把参数删回去。**
+
+**这坑是靠跑 tsc 抓到的**（381 → 382），不是靠读代码看出来的。第一版我数错了占位符
+个数（签名上 9/10/11/12 四个槽我给了五个），`'full'` 落到 `isProactive` 头上。
+**参数多的函数，改完一定跑 tsc。**
+
+### ③ 用户画像入口查错过一次
+
+第一次查"用户画像在哪"我只搜了 `components/`，结论是"没有编辑入口"——错的。
+它在 `apps/UserApp.tsx:64-71`。**下结论前把 `apps/` 也搜一遍。**
 
 ---
 

@@ -142,3 +142,29 @@ describe('纯聊天模式：走的是独立短路径，不是"完整模式减法
     expect(out.bp1Tools).not.toContain('SEND_EMOJI');
   });
 });
+
+/**
+ * 10-4 交付前自查时发现的坑：纯聊天判定是 `chatMode ?? char.chatMode ?? 'full'`。
+ *
+ * 那个 `?? char.chatMode` 是 2026-07-18 就有的（老角色不传 chatMode 时按自己的设置判），
+ * 一直没问题。但 10-4 把纯聊天改成"早返回的独立短路径"之后，它变成了一个陷阱：
+ * **任何不传 chatMode 的调用点，都会跟着角色的开关走。**
+ *
+ * 当时有三个这样的调用点，都是"主动消息/即时对话"这类**要完整上下文**的路：
+ *   - context/OSContext.tsx      主动消息到点生成
+ *   - utils/chatRequestPayload.ts 即时对话回复
+ *   - utils/activeMsgClient.ts   fire_pack 模板（碰巧安全：options 对象落在同一位置，判不等）
+ *
+ * 后果：角色一开纯聊天，他的主动消息也跟着变成贫瘠版。已三个都显式传 'full' 修掉。
+ *
+ * **加新调用点时记得传。** 漏传的表现是"某个非聊天功能突然变傻"，不会报错。
+ */
+describe('纯聊天模式：不该跟着走的路径不能跟着走', () => {
+  it('不传 chatMode 时确实 fallback 到角色设置（所以调用点必须显式传）', async () => {
+    const out = await build(makeChar({ chatMode: 'pure' }));
+    expect(out.bp1Tools).not.toContain('SEND_EMOJI');
+    // 反证：完整模式角色的默认行为没变
+    const normal = await build(makeChar({ chatMode: 'full' }));
+    expect(normal.bp1Tools).toContain('SEND_EMOJI');
+  });
+});

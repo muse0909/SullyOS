@@ -840,6 +840,11 @@ export const buildFirePack = async (
         undefined,
         undefined,
         undefined,
+        // 麦麦 2026-10-04：显式传 chatMode='full'。
+        //   原来这里直接跳过，options 落在 chatMode 那个位置上——`{forFirePack:true} === 'pure'`
+        //   判不等，所以碰巧一直走的是完整模式。碰巧不能当保证：谁在 options 里多写个字段
+        //   就可能翻面。fire_pack 是主动消息到点用的模板，要的正是完整上下文。
+        /* chatMode */ 'full',
         // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
         // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
         { forFirePack: true },

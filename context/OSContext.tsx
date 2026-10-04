@@ -1924,7 +1924,18 @@ if (!isVisible || !isChattingWithThisChar) {
                   // userListeningContext / isListeningTogether / musicCfg / chatMode 主动消息用不上，跳过
                   // 暮色 2026-08-05：isProactive=true（主动消息路径带真实世界感知）
                   //   正常聊天（useChatAI）传 false → 不带
-                  undefined, undefined, undefined, undefined, /* isProactive */ true,
+                  // 麦麦 2026-10-04：chatMode 显式传 'full'，**不能靠不传**。
+                  //   原来上面那句"主动消息用不上，跳过"是在旧纯聊天实现下成立的——当时纯聊天
+                  //   只关 awareness，而主动消息本来就不吃 awareness，两个模式对它没差别。
+                  //   10-4 把纯聊天改成早返回的独立短路径之后不行了：不传会 fallback 到
+                  //   `char.chatMode`，角色一开纯聊天，**主动消息也跟着变成贫瘠版**
+                  //   （没朋友圈、没日程、没记忆宫殿、没工具）。主动消息要的是完整上下文。
+                  //   非主聊天的三个调用点（即时对话 / 主动消息 / fire_pack）都照这个改。
+                  //   暮色 2026-08-05：isProactive=true（主动消息路径带真实世界感知）
+                  //     正常聊天（useChatAI）传 false → 不带
+                  undefined, undefined, undefined,
+                  /* chatMode */ 'full',
+                  /* isProactive */ true,
               );
               // buildSystemPrompt 返回 {bp1Tools, bp2Rules, bp3Context, dynamicTail}——拼回 string
               // dynamicTail.realtimeText 主动消息用，innerState 情绪延续，privateNotes 主动消息不需要

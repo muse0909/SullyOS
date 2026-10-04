@@ -203,12 +203,16 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 这里跟着按对象字段拼。chatRequestPayload 原本就当 string 用（后面 `systemPrompt += ...` 拼接），
     // 拆 3 段拼成一个大 string 保持原行为（dynamicTail 的 3 个字段不进聊天即时请求的 system prompt，
     // 由 useChatAI 自行拼到 messages 末尾）
+    //   麦麦 2026-10-04：显式传 chatMode='full'。不传会 fallback 到 char.chatMode，
+    //   角色一开纯聊天，**即时对话的回复也会变成只有角色设定的贫瘠版**。
+    //   即时对话是"角色此刻的自主发言"，要的就是完整上下文（朋友圈/日程/工具）。
     const systemPromptResult = await ChatPrompts.buildSystemPrompt(
         char, userProfile, groups, emojis, categories, recentMsgsHint,
         realtimeConfig, innerState || undefined,
         userListeningContext ?? null,
         !!isListeningTogether,
         musicCfg,
+        /* chatMode */ 'full',
     );
     let systemPrompt = [systemPromptResult.bp1Tools, systemPromptResult.bp2Rules, systemPromptResult.bp3Context]
         .filter(Boolean)

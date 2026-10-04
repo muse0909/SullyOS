@@ -976,7 +976,13 @@ export const useChatAI = ({
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
             //     此时已有"…"气泡，不额外显示状态提示
-            await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
+            //
+            //     麦麦 2026-10-04：纯聊天模式整条跳过。省的不只是后面拼进请求体的那段文本，
+            //     **连这次向量检索的网络往返都省了** —— 检索结果本轮根本没人用。
+            //     （注入点两处都关：这里不检索，下面 dynamicTailParts 也不 push。）
+            if (char.chatMode !== 'pure') {
+                await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
+            }
 
             // ⚠️ 2026-07-17 4 断点优化：把记忆宫殿挪出 bp3Context 段
             //   改前：buildCoreContext 读 char.memoryPalaceInjection 拼到 bp3Context
@@ -1071,7 +1077,11 @@ export const useChatAI = ({
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
-            const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
+            // 麦麦 2026-10-04：纯聊天模式跳过双语输出。
+            //   判据加在**定义处**而不是两处 if 上——bilingualActive 下面还有一处
+            //   dynamicTailParts.push 的提醒句，定义处关掉才能两处一起干净。
+            const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang
+                && translationConfig.targetLang && char.chatMode !== 'pure';
             if (bilingualActive) {
                 bp1Tools += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
 你的每句话都必须用以下XML标签格式输出双语内容：
@@ -1242,7 +1252,10 @@ let _tempImageCleanupKeys: string[] = [];
             // 小程序模式下, 所有这一轮新落库的 assistant 消息都打 fromMcdMiniApp 标,
             // 让 InAppChat 面板能 filter 出来显示 (否则用户看不到 char 的回复, 以为没触发 LLM)
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
-            if (mcdMiniOpen) {
+            // 麦麦 2026-10-04：纯聊天模式不注入麦当劳小程序上下文。
+            //   （mcdInheritMeta 那行不在这个 if 里、也不动 —— 它只给落库消息打
+            //   fromMcdMiniApp 标，不进请求体，省不了 token 也不该在这里改。）
+            if (mcdMiniOpen && char.chatMode !== 'pure') {
                 const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
                 if (block) {
                     // 4 断点方案：麦当劳 MiniApp 是「工具上下文」→ 归 bp1Tools
@@ -1257,7 +1270,13 @@ let _tempImageCleanupKeys: string[] = [];
             // 4 断点方案分段：
             //   - 心声输出要求（规则/格式约束）→ 归 bp2Rules（行为规范）
             //   - 最近 5 条心声（历史感知上下文）→ 归 bp3Context（角色上下文）
-            if (isEmotionOn(char)) {
+            //
+            // 麦麦 2026-10-04：纯聊天模式跳过整个心声块。
+            //   输出要求（本段拼进 bp2Rules）+ 最近 3 条（dynamicRecentEmotions）+ 情绪底色
+            //   （chatPrompts 早返回里那份克隆角色已清掉）三处是一套，一起关才干净。
+            //   判据直接写 char.chatMode，跟本文件 HTML 那处（line 1103）同一把尺——
+            //   不在这里引 isPureChat 变量：它在 1709 才声明，提前引用会 TDZ。
+            if (isEmotionOn(char) && char.chatMode !== 'pure') {
                 const scheduleStyle = char.scheduleStyle || 'lifestyle';
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
@@ -1463,7 +1482,9 @@ let _tempImageCleanupKeys: string[] = [];
                 dynamicTailParts.push(dynamicRecentEmotions);
             }
             // ⚠️ 2026-07-17 4 断点优化：记忆宫殿
-            if (dynamicMemoryPalace) {
+            //   麦麦 2026-10-04：纯聊天模式跳过。这是 dynamicTail 里最重的一段（向量检索
+            //   结果全文），而且每轮都在变——留着既烧 token 又会把缓存前缀顶掉。
+            if (dynamicMemoryPalace && char.chatMode !== 'pure') {
                 dynamicTailParts.push(dynamicMemoryPalace);
             }
 
@@ -1706,7 +1727,17 @@ if (hasImageInLatest && !alreadyDescribed) {
             // toolsList 提前到这里——Gemini 协议下也要用（line 1682 / 1720 都要引用）
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
+            // 麦麦 2026-10-04：纯聊天模式下 tools 数组**整个不传**。
+            //
+            // 为什么这层最重要：工具的 description 是**每轮常驻**在请求体里的，
+            // 不管这一轮用不用都在算钱。纯聊天是暮色花钱的工作台（2026-10-04 说明），
+            // 所以这里一个都不留——不只是提示词不教，是连定义都不发。
+            //
+            // 顺带把 mcpHiddenNames 也留在空状态：那是在这个 if 里赋值的，
+            // 不进 if 就没有「按需注入的隐藏工具」那一句 system 补充，跟实际没注入的工具对得上。
+            const isPureChat = char.chatMode === 'pure';
             const toolsList: any[] = [];
+            if (!isPureChat) {
             if (mcdMiniOpen) {
                 toolsList.push(MCD_PROPOSE_TOOL);
             }
@@ -1764,6 +1795,8 @@ if (hasImageInLatest && !alreadyDescribed) {
                     mcpHiddenNames = mcpResult.hiddenNames;
                 }
             }
+            } // ← 麦麦 2026-10-04：关闭 if (!isPureChat)。纯聊天下 toolsList 恒为空，
+              //   下面的 `if (toolsList.length > 0)` 自然不挂 tools，tool_choice 也不设。
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;

@@ -34,7 +34,7 @@ import { useMusic, toHttps, musicApi } from '../context/MusicContext';
 import { pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, extractGeminiKeys, shortKey } from '../utils/geminiKeyPool';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
-import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
+import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle, mergeSelfInsights } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
@@ -5629,9 +5629,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name, mpEmb);
                             if (result) {
                                 // 持久化自我领悟词条到角色档案
+                                // 麦麦 2026-10-04：改走 mergeSelfInsights（去重 + 上限 10 条 FIFO），
+                                // 跟手动触发那条路径共用同一套规则，不然两条路会长出不同的词条表。
                                 if (result.selfInsights.length > 0) {
-                                    const existing = char.selfInsights || [];
-                                    const updatedInsights = [...existing, ...result.selfInsights];
+                                    const updatedInsights = mergeSelfInsights(char.selfInsights, result.selfInsights);
                                     await DB.saveCharacter({ ...char, selfInsights: updatedInsights });
                                 }
                                 const total = result.resolved.length + result.deepened.length + result.faded.length +

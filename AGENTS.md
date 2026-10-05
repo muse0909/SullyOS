@@ -305,6 +305,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-05 | 剧场：在线剧放不出来 —— 编码标记缺失 + 转发没暴露 X-Playback-MIME（真机实测画面在动） | [`changelogs/2026-10-05-theater-online-play-mime-fix.md`](./changelogs/2026-10-05-theater-online-play-mime-fix.md) |
 | 2026-10-05 | 剧场：下载 ENOENT 全挂（downloadFile 不建目录）+ 短剧库残留治理（1 分钟回收 / 一键清空） | [`changelogs/2026-10-05-theater-enoent-and-playback-stalls.md`](./changelogs/2026-10-05-theater-enoent-and-playback-stalls.md) |
 | 2026-10-05 | 剧场：下载闪退根因（原生传 74MB 字符串穿顶 256MB）+ 高度按比例 + 播时藏控制条 | [`changelogs/2026-10-05-theater-download-crash-and-ratio-height.md`](./changelogs/2026-10-05-theater-download-crash-and-ratio-height.md) |
 | 2026-10-05 | 剧场：本地视频播不了(file://被拒)/加载图换掉/区域高度固定 + 播在线剧自动让电脑下载 | [`changelogs/2026-10-05-theater-local-play-loading-and-autodownload.md`](./changelogs/2026-10-05-theater-local-play-loading-and-autodownload.md) |

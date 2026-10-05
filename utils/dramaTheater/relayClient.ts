@@ -124,11 +124,11 @@ export function normalizeAddr(input: string): string {
  * 变成浏览器本地的临时地址再播放。附带好处是这个地址跟页面同源，
  * 第 3 步往画布上取帧天然干净，不需要额外开跨域。
  */
-export async function fetchVideoBlobUrl(
+export async function fetchVideoBytes(
   dramaTitle: string,
   episode: number,
   onProgress?: (loaded: number, total: number) => void
-): Promise<{ url: string; revoke: () => void; size: number }> {
+): Promise<{ blob: Blob; size: number }> {
   const base = getRelayAddr();
   if (!base) throw new Error('还没连上电脑');
 
@@ -148,8 +148,7 @@ export async function fetchVideoBlobUrl(
   // 带进度的读取：直接 resp.blob() 的话中途没反馈，进度条会一直卡在 0
   if (!resp.body || !onProgress) {
     const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    return { url, revoke: () => URL.revokeObjectURL(url), size: blob.size };
+    return { blob, size: blob.size };
   }
 
   const reader = resp.body.getReader();
@@ -165,8 +164,17 @@ export async function fetchVideoBlobUrl(
     }
   }
   const blob = new Blob(chunks as BlobPart[], { type: 'video/mp4' });
+  return { blob, size: blob.size };
+}
+
+export async function fetchVideoBlobUrl(
+  dramaTitle: string,
+  episode: number,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ url: string; revoke: () => void; size: number }> {
+  const { blob, size } = await fetchVideoBytes(dramaTitle, episode, onProgress);
   const url = URL.createObjectURL(blob);
-  return { url, revoke: () => URL.revokeObjectURL(url), size: blob.size };
+  return { url, revoke: () => URL.revokeObjectURL(url), size };
 }
 
 
@@ -188,7 +196,50 @@ export type RelayTask = {
   playable?: boolean;
   duration?: number;
   size?: number;
+  // 实测：task 里的 total 是这一部剧真实集数（不是剧库列表里那个假的 episodeCount）
+  total?: number;
+  releaseStatus?: string;
 };
+
+export type RelaySource = {
+  key: string;
+  name: string;
+  count: number;
+  ready: boolean;
+};
+
+export type DramaSnapshot = {
+  items: RelayDrama[];
+  sources: RelaySource[];
+  hasMore: boolean;
+  total: number;
+};
+
+// 站源 key → 中文名。短剧库只回 key，界面上不能直接甩英文给暮色看。
+const SOURCE_NAMES: Record<string, string> = {
+  hongguo: '红果',
+  huangdou: '黄豆',
+  huangguo: '黄果',
+  huangguoai: '黄果AI',
+  'huangguo-video': '黄果视频',
+  guanguo: '罐罐',
+  fanguo: '饭锅',
+  heguo: '喝锅',
+  dsd: '大帝',
+  maoguo: '猫锅',
+  niuguo: '牛锅',
+  wuguo: '五锅',
+  huangju: '黄剧',
+  xingguo: '星锅',
+  yeguo: '野锅',
+  zuiguo: '最锅',
+  cloudfront: '黄果CDN',
+  emby: '本地',
+};
+
+export function sourceName(key: string): string {
+  return SOURCE_NAMES[key] || key;
+}
 
 /** 已下载的剧：转发服务直接从硬盘读文件 */
 export function localVideoUrl(base: string, dramaTitle: string, episode: number): string {
@@ -217,17 +268,57 @@ async function jget<T>(base: string, path: string, timeoutMs = 15000): Promise<T
   }
 }
 
-/** 短剧库本地已缓存的剧库（实测一万多条） */
-export async function fetchDramas(base: string): Promise<RelayDrama[]> {
-  const j = await jget<any>(base, '/api/ui/dramas', 30000);
-  const list: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
-  return list.map((d) => ({
+function mapDrama(d: any): RelayDrama {
+  return {
     id: d.id,
     title: d.title || d.name || '未命名',
     coverUrl: d.coverUrl || d.cover_url || d.imageUrl || d.image_url || d.cover || d.image,
     intro: d.intro || d.desc || '',
     source: d.source,
-  }));
+  };
+}
+
+/**
+ * 剧库首页。
+ * 实测一次就回全量（10444 条）+ sources（每个站源多少部、能不能用）+ hasMore。
+ * sources 里 status=failed 的站源要滤掉，不然界面上会出现点进去空的分类。
+ */
+export async function fetchDramas(base: string): Promise<DramaSnapshot> {
+  const j = await jget<any>(base, '/api/ui/dramas', 40000);
+  const list: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+  const rawSources: any = j?.sources && typeof j.sources === 'object' ? j.sources : {};
+  const sources: RelaySource[] = Object.keys(rawSources)
+    .map((key) => {
+      const s = rawSources[key] || {};
+      return {
+        key,
+        name: sourceName(key),
+        count: Number(s.count || 0),
+        ready: s.status === 'ready' && Number(s.count || 0) > 0,
+      };
+    })
+    .filter((s) => s.count > 0)
+    .sort((a, b) => b.count - a.count);
+  return {
+    items: list.map(mapDrama),
+    sources,
+    hasMore: !!j?.hasMore,
+    total: Number(j?.total || list.length),
+  };
+}
+
+/** 某个站源下的分类（短剧库要求必须带 source） */
+export async function fetchCategories(base: string, source: string): Promise<{ id: string; name: string }[]> {
+  if (!source) return [];
+  const j = await jget<any>(base, `/api/ui/categories?source=${encodeURIComponent(source)}`, 25000);
+  const list: any[] = Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
+  return list.map((c) => ({ id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') })).filter((c) => c.name);
+}
+
+/** 电脑上（网页版播放器）看过的剧，合进「正在追剧」用 */
+export async function fetchMacWatchHistory(base: string): Promise<any[]> {
+  const j = await jget<any>(base, '/api/ui/playback/history', 15000);
+  return Array.isArray(j?.data) ? j.data : [];
 }
 
 /** 已下载的集 */
@@ -244,6 +335,8 @@ export async function fetchTasks(base: string): Promise<RelayTask[]> {
     // 时长短剧库叫 mediaTotalSeconds，不是 duration
     duration: t.mediaTotalSeconds || t.duration,
     size: t.totalBytes || t.size || t.filesize,
+    total: Number(t.total || 0),
+    releaseStatus: t.releaseStatus,
   }));
 }
 
@@ -251,13 +344,7 @@ export async function fetchTasks(base: string): Promise<RelayTask[]> {
 export async function searchDramas(base: string, q: string): Promise<RelayDrama[]> {
   const j = await jget<any>(base, `/api/ui/search?q=${encodeURIComponent(q)}&source=hongguo`, 25000);
   const list: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
-  return list.map((d) => ({
-    id: d.id,
-    title: d.title || d.name || '未命名',
-    coverUrl: d.coverUrl || d.cover_url || d.imageUrl || d.image_url || d.cover || d.image,
-    intro: d.intro || d.desc || '',
-    source: d.source || 'hongguo',
-  }));
+  return list.map((d) => ({ ...mapDrama(d), source: d.source || 'hongguo' }));
 }
 
 /**

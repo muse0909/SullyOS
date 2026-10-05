@@ -59,6 +59,7 @@ const TheaterApp: React.FC = () => {
   const [addr, setAddr] = useState(getRelayAddr());
   const [online, setOnline] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [connError, setConnError] = useState('');
   const [known, setKnown] = useState(getKnownRelays());
 
   // ── 数据 ──
@@ -101,10 +102,21 @@ const TheaterApp: React.FC = () => {
   // ── 探活 + 拉数据 ──
   const refresh = useCallback(async () => {
     setChecking(true);
+    setConnError('');
     const info = await pingRelay(addr);
     setOnline(info.online);
     setChecking(false);
     setKnown(getKnownRelays());
+
+    // 填了地址但连不上 —— 得说清楚是哪一类，不然用户只能对着「没连上」干瞪眼。
+    if (addr.trim() && !info.online) {
+      setConnError(
+        info.reached === false
+          ? '连不上电脑。先确认手机和电脑连的是同一个 WiFi，' +
+            '再确认电脑上「短剧库」和「剧场转发」两个窗口都开着。'
+          : '连上了电脑，但短剧库没响应 —— 电脑上「短剧库」那个窗口可能没开。'
+      );
+    }
 
     setUploads(await listUploadedVideos());
     if (!info.online) {
@@ -289,6 +301,7 @@ const TheaterApp: React.FC = () => {
                 {checking ? '正在试…' : '连一下'}
               </Pill>
             </div>
+            {connError && <p className="mt-3 text-[11px] text-amber-600 leading-relaxed text-center">{connError}</p>}
           </div>
         )}
 
@@ -443,6 +456,11 @@ const TheaterApp: React.FC = () => {
             src={videoSrc}
             controls
             playsInline
+            // 麦麦 2026-10-05：必须写 crossOrigin。
+            // 不写的话这个 video 是「不带 CORS 的跨源加载」，第 3 步把它画到 canvas 上会被污染，
+            // getImageData 直接抛 SecurityError，角色就永远看不到画面。
+            // 写成 anonymous 后走 CORS 加载，画布不脏 —— 转发服务那边已经带了 Allow-Origin 头。
+            crossOrigin="anonymous"
             className="w-full max-h-[42vh] bg-black"
             onTimeUpdate={(e) => {
               const v = e.currentTarget;
@@ -517,6 +535,7 @@ const TheaterApp: React.FC = () => {
               : online ? <Tag tone="ok">已经连上了</Tag>
               : <Tag tone="no">没连上</Tag>}
           </div>
+          {connError && <p className="mt-2.5 text-[11px] text-amber-600 leading-relaxed text-center">{connError}</p>}
         </div>
 
         {known.length > 0 && (

@@ -15,6 +15,9 @@ export type RelayInfo = {
   base: string;
   online: boolean;
   localIp?: string;
+  // false = 压根没连上（网不通/地址错/服务没开）
+  // undefined = 连上了，但转发服务说短剧库那边没响应
+  reached?: boolean;
 };
 
 // 试过的地址按「最近用的排前面」记下来，方便暮色手机和电脑来回切。

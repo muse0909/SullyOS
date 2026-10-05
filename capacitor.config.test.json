@@ -10,7 +10,8 @@
       "sully-muse-vert.vercel.app",
       "sully-os-git-preview-muse0909s-projects.vercel.app",
       "sully-os-git-fix-amsg2-realign-muse0909s-projects.vercel.app"
-    ]
+    ],
+    "allowMixedContent": true
   },
   "plugins": {
     "SplashScreen": {

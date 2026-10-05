@@ -537,7 +537,29 @@ const TheaterApp: React.FC = () => {
   // ── 选集 ──
   // 集数不采信剧库列表里的 episodeCount —— 实测那个字段的值是 '1'，是假数据。
   // 三个来源按可信度排：手机本地集数 > task.total（实测真实）> playback/open 的 episodes 长度。
-  const openEpisodes = async (d: DramaRef) => {
+  const openEpisodes = async (incoming: DramaRef) => {
+    /**
+     * 进选集页前先把剧 id 补上。
+     *
+     * 「正在追剧」和「本地剧库」两处传进来的是 `id: ''`（原来的代码就是这么写的），
+     * 于是 `canPlayOnline = !!picked.id && online` 判成否，选集页的集数全灰、
+     * 一集都点不动 —— 用户 10-06 深夜实测就是这样。
+     *
+     * 两条补法：
+     *   1. 新记的追剧条目自带 dramaId（watchHistory 里已加）
+     *   2. 老条目没有，就按剧名在**已经拉到内存的剧库**里查一次
+     *      （不是去网络搜，dramas 这会儿就在手上，10455 条全在）
+     */
+    let d = incoming;
+    if (!d.id) {
+      const hit = dramas.find((x) => x.title === d.title);
+      if (hit?.id) {
+        d = { ...d, id: hit.id };
+        diag('按剧名补到了剧 id', { 剧: d.title, id: hit.id.slice(0, 22) });
+      } else {
+        diag('这部没找到剧 id（可能不是剧库里的剧）', { 剧: d.title });
+      }
+    }
     setPicked(d);
     const ph = findPhoneDrama(phoneList, d.title);
     const mac = macByDrama.get(d.title);
@@ -788,6 +810,8 @@ const TheaterApp: React.FC = () => {
     const total = guessTotal(picked);
     upsertWatch({
       title: picked.title,
+      // 存剧 id：从「正在追剧」回去时靠它才能走在线播放（见 watchHistory 的说明）
+      dramaId: picked.id || undefined,
       coverUrl: picked.coverUrl,
       episode: currentEp,
       total,

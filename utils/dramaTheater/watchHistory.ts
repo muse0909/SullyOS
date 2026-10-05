@@ -16,6 +16,15 @@ const LIMIT = 200;
 
 export type WatchEntry = {
   title: string;
+  /**
+   * 剧库里的 id（比如 hongguo:7687...）。
+   *
+   * **必须有它，否则从「正在追剧」点进来的剧播不了在线的。**
+   * 之前没存这个字段，于是追剧列表那处只能 `openEpisodes({ id: '', ... })`，
+   * 剧 id 是空的 → 「能不能在线播」判成否 → 选集页的集数全灰、点不动
+   * （用户 10-06 深夜实测：进去了但一集都点不了）。
+   */
+  dramaId?: string;
   coverUrl?: string;
   episode: number;
   total: number;

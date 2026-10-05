@@ -4,7 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB, CoReadBook } from '../utils/db';
 // 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
 import { phoneUsage } from '../utils/phoneUsage';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
 // 🛟 麦麦 2026-09-22：共读浮窗（暮色点 + 号里"共读"→ 选书 → 浮窗 + 自动发章节内容给江澈）
 import CoReadFloatingBookshelf from './CoReadFloatingBookshelf';
@@ -71,7 +71,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive, openApp } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -1590,6 +1590,12 @@ const Chat: React.FC = () => {
                 // 🛟 麦麦 2026-09-22：暮色点 + 号里「共读」→ 打开迷你书架选择器
                 setShowPanel('none');
                 setShowCoReadPicker(true);
+                break;
+            case 'theater':
+                // 麦麦 2026-10-05：短剧剧场。暮色定的位置在转账和戳一戳之间。
+                // 从谁的聊天页进去，剧场就用谁的人设和记忆。
+                setShowPanel('none');
+                openApp(AppID.Theater);
                 break;
             case 'html-mode-settings': {
                 // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)

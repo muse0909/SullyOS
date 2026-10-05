@@ -37,6 +37,7 @@ export enum AppID {
   VRWorld = 'vrworld', // 彼方 — 角色自主登入的虚拟世界
   CoupleSpace = 'couple_space', // 情侣空间 — 用户和 AI 角色的双人小窝（基础版 3 模块：打卡 / 时间线 / 悄悄话）
   DrawGuess = 'draw_guess', // 你画我猜 — 角色联动版（cjjc 移植，B 方案视觉模型 + 角色 API 拆开调）
+  Theater = 'theater', // 短剧剧场 — 看短剧 + 边看边跟角色聊（暮色 2026-10-05，入口在聊天页 + 号）
 }
 
 export interface SystemLog {

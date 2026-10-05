@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { X, DeviceMobile, HardDrive, CloudSlash, GearSix, Trash } from '@phosphor-icons/react';
+import { X, DeviceMobile, HardDrive, CloudSlash, GearSix, Trash, Play } from '@phosphor-icons/react';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
 export type EpState = 'phone' | 'mac' | 'none';
@@ -79,19 +79,30 @@ const EpisodeDrawer: React.FC<Props> = ({
                     onClick={() => play && onPick(n)}
                     disabled={!play}
                     className={`w-full aspect-square rounded-xl text-xs font-bold transition active:scale-95 ${
-                      cur
-                        ? 'bg-sky-500 text-white shadow-sm'
-                        : st === 'phone'
+                      st === 'phone'
                         ? 'bg-emerald-50 text-emerald-600'
                         : st === 'mac'
                         ? 'bg-sky-50 text-sky-600'
+                        : p.night
+                        ? 'bg-[#1e293b] text-slate-600'
                         : 'bg-slate-100 text-slate-300'
-                    } ${p.night && !cur ? (st === 'none' ? 'bg-[#1e293b] text-slate-600' : '') : ''}`}
+                    }`}
                   >
                     {n}
                   </button>
+                  {/* 正在播的这一集：右上角一个小播放键。
+                      原来是把整格刷成蓝色高亮，结果「这一集在不在手机里」这个
+                      信息被盖住了，跟上面的图例对不上（暮色 10-05 提的）。 */}
+                  {cur && (
+                    <span
+                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-sky-500 flex items-center justify-center pointer-events-none"
+                      title="正在播这一集"
+                    >
+                      <Play size={10} weight="fill" className="text-white" />
+                    </span>
+                  )}
                   {/* 手机里存着的，右上角给个能删的小角标 */}
-                  {st === 'phone' && (
+                  {st === 'phone' && !cur && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onDeletePhone(n); }}
                       className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-white border border-slate-200 flex items-center justify-center active:scale-90"

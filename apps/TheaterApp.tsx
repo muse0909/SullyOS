@@ -23,7 +23,7 @@ import EpisodeDrawer, { type EpState } from '../components/dramaTheater/EpisodeD
 import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
-  fetchMacWatchHistory, sourceName,
+  fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -65,8 +65,186 @@ const Pill: React.FC<{
   );
 };
 
+/**
+ * 下载选择窗：选要下哪几集到手机。
+ *
+ * 暮色 10-05 要求：点「下载到手机」弹窗，能手动输区间（比如 2-20），
+ * 有全选、全不选，全选就是整部。**必须显示体积**（同一天定的）——
+ * 之前「整部存到手机」一点就开下，实测 107 集 ≈ 1.5 GB，误触没有退路。
+ *
+ * 体积只能估：转发服务不吐单集大小（实测 /relay/local/video 的响应头里没有
+ * Content-Length 之外的可用信息），所以拿「电脑上已存的这几集的平均大小」乘，
+ * 再拿手机里已存的集数校准。第一次没有参照时给不出数字，就说「估不出来」。
+ */
+const DownloadPicker: React.FC<{
+  p: Palette;
+  title: string;
+  avail: number[];              // 电脑里有、手机还没有的集
+  checked: Set<number>;
+  range: string;
+  setRange: (v: string) => void;
+  avgBytes: number;             // 0 = 还没有参照，给不出体积
+  onToggle: (n: number) => void;
+  onApplyRange: () => void;
+  onAll: () => void;
+  onNone: () => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}> = ({ p, title, avail, checked, range, setRange, avgBytes, onToggle, onApplyRange, onAll, onNone, onClose, onConfirm }) => {
+  const picked = checked.size;
+  const est = avgBytes > 0 ? avgBytes * picked : 0;
+  const min = avail[0];
+  const max = avail[avail.length - 1];
+
+  return (
+    <Modal
+      isOpen={!!title}
+      title="下载到手机"
+      onClose={onClose}
+      zIndex={130}
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!picked}
+            className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40"
+          >
+            {picked ? `下载 ${picked} 集` : '先选集'}
+          </button>
+        </>
+      }
+    >
+      <p className={`text-[11px] text-center mb-3 ${p.sub}`}>
+        电脑里有 {avail.length} 集还没下到手机 · 第 {min}-{max} 集
+      </p>
+
+      {/* 区间输入：2-20 这种。写完点「照这段」才生效 */}
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          value={range}
+          onChange={(e) => setRange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onApplyRange(); }}
+          placeholder={`比如 ${min}-${Math.min(min + 18, max)}`}
+          inputMode="numeric"
+          className={`flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-sm text-center outline-none ${p.input}`}
+        />
+        <button
+          onClick={onApplyRange}
+          disabled={!range.trim()}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 disabled:opacity-40 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          照这段
+        </button>
+        <button
+          onClick={onAll}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          全选
+        </button>
+        <button
+          onClick={onNone}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          全不选
+        </button>
+      </div>
+
+      {/* 体积：不显示就等于默认允许一次下 1.5 G */}
+      <div className={`rounded-2xl px-4 py-3 mb-3 text-center ${p.night ? 'bg-[#0f172a]' : 'bg-sky-50'}`}>
+        <p className={`text-[13px] font-bold ${p.title}`}>
+          这次要下 {picked} 集
+          {est > 0 ? `，大约 ${fmtBytes(est)}` : ''}
+        </p>
+        <p className={`text-[10px] mt-1 ${p.sub}`}>
+          {est > 0
+            ? '下完跟电脑就没关系了，断网也能看'
+            : picked ? '体积暂时估不出来' : '还没选集'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-6 gap-1.5 max-h-[26vh] overflow-y-auto no-scrollbar">
+        {avail.map((n) => {
+          const on = checked.has(n);
+          return (
+            <button
+              key={n}
+              onClick={() => onToggle(n)}
+              className={`aspect-square rounded-lg text-[11px] font-bold transition active:scale-95 ${
+                on
+                  ? 'bg-sky-500 text-white'
+                  : p.night
+                  ? 'bg-[#1e293b] text-slate-500'
+                  : 'bg-slate-100 text-slate-400'
+              }`}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+};
+
 /** 一部剧的引用：电脑上的剧和手机上传的剧都要能选中，字段凑成同一套 */
 type DramaRef = { id: string; title: string; coverUrl?: string; origin: 'mac' | 'upload'; episodeHint?: number };
+
+/**
+ * 上传确认窗：选完文件先问剧名再存。
+ *
+ * 抽成独立组件是为了能挂在**多个页面分支**下面 —— 之前它内联写在设置页的
+ * return 里，只有进到设置页那段 JSX 才会渲染，本地剧库点「传视频」时
+ * 存是存进去了、弹窗却不出现（真机 10-05 反馈）。
+ */
+const UploadModal: React.FC<{
+  p: Palette;
+  files: File[];
+  name: string;
+  setName: (v: string) => void;
+  uploading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}> = ({ p, files, name, setName, uploading, onCancel, onConfirm }) => (
+  <Modal
+    isOpen={files.length > 0}
+    title="传到手机里"
+    onClose={onCancel}
+    zIndex={130}
+    footer={
+      <>
+        <button
+          onClick={onCancel}
+          className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}
+        >
+          取消
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={uploading || !name.trim()}
+          className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40"
+        >
+          {uploading ? '正在存…' : `存 ${files.length} 个文件`}
+        </button>
+      </>
+    }
+  >
+    <p className={`text-[11px] text-center mb-3 ${p.sub}`}>
+      选了 {files.length} 个文件，按顺序当成连续几集
+    </p>
+    <input
+      value={name}
+      onChange={(e) => setName(e.target.value)}
+      placeholder="给它起个剧名"
+      className={`w-full rounded-2xl px-4 py-3 text-sm text-center outline-none ${p.input}`}
+    />
+  </Modal>
+);
 
 type Page = 'list' | 'episodes' | 'player' | 'settings';
 type Tab = 'home' | 'mac' | 'phone' | 'watch';
@@ -110,8 +288,11 @@ const TheaterApp: React.FC = () => {
   const [searched, setSearched] = useState('');
 
   // ── 剧库首页筛选 ──
-  const [srcFilter, setSrcFilter] = useState('');
-  const [catFilter, setCatFilter] = useState('');
+  // 暮色 10-05：首页默认就加载红果。红果是几个站源里内容最正常的，
+  // 「全部站源」里混着黄豆那种大量成人向内容，一进来就摆在最前面不合适。
+  // 只改默认站源，其他站源照旧能点（点「全部站源」或别的站源都行）。
+  const DEFAULT_SOURCE = 'hongguo';
+  const [srcFilter, setSrcFilter] = useState(DEFAULT_SOURCE);
   const [sortKey, setSortKey] = useState('default');
   const [visible, setVisible] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -126,10 +307,15 @@ const TheaterApp: React.FC = () => {
   const [curDuration, setCurDuration] = useState(0);
 
   // ── 存到手机 ──
-  const [savingOne, setSavingOne] = useState(false);
-  const [saveProgress, setSaveProgress] = useState(0);
   const [saveAll, setSaveAll] = useState({ busy: false, done: 0, total: 0, cancel: false });
   const [expandedPhone, setExpandedPhone] = useState('');
+
+  // ── 下载选择窗（暮色 10-05：点「下载到手机」先选要哪几集）──
+  // 存的是「这部剧里电脑有、手机还没有的集」，勾选状态用一个 Set 存，
+  // 区间输入、全选、全不选都只改这个 Set。
+  const [dlPick, setDlPick] = useState<{ title: string; avail: number[] } | null>(null);
+  const [dlChecked, setDlChecked] = useState<Set<number>>(new Set());
+  const [dlRange, setDlRange] = useState('');
 
   // ── 上传 ──
   const fileRef = useRef<HTMLInputElement>(null);
@@ -145,7 +331,11 @@ const TheaterApp: React.FC = () => {
   // 「把这一集存到手机」如果在窗口期点了，按 currentEp 存下来的就是上一集的内容 ——
   // 真机 10-05 实测存出个「003.mp4 里装的是 002 的内容」，跟电脑原文件一比字节完全对得上。
   const [blobEp, setBlobEp] = useState(0);
-  const [srcKind, setSrcKind] = useState<'mac' | 'phone' | ''>('');
+  const [srcKind, setSrcKind] = useState<'mac' | 'phone' | 'online' | ''>('');
+  // 在线播放的现场：一条流对应一个 AbortController + 一个 MediaSource 清理函数，
+  // 切集/退页必须把它们收掉，不然连接和缓冲一直挂着。
+  const onlineAbort = useRef<AbortController | null>(null);
+  const onlineCleanup = useRef<(() => void) | null>(null);
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
   const [dlError, setDlError] = useState('');
@@ -230,6 +420,9 @@ const TheaterApp: React.FC = () => {
       ]);
       setDramas(snap.items);
       setSources(snap.sources);
+      // 默认站源是红果，万一这个库里没有红果（换了站源/数据被清），
+      // 顶着个不存在的站源首页就是一片空白，认不出来为什么空 —— 退回全部。
+      setSrcFilter((cur) => (snap.sources.some((s) => s.key === DEFAULT_SOURCE) ? cur : ''));
       setTasks(ts.filter((t) => t.playable));
       setMacWatch(mw);
     } catch (e: any) {
@@ -273,24 +466,31 @@ const TheaterApp: React.FC = () => {
     setSearchResults([]);
   };
 
-  // 分类按剧库里的 categoryName 汇总，跟网页版的分类下拉框一个做法
-  // （短剧库 internal/webui/library.js:106-117 就是这么建的）。
-  // 里面混着 'series' / 'video' 这种没映射干净的站源原值，滤掉。
-  const cats = useMemo(() => {
-    const junk = new Set(['series', 'video', 'movie', 'short_play', 'comic_series', 'ai_series']);
-    const map = new Map<string, number>();
-    dramas.forEach((d) => {
-      const c = d.categoryName;
-      if (!c || junk.has(c)) return;
-      map.set(c, (map.get(c) || 0) + 1);
-    });
-    return Array.from(map.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 14)
-      .map(([name, count]) => ({ name, count }));
-  }, [dramas]);
+  // 分类筛选：暮色 10-05 明确「图4中的分类删掉」。
+  // 原来这行是按剧库的 categoryName 汇总（照抄网页版 library.js:106-117 的做法），
+  // 但实际用起来「AI成人短剧」这类分类占了半屏，点进去内容也很杂，所以整条拿掉。
+  // 站源筛选保留，分类不再是首页的筛选维度。
 
-  useEffect(() => { setVisible(PAGE); }, [srcFilter, catFilter, sortKey, tab, searched]);
+  useEffect(() => { setVisible(PAGE); }, [srcFilter, sortKey, tab, searched]);
+
+  /**
+   * 按一部剧算它到底多少集。**换剧时必须重算**，不然会带着上一部剧的值走。
+   *
+   * 真机 10-05 抓到的：用户先看了 39 集的那部，再从「正在追剧」点开一部自己
+   * 上传的（只有 1 集），选集页标题写「共 39 集」、底下铺了 39 个格子，
+   * 追剧记录里也被写成了 / 39。根因是 playEpisode 压根没碰 epTotal，
+   * 而 epTotal 是个组件级 state，还停在上一部剧的值。
+   */
+  const guessTotal = useCallback((d: DramaRef): number => {
+    const ph = findPhoneDrama(phoneList, d.title);
+    const mac = macByDrama.get(d.title);
+    return Math.max(
+      ph?.episodes[ph.episodes.length - 1]?.episode || 0,
+      mac?.eps[mac.eps.length - 1] || 0,
+      mac?.total || 0,
+      d.episodeHint || 0
+    );
+  }, [phoneList, macByDrama]);
 
   // ── 选集 ──
   // 集数不采信剧库列表里的 episodeCount —— 实测那个字段的值是 '1'，是假数据。
@@ -322,6 +522,50 @@ const TheaterApp: React.FC = () => {
       // 问不到就先用本地已有的，最差也就只显示存过的那几集
     }
   };
+
+  /**
+   * 在线剧（电脑上没下载过的那些）—— 走短剧库的在线播放，边下边播。
+   *
+   * 之前没这条路，所以剧库首页刷出来的 10455 条剧一集都点不动。
+   * 会话按「剧 + 集」开，切集时把上一条流停掉。
+   */
+  const loadOnline = useCallback(async (dramaId: string, episode: number) => {
+    setDlLoading(true);
+    setDlError('');
+    mediaFallback.current = false;
+
+    // 上一条在线流停掉，否则那个 MediaSource 和连接还挂着不放
+    onlineAbort.current?.abort();
+    onlineAbort.current = null;
+    onlineCleanup.current?.();
+    onlineCleanup.current = null;
+
+    const ac = new AbortController();
+    onlineAbort.current = ac;
+    const onlineSession = await openOnlinePlayback(dramaId);
+    if (ac.signal.aborted) return;
+
+    try {
+      const r = await streamOnlineEpisode(onlineSession.session, episode, ac.signal);
+      if (ac.signal.aborted) {
+        r.cleanup();
+        return;
+      }
+      setSrcKind('online');
+      setBlobEp(episode);
+      onlineCleanup.current = r.cleanup;
+      setBlobUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return r.url;
+      });
+    } catch (e: any) {
+      if (ac.signal.aborted) return;
+      setDlError(e?.message || '在线播不了这一集');
+      setBlobUrl('');
+    } finally {
+      if (!ac.signal.aborted) setDlLoading(false);
+    }
+  }, []);
 
   // ── 播放 ──
   const loadFromMac = useCallback(async (title: string, episode: number) => {
@@ -398,6 +642,9 @@ const TheaterApp: React.FC = () => {
    * drama 传进来是因为：从「本地剧库」「正在追剧」直接点播放时，
    * setPicked 要到下一次渲染才生效，这里闭包里的 picked 还是上一部剧，
    * 直接用就会播错剧。所以谁点的谁把剧名传进来。
+   *
+   * 换剧必须重算总集数：不重算的话 epTotal 会带着上一部剧的值走
+   * （上传的单集剧会被显示成上一部剧的集数，见 guessTotal 的注释）。
    */
   const playEpisode = useCallback((n: number, drama?: DramaRef) => {
     const d = drama || picked;
@@ -407,10 +654,14 @@ const TheaterApp: React.FC = () => {
     setCinema(false);
     setCurrentEp(n);
     setCurDuration(0);
+    setEpTotal(guessTotal(d));
     setPage('player');
-    if (epState(d.title, n) === 'phone') loadFromPhone(d.title, n);
-    else loadFromMac(d.title, n);
-  }, [picked, epState, loadFromPhone, loadFromMac]);
+    const st = epState(d.title, n);
+    if (st === 'phone') loadFromPhone(d.title, n);
+    else if (st === 'mac') loadFromMac(d.title, n);
+    else if (d.id && online) loadOnline(d.id, n);
+    else setDlError('这一集电脑上没有，手机上也没有');
+  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal]);
 
   // ── 观看记录 ──
   const recordWatch = useCallback((force = false) => {
@@ -420,83 +671,54 @@ const TheaterApp: React.FC = () => {
     const now = Date.now();
     if (!force && now - lastRecord.current < 8000) return;
     lastRecord.current = now;
+    // 总集数用当场重算的值，不吃 epTotal 那个可能带着上一部剧的残留
+    const total = guessTotal(picked);
     upsertWatch({
       title: picked.title,
       coverUrl: picked.coverUrl,
       episode: currentEp,
-      total: epTotal,
+      total,
       position: Math.round(pos),
       duration: Math.round(dur || curDuration),
       origin: picked.origin === 'upload' ? 'upload' : 'mac',
     });
     setWatch(listWatch());
-  }, [picked, currentEp, epTotal, curDuration]);
+  }, [picked, currentEp, curDuration, guessTotal]);
+
+  // 离开剧场（含退到后台被系统回收）时把在线流收掉：
+  // 不收的话那条转码长连接会一直挂着，手机上白白耗电耗流量。
+  useEffect(() => {
+    const stop = () => {
+      onlineAbort.current?.abort();
+      onlineAbort.current = null;
+      onlineCleanup.current?.();
+      onlineCleanup.current = null;
+    };
+    window.addEventListener('pagehide', stop);
+    return () => {
+      window.removeEventListener('pagehide', stop);
+      stop();
+    };
+  }, []);
 
   const onEnded = useCallback(() => {
     recordWatch(true);
     if (!autoNext) return;
     const next = currentEp + 1;
-    if (epState(picked?.title || '', next) === 'none') return;
+    // 下一集「在不在」按能不能播来判：手机有 / 电脑有 / 电脑上能在线取都算能接着播。
+    // 之前只认手机和电脑，在线这条路（剧库首页那批剧）自动连播直接断在这儿。
+    const d = picked;
+    if (!d) return;
+    const st = epState(d.title, next);
+    const canPlay = st !== 'none' || (!!d.id && online) || d.origin === 'upload';
+    if (!canPlay) return;
     playEpisode(next);
-  }, [autoNext, currentEp, epState, picked, playEpisode, recordWatch]);
+  }, [autoNext, currentEp, epState, picked, playEpisode, recordWatch, online]);
 
   // ── 存到手机 ──
-  const saveOne = async (d: DramaRef, ep: number) => {
-    if (!online) return addToast('还没连上电脑，先连上才能存', 'error');
-    setSavingOne(true);
-    setSaveProgress(0);
-    try {
-      const { blob } = await fetchVideoBytes(d.title, ep, (loaded, total) => {
-        setSaveProgress(total ? loaded / total : 0);
-      });
-      const ent = await saveEpisodeToPhone(
-        { title: d.title, coverUrl: d.coverUrl, origin: 'mac' },
-        ep,
-        blob,
-        curDuration || undefined
-      );
-      await reloadPhone();
-      addToast(`第 ${ep} 集已存进手机（${fmtBytes(ent.size)}）`, 'success');
-    } catch (e: any) {
-      addToast(e?.message || '存不进去', 'error');
-    } finally {
-      setSavingOne(false);
-      setSaveProgress(0);
-    }
-  };
-
-  const saveCurrent = async () => {
-    if (!picked) return;
-    if (epState(picked.title, currentEp) === 'phone') {
-      addToast('这一集已经在手机里了', 'info');
-      return;
-    }
-    // 正在取这一集的视频就别存 —— 这时候内存里那份是上一集的
-    if (dlLoading) return addToast('这一集还在取，等一下再存', 'info');
-    // 只有内存里那份确实就是当前这一集，才复用，别再从电脑拉一遍
-    if (srcKind === 'mac' && blobUrl && blobEp === currentEp) {
-      setSavingOne(true);
-      try {
-        const blob = await (await fetch(blobUrl)).blob();
-        const ent = await saveEpisodeToPhone(
-          { title: picked.title, coverUrl: picked.coverUrl, origin: 'mac' },
-          currentEp,
-          blob,
-          curDuration || undefined
-        );
-        await reloadPhone();
-        addToast(`第 ${currentEp} 集已存进手机（${fmtBytes(ent.size)}）`, 'success');
-        return;
-      } catch (e: any) {
-        addToast(e?.message || '存不进去', 'error');
-        return;
-      } finally {
-        setSavingOne(false);
-      }
-    }
-    await saveOne(picked, currentEp);
-  };
-
+  // 单集保存的活儿原来在播放页（saveCurrent / saveOne），暮色 10-05 明确
+  // 「播放页那个保存和连带的删除一起全都删了，保存只留选集页那一个入口」，
+  // 所以这两段连同 savingOne / saveProgress 一起清掉了。批量下载走 downloadEps。
   const delPhoneEp = async (d: DramaRef, ep: number) => {
     const ph = findPhoneDrama(phoneList, d.title);
     if (!ph) return;
@@ -505,17 +727,21 @@ const TheaterApp: React.FC = () => {
     addToast(`第 ${ep} 集已从手机删掉`, 'success');
   };
 
-  const saveWhole = async (d: DramaRef) => {
-    if (!online) return addToast('还没连上电脑，先连上才能存', 'error');
-    const mac = macByDrama.get(d.title);
-    if (!mac) return addToast('电脑上还没有这部剧', 'error');
-    const todo = mac.eps.filter((n) => epState(d.title, n) !== 'phone');
-    if (!todo.length) return addToast('电脑上有的集都已经在手机里了', 'info');
+  /**
+   * 下载一批集到手机。
+   *
+   * 暮色 10-05：点「下载到手机」先弹选择窗，可以手输区间（2-20）、全选、全不选，
+   * 全选就是整部。所以这里收的是**具体要哪几集**，不是「全部」。
+   * 已经在手机里的集默认不勾（macOnly），省得白下一遍。
+   */
+  const downloadEps = async (d: DramaRef, eps: number[]) => {
+    if (!online) return addToast('还没连上电脑，先连上才能下载', 'error');
+    if (!eps.length) return addToast('一集都没勾', 'info');
 
-    setSaveAll({ busy: true, done: 0, total: todo.length, cancel: false });
+    setSaveAll({ busy: true, done: 0, total: eps.length, cancel: false });
     saveAllCancel.current = false;
     let ok = 0;
-    for (const ep of todo) {
+    for (const ep of eps) {
       if (saveAllCancel.current) break;
       try {
         const { blob } = await fetchVideoBytes(d.title, ep);
@@ -531,6 +757,67 @@ const TheaterApp: React.FC = () => {
     setSaveAll({ busy: false, done: 0, total: 0, cancel: false });
     if (ok) addToast(`存了 ${ok} 集进手机，存完就跟电脑无关了`, 'success');
   };
+
+  /**
+   * 打开下载选择窗，默认勾上电脑上所有还没下到手机的集（=「全选就是整部」）。
+   * avgBytes 拿手机里已存集的平均大小当参照：转发服务不吐单集真实大小，
+   * 用实测值估比不给数字强。
+   */
+  const openDownloadPicker = (d: DramaRef) => {
+    const mac = macByDrama.get(d.title);
+    if (!mac) return addToast('电脑上还没有这部剧', 'error');
+    const avail = mac.eps.filter((n) => epState(d.title, n) !== 'phone');
+    if (!avail.length) return addToast('电脑上有的集都已经在手机里了', 'info');
+    setDlPick({ title: d.title, avail });
+    setDlChecked(new Set(avail));
+    setDlRange('');
+  };
+
+  const toggleDlEp = (n: number) => {
+    setDlChecked((old) => {
+      const next = new Set(old);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  };
+
+  /** 手输区间：「2-20」「2」「5-」都认，认不出来就当没输 */
+  const applyDlRange = () => {
+    if (!dlPick) return;
+    const s = dlRange.trim().replace(/\s/g, '');
+    if (!s) return;
+    let a = 0;
+    let b = 0;
+    if (/^\d+$/.test(s)) {
+      a = b = Number(s);
+    } else {
+      const m = s.match(/^(\d*)-(\d*)$/);
+      if (!m) return addToast('看不懂这个区间，写成 2-20 这样', 'error');
+      a = m[1] ? Number(m[1]) : dlPick.avail[0];
+      b = m[2] ? Number(m[2]) : dlPick.avail[dlPick.avail.length - 1];
+    }
+    if (a > b) [a, b] = [b, a];
+    const inRange = dlPick.avail.filter((n) => n >= a && n <= b);
+    if (!inRange.length) return addToast(`${a}-${b} 这段里电脑上没有`, 'info');
+    setDlChecked(new Set(inRange));
+    addToast(`选中了 ${inRange.length} 集`, 'info');
+  };
+
+  /** 体积参照：手机里已存集的平均单集大小（转发服务不吐单集真实大小，只能这么估） */
+  const avgPhoneEpBytes = useMemo(() => {
+    let bytes = 0;
+    let n = 0;
+    phoneList.forEach((d) =>
+      d.episodes.forEach((e) => {
+        if (e.size > 0) {
+          bytes += e.size;
+          n += 1;
+        }
+      })
+    );
+    return n > 0 ? Math.round(bytes / n) : 0;
+  }, [phoneList]);
 
   // ── 上传 ──
   const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -560,7 +847,6 @@ const TheaterApp: React.FC = () => {
   const homeItems = useMemo(() => {
     let list = searched.length ? searchResults : dramas;
     if (srcFilter) list = list.filter((d) => d.source === srcFilter);
-    if (catFilter) list = list.filter((d) => d.categoryName === catFilter);
     const sorted = [...list];
     if (!searched.length) {
       if (sortKey === 'title') sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
@@ -577,7 +863,7 @@ const TheaterApp: React.FC = () => {
       }
     }
     return sorted;
-  }, [dramas, searchResults, searched, srcFilter, catFilter, sortKey]);
+  }, [dramas, searchResults, searched, srcFilter, sortKey]);
 
   const macItems = useMemo<DramaRef[]>(() => {
     const out: DramaRef[] = [];
@@ -771,21 +1057,7 @@ const TheaterApp: React.FC = () => {
                       </button>
                     ))}
                   </div>
-                  {cats.length > 1 && (
-                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2">
-                      {cats.map((c) => (
-                        <button
-                          key={c.name}
-                          onClick={() => setCatFilter(catFilter === c.name ? '' : c.name)}
-                          className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold ${catFilter === c.name ? p.chipOn : p.chip}`}
-                        >
-                          {c.name} {c.count}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {!searched && (
-                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2">
+                  {!searched && (                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2">
                       {[['default', '默认'], ['newest', '最新'], ['oldest', '最早'], ['title', '剧名']].map(([k, label]) => (
                         <button
                           key={k}
@@ -1002,6 +1274,10 @@ const TheaterApp: React.FC = () => {
                 <div className="space-y-2.5">
                   {watchItems.map((w: any) => {
                     const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
+                    // 存下来的 total 可能是错的：playEpisode 那时候没重算集数，
+                    // 会把上一部剧的集数写进来（真机 10-05 抓到两个自己上传的单集剧
+                    // 被记成「/ 39」）。这里只认当场算的，算不出来才退回存的。
+                    const wTotal = guessTotal({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' }) || w.total;
                     return (
                       <div key={w.title} className={`rounded-3xl p-3 flex items-center gap-3 ${p.card}`}>
                         <div
@@ -1016,7 +1292,7 @@ const TheaterApp: React.FC = () => {
                         <div className="flex-1 min-w-0">
                           <h3 className={`text-xs font-bold truncate ${p.title}`}>{w.title}</h3>
                           <p className={`text-[10px] mt-1 ${p.sub}`}>
-                            看到第 {w.episode} 集{w.total ? ` / ${w.total}` : ''}
+                            看到第 {w.episode} 集{wTotal ? ` / ${wTotal}` : ''}
                             {pct > 0 ? ` · ${pct}%` : ''}
                             {w.from === 'mac' ? ' · 电脑上看的' : ''}
                           </p>
@@ -1048,6 +1324,21 @@ const TheaterApp: React.FC = () => {
             </>
           )}
         </div>
+
+        {/* 上传弹窗原来只写在「设置」那个分支里（页面 4 的 return），
+            列表页点「传视频」时那段 JSX 根本不会渲染 —— 数据存进去了但弹窗不出现，
+            要等用户绕进设置页那个分支，弹窗才突然跳出来。真机 10-05 反馈。
+            Modal 自己 createPortal 到 body，所以挂哪个分支都能显示，
+            但必须**每个可能触发上传的分支都挂一份**。这里是本地剧库，唯一的上传入口。 */}
+        <UploadModal
+          p={p}
+          files={pending}
+          name={pendingName}
+          setName={setPendingName}
+          uploading={uploading}
+          onCancel={() => setPending([])}
+          onConfirm={doUpload}
+        />
       </div>
     );
   }
@@ -1081,15 +1372,17 @@ const TheaterApp: React.FC = () => {
 
               <div className="mt-2.5 flex flex-wrap gap-2">
                 {macOnly.length > 0 ? (
-                  <Pill primary tone={p} onClick={() => saveWhole(picked)} disabled={!online || saveAll.busy}>
-                    {saveAll.busy ? `存着 ${saveAll.done}/${saveAll.total}` : `整部存到手机（${macOnly.length}）`}
+                  <Pill primary tone={p} onClick={() => openDownloadPicker(picked)} disabled={!online || saveAll.busy}>
+                    {saveAll.busy ? `下载着 ${saveAll.done}/${saveAll.total}` : `下载到手机（${macOnly.length}）`}
                   </Pill>
                 ) : macEps.length > 0 ? (
                   /* 电脑上有的都已在手机 —— 这句只在真缓存过的时候才准 */
                   <Pill tone={p} disabled>电脑上有的都已在手机</Pill>
                 ) : (
-                  /* 电脑上压根没缓存这部，就别装成「已经存好了」 */
-                  <Pill tone={p} disabled>电脑上还没下这部</Pill>
+                  /* 电脑上没缓存这部：能在线看，但没法「下载到手机」
+                     —— 下载走的是电脑上的文件，电脑没文件就没什么可下载的。
+                     这句要跟用户说清楚，不然会以为整部都看不了。 */
+                  <Pill tone={p} disabled>电脑没存 · 在线看</Pill>
                 )}
                 {phoneEps.length > 0 && (
                   <Pill
@@ -1097,10 +1390,10 @@ const TheaterApp: React.FC = () => {
                     onClick={async () => {
                       await deletePhoneDrama(dramaKey(picked.title));
                       await reloadPhone();
-                      addToast('这部已从手机清掉', 'success');
+                      addToast('这部已从手机删掉', 'success');
                     }}
                   >
-                    清掉手机上的这部
+                    删除下载
                   </Pill>
                 )}
               </div>
@@ -1126,15 +1419,17 @@ const TheaterApp: React.FC = () => {
               {Array.from({ length: Math.max(total, 1) }, (_, i) => i + 1).map((n) => {
                 const st = epState(picked.title, n);
                 const cur = n === currentEp;
+                // 正在播的那一集：格子本身照常按「在不在手机里」上色（绿/蓝/灰），
+                // 正在播这件事改成右上角一个小播放键表示。
+                // 原来是把整格刷成蓝色，结果「这一集已经在手机里」这个信息
+                // 被高亮盖掉了，跟上面的图例对不上（暮色 10-05 提的）。
                 return (
                   <button
                     key={n}
                     onClick={() => st !== 'none' && playEpisode(n)}
-                    disabled={st === 'none'}
-                    className={`aspect-square rounded-xl text-xs font-bold transition active:scale-95 ${
-                      cur
-                        ? 'bg-sky-500 text-white shadow-sm'
-                        : st === 'phone'
+                    disabled={st === 'none' && !(picked.id && online)}
+                    className={`relative aspect-square rounded-xl text-xs font-bold transition active:scale-95 ${
+                      st === 'phone'
                         ? 'bg-emerald-50 text-emerald-600'
                         : st === 'mac'
                         ? 'bg-sky-50 text-sky-600'
@@ -1144,6 +1439,14 @@ const TheaterApp: React.FC = () => {
                     }`}
                   >
                     {n}
+                    {cur && (
+                      <span
+                        className="absolute top-0.5 right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-sky-500 text-white"
+                        title="正在播这一集"
+                      >
+                        <Play size={8} weight="fill" />
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -1152,9 +1455,30 @@ const TheaterApp: React.FC = () => {
 
           <p className={`mt-5 text-[10px] leading-relaxed ${p.sub}`}>
             绿的是真躺在手机里的（断网也能看），蓝的还得连电脑。<br />
-            存到手机的这一步是真的写进手机，不是排在电脑的下载队列里。
+            下载到手机的这一步是真的写进手机，不是排在电脑的下载队列里。
           </p>
         </div>
+
+        <DownloadPicker
+          p={p}
+          title={dlPick?.title || ''}
+          avail={dlPick?.avail || []}
+          checked={dlChecked}
+          range={dlRange}
+          setRange={setDlRange}
+          avgBytes={avgPhoneEpBytes}
+          onToggle={toggleDlEp}
+          onApplyRange={applyDlRange}
+          onAll={() => dlPick && setDlChecked(new Set(dlPick.avail))}
+          onNone={() => setDlChecked(new Set())}
+          onClose={() => setDlPick(null)}
+          onConfirm={async () => {
+            const d = picked;
+            const eps = Array.from(dlChecked).sort((a, b) => a - b);
+            setDlPick(null);
+            await downloadEps(d, eps);
+          }}
+        />
       </div>
     );
   }
@@ -1163,7 +1487,9 @@ const TheaterApp: React.FC = () => {
   if (page === 'player' && picked) {
     const st = epState(picked.title, currentEp);
     const phoneEp = findPhoneDrama(phoneList, picked.title)?.episodes.find((e) => e.episode === currentEp);
-    const nextSt = epState(picked.title, currentEp + 1);
+    // 「下一集」可不可点：在线能取也算能接着播
+    const nextStRaw = epState(picked.title, currentEp + 1);
+    const nextSt = nextStRaw === 'none' && (picked.id && online) ? 'mac' : nextStRaw;
 
     return (
       <div className={`absolute inset-0 flex flex-col ${night ? 'bg-[#0f172a]' : 'bg-white'}`}>
@@ -1198,26 +1524,17 @@ const TheaterApp: React.FC = () => {
           p={p}
         />
 
-        {/* 这一集到底存没存 / 自动连播 —— 暮色 10-05 明确要能看出来 */}
+        {/* 这一集到底存没存 —— 只做显示。
+            暮色 10-05 明确「播放页的『把这一集存到手机』和这个功能连带的
+            『从手机删掉』一起全都删了」：下载只留在选集页那一个入口，
+            删也只从选集页删，播放页不再提供这两个动作。 */}
         <div className={`shrink-0 px-4 py-2.5 flex items-center gap-2 flex-wrap border-b ${p.line}`}>
           {st === 'phone' ? (
-            <>
-              <Tag tone="ok">已存手机 {fmtBytes(phoneEp?.size || 0)}</Tag>
-              <button
-                onClick={async () => { await delPhoneEp(picked, currentEp); }}
-                className="rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold text-rose-500 active:scale-95"
-              >
-                从手机删掉
-              </button>
-            </>
+            <Tag tone="ok">已存手机 {fmtBytes(phoneEp?.size || 0)}</Tag>
           ) : st === 'mac' ? (
-            <button
-              onClick={saveCurrent}
-              disabled={savingOne || !online}
-              className="rounded-full bg-sky-500 px-3.5 py-1 text-[10px] font-bold text-white active:scale-95 disabled:opacity-50"
-            >
-              {savingOne ? `存着… ${Math.round(saveProgress * 100)}%` : '把这一集存到手机'}
-            </button>
+            <Tag tone="mac">在电脑里</Tag>
+          ) : srcKind === 'online' ? (
+            <Tag tone="mac">在线播，电脑上没这集</Tag>
           ) : (
             <Tag tone="no">这一集还没有</Tag>
           )}
@@ -1394,41 +1711,6 @@ const TheaterApp: React.FC = () => {
           第 1 步 · 还不接 AI，第 2 步才接
         </div>
       </div>
-
-      {/* 上传：选完文件问一下剧名再存 */}
-      <Modal
-        isOpen={pending.length > 0}
-        title="传到手机里"
-        onClose={() => setPending([])}
-        zIndex={130}
-        footer={
-          <>
-            <button
-              onClick={() => setPending([])}
-              className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}
-            >
-              取消
-            </button>
-            <button
-              onClick={doUpload}
-              disabled={uploading || !pendingName.trim()}
-              className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40"
-            >
-              {uploading ? '正在存…' : `存 ${pending.length} 个文件`}
-            </button>
-          </>
-        }
-      >
-        <p className={`text-[11px] text-center mb-3 ${p.sub}`}>
-          选了 {pending.length} 个文件，按顺序当成连续几集
-        </p>
-        <input
-          value={pendingName}
-          onChange={(e) => setPendingName(e.target.value)}
-          placeholder="给它起个剧名"
-          className={`w-full rounded-2xl px-4 py-3 text-sm text-center outline-none ${p.input}`}
-        />
-      </Modal>
     </div>
   );
 };

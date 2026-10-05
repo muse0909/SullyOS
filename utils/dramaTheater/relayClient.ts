@@ -177,6 +177,102 @@ export async function fetchVideoBlobUrl(
   return { url, revoke: () => URL.revokeObjectURL(url), size };
 }
 
+// ── 在线剧（电脑上没下过的那些）─────────────────────────────
+
+/**
+ * 开一个播放会话。
+ *
+ * 电脑上没下载的剧（剧库首页那 10455 条里绝大多数）之前在剧场里点不动：
+ * 集数格子是灰的。根因是取片只走电脑的下载目录，压根没有在线这条路。
+ * 短剧库那边其实有完整的在线播放（网页版 player.js 就是这么放的）：
+ *   POST /api/ui/playback/open    → 拿 session + 每一集的 chapterId
+ *   GET  /api/ui/playback/stream  → 边转边送的 fMP4 流
+ * 真机 10-05 在电脑上实测过：红果某剧 open 返回 45 集，stream 真取到
+ * 83.8 MB、头是 ftypiso5、X-Playback-Source: online。
+ */
+export async function openOnlinePlayback(
+  dramaId: string
+): Promise<{ session: string; total: number }> {
+  const base = getRelayAddr();
+  if (!base) throw new Error('还没连上电脑');
+  const resp = await fetch(`${base}/api/ui/playback/open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dramaId }),
+    cache: 'no-store',
+  });
+  if (!resp.ok) throw new Error(`取播放地址失败 HTTP ${resp.status}`);
+  const j = await resp.json();
+  if (j?.error) throw new Error(j.error);
+  const session = String(j?.session || '');
+  if (!session) throw new Error('短剧库没给播放会话');
+  const total = Number(j?.episodes?.length || 0);
+  return { session, total };
+}
+
+/**
+ * 拉一集的在线流，边下边喂给播放器。
+ *
+ * 跟 fetchVideoBytes 的区别是**不整集下完再播**：在线流是转码出来的长连接
+ * （实测 112 秒那集拉了 40 秒才结束），整集下完再播等于白等。
+ * 用 MediaSource 一段段 appendSourceBuffer，播完这一集就把会话释放掉。
+ */
+export async function streamOnlineEpisode(
+  session: string,
+  episode: number,
+  signal: AbortSignal,
+  onBytes?: (loaded: number) => void
+): Promise<{ url: string; mime: string; cleanup: () => void }> {
+  const base = getRelayAddr();
+  if (!base) throw new Error('还没连上电脑');
+
+  const url =
+    `${base}/api/ui/playback/stream?session=${encodeURIComponent(session)}` +
+    `&episode=${episode}&start=0&quality=0&version=1&remux=0`;
+
+  const resp = await fetch(url, { cache: 'no-store', signal });
+  if (!resp.ok || !resp.body) throw new Error(`在线播放失败 HTTP ${resp.status}`);
+
+  // 短剧库在响应头里直接给了 mime（实测 video/mp4; codecs="avc1..."），照抄最准
+  const mime = resp.headers.get('X-Playback-Mime') || 'video/mp4';
+  const ms = new MediaSource();
+  const msUrl = URL.createObjectURL(ms);
+
+  const done = (async () => {
+    await new Promise<void>((resolve) => {
+      ms.addEventListener('sourceopen', () => resolve(), { once: true });
+    });
+    const sb = ms.addSourceBuffer(mime);
+    const reader = resp.body!.getReader();
+    let loaded = 0;
+    for (;;) {
+      const { done: fin, value } = await reader.read();
+      if (fin) break;
+      if (!value || !value.byteLength) continue;
+      loaded += value.byteLength;
+      onBytes?.(loaded);
+      const buf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+      await new Promise<void>((resolve, reject) => {
+        sb.addEventListener('updateend', () => resolve(), { once: true });
+        sb.addEventListener('error', () => reject(new Error('在线播放缓冲失败')), { once: true });
+        try {
+          sb.appendBuffer(buf);
+        } catch (e: any) {
+          reject(new Error(e?.message || '在线播放缓冲失败'));
+        }
+      });
+    }
+    try { ms.endOfStream(); } catch {}
+  })();
+
+  const cleanup = () => {
+    try { resp.body?.cancel(); } catch {}
+    try { URL.revokeObjectURL(msUrl); } catch {}
+  };
+
+  return { url: msUrl, mime, cleanup: () => { cleanup(); void done.catch(() => {}); } };
+}
+
 
 export type RelayDrama = {
   id: string;          // 形如 hongguo:7691205405866724414 —— 不是剧名

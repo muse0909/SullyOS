@@ -64,6 +64,33 @@ const PlayerStage: React.FC<Props> = ({
     setEnded(false);
   }, [src]);
 
+  /**
+   * 换到新的一集就自己开始播。
+   *
+   * 之前这里只把进度归零、**一句让视频播起来的话都没有**，所以不管点「下一集」
+   * 还是自动连播接到下一集，画面都停在 0:00，得再手点一下播放键
+   * （暮色 10-05 真机反馈：「点下一集不会自动播放」）。
+   *
+   * 不用 autoPlay 属性、改成 src 到位后显式 play()：autoPlay 在安卓 WebView 里
+   * 常被拦（带声音的自动播需要用户手势），被拦了就静默停住，用户完全不知道为什么。
+   * 显式调 play() 的 promise 拒了也不慌 —— 播放按钮还在，用户点一下就行，
+   * 不会像现在这样「点了下一集却像没反应」。
+   */
+  useEffect(() => {
+    if (!src) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const t = setTimeout(() => {
+      const el = videoRef.current;
+      if (!el) return;
+      el.play().catch(() => {
+        // 拦下来了就让控制条显示成「没在播」，用户能看见、能点
+        setPlaying(false);
+      });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [src]);
+
   const toggle = () => {
     const v = videoRef.current;
     if (!v) return;

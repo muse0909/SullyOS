@@ -7,19 +7,24 @@
  * 这两个以前混在一个「已下载」标签里，点完「存到手机」用户根本不知道
  * 到底存没存进手机、存了多少、怎么删。这一层就是把「在手机里」这件事做实。
  *
- * 存在哪（暮色定：App 私有位置，不污染系统电影目录）：
- *   <Data>/theater/phone/<safeKey>/<ep>.mp4     视频本体
- *   <Data>/theater/phone/index.json              索引（剧名、集数、字节数、存的时间）
+ * 视频本体（暮色定：App 私有位置，不污染系统电影目录）：
+ *   <Data>/theater/phone/<safeKey>/<ep>.mp4
  *
- * 为什么索引要自己维护：Capacitor 的 Filesystem 只能列目录，不能查每个文件多大。
- * 存的时候我们自己记下字节数，显示「占了多少空间」和「清理」都靠这份索引。
+ * 索引放 localStorage，不放文件里 —— 这是被真机教训逼的：
+ *   索引要判断「文件在不在」，如果用 Filesystem.readFile 去读一个不存在的
+ *   index.json，Capacitor 插件会 call.reject("File does not exist", ex)
+ *   （FilesystemPlugin.java:72），这个 reject 会冒到页面 console.error，
+ *   而 app 那边（context/OSContext.tsx:1034）劫持了 console.error 把报错全收进
+ *   systemLogs，状态栏就挂一个红条「SYSTEM ERROR」。
+ *   索引本身只有几 KB，放 localStorage 既同步又不会报错，还跟着 app 一起备份。
+ *   Filesystem 只剩「写视频 / 删视频 / 取文件地址」这几个动作，都不会凭空报错。
  */
 
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 
 const ROOT = 'theater/phone';
-const INDEX = 'theater/phone/index.json';
+const INDEX_KEY = 'theater_phone_index';
 
 export type PhoneEpisode = {
   episode: number;
@@ -89,58 +94,19 @@ function epPath(key: string, episode: number): string {
   return `${ROOT}/${key}/${String(episode).padStart(3, '0')}.mp4`;
 }
 
-let indexReady: Promise<void> | null = null;
+// ── 索引 ──
 
-/**
- * 第一次进来先把索引文件建出来，而且以后每次都确认它还在。
- *
- * 为什么不能直接 readFile 读一下、读不到就当空：
- * Capacitor 的 Filesystem 插件读不到文件时走的是
- *   call.reject("File does not exist", ex)   （FilesystemPlugin.java:72）
- * 这个 reject 会一路冒到页面的 console.error，而 app 那边
- * （context/OSContext.tsx:1034）劫持了 console.error 把报错全收进 systemLogs，
- * 状态栏就会挂一个红条「SYSTEM ERROR」。真机 10-05 抓到的就是这条。
- *
- * 所以改成：先 mkdir（建目录，不存在才建，存在就忽略），再 readdir 列文件。
- * 这两个调用都不会因为「东西不在」而报错，从根上不产生噪音。
- * 而且是自愈的 —— 哪怕索引文件被系统清理掉了、或者备份还原只回来一半，
- * 下次进来发现没有就补一个空的，不用靠 localStorage 那种会对不上账的标记。
- */
-function ensureIndex(): Promise<void> {
-  if (!indexReady) {
-    indexReady = (async () => {
-      try {
-        await ensureDir();
-        const listing = await Filesystem.readdir({ path: ROOT, directory: Directory.Data });
-        const has = (listing?.files || []).some((f: any) => f?.name === 'index.json');
-        if (!has) {
-          await Filesystem.writeFile({
-            path: INDEX,
-            data: JSON.stringify([]),
-            directory: Directory.Data,
-            encoding: Encoding.UTF8,
-          });
-        }
-      } catch {
-        // 建不出来就让下面的 readIndex 自己兜底
-      }
-    })().catch(() => {});
-  }
-  return indexReady;
-}
-
-async function readIndex(): Promise<PhoneDrama[]> {
-  await ensureIndex();
+function readIndex(): PhoneDrama[] {
   try {
-    const r = await Filesystem.readFile({ path: INDEX, directory: Directory.Data, encoding: Encoding.UTF8 });
-    const list = JSON.parse(r.data as string);
+    const raw = localStorage.getItem(INDEX_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
     if (!Array.isArray(list)) return [];
-    // 兼容只有 uploaded 字段的老索引
     return list
       .filter((d) => d && typeof d.key === 'string')
       .map((d: any) => ({
         key: d.key,
-        title: d.title || d.name || '未命名',
+        title: d.title || '未命名',
         coverUrl: d.coverUrl,
         origin: d.origin === 'upload' ? 'upload' : 'mac',
         createdAt: d.createdAt || Date.now(),
@@ -152,24 +118,19 @@ async function readIndex(): Promise<PhoneDrama[]> {
   }
 }
 
-async function writeIndex(list: PhoneDrama[]): Promise<void> {
-  await ensureDir();
-  await Filesystem.writeFile({
-    path: INDEX,
-    data: JSON.stringify(list),
-    directory: Directory.Data,
-    encoding: Encoding.UTF8,
-  });
+function writeIndex(list: PhoneDrama[]): void {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(list));
+  } catch {
+    // 存不下就还是留在内存里这次会话用着，不崩
+  }
 }
+
+// ── 查询 ──
 
 export async function listPhoneDramas(): Promise<PhoneDrama[]> {
   if (!isNative()) return [];
-  try {
-    const list = await readIndex();
-    return list.sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch {
-    return [];
-  }
+  return readIndex().sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function findPhoneDrama(list: PhoneDrama[], title: string): PhoneDrama | undefined {
@@ -189,12 +150,11 @@ export function phoneEpisodeSize(list: PhoneDrama[], title: string, episode: num
 
 /** 拿这一集在手机里的真实文件地址，交给播放器直接播（断网也能看） */
 export async function phoneEpisodeUri(key: string, episode: number): Promise<string> {
-  const r = await Filesystem.getUri({
-    path: epPath(key, episode),
-    directory: Directory.Data,
-  });
+  const r = await Filesystem.getUri({ path: epPath(key, episode), directory: Directory.Data });
   return r.uri;
 }
+
+// ── 写入 ──
 
 /**
  * 把一集真的写进手机。
@@ -224,7 +184,7 @@ export async function saveEpisodeToPhone(
   });
 
   const entry: PhoneEpisode = { episode, size: blob.size, savedAt: Date.now(), duration };
-  const list = await readIndex();
+  const list = readIndex();
   let d = list.find((x) => x.key === key);
   if (!d) {
     d = {
@@ -244,79 +204,9 @@ export async function saveEpisodeToPhone(
   d.episodes.push(entry);
   d.episodes.sort((a, b) => a.episode - b.episode);
   d.updatedAt = Date.now();
-  await writeIndex(list);
+  writeIndex(list);
   return entry;
 }
-
-export async function deletePhoneEpisode(key: string, episode: number): Promise<void> {
-  if (!isNative()) return;
-  const list = await readIndex();
-  const d = list.find((x) => x.key === key);
-  if (d) {
-    d.episodes = d.episodes.filter((e) => e.episode !== episode);
-    d.updatedAt = Date.now();
-    // 集数清空 = 这部剧在手机上没了，目录也一起收掉，别留空壳
-    if (d.episodes.length === 0) {
-      await writeIndex(list.filter((x) => x.key !== key));
-      await rmdirSafe(key);
-      return;
-    }
-    await writeIndex(list);
-  }
-  try {
-    await Filesystem.deleteFile({ path: epPath(key, episode), directory: Directory.Data });
-  } catch {
-    // 文件可能已经不在了，索引先清掉更重要
-  }
-}
-
-export async function deletePhoneDrama(key: string): Promise<void> {
-  if (!isNative()) return;
-  await writeIndex((await readIndex()).filter((x) => x.key !== key));
-  await rmdirSafe(key);
-}
-
-/** 全部清理：目录整个删掉再重建，索引清空 */
-export async function clearPhoneLibrary(): Promise<void> {
-  if (!isNative()) return;
-  try {
-    await Filesystem.rmdir({ path: ROOT, directory: Directory.Data, recursive: true });
-  } catch {
-    // 目录本来就不在
-  }
-  await writeIndex([]);
-}
-
-async function rmdirSafe(key: string): Promise<void> {
-  try {
-    await Filesystem.rmdir({ path: `${ROOT}/${key}`, directory: Directory.Data, recursive: true });
-  } catch {
-    // 可能还有别的集，先留着
-  }
-}
-
-export async function phoneLibraryUsage(): Promise<{ bytes: number; count: number; dramas: number }> {
-  const list = await readIndex();
-  let bytes = 0;
-  let count = 0;
-  list.forEach((d) =>
-    d.episodes.forEach((e) => {
-      bytes += e.size || 0;
-      count += 1;
-    })
-  );
-  return { bytes, count, dramas: list.length };
-}
-
-export function fmtBytes(n: number): string {
-  if (!n || n <= 0) return '0 B';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-// ── 上传（手机自己选的视频）──
 
 /**
  * 上传一个视频。
@@ -333,7 +223,7 @@ export async function saveUploads(
   const key = dramaKey(name);
   await ensureDir(key);
 
-  const list = await readIndex();
+  const list = readIndex();
   let d = list.find((x) => x.key === key);
   if (!d) {
     d = {
@@ -370,6 +260,76 @@ export async function saveUploads(
 
   d.episodes.sort((a, b) => a.episode - b.episode);
   d.updatedAt = Date.now();
-  await writeIndex(list);
+  writeIndex(list);
   return d;
+}
+
+// ── 删除 / 清理 ──
+
+export async function deletePhoneEpisode(key: string, episode: number): Promise<void> {
+  if (!isNative()) return;
+  const list = readIndex();
+  const d = list.find((x) => x.key === key);
+  if (d) {
+    d.episodes = d.episodes.filter((e) => e.episode !== episode);
+    d.updatedAt = Date.now();
+    // 集数清空 = 这部剧在手机上没了，目录也一起收掉，别留空壳
+    if (d.episodes.length === 0) {
+      writeIndex(list.filter((x) => x.key !== key));
+      await rmdirSafe(key);
+      return;
+    }
+    writeIndex(list);
+  }
+  try {
+    await Filesystem.deleteFile({ path: epPath(key, episode), directory: Directory.Data });
+  } catch {
+    // 文件可能已经不在了，索引先清掉更重要
+  }
+}
+
+export async function deletePhoneDrama(key: string): Promise<void> {
+  if (!isNative()) return;
+  writeIndex(readIndex().filter((x) => x.key !== key));
+  await rmdirSafe(key);
+}
+
+/** 全部清理：目录整个删掉，索引清空 */
+export async function clearPhoneLibrary(): Promise<void> {
+  if (!isNative()) return;
+  try {
+    await Filesystem.rmdir({ path: ROOT, directory: Directory.Data, recursive: true });
+  } catch {
+    // 目录本来就不在
+  }
+  writeIndex([]);
+}
+
+async function rmdirSafe(key: string): Promise<void> {
+  try {
+    await Filesystem.rmdir({ path: `${ROOT}/${key}`, directory: Directory.Data, recursive: true });
+  } catch {
+    // 可能还有别的集，先留着
+  }
+}
+
+export async function phoneLibraryUsage(): Promise<{ bytes: number; count: number; dramas: number }> {
+  const list = readIndex();
+  let bytes = 0;
+  let count = 0;
+  list.forEach((d) =>
+    d.episodes.forEach((e) => {
+      bytes += e.size || 0;
+      count += 1;
+    })
+  );
+  return { bytes, count, dramas: list.length };
+}
+
+export function fmtBytes(n: number): string {
+  if (!n || n <= 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }

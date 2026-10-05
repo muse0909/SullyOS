@@ -136,11 +136,12 @@ const PlayerStage: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 控制条：暮色 10-05 —— 下一集放在音量左边 */}
+      {/* 控制条：暮色 10-05 —— 下一集放在音量左边
+          切集正在取的时候整条不画：那会儿 blobUrl 里还是上一集，
+          画出来会是「上一集的时间 + 这一集的集号」，自己骗自己。 */}
+      {!loading && (
       <div
-        className={`absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity ${
-          playing && !cinema ? 'opacity-100' : 'opacity-100'
-        }`}
+        className="absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent"
       >
         {/* 进度条：触摸区做高一点，手指粗也拖得动 */}
         <div
@@ -227,6 +228,7 @@ const PlayerStage: React.FC<Props> = ({
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 };

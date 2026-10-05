@@ -139,6 +139,12 @@ const TheaterApp: React.FC = () => {
 
   // ── 播放器 ──
   const [blobUrl, setBlobUrl] = useState('');
+  // blobUrl 里装的到底是第几集。必须有这个：
+  // 自动连播切到下一集时，setCurrentEp 立刻生效，但取下一集的视频是异步的
+  // （几十兆要一两秒）。这中间 blobUrl 里装的还是上一集。
+  // 「把这一集存到手机」如果在窗口期点了，按 currentEp 存下来的就是上一集的内容 ——
+  // 真机 10-05 实测存出个「003.mp4 里装的是 002 的内容」，跟电脑原文件一比字节完全对得上。
+  const [blobEp, setBlobEp] = useState(0);
   const [srcKind, setSrcKind] = useState<'mac' | 'phone' | ''>('');
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
@@ -328,6 +334,7 @@ const TheaterApp: React.FC = () => {
         setDlProgress(total ? loaded / total : 0);
       });
       setSrcKind('mac');
+      setBlobEp(episode);
       setBlobUrl((old) => {
         if (old) URL.revokeObjectURL(old);
         return r.url;
@@ -353,6 +360,7 @@ const TheaterApp: React.FC = () => {
       const ph = findPhoneDrama(phoneList, title);
       if (!ph) throw new Error('手机里没有这部剧');
       setSrcKind('phone');
+      setBlobEp(episode);
       setBlobUrl(await phoneEpisodeUri(ph.key, episode));
     } catch (e: any) {
       setDlError(e?.message || '读不出手机里的文件');
@@ -463,8 +471,10 @@ const TheaterApp: React.FC = () => {
       addToast('这一集已经在手机里了', 'info');
       return;
     }
-    // 已经在内存里（刚播过）就复用那份字节，别再从电脑拉一遍
-    if (srcKind === 'mac' && blobUrl) {
+    // 正在取这一集的视频就别存 —— 这时候内存里那份是上一集的
+    if (dlLoading) return addToast('这一集还在取，等一下再存', 'info');
+    // 只有内存里那份确实就是当前这一集，才复用，别再从电脑拉一遍
+    if (srcKind === 'mac' && blobUrl && blobEp === currentEp) {
       setSavingOne(true);
       try {
         const blob = await (await fetch(blobUrl)).blob();

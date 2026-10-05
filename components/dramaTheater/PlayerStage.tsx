@@ -94,6 +94,14 @@ const PlayerStage: React.FC<Props> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const scrubbing = useRef(false);
+  /** 诊断：视频元素自身的事件（见 apps/TheaterApp.tsx 里的 diag 说明） */
+  const d = (s: string, extra?: Record<string, unknown>) => {
+    try {
+      const w = window as unknown as { __theaterDiag?: unknown[] };
+      if (!w.__theaterDiag) w.__theaterDiag = [];
+      w.__theaterDiag.push({ t: new Date().toISOString().slice(11, 19), step: '播放器:' + s, ...(extra || {}) });
+    } catch { /* 忽略 */ }
+  };
   const [scrub, setScrub] = useState<number | null>(null);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(0);
@@ -122,6 +130,7 @@ const PlayerStage: React.FC<Props> = ({
     const v = e.currentTarget;
     if (v.duration) setDur(v.duration);
     const r = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
+    d('元数据到了', { 宽: v.videoWidth, 高: v.videoHeight, 时长: v.duration });
     if (r > 0.1 && r < 10) {
       setRatio(r);
       saveRatio(title, r);
@@ -151,11 +160,13 @@ const PlayerStage: React.FC<Props> = ({
     if (!src) return;
     const v = videoRef.current;
     if (!v) return;
+    d('src 到了，准备自动播', { src: String(src).slice(0, 32) });
     const t = setTimeout(() => {
       const el = videoRef.current;
       if (!el) return;
-      el.play().catch(() => {
+      el.play().catch((e: any) => {
         // 拦下来了就让控制条显示成「没在播」，用户能看见、能点
+        d('自动播被拦', { 原因: String(e?.message || e) });
         setPlaying(false);
       });
     }, 60);
@@ -213,10 +224,17 @@ const PlayerStage: React.FC<Props> = ({
           onTime(v.currentTime, v.duration || 0);
         }}
         onLoadedMetadata={onMeta}
-        onCanPlay={() => onMediaReady?.()}
-        onPlay={() => { setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); }}
-        onPause={() => { setPlaying(false); setBarOn(true); }}
-        onError={() => onMediaError?.()}
+        onCanPlay={() => { d('可以播了', { readyState: videoRef.current?.readyState }); onMediaReady?.(); }}
+        onPlaying={() => d('正在播放', { 播到: videoRef.current?.currentTime })}
+        onWaiting={() => d('缓冲中')}
+        onStalled={() => d('卡住了', { 已缓冲段: videoRef.current?.buffered.length })}
+        onPlay={() => { d('开始播放'); setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); }}
+        onPause={() => { d('暂停', { 播到: videoRef.current?.currentTime }); setPlaying(false); setBarOn(true); }}
+        onError={() => {
+          const v = videoRef.current;
+          d('视频报错', { 码: v?.error?.code, 说明: v?.error?.message, src: String(v?.src || '').slice(0, 40) });
+          onMediaError?.();
+        }}
         onEnded={() => {
           setPlaying(false);
           setEnded(true);

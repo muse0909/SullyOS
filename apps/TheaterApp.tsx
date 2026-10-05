@@ -38,6 +38,26 @@ import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/th
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
 
+/**
+ * 诊断记录：把在线播放的**每一步**写进 window.__theaterDiag。
+ *
+ * 2026-10-06 深夜这轮排查逼出来的：靠猜连错三次（先怪 429、再怪高度、
+ * 最后发现是按钮被 disabled），每次都得请用户点一次、我在外面轮询，
+ * 而轮询会因为 WebView 调试端口掉线而丢现场。
+ *
+ * 所以改成**让被测对象自己说话**：点一次之后读 window.__theaterDiag，
+ * 就能看到它走到哪一步、报了什么，不用依赖连接一直活着。
+ * 只挂在 window 上、不进 localStorage、不产生任何副作用。
+ */
+function diag(step: string, extra?: Record<string, unknown>): void {
+  try {
+    const w = window as unknown as { __theaterDiag?: unknown[] };
+    if (!w.__theaterDiag) w.__theaterDiag = [];
+    w.__theaterDiag.push({ t: new Date().toISOString().slice(11, 19), step, ...(extra || {}) });
+    if (w.__theaterDiag.length > 80) w.__theaterDiag.splice(0, w.__theaterDiag.length - 80);
+  } catch { /* 诊断不能影响功能 */ }
+}
+
 // ── 小零件 ──
 
 const Tag: React.FC<{ tone: 'ok' | 'no' | 'new' | 'mac'; children: React.ReactNode }> = ({ tone, children }) => {
@@ -578,8 +598,10 @@ const TheaterApp: React.FC = () => {
     const ac = new AbortController();
     onlineAbort.current = ac;
     let session = '';
+    diag('开始在线播放', { dramaId, ep: episode });
     try {
       const opened = await openOnlinePlayback(dramaId);
+      diag('开会话成功', { session: opened.session.slice(0, 10), total: opened.total });
       if (ac.signal.aborted) {
         // 已经被切掉了，但会话已经开出来了，得还回去，不然白占一个名额
         closeOnlinePlayback(opened.session);
@@ -588,7 +610,9 @@ const TheaterApp: React.FC = () => {
       session = opened.session;
       onlineSession.current = opened.session;
 
+      diag('开始取流');
       const r = await streamOnlineEpisode(session, episode, ac.signal);
+      diag('取流成功', { mime: r.mime, src: r.url.slice(0, 24) });
       if (ac.signal.aborted) {
         r.cleanup();
         closeOnlinePlayback(session);
@@ -601,7 +625,9 @@ const TheaterApp: React.FC = () => {
         if (old) URL.revokeObjectURL(old);
         return r.url;
       });
+      diag('已挂到播放器');
     } catch (e: any) {
+      diag('失败', { 报错: String(e?.message || e), 有会话: !!session, 已中止: ac.signal.aborted });
       if (session) closeOnlinePlayback(session);
       if (ac.signal.aborted) return;
       onlineSession.current = '';

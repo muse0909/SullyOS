@@ -25,6 +25,8 @@ export function fmtTime(s: number): string {
 type Props = {
   src: string;
   episode: number;
+  /** 剧名 —— 用来记这部剧的视频比例，好让加载页和播放页一样高 */
+  title?: string;
   cinema: boolean;
   setCinema: (v: boolean) => void;
   onEnded: () => void;
@@ -39,12 +41,53 @@ type Props = {
   onSeek?: (t: number) => void;
   /** 媒体本身放不出来（比如手机本地文件地址被内核拒了），交给外层换一条路 */
   onMediaError?: () => void;
+  /** 真的播起来了（用来把「误报的 error」撤回去） */
+  onMediaReady?: () => void;
   p: Palette;
 };
 
+/**
+ * 每部剧的视频比例，存本地。
+ *
+ * 为什么记：横屏剧（16:9）和竖屏剧（9:16）自然高度差一倍多，而 `<video>`
+ * 在元数据读出来之前**没有固有高度**（真正的原因不是 max-h，是这个）。
+ * 不知道比例就没法在加载页把高度撑对，加载页和播放页必然不一样高 ——
+ * 那正是暮色 10-05 说的「你看看图上两个高度差很多」。
+ *
+ * 同一部剧所有集比例是一样的，所以第一次播完记住之后，
+ * 之后每次进播放页都能提前算准，加载页和播放页**一模一样高、零跳变**。
+ */
+const RATIO_KEY = 'theater_ratio';
+
+function readRatio(title?: string): number {
+  if (!title) return 0;
+  try {
+    const map = JSON.parse(localStorage.getItem(RATIO_KEY) || '{}');
+    const r = Number(map[title] || 0);
+    return r > 0.1 && r < 10 ? r : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveRatio(title: string | undefined, ratio: number): void {
+  if (!title || !(ratio > 0.1 && ratio < 10)) return;
+  try {
+    const map = JSON.parse(localStorage.getItem(RATIO_KEY) || '{}');
+    if (Math.abs(Number(map[title] || 0) - ratio) < 0.01) return;
+    map[title] = Math.round(ratio * 1000) / 1000;
+    // 只留最近 30 部，别让这个 key 无限长
+    const keys = Object.keys(map);
+    if (keys.length > 30) {
+      keys.slice(0, keys.length - 30).forEach((k) => delete map[k]);
+    }
+    localStorage.setItem(RATIO_KEY, JSON.stringify(map));
+  } catch { /* 存不下就用默认值，不影响播放 */ }
+}
+
 const PlayerStage: React.FC<Props> = ({
-  src, episode, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, error, onRetry, hasNext, onNext, onSeek, onMediaError, p,
+  src, episode, title, cinema, setCinema, onEnded, onTime,
+  loading, loadProgress, error, onRetry, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -55,6 +98,10 @@ const PlayerStage: React.FC<Props> = ({
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [ratio, setRatio] = useState(() => readRatio(title));
+  // 播的时候控制条藏起来，点一下画面再出来（暮色 10-05：「播放的时候进度条要隐藏」）
+  const [barOn, setBarOn] = useState(true);
+  const hideTimer = useRef<number | null>(null);
 
   // 换集就归零，不然上一集的进度会挂在新集上
   useEffect(() => {
@@ -62,7 +109,29 @@ const PlayerStage: React.FC<Props> = ({
     setDur(0);
     setScrub(null);
     setEnded(false);
+    setBarOn(true);
   }, [src]);
+
+  // 换剧就换回这部剧记着的比例
+  useEffect(() => { setRatio(readRatio(title)); }, [title]);
+
+  /** 元数据到了 = 真实比例知道了，更新并记住（以后加载页就能提前算对） */
+  const onMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget;
+    if (v.duration) setDur(v.duration);
+    const r = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
+    if (r > 0.1 && r < 10) {
+      setRatio(r);
+      saveRatio(title, r);
+    }
+  };
+
+  /** 播起来 3 秒后把控制条收掉 */
+  const scheduleHide = () => {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setBarOn(false), 3000);
+  };
+  useEffect(() => () => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }, []);
 
   /**
    * 换到新的一集就自己开始播。
@@ -110,8 +179,16 @@ const PlayerStage: React.FC<Props> = ({
   const shown = scrub !== null ? scrub : pos;
   const pct = dur > 0 ? Math.min(100, Math.max(0, (shown / dur) * 100)) : 0;
 
+  // 高度：知道比例就按比例算（宽度撑满 → 高度 = 宽/比例，再受 42vh/64vh 封顶），
+  // 这样横屏剧不会被撑成 42vh 而上下留黑边，竖屏剧照旧顶到 42vh。
+  // 不知道比例（第一次播这部剧）就先给 42vh 占位，元数据到了再修正。
+  const maxH = cinema ? '64vh' : '42vh';
+  const stageStyle: React.CSSProperties = ratio
+    ? { aspectRatio: String(ratio), maxHeight: maxH, maxWidth: '100%', margin: '0 auto' }
+    : { height: maxH };
+
   return (
-    <div className={`shrink-0 relative bg-black transition-all ${cinema ? 'h-[64vh]' : 'h-[42vh]'}`}>
+    <div className="shrink-0 relative bg-black flex justify-center" style={stageStyle}>
       <video
         ref={videoRef}
         src={src}
@@ -120,26 +197,28 @@ const PlayerStage: React.FC<Props> = ({
         // 电脑上取的剧已经变成浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
         // 第 3 步取帧直接能读；一加反而会去要跨域头，而这个地址没有跨域头，视频会直接播不了。
         //
-        // h 固定 + object-contain（暮色 10-05：「高度也改成和播放时一样高」）：
-        // 原来写的是 max-h-[42vh]，那只是**上限**。视频元数据没读出来之前它没有
-        // 固有高度，容器就塌成一条细线，等 loadedmetadata 一到又猛地撑开 —— 加载中
-        // 看到的是一条，加载完才是满的，中间还跳一下。
-        // 固定高度 + 画面按比例缩进中间，两种状态高度一模一样。
-        className={`w-full h-full bg-black object-contain ${cinema ? '' : ''}`}
-        onClick={toggle}
+        // object-contain 而不是 fill：容器已经按比例算好了高度，
+        // 但比例是「记住的那一部剧的比例」，万一是别的比例也不能拉伸变形。
+        className="w-full h-full bg-black object-contain"
+        onClick={() => {
+          if (!barOn) { setBarOn(true); scheduleHide(); return; }
+          toggle();
+        }}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
           setPos(v.currentTime);
           if (v.duration) setDur(v.duration);
           onTime(v.currentTime, v.duration || 0);
         }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
-        onPlay={() => { setPlaying(true); setEnded(false); }}
-        onPause={() => setPlaying(false)}
+        onLoadedMetadata={onMeta}
+        onCanPlay={() => onMediaReady?.()}
+        onPlay={() => { setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); }}
+        onPause={() => { setPlaying(false); setBarOn(true); }}
         onError={() => onMediaError?.()}
         onEnded={() => {
           setPlaying(false);
           setEnded(true);
+          setBarOn(true);
           onTime(dur || pos, dur || pos);
           onEnded();
         }}
@@ -179,10 +258,13 @@ const PlayerStage: React.FC<Props> = ({
 
       {/* 控制条：暮色 10-05 —— 下一集放在音量左边
           切集正在取的时候整条不画：那会儿 blobUrl 里还是上一集，
-          画出来会是「上一集的时间 + 这一集的集号」，自己骗自己。 */}
+          画出来会是「上一集的时间 + 这一集的集号」，自己骗自己。
+          10-05 追加：正在播的时候整条藏起来（3 秒后），点画面才出来。 */}
       {!loading && (
       <div
-        className="absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent"
+        className={`absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
+          barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
       >
         {/* 进度条：触摸区做高一点，手指粗也拖得动 */}
         <div
@@ -269,6 +351,18 @@ const PlayerStage: React.FC<Props> = ({
           </button>
         </div>
       </div>
+      )}
+
+      {/* 控制条藏着的时候给一下提示：手指点一下画面它会出来，
+          不然用户看着一个「没有按钮」的画面不知道还能不能操作。 */}
+      {!loading && !barOn && !error && (
+        <button
+          onClick={() => { setBarOn(true); scheduleHide(); }}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-black/45 px-3.5 py-1.5 text-white/85 text-[11px] active:scale-95"
+        >
+          <Play size={11} weight="fill" />
+          点一下出控制条
+        </button>
       )}
     </div>
   );

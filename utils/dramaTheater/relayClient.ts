@@ -283,44 +283,6 @@ export const PLAYBACK_BUSY_MSG =
   '电脑上的播放位满了。等 10 分钟自动清，或者把短剧库关掉重开一下就立刻腾出来（正在看的话先关掉网页版那个剧）。';
 
 /**
- * 让电脑在后台把这部剧下下来（暮色 10-05：「点播放时就开始自动在电脑端下载」）。
- *
- * **只能用整部下载接口。** 短剧库只提供 `POST /api/ui/download`（ui_server.go:1111
- * → enqueueDramasAsync），入参是 drama id 列表，粒度就是**整部**，
- * 全项目没有任何单集下载的路由（`mux.HandleFunc("/api/ui/...")` 全部列过一遍确认过）。
- * 网页版的「边播边下」不是独立下载，而是 `playback/prepare` —— 但那个接口
- * 要求会话是「合集播放」模式：`input.Episode > len(session.downloadIDs)` 就回 400
- * （ui_playback_collection.go:180），而按 dramaId 开的会话 `downloadIDs` 是 nil
- * （ui_playback.go:273，只有走 taskId 的合集分支才会填），所以对在线剧**必然 400**。
- *
- * 这个函数是**故意 fire-and-forget 的**：它触发的是电脑上的下载任务，可能慢、
- * 可能失败、可能电脑磁盘满了。播放本身完全不需要等它，所以任何一条岔路
- * （没连电脑 / 电脑返回 4xx）都只静默吞掉，不往用户面前抛 —— 一个正在播的
- * 视频突然冒红字，比「没顺便下下来」糟糕得多。
- *
- * 要停就去电脑网页版的下载列表停（那边本来就能看到并取消）。
- */
-export function requestComputerDownload(dramaId: string): boolean {
-  const base = getRelayAddr();
-  if (!base || !dramaId) return false;
-  try {
-    void fetch(`${base}/api/ui/download`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // quality 传 0 = 用短剧库自己挑的最高可用清晰度（download_quality.go:29）
-      // 多传任何字段都会被 DisallowUnknownFields 打回 400，所以这里只能给这两个。
-      body: JSON.stringify({ ids: [dramaId], quality: 0 }),
-      cache: 'no-store',
-    }).catch(() => {
-      /* 顺手的事，失败不打扰用户 */
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * 把播放会话还回去。
  *
  * **不还的话会撞 429。** 短剧库那边每开一个 playback/open 就占一个名额

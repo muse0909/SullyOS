@@ -185,8 +185,92 @@ export async function phoneEpisodeUri(key: string, episode: number): Promise<str
 // ── 写入 ──
 
 /**
+ * 把一集从电脑上直接下进手机 —— **走原生下载，网页侧一个字节都不碰**。
+ *
+ * 为什么不能走「取回来 → 转 base64 → 写文件」（原来那条路）：
+ * 真机 22:30 直接闪退，日志是 Java 侧的内存爆：
+ *
+ *   java.lang.OutOfMemoryError: Failed to allocate a 74064696 byte allocation
+ *     at java.lang.StringUTF16.newBytesFor(StringUTF16.java:50)
+ *     at java.lang.AbstractStringBuilder.append(...)
+ *     at com.getcapacitor.Bridge.callPluginMethod(Bridge.java:815)
+ *
+ * 拆开看就是：一集 11.9 MB → base64 变 ~16 MB 字符串 → 交给原生写文件时，
+ * Java 侧 StringBuilder 再把它拼一遍（UTF-16 一次 74 MB 分配）→ WebView 的
+ * 256 MB 上限直接穿顶。**一集就炸，跟大小基本无关，是架构问题。**
+ *
+ * `Filesystem.downloadFile`（Capacitor 5.1+）是原生自己发 HTTP 请求、
+ * 自己写文件，JS 这边只递一个 URL 字符串过去，内存占用是常数级。
+ * `recursive: true` 顺带把父目录建好（`FilesystemPlugin.java:104-114` 内部会
+ * `getParentFile().mkdirs()`），所以也不用先 mkdir —— 那个会因目录已存在而 reject。
+ */
+export async function downloadEpisodeToPhone(
+  url: string,
+  meta: { title: string; coverUrl?: string; origin: 'mac' | 'upload' },
+  episode: number,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<PhoneEpisode> {
+  if (!Capacitor.isNativePlatform()) throw new Error('只有装成 App 才能存到手机');
+
+  const key = dramaKey(meta.title);
+  const rel = epPath(key, episode);
+
+  let handle: { remove: () => Promise<void> } | null = null;
+  // 原生只报「已下字节 / 总字节」，下完最后一个事件的 contentLength 就是文件真实大小。
+  // 索引里的 size 要靠它 —— 没有 onProgress 就只能记 0（「占多少空间」显示不出数，
+  // 但不影响播放，播放读的是文件本身不是索引）。
+  let lastTotal = 0;
+  if (onProgress) {
+    handle = await Filesystem.addListener('progress', (p) => {
+      // 原生只认自己发起的那次下载，按 url 对一下，别把别的下载的进度算到这一集头上
+      if (p.url && p.url !== url) return;
+      lastTotal = Number(p.contentLength || 0);
+      onProgress(Number(p.bytes || 0), lastTotal);
+    });
+  }
+
+  try {
+    await Filesystem.downloadFile({
+      url,
+      path: rel,
+      directory: Directory.Data,
+      recursive: true,
+    });
+  } finally {
+    if (handle) await handle.remove().catch(() => {});
+  }
+
+  const entry: PhoneEpisode = { episode, size: lastTotal, savedAt: Date.now() };
+  const list = readIndex();
+  let d = list.find((x) => x.key === key);
+  if (!d) {
+    d = {
+      key,
+      title: meta.title,
+      coverUrl: meta.coverUrl,
+      origin: meta.origin,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      episodes: [],
+    };
+    list.push(d);
+  }
+  d.title = meta.title;
+  if (meta.coverUrl) d.coverUrl = meta.coverUrl;
+  d.episodes = d.episodes.filter((e) => e.episode !== episode);
+  d.episodes.push(entry);
+  d.episodes.sort((a, b) => a.episode - b.episode);
+  d.updatedAt = Date.now();
+  writeIndex(list);
+  return entry;
+}
+
+/**
  * 把一集真的写进手机。
  * blob 是已经取回来的视频字节（从电脑拿的），size 记进索引，「占多少空间」才有依据。
+ *
+ * ⚠️ 这条路**只给上传用**（用户自己选的视频，本来就在手机上，内存占用是它自己的）。
+ * 从电脑下载**一定**要走 `downloadEpisodeToPhone`，理由见上面那条内存爆的日志。
  */
 export async function saveEpisodeToPhone(
   meta: { title: string; coverUrl?: string; origin: 'mac' | 'upload' },

@@ -15,7 +15,6 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
   DeviceMobile, HardDrive, CloudSlash, Moon, Sun, DeviceMobileCamera, Sparkle,
-  DownloadSimple,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -25,13 +24,13 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
-  requestComputerDownload, reclaimStaleSessions,
+  reclaimStaleSessions, localVideoUrl,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
   listPhoneDramas, findPhoneDrama, dramaKey, saveEpisodeToPhone, phoneEpisodeUri,
   deletePhoneEpisode, deletePhoneDrama, clearPhoneLibrary, phoneLibraryUsage,
-  saveUploads, base64ToBlob, fmtBytes, type PhoneDrama,
+  saveUploads, base64ToBlob, fmtBytes, downloadEpisodeToPhone, type PhoneDrama,
 } from '../utils/dramaTheater/localVideos';
 import { listWatch, upsertWatch, removeWatch, clearWatch } from '../utils/dramaTheater/watchHistory';
 import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/theme';
@@ -343,14 +342,8 @@ const TheaterApp: React.FC = () => {
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
   const [dlError, setDlError] = useState('');
-  /**
-   * 「已让电脑开始下载这部剧」的一次性提示。
-   *
-   * 在线播放顺手会让电脑整部下载（用户 10-05 要的），但这发生在手机上、
-   * 进度显示在电脑上 —— 不说一句的话，用户会以为是手机在偷偷下东西。
-   * 说清楚 + 告诉他要去哪看、怎么停，比偷偷下好。
-   */
-  const [autoDlNote, setAutoDlNote] = useState('');
+  /** 正在下第几集、到百分之几（原生下载报的，粒度到集） */
+  const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
   const [cinema, setCinema] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
@@ -460,13 +453,6 @@ const TheaterApp: React.FC = () => {
   }, [addr, reloadPhone]);
 
   useEffect(() => { refresh(); }, [refresh]);
-
-  // 「已让电脑开始下载」这句提示 6 秒后自己收掉，别一直挂在播放页挡着内容
-  useEffect(() => {
-    if (!autoDlNote) return;
-    const t = setTimeout(() => setAutoDlNote(''), 6000);
-    return () => clearTimeout(t);
-  }, [autoDlNote]);
 
   const saveAddr = async (input: string) => {
     const clean = normalizeAddr(input);
@@ -612,14 +598,6 @@ const TheaterApp: React.FC = () => {
         if (old) URL.revokeObjectURL(old);
         return r.url;
       });
-
-      // 顺手让电脑把这部剧下下来（暮色 10-05 提的）。放在流起之后调：
-      // 确认播得起来了再说下载的事，万一这一集根本放不出来，也不用白下。
-      // 整部下而不是只下这一集 —— 短剧库只有整部下载的接口（详见
-      // relayClient.requestComputerDownload 的注释）。要停就去电脑网页版停。
-      if (requestComputerDownload(dramaId)) {
-        setAutoDlNote(`已让电脑开始下载《${picked?.title || '这部剧'}》`);
-      }
     } catch (e: any) {
       if (session) closeOnlinePlayback(session);
       if (ac.signal.aborted) return;
@@ -679,21 +657,45 @@ const TheaterApp: React.FC = () => {
   }, [phoneList]);
 
   /**
-   * 手机里的文件还是放不出来时的最后一手。
+   * 媒体报错了 —— 但**先别急着想它真的播不出来**。
    *
-   * 原来这里兜底是「整集读成 base64 → atob → Blob」（真机 10-05 见过它失败）：
-   * 一集 11.9 MB，base64 后是 ~16 MB 字符串，atob 要一个字符一个字符解，
-   * 在安卓 WebView 上不是卡死就是直接失败，用户看到的就是那条
-   * 「换个方式再试…」一直挂着。现在 phoneEpisodeUri 走 Capacitor.convertFileSrc，
-   * 正常情况下根本进不到这里。
+   * 真机 10-05 22:56 暮色给的图：屏幕上明明白白写着「这个本地地址播不了，
+   * 换个方式再试…」，可同一集**其实在正常播**（另一张图里 1:11/1:11 走着）。
+   * 也就是说 `error` 事件在安卓 WebView 上会误报 —— 换一个 src 时的中间态、
+   * 或者 convertFileSrc 那个地址被内核先拒一次再自己重试成功，都会打 error。
    *
-   * 所以这里不再做那套重活，只做一件事：说清楚为什么不行 + 给个能点的重试，
-   * 并且**不再自己抛错**（原生的 reject 会被 Capacitor 打上 console.error → 红条）。
+   * 所以这里**延迟判定**：报错先记下来，3 秒内如果 `canplay`/`playing` 来了，
+   * 就当它没发生过（什么都不显示）；3 秒过去还是起不来，才真的告诉用户。
+   * 用户看到「播不了」却发现它在播，比没提示更糟。
    */
+  const mediaBroken = useRef(false);
+  const mediaErrTimer = useRef<number | null>(null);
+
+  const onMediaOk = useCallback(() => {
+    mediaBroken.current = false;
+    if (mediaErrTimer.current) { window.clearTimeout(mediaErrTimer.current); mediaErrTimer.current = null; }
+  }, []);
+
   const onMediaError = useCallback(() => {
     if (srcKind !== 'phone') return;
-    setDlError('这一集在手机里读不出来，重新下过一次可能就好');
+    if (mediaBroken.current) return;
+    mediaBroken.current = true;
+    if (mediaErrTimer.current) window.clearTimeout(mediaErrTimer.current);
+    mediaErrTimer.current = window.setTimeout(() => {
+      if (mediaBroken.current) setDlError('这一集在手机里读不出来，重新下过一次可能就好');
+    }, 3000);
   }, [srcKind]);
+
+  // 换集就清掉上一集的判定：旧的那句「读不出来」不该挂到新的一集上
+  useEffect(() => {
+    if (mediaErrTimer.current) window.clearTimeout(mediaErrTimer.current);
+    mediaErrTimer.current = null;
+    mediaBroken.current = false;
+  }, [blobUrl]);
+
+  useEffect(() => () => {
+    if (mediaErrTimer.current) window.clearTimeout(mediaErrTimer.current);
+  }, []);
 
   /**
    * 播第 n 集。
@@ -799,14 +801,23 @@ const TheaterApp: React.FC = () => {
     for (const ep of eps) {
       if (saveAllCancel.current) break;
       try {
-        const { blob } = await fetchVideoBytes(d.title, ep);
-        await saveEpisodeToPhone({ title: d.title, coverUrl: d.coverUrl, origin: 'mac' }, ep, blob);
+        // 走原生下载（原来取回内存再转 base64 写进去，真机 22:30 一集就闪退：
+        // Java 侧拼 74 MB 字符串把 256 MB 上限穿顶，日志见 localVideos 里的注释）
+        await downloadEpisodeToPhone(
+          localVideoUrl(addr, d.title, ep),
+          { title: d.title, coverUrl: d.coverUrl, origin: 'mac' },
+          ep,
+          (loaded, total) => {
+            if (total > 0) setSaveEpProgress({ ep, pct: loaded / total });
+          }
+        );
         ok += 1;
         setSaveAll((s) => ({ ...s, done: s.done + 1 }));
       } catch (e: any) {
         addToast(`第 ${ep} 集没存成：${e?.message || '取不到'}`, 'error');
       }
     }
+    setSaveEpProgress(null);
     await reloadPhone();
     saveAllCancel.current = false;
     setSaveAll({ busy: false, done: 0, total: 0, cancel: false });
@@ -1455,8 +1466,16 @@ const TheaterApp: React.FC = () => {
               {saveAll.busy && (
                 <div className="mt-2 flex items-center gap-2">
                   <div className={`flex-1 h-1 rounded-full overflow-hidden ${p.night ? 'bg-[#334155]' : 'bg-slate-100'}`}>
-                    <div className="h-full bg-sky-400 rounded-full transition-all" style={{ width: `${saveAll.total ? (saveAll.done / saveAll.total) * 100 : 0}%` }} />
+                    {/* 集内的字节进度也算进去，不然一集十几 MB、
+                        整条进度条从头到尾纹丝不动，看着像卡死了 */}
+                    <div
+                      className="h-full bg-sky-400 rounded-full transition-all"
+                      style={{ width: `${saveAll.total ? Math.min(100, ((saveAll.done + (saveEpProgress?.pct || 0)) / saveAll.total) * 100) : 0}%` }}
+                    />
                   </div>
+                  <span className="shrink-0 text-[10px] text-slate-400 tabular-nums">
+                    {saveEpProgress ? `第 ${saveEpProgress.ep} 集 ${Math.round(saveEpProgress.pct * 100)}%` : `${saveAll.done}/${saveAll.total}`}
+                  </span>
                   <button onClick={() => { saveAllCancel.current = true; }} className="shrink-0 text-[10px] text-rose-400">停</button>
                 </div>
               )}
@@ -1565,6 +1584,7 @@ const TheaterApp: React.FC = () => {
         <PlayerStage
           src={blobUrl}
           episode={currentEp}
+          title={picked.title}
           cinema={cinema}
           setCinema={setCinema}
           onEnded={onEnded}
@@ -1576,6 +1596,7 @@ const TheaterApp: React.FC = () => {
           hasNext={nextSt !== 'none'}
           onNext={() => playEpisode(currentEp + 1)}
           onMediaError={onMediaError}
+          onMediaReady={onMediaOk}
           p={p}
         />
 
@@ -1592,20 +1613,6 @@ const TheaterApp: React.FC = () => {
             <Tag tone="mac">在线播，电脑上没这集</Tag>
           ) : (
             <Tag tone="no">这一集还没有</Tag>
-          )}
-
-          {/* 在线播顺手让电脑整部下载 —— 说清楚，别让用户以为手机在偷偷下。
-              6 秒后自己收掉；要停去电脑网页版的下载列表。 */}
-          {autoDlNote && (
-            <div className="w-full mt-1 flex items-center gap-2 rounded-2xl bg-sky-50 px-3 py-2">
-              <DownloadSimple size={13} weight="bold" className="text-sky-500 shrink-0" />
-              <span className="flex-1 text-[10px] leading-relaxed text-sky-700">
-                {autoDlNote}，进度在电脑网页版能看到，不想下了去那边停
-              </span>
-              <button onClick={() => setAutoDlNote('')} className="shrink-0 text-sky-400 active:scale-90">
-                <X size={12} weight="bold" />
-              </button>
-            </div>
           )}
 
           <div className="flex-1" />

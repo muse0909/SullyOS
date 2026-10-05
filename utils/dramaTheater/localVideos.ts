@@ -65,14 +65,30 @@ export function base64ToBlob(b64: string, type = 'video/mp4'): Blob {
   return new Blob([bytes], { type });
 }
 
-async function ensureDir(sub = ''): Promise<void> {
-  const path = sub ? `${ROOT}/${sub}` : ROOT;
-  try {
-    await Filesystem.mkdir({ path, directory: Directory.Data, recursive: true });
-  } catch (e: any) {
-    // 已经存在时插件会报错，这里吞掉
-    if (!String(e?.message || '').toLowerCase().includes('exist')) throw e;
-  }
+/**
+ * 目录**不要**用 Filesystem.mkdir 单独建。
+ *
+ * 2026-10-05 真机定位到的（暮色反馈「每一集都会报个 [object object]」，真机上
+ * 抓到 33 条 console.error，全是 {"message":"Directory exists"}）：
+ *
+ *   1. Filesystem.java:80-85 —— mkdir 一进来就 `if (fileObject.exists()) throw
+ *      new DirectoryExistsException("Directory exists")`，**recursive: true 也一样**
+ *      先判存在。所以一部剧下第 2 集开始，每集都撞一次。
+ *   2. @capacitor/core/dist/index.js:137 —— `const handleError = (err) =>
+ *      win.console.error(err)`。**Capacitor 核心把所有原生 reject 都丢给
+ *      console.error，在你自己 catch 之前就打了**。
+ *   3. context/OSContext.tsx:1034 劫持了 console.error 把报错收进 systemLogs
+ *      → 状态栏红条，调试终端里显示成 [object Object]。
+ *
+ * 也就是说**这个错误 try/catch 消不掉**，只能压根别触发。
+ * 而 FilesystemPlugin.java:110 里 writeFile 传 recursive: true 就会自己
+ * `fileObject.getParentFile().mkdirs()`，目录已存在时走 exists() 分支不报错 ——
+ * 所以父目录交给 writeFile 建就行，这一段整体删掉。
+ */
+function ensureDir(_sub = ''): void {
+  // 故意留空：写文件时 recursive: true 会自己建父目录。
+  // 真去调 Filesystem.mkdir 会每集产生一次 "Directory exists" reject，
+  // 而 Capacitor 核心会把它打上 console.error → 状态栏红条。
 }
 
 /**

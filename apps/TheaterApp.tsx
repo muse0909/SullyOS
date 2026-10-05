@@ -23,7 +23,7 @@ import EpisodeDrawer, { type EpState } from '../components/dramaTheater/EpisodeD
 import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
-  fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode,
+  fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -336,6 +336,8 @@ const TheaterApp: React.FC = () => {
   // 切集/退页必须把它们收掉，不然连接和缓冲一直挂着。
   const onlineAbort = useRef<AbortController | null>(null);
   const onlineCleanup = useRef<(() => void) | null>(null);
+  // 当前在线播放的会话号，切集/退页/播完都要拿它去还回去（不还就撞 429）
+  const onlineSession = useRef('');
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
   const [dlError, setDlError] = useState('');
@@ -527,28 +529,48 @@ const TheaterApp: React.FC = () => {
    * 在线剧（电脑上没下载过的那些）—— 走短剧库的在线播放，边下边播。
    *
    * 之前没这条路，所以剧库首页刷出来的 10455 条剧一集都点不动。
-   * 会话按「剧 + 集」开，切集时把上一条流停掉。
+   *
+   * **会话必须还回去。** 短剧库每开一个 playback/open 占一个并发名额
+   * （ui_playback.go:265，到上限回 429「同时播放数量已达上限」），第一版只
+   * abort 了本地流、没通知短剧库，切几集就攒满名额，之后连开都开不出来。
+   * 电脑上在播也占名额，所以会「电脑一播手机就 429」。
    */
+  const closeOnline = useCallback(() => {
+    onlineAbort.current?.abort();
+    onlineAbort.current = null;
+    onlineCleanup.current?.();
+    onlineCleanup.current = null;
+    if (onlineSession.current) {
+      closeOnlinePlayback(onlineSession.current);
+      onlineSession.current = '';
+    }
+  }, []);
+
   const loadOnline = useCallback(async (dramaId: string, episode: number) => {
     setDlLoading(true);
     setDlError('');
     mediaFallback.current = false;
 
-    // 上一条在线流停掉，否则那个 MediaSource 和连接还挂着不放
-    onlineAbort.current?.abort();
-    onlineAbort.current = null;
-    onlineCleanup.current?.();
-    onlineCleanup.current = null;
+    // 上一条在线流连同它的会话一起收掉
+    closeOnline();
 
     const ac = new AbortController();
     onlineAbort.current = ac;
-    const onlineSession = await openOnlinePlayback(dramaId);
-    if (ac.signal.aborted) return;
-
+    let session = '';
     try {
-      const r = await streamOnlineEpisode(onlineSession.session, episode, ac.signal);
+      const opened = await openOnlinePlayback(dramaId);
+      if (ac.signal.aborted) {
+        // 已经被切掉了，但会话已经开出来了，得还回去，不然白占一个名额
+        closeOnlinePlayback(opened.session);
+        return;
+      }
+      session = opened.session;
+      onlineSession.current = opened.session;
+
+      const r = await streamOnlineEpisode(session, episode, ac.signal);
       if (ac.signal.aborted) {
         r.cleanup();
+        closeOnlinePlayback(session);
         return;
       }
       setSrcKind('online');
@@ -559,13 +581,15 @@ const TheaterApp: React.FC = () => {
         return r.url;
       });
     } catch (e: any) {
+      if (session) closeOnlinePlayback(session);
       if (ac.signal.aborted) return;
+      onlineSession.current = '';
       setDlError(e?.message || '在线播不了这一集');
       setBlobUrl('');
     } finally {
       if (!ac.signal.aborted) setDlLoading(false);
     }
-  }, []);
+  }, [closeOnline]);
 
   // ── 播放 ──
   const loadFromMac = useCallback(async (title: string, episode: number) => {
@@ -649,6 +673,8 @@ const TheaterApp: React.FC = () => {
   const playEpisode = useCallback((n: number, drama?: DramaRef) => {
     const d = drama || picked;
     if (!d) return;
+    // 切剧/切集先把手上的在线会话还回去，别占着短剧库的并发名额
+    closeOnline();
     setPicked(d);
     setDrawer(false);
     setCinema(false);
@@ -661,7 +687,7 @@ const TheaterApp: React.FC = () => {
     else if (st === 'mac') loadFromMac(d.title, n);
     else if (d.id && online) loadOnline(d.id, n);
     else setDlError('这一集电脑上没有，手机上也没有');
-  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal]);
+  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal, closeOnline]);
 
   // ── 观看记录 ──
   const recordWatch = useCallback((force = false) => {
@@ -688,18 +714,13 @@ const TheaterApp: React.FC = () => {
   // 离开剧场（含退到后台被系统回收）时把在线流收掉：
   // 不收的话那条转码长连接会一直挂着，手机上白白耗电耗流量。
   useEffect(() => {
-    const stop = () => {
-      onlineAbort.current?.abort();
-      onlineAbort.current = null;
-      onlineCleanup.current?.();
-      onlineCleanup.current = null;
-    };
+    const stop = () => closeOnline();
     window.addEventListener('pagehide', stop);
     return () => {
       window.removeEventListener('pagehide', stop);
       stop();
     };
-  }, []);
+  }, [closeOnline]);
 
   const onEnded = useCallback(() => {
     recordWatch(true);

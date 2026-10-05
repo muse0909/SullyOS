@@ -211,6 +211,36 @@ export async function openOnlinePlayback(
 }
 
 /**
+ * 把播放会话还回去。
+ *
+ * **不还的话会撞 429。** 短剧库那边每开一个 playback/open 就占一个名额
+ * （internal/app/ui_playback.go:265：`activePlaybackSessionsLocked() >= MaxSessions`
+ * 就回 429「同时播放数量已达上限，请稍后再试」），名额总数是配置的 MaxSessions。
+ * 网页版每次切集/关面板都会发 `{session, action:'close'}`（player.js:216-220），
+ * 我们第一版只 abort 了本地的流、**没告诉短剧库**，切几集就攒满几个名额，
+ * 之后连开都开不出来。电脑上在播也占名额，所以会出现「电脑一播手机就 429」。
+ *
+ * 用 sendBeacon 是为了页面已经在跳走时也能送到；发不出去就拉倒，
+ * 短剧库那边还有闲置超时兜底。
+ */
+export function closeOnlinePlayback(session: string, progress?: number): void {
+  if (!session) return;
+  const base = getRelayAddr();
+  if (!base) return;
+  const body = JSON.stringify({ session, action: 'close', ...(progress ? { progress } : {}) });
+  const url = `${base}/api/ui/playback/control`;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+      return;
+    }
+  } catch { /* 落到下面的 fetch */ }
+  try {
+    void fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
+  } catch { /* 还不回去就算了，有闲置超时兜底 */ }
+}
+
+/**
  * 拉一集的在线流，边下边喂给播放器。
  *
  * 跟 fetchVideoBytes 的区别是**不整集下完再播**：在线流是转码出来的长连接

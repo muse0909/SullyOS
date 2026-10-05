@@ -11,7 +11,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, SkipForward, ArrowCounterClockwise,
+  Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, SkipForward, ArrowCounterClockwise, Broom,
 } from '@phosphor-icons/react';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
@@ -35,6 +35,8 @@ type Props = {
   loadProgress: number;
   error: string;
   onRetry: () => void;
+  /** 播放位满了：给一个「一次清空所有播放位」的动作（短剧库新加的 closeAll） */
+  onClearAll?: () => void;
   hasNext: boolean;
   onNext: () => void;
   /** 拖完进度条 */
@@ -87,7 +89,7 @@ function saveRatio(title: string | undefined, ratio: number): void {
 
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, error, onRetry, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
+  loading, loadProgress, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -245,13 +247,25 @@ const PlayerStage: React.FC<Props> = ({
         <div className="absolute inset-0 flex items-center justify-center px-6">
           <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl max-w-[85%]">
             <div className="text-[13px] font-bold text-slate-700 text-center leading-relaxed">{error}</div>
-            <button
-              onClick={onRetry}
-              className="rounded-full bg-sky-100 px-5 py-1.5 text-[12px] font-bold text-sky-700 active:scale-95 flex items-center gap-1.5"
-            >
-              <ArrowCounterClockwise size={13} weight="bold" />
-              重试
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onRetry}
+                className="rounded-full bg-sky-100 px-5 py-1.5 text-[12px] font-bold text-sky-700 active:scale-95 flex items-center gap-1.5"
+              >
+                <ArrowCounterClockwise size={13} weight="bold" />
+                重试
+              </button>
+              {/* 播放位满的时候，把「一次清空」摆出来，别让人干等 */}
+              {onClearAll && (
+                <button
+                  onClick={onClearAll}
+                  className="rounded-full bg-rose-100 px-5 py-1.5 text-[12px] font-bold text-rose-600 active:scale-95 flex items-center gap-1.5"
+                >
+                  <Broom size={13} weight="bold" />
+                  清空播放位
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -24,7 +24,7 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
-  reclaimStaleSessions, localVideoUrl,
+  reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, PLAYBACK_BUSY_MSG,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -342,6 +342,8 @@ const TheaterApp: React.FC = () => {
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
   const [dlError, setDlError] = useState('');
+  /** 是不是「播放位满了」这种堵死型错误 —— 只有这种才给一键清空的入口 */
+  const [busyStall, setBusyStall] = useState(false);
   /** 正在下第几集、到百分之几（原生下载报的，粒度到集） */
   const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
   const [cinema, setCinema] = useState(false);
@@ -567,6 +569,7 @@ const TheaterApp: React.FC = () => {
   const loadOnline = useCallback(async (dramaId: string, episode: number) => {
     setDlLoading(true);
     setDlError('');
+    setBusyStall(false);
     mediaFallback.current = false;
 
     // 上一条在线流连同它的会话一起收掉
@@ -603,11 +606,33 @@ const TheaterApp: React.FC = () => {
       if (ac.signal.aborted) return;
       onlineSession.current = '';
       setDlError(e?.message || '在线播不了这一集');
+      // 只有「播放位满了」才给一键清空的入口。别的错误给也没用。
+      setBusyStall(String(e?.message || '').includes('播放位满了'));
       setBlobUrl('');
     } finally {
       if (!ac.signal.aborted) setDlLoading(false);
     }
   }, [closeOnline, picked?.title]);
+
+  /**
+   * 「清空播放位」→ 再重试一次当前这一集。
+   *
+   * 名额只有 4 个且是全机共享的（电脑网页版在播也占一个），任何一个「忘了关的」
+   * 就能把手机堵死。短剧库 2026-10-05 加了 `{"action":"closeAll"}`，这里接上。
+   *
+   * 只在用户点了之后才清 —— 会把电脑网页版正在看的也一起断掉，
+   * 自动清等于擅自替用户关别人的播放。
+   */
+  const clearStallsAndRetry = useCallback(async () => {
+    setBusyStall(false);
+    const n = await clearAllOnlinePlayback();
+    if (n <= 0) {
+      addToast('清空播放位没成功，先看看电脑上短剧库是不是开着', 'error');
+      return;
+    }
+    addToast(`清掉了 ${n} 个占着的播放位，正在重试`, 'info');
+    if (picked?.id) loadOnline(picked.id, currentEp);
+  }, [loadOnline, addToast, picked?.id, currentEp]);
 
   // ── 播放 ──
   const loadFromMac = useCallback(async (title: string, episode: number) => {
@@ -1593,6 +1618,7 @@ const TheaterApp: React.FC = () => {
           loadProgress={dlProgress}
           error={dlError}
           onRetry={() => (st === 'phone' ? loadFromPhone(picked.title, currentEp) : loadFromMac(picked.title, currentEp))}
+          onClearAll={busyStall ? clearStallsAndRetry : undefined}
           hasNext={nextSt !== 'none'}
           onNext={() => playEpisode(currentEp + 1)}
           onMediaError={onMediaError}

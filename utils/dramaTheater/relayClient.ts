@@ -280,7 +280,31 @@ export async function openOnlinePlayback(
  * 没有任何落盘，所以重启即清零。
  */
 export const PLAYBACK_BUSY_MSG =
-  '电脑上的播放位满了。等 10 分钟自动清，或者把短剧库关掉重开一下就立刻腾出来（正在看的话先关掉网页版那个剧）。';
+  '电脑上的播放位满了。等一会儿它自己会清，或者点下面的按钮一次清空所有播放位。';
+
+/**
+ * 把电脑上**所有**播放位一次清空（短剧库 2026-10-05 新加的 action）。
+ *
+ * 为什么需要：名额只有 4 个，任何一个「忘了关的」就能把所有人堵死（429），
+ * 而用户既看不到有几个挂着、也没有别的办法清 —— 原来唯一的出路是重启短剧库。
+ * 这个接口是 2026-10-05 麦麦给短剧库加的，实测 `{"closed":4,"ok":true}` 生效。
+ *
+ * ⚠️ 会把**别人正在看的也一起断掉**（电脑网页版也在共用这 4 个名额）。
+ * 所以只在「确实是 429、且用户主动点了」的时候才调，不能自动调。
+ */
+export function clearAllOnlinePlayback(): Promise<number> {
+  const base = getRelayAddr();
+  if (!base) return Promise.resolve(0);
+  return fetch(`${base}/api/ui/playback/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'closeAll' }),
+    cache: 'no-store',
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => Number(j?.closed || 0))
+    .catch(() => 0);
+}
 
 /**
  * 把播放会话还回去。

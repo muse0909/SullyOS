@@ -20,7 +20,6 @@ import { Capacitor } from '@capacitor/core';
 
 const ROOT = 'theater/phone';
 const INDEX = 'theater/phone/index.json';
-const BOOT_KEY = 'theater_phone_booted';
 
 export type PhoneEpisode = {
   episode: number;
@@ -93,32 +92,35 @@ function epPath(key: string, episode: number): string {
 let indexReady: Promise<void> | null = null;
 
 /**
- * 第一次进来先把索引文件建出来。
+ * 第一次进来先把索引文件建出来，而且以后每次都确认它还在。
  *
- * 不能靠「先 readFile 读一下，读不到就当空」来探文件在不在 ——
- * Capacitor 的 Filesystem 插件读不到文件时会自己 console.error 一条
- * {message: "File does not exist"}，而 app 那边（context/OSContext.tsx:1034）
- * 劫持了 console.error 把所有报错收进 systemLogs，状态栏就会挂一个红条
- * 「SYSTEM ERROR」。真机 10-05 抓到的就是这条：剧场一打开必红。
+ * 为什么不能直接 readFile 读一下、读不到就当空：
+ * Capacitor 的 Filesystem 插件读不到文件时走的是
+ *   call.reject("File does not exist", ex)   （FilesystemPlugin.java:72）
+ * 这个 reject 会一路冒到页面的 console.error，而 app 那边
+ * （context/OSContext.tsx:1034）劫持了 console.error 把报错全收进 systemLogs，
+ * 状态栏就会挂一个红条「SYSTEM ERROR」。真机 10-05 抓到的就是这条。
  *
- * 所以这里用 localStorage 记一个「已经初始化过」，第一次直接把索引写出来，
- * 之后 readIndex 读的一定读得到，一次报错都不会有。
+ * 所以改成：先 mkdir（建目录，不存在才建，存在就忽略），再 readdir 列文件。
+ * 这两个调用都不会因为「东西不在」而报错，从根上不产生噪音。
+ * 而且是自愈的 —— 哪怕索引文件被系统清理掉了、或者备份还原只回来一半，
+ * 下次进来发现没有就补一个空的，不用靠 localStorage 那种会对不上账的标记。
  */
 function ensureIndex(): Promise<void> {
   if (!indexReady) {
     indexReady = (async () => {
-      let booted = false;
-      try { booted = localStorage.getItem(BOOT_KEY) === '1'; } catch {}
-      if (booted) return;
       try {
         await ensureDir();
-        await Filesystem.writeFile({
-          path: INDEX,
-          data: JSON.stringify([]),
-          directory: Directory.Data,
-          encoding: Encoding.UTF8,
-        });
-        localStorage.setItem(BOOT_KEY, '1');
+        const listing = await Filesystem.readdir({ path: ROOT, directory: Directory.Data });
+        const has = (listing?.files || []).some((f: any) => f?.name === 'index.json');
+        if (!has) {
+          await Filesystem.writeFile({
+            path: INDEX,
+            data: JSON.stringify([]),
+            directory: Directory.Data,
+            encoding: Encoding.UTF8,
+          });
+        }
       } catch {
         // 建不出来就让下面的 readIndex 自己兜底
       }

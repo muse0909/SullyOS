@@ -360,8 +360,42 @@ export async function streamOnlineEpisode(
   const resp = await fetch(url, { cache: 'no-store', signal });
   if (!resp.ok || !resp.body) throw new Error(`在线播放失败 HTTP ${resp.status}`);
 
-  // 短剧库在响应头里直接给了 mime（实测 video/mp4; codecs="avc1..."），照抄最准
-  const mime = resp.headers.get('X-Playback-Mime') || 'video/mp4';
+  /**
+   * 挑一个这台设备**真能播**的编码，写死一个值是不行的。
+   *
+   * 真机 23:5x 踩的：原来兜底是裸的 `video/mp4`，结果 vivo 那台机器直接
+   *   NotSupportedError: The type provided ('video/mp4') is unsupported
+   * 整个在线剧一个都放不出来（而下载到手机的剧走整集文件、不经过这里，所以照常能播，
+   * 现象就是「下载好的能看、在线的一个不行」）。
+   *
+   * 原因是 `MediaSource.addSourceBuffer` 对**不带 codecs 的 video/mp4** 相当挑剔，
+   * 同一个视频在 iOS/桌面 Chrome 上没事、在部分安卓 WebView 上直接拒收。
+   * 那台机器实测：
+   *   video/mp4                              → 不支持
+   *   video/mp4; codecs="avc1.42C01F, ..."   → 支持   （Baseline）
+   *   video/mp4; codecs="avc1.64001F, ..."   → 支持   （High）
+   *
+   * 短剧库自己也是这个口径（`ui_playback.go:18` 的 playbackMIME 就是 Baseline 那个）。
+   * 顺序上先信短剧库给的头（它知道自己转成了什么），读不到再从候选里挑设备支持的。
+   */
+  const candidates = [
+    resp.headers.get('X-Playback-MIME') || resp.headers.get('X-Playback-Mime') || '',
+    'video/mp4; codecs="avc1.42C01F, mp4a.40.2"',
+    'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
+  ].filter(Boolean);
+
+  let mime = '';
+  for (const c of candidates) {
+    if (MediaSource.isTypeSupported(c)) { mime = c; break; }
+  }
+  if (!mime) {
+    // 到这一步就别让 addSourceBuffer 去抛那个天书般的 NotSupportedError 了，
+    // 说人话，并且**把真凶告诉他**：这台设备的内核扛不住在线边下边播。
+    throw new Error(
+      '这台手机的内核放不了在线边下边播。下载到手机里的剧不受影响，照样能看。'
+    );
+  }
+
   const ms = new MediaSource();
   const msUrl = URL.createObjectURL(ms);
 

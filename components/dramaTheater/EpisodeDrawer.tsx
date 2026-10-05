@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { X, DeviceMobile, HardDrive, CloudSlash, GearSix, Trash, Play } from '@phosphor-icons/react';
+import { X, DeviceMobile, HardDrive, CloudSlash, CloudArrowDown, GearSix, Trash, Play } from '@phosphor-icons/react';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
 export type EpState = 'phone' | 'mac' | 'none';
@@ -24,6 +24,10 @@ type Props = {
   total: number;
   current: number;
   stateOf: (n: number) => EpState;
+  /** 这部剧能不能在线播（电脑上没下、靠电脑边下边播）。
+   *  原来只认「手机里有 / 电脑里有」两种，在线剧的集就被判成「没有」直接禁用，
+   *  点下去一点反应都没有（用户 10-06 实测：选集页点在线剧的任何一集都点不动）。 */
+  canPlayOnline: boolean;
   onPick: (n: number) => void;
   onDeletePhone: (n: number) => void;
   onOpenSettings: () => void;
@@ -32,7 +36,7 @@ type Props = {
 };
 
 const EpisodeDrawer: React.FC<Props> = ({
-  open, onClose, title, total, current, stateOf, onPick, onDeletePhone, onOpenSettings, p, savingAll,
+  open, onClose, title, total, current, stateOf, canPlayOnline, onPick, onDeletePhone, onOpenSettings, p, savingAll,
 }) => {
   if (!open) return null;
 
@@ -63,7 +67,14 @@ const EpisodeDrawer: React.FC<Props> = ({
         <div className={`shrink-0 px-4 py-2.5 flex items-center gap-3 text-[10px] ${p.sub} ${p.line} border-b`}>
           <span className="flex items-center gap-1"><DeviceMobile size={11} className="text-emerald-500" />手机里</span>
           <span className="flex items-center gap-1"><HardDrive size={11} className="text-sky-500" />电脑里</span>
-          <span className="flex items-center gap-1"><CloudSlash size={11} className={p.faint} />都没有</span>
+          {canPlayOnline && (
+            <span className="flex items-center gap-1">
+              <CloudArrowDown size={11} className="text-violet-400" />在线看
+            </span>
+          )}
+          {!canPlayOnline && (
+            <span className="flex items-center gap-1"><CloudSlash size={11} className={p.faint} />都没有</span>
+          )}
         </div>
 
         {/* 集数 */}
@@ -72,7 +83,9 @@ const EpisodeDrawer: React.FC<Props> = ({
             {Array.from({ length: Math.max(total, 1) }, (_, i) => i + 1).map((n) => {
               const st = stateOf(n);
               const cur = n === current;
-              const play = st !== 'none';
+              // 「能不能点」不等于「文件在不在」：电脑上没这集不代表不能看，
+              // 在线路径能播（用户 10-06 反馈：这里原来是灰的、点不动）。
+              const play = st !== 'none' || canPlayOnline;
               return (
                 <div key={n} className="relative">
                   <button
@@ -83,6 +96,9 @@ const EpisodeDrawer: React.FC<Props> = ({
                         ? 'bg-emerald-50 text-emerald-600'
                         : st === 'mac'
                         ? 'bg-sky-50 text-sky-600'
+                        // 文件不在但能在线播：不能还用那个灰 —— 看着像点不动
+                        : canPlayOnline
+                        ? 'bg-violet-50 text-violet-500'
                         : p.night
                         ? 'bg-[#1e293b] text-slate-600'
                         : 'bg-slate-100 text-slate-300'

@@ -1685,6 +1685,7 @@ const TheaterApp: React.FC = () => {
           total={Math.max(epTotal, macByDrama.get(picked.title)?.total || 0)}
           current={currentEp}
           stateOf={(n) => epState(picked.title, n)}
+          canPlayOnline={!!picked.id && online}
           onPick={(n) => playEpisode(n)}
           onDeletePhone={(n) => delPhoneEp(picked, n)}
           onOpenSettings={() => { setDrawer(false); setPage('settings'); }}

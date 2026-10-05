@@ -1736,6 +1736,7 @@ const TheaterApp: React.FC = () => {
           current={currentEp}
           stateOf={(n) => epState(picked.title, n)}
           canPlayOnline={!!picked.id && online}
+          onlineBlockedReason={!online ? '没连上电脑' : !picked.id ? '没认出来这部剧' : ''}
           onPick={(n) => playEpisode(n)}
           onDeletePhone={(n) => delPhoneEp(picked, n)}
           onOpenSettings={() => { setDrawer(false); setPage('settings'); }}

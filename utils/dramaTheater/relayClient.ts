@@ -343,7 +343,21 @@ export function closeOnlinePlayback(session: string, progress?: number): void {
  * 跟 fetchVideoBytes 的区别是**不整集下完再播**：在线流是转码出来的长连接
  * （实测 112 秒那集拉了 40 秒才结束），整集下完再播等于白等。
  * 用 MediaSource 一段段 appendSourceBuffer，播完这一集就把会话释放掉。
+ *
+ * **必须带「首包超时」看门狗。**（2026-10-06 凌晨从短剧库日志查出来的）
+ * 红果的在线源在续读时会挂，日志里全是：
+ *   「媒体续读资源已变化」
+ *   「媒体续读未返回所需字节范围（HTTP 403）」
+ * 短剧库拉不到就**自己一直重试**（同一集 `run` 字段一路涨到 15），
+ * 而它重试期间**那个会话一直占着并发名额** —— 名额总共只有 4 个，
+ * 所以一集坏掉，其他人（和电脑网页版）全被连带，然后满屏 429。
+ *
+ * 源的问题我们改不了（红果 CDN 的事），但「一集坏掉就把名额占死」能防：
+ * 超过 STREAM_FIRST_BYTE_TIMEOUT 还没收到第一个字节，就主动断开并报错，
+ * 外层 catch 会立刻 `closeOnlinePlayback(session)` 把名额还回去。
  */
+const STREAM_FIRST_BYTE_TIMEOUT = 30000;
+
 export async function streamOnlineEpisode(
   session: string,
   episode: number,
@@ -353,12 +367,45 @@ export async function streamOnlineEpisode(
   const base = getRelayAddr();
   if (!base) throw new Error('还没连上电脑');
 
+  // 内部自己的一套 signal：外层切集/退页要能中断它，看门狗也要能中断它，
+  // 而这两者要能区分（「用户切走了」和「这一集拉不下来」给的提示不一样）。
+  const inner = new AbortController();
+  let timedOut = false;
+  let firstByteSeen = false;
+  const relayAbort = () => inner.abort();
+  if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+  signal.addEventListener('abort', relayAbort);
+
+  const watchdog = setTimeout(() => {
+    if (!firstByteSeen) {
+      timedOut = true;
+      inner.abort();
+    }
+  }, STREAM_FIRST_BYTE_TIMEOUT);
+  const clearWatchdog = () => {
+    clearTimeout(watchdog);
+    signal.removeEventListener('abort', relayAbort);
+  };
+
   const url =
     `${base}/api/ui/playback/stream?session=${encodeURIComponent(session)}` +
     `&episode=${episode}&start=0&quality=0&version=1&remux=0`;
 
-  const resp = await fetch(url, { cache: 'no-store', signal });
-  if (!resp.ok || !resp.body) throw new Error(`在线播放失败 HTTP ${resp.status}`);
+  let resp: Response;
+  try {
+    resp = await fetch(url, { cache: 'no-store', signal: inner.signal });
+  } catch (e) {
+    clearWatchdog();
+    if (timedOut) throw new Error('电脑那边这一集一直拉不下来（多半是红果源抽风），播放位已经还回去了，换一集试试');
+    throw e;
+  }
+  if (!resp.ok || !resp.body) {
+    clearWatchdog();
+    throw new Error(`在线播放失败 HTTP ${resp.status}`);
+  }
+  // 拿到响应头就认为「开始了」：短剧库转码要时间，那段时间是没有 body 的，
+  // 但会话已经是活的，不该再被看门狗打断。之后再慢也无所谓。
+  clearWatchdog();
 
   /**
    * 挑一个这台设备**真能播**的编码，写死一个值是不行的。
@@ -427,8 +474,10 @@ export async function streamOnlineEpisode(
   })();
 
   const cleanup = () => {
+    try { inner.abort(); } catch {}
     try { resp.body?.cancel(); } catch {}
     try { URL.revokeObjectURL(msUrl); } catch {}
+    clearWatchdog();
   };
 
   return { url: msUrl, mime, cleanup: () => { cleanup(); void done.catch(() => {}); } };

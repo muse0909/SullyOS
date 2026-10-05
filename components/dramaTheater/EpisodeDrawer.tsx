@@ -28,6 +28,9 @@ type Props = {
    *  原来只认「手机里有 / 电脑里有」两种，在线剧的集就被判成「没有」直接禁用，
    *  点下去一点反应都没有（用户 10-06 实测：选集页点在线剧的任何一集都点不动）。 */
   canPlayOnline: boolean;
+  /** 明明能在线播却判成不能的原因，直接写在图例那一行。
+   *  「点不动」最耗时间的就是「不知道为什么点不动」——这一行就是答案。 */
+  onlineBlockedReason?: string;
   onPick: (n: number) => void;
   onDeletePhone: (n: number) => void;
   onOpenSettings: () => void;
@@ -36,7 +39,7 @@ type Props = {
 };
 
 const EpisodeDrawer: React.FC<Props> = ({
-  open, onClose, title, total, current, stateOf, canPlayOnline, onPick, onDeletePhone, onOpenSettings, p, savingAll,
+  open, onClose, title, total, current, stateOf, canPlayOnline, onlineBlockedReason, onPick, onDeletePhone, onOpenSettings, p, savingAll,
 }) => {
   if (!open) return null;
 
@@ -73,7 +76,9 @@ const EpisodeDrawer: React.FC<Props> = ({
             </span>
           )}
           {!canPlayOnline && (
-            <span className="flex items-center gap-1"><CloudSlash size={11} className={p.faint} />都没有</span>
+            <span className="flex items-center gap-1">
+              <CloudSlash size={11} className={p.faint} />{onlineBlockedReason || '都没有'}
+            </span>
           )}
         </div>
 

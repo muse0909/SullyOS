@@ -112,7 +112,63 @@ export function normalizeAddr(input: string): string {
   return s;
 }
 
-// ── 短剧库的数据接口 ──
+/**
+ * 把一集视频整个取回来，交给播放器。
+ *
+ * 为什么不能直接给 <video> 喂电脑上的地址：
+ * App 的页面是 https，电脑上的转发服务是 http。安卓显示内核对「放视频」这条路
+ * 单独加了一道混合内容拦截，**配置文件里的 allowMixedContent 管不到它** ——
+ * 实测 fetch 已经能通（HTTP 200），video 仍然是 type=Media + mixed-content 拦截。
+ *
+ * 所以改成：先用能通的那条路（fetch）把文件整个取回来，
+ * 变成浏览器本地的临时地址再播放。附带好处是这个地址跟页面同源，
+ * 第 3 步往画布上取帧天然干净，不需要额外开跨域。
+ */
+export async function fetchVideoBlobUrl(
+  dramaTitle: string,
+  episode: number,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ url: string; revoke: () => void; size: number }> {
+  const base = getRelayAddr();
+  if (!base) throw new Error('还没连上电脑');
+
+  const src = localVideoUrl(base, dramaTitle, episode);
+  const resp = await fetch(src, { cache: 'no-store' });
+  if (!resp.ok) {
+    let msg = `取视频失败 HTTP ${resp.status}`;
+    try {
+      const j = await resp.json();
+      if (j?.error) msg = j.error;
+    } catch {}
+    throw new Error(msg);
+  }
+
+  const total = Number(resp.headers.get('Content-Length') || 0);
+
+  // 带进度的读取：直接 resp.blob() 的话中途没反馈，进度条会一直卡在 0
+  if (!resp.body || !onProgress) {
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    return { url, revoke: () => URL.revokeObjectURL(url), size: blob.size };
+  }
+
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      loaded += value.length;
+      onProgress(loaded, total);
+    }
+  }
+  const blob = new Blob(chunks as BlobPart[], { type: 'video/mp4' });
+  const url = URL.createObjectURL(blob);
+  return { url, revoke: () => URL.revokeObjectURL(url), size: blob.size };
+}
+
 
 export type RelayDrama = {
   id: string;          // 形如 hongguo:7691205405866724414 —— 不是剧名

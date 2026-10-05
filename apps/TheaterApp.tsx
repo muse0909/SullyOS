@@ -15,7 +15,7 @@ import { ArrowLeft, GearSix, MagnifyingGlass, Play, DownloadSimple, FilmSlate, X
 import { useOS } from '../context/OSContext';
 import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
-  fetchDramas, fetchTasks, searchDramas, queueDownload, fetchEpisodes, localVideoUrl,
+  fetchDramas, fetchTasks, searchDramas, queueDownload, fetchEpisodes, fetchVideoBlobUrl,
   RelayDrama, RelayTask,
 } from '../utils/dramaTheater/relayClient';
 import { saveUploadedVideo, listUploadedVideos, deleteUploadedVideo, UploadedVideo } from '../utils/dramaTheater/localVideos';
@@ -85,6 +85,11 @@ const TheaterApp: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [uploadPlay, setUploadPlay] = useState<UploadedVideo | null>(null);
+  // 电脑上的视频要先整个取回来才能播（安卓显示内核拦 https 页面直连 http 视频）
+  const [blobUrl, setBlobUrl] = useState('');
+  const [dlLoading, setDlLoading] = useState(false);
+  const [dlProgress, setDlProgress] = useState(0);
+  const [dlError, setDlError] = useState('');
 
   // 已下载的集：按剧名分桶，短剧库的目录名就是剧名
   const downloadedByDrama = useMemo(() => {
@@ -196,29 +201,45 @@ const TheaterApp: React.FC = () => {
   };
 
   // ── 播放 ──
+  // 电脑上的剧：先把整集取回浏览器本地再播。原因见 relayClient.fetchVideoBlobUrl 的注释。
+  // 上传到自己手机上的：本来就是本地文件，直接播。
+  const loadVideo = useCallback(async (dramaTitle: string, episode: number) => {
+    setDlLoading(true);
+    setDlError('');
+    setProgress(0);
+    try {
+      const r = await fetchVideoBlobUrl(dramaTitle, episode, (loaded, total) => {
+        setDlProgress(total ? loaded / total : 0);
+      });
+      setBlobUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return r.url;
+      });
+    } catch (e: any) {
+      setDlError(e?.message || '取不到这一集');
+      setBlobUrl('');
+    } finally {
+      setDlLoading(false);
+    }
+  }, []);
+
   const playEpisode = (ep: number) => {
     if (!picked) return;
     setUploadPlay(null);
     setCurrentEp(ep);
     setPage('player');
     setPlaying(false);
-    setProgress(0);
+    loadVideo(picked.title, ep);
   };
 
   const playUpload = (v: UploadedVideo) => {
     setUploadPlay(v);
     setPicked(null);
+    setBlobUrl('');
     setPage('player');
     setPlaying(false);
     setProgress(0);
   };
-
-  // 播放器地址：上传的走本地文件，其余走转发服务
-  const videoSrc = useMemo(() => {
-    if (uploadPlay) return uploadPlay.uri;
-    if (!picked || !addr) return '';
-    return localVideoUrl(addr, picked.title, currentEp);
-  }, [uploadPlay, picked, addr, currentEp]);
 
   // ── 列表数据（三个页签共用）──
   const listItems = useMemo(() => {
@@ -450,17 +471,15 @@ const TheaterApp: React.FC = () => {
         <TopBar title={title} onBack={() => setPage(uploadPlay ? 'list' : 'episodes')} />
 
         {/* 播放器 */}
-        <div className="shrink-0 bg-black">
+        <div className="shrink-0 relative bg-black">
           <video
             ref={videoRef}
-            src={videoSrc}
+            src={uploadPlay ? uploadPlay.uri : blobUrl}
             controls
             playsInline
-            // 麦麦 2026-10-05：必须写 crossOrigin。
-            // 不写的话这个 video 是「不带 CORS 的跨源加载」，第 3 步把它画到 canvas 上会被污染，
-            // getImageData 直接抛 SecurityError，角色就永远看不到画面。
-            // 写成 anonymous 后走 CORS 加载，画布不脏 —— 转发服务那边已经带了 Allow-Origin 头。
-            crossOrigin="anonymous"
+            // 麦麦 2026-10-05：**不能**加 crossOrigin。
+            // 电脑上取的剧已经变成浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
+            // 第 3 步取帧直接能读；一加反而会去要跨域头，而这个地址没有跨域头，视频会直接播不了。
             className="w-full max-h-[42vh] bg-black"
             onTimeUpdate={(e) => {
               const v = e.currentTarget;
@@ -471,6 +490,27 @@ const TheaterApp: React.FC = () => {
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
           />
+          {/* 从电脑取视频要下完才能播，几十兆大概一两秒，给个说法免得以为卡死 */}
+          {dlLoading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90">
+              <div className="text-xs mb-2">正在从电脑取这一集…</div>
+              <div className="w-32 h-1 rounded-full bg-white/20 overflow-hidden">
+                <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${Math.round(dlProgress * 100)}%` }} />
+              </div>
+              <div className="text-[10px] mt-1.5 text-white/50">{Math.round(dlProgress * 100)}%</div>
+            </div>
+          )}
+          {dlError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center">
+              <div className="text-xs">{dlError}</div>
+              <button
+                onClick={() => picked && loadVideo(picked.title, currentEp)}
+                className="mt-3 rounded-full bg-white/20 px-4 py-1.5 text-[11px] active:scale-95"
+              >
+                重试
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 进度条（视频原生 controls 之外的补充信息，第 4 步摘要条挂在这下面）*/}

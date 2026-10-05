@@ -20,6 +20,7 @@ import { Capacitor } from '@capacitor/core';
 
 const ROOT = 'theater/phone';
 const INDEX = 'theater/phone/index.json';
+const BOOT_KEY = 'theater_phone_booted';
 
 export type PhoneEpisode = {
   episode: number;
@@ -89,7 +90,45 @@ function epPath(key: string, episode: number): string {
   return `${ROOT}/${key}/${String(episode).padStart(3, '0')}.mp4`;
 }
 
+let indexReady: Promise<void> | null = null;
+
+/**
+ * 第一次进来先把索引文件建出来。
+ *
+ * 不能靠「先 readFile 读一下，读不到就当空」来探文件在不在 ——
+ * Capacitor 的 Filesystem 插件读不到文件时会自己 console.error 一条
+ * {message: "File does not exist"}，而 app 那边（context/OSContext.tsx:1034）
+ * 劫持了 console.error 把所有报错收进 systemLogs，状态栏就会挂一个红条
+ * 「SYSTEM ERROR」。真机 10-05 抓到的就是这条：剧场一打开必红。
+ *
+ * 所以这里用 localStorage 记一个「已经初始化过」，第一次直接把索引写出来，
+ * 之后 readIndex 读的一定读得到，一次报错都不会有。
+ */
+function ensureIndex(): Promise<void> {
+  if (!indexReady) {
+    indexReady = (async () => {
+      let booted = false;
+      try { booted = localStorage.getItem(BOOT_KEY) === '1'; } catch {}
+      if (booted) return;
+      try {
+        await ensureDir();
+        await Filesystem.writeFile({
+          path: INDEX,
+          data: JSON.stringify([]),
+          directory: Directory.Data,
+          encoding: Encoding.UTF8,
+        });
+        localStorage.setItem(BOOT_KEY, '1');
+      } catch {
+        // 建不出来就让下面的 readIndex 自己兜底
+      }
+    })().catch(() => {});
+  }
+  return indexReady;
+}
+
 async function readIndex(): Promise<PhoneDrama[]> {
+  await ensureIndex();
   try {
     const r = await Filesystem.readFile({ path: INDEX, directory: Directory.Data, encoding: Encoding.UTF8 });
     const list = JSON.parse(r.data as string);

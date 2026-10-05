@@ -1074,8 +1074,12 @@ const TheaterApp: React.FC = () => {
                   <Pill primary tone={p} onClick={() => saveWhole(picked)} disabled={!online || saveAll.busy}>
                     {saveAll.busy ? `存着 ${saveAll.done}/${saveAll.total}` : `整部存到手机（${macOnly.length}）`}
                   </Pill>
-                ) : (
+                ) : macEps.length > 0 ? (
+                  /* 电脑上有的都已在手机 —— 这句只在真缓存过的时候才准 */
                   <Pill tone={p} disabled>电脑上有的都已在手机</Pill>
+                ) : (
+                  /* 电脑上压根没缓存这部，就别装成「已经存好了」 */
+                  <Pill tone={p} disabled>电脑上还没下这部</Pill>
                 )}
                 {phoneEps.length > 0 && (
                   <Pill

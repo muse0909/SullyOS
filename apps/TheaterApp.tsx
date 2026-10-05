@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
-  DeviceMobile, HardDrive, CloudSlash, Bookmark, Moon, Sun, DeviceMobileCamera, Sparkle,
+  DeviceMobile, HardDrive, CloudSlash, Moon, Sun, DeviceMobileCamera, Sparkle,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -23,7 +23,7 @@ import EpisodeDrawer, { type EpState } from '../components/dramaTheater/EpisodeD
 import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
-  fetchCategories, fetchMacWatchHistory, sourceName,
+  fetchMacWatchHistory, sourceName,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -66,7 +66,7 @@ const Pill: React.FC<{
 };
 
 /** 一部剧的引用：电脑上的剧和手机上传的剧都要能选中，字段凑成同一套 */
-type DramaRef = { id: string; title: string; coverUrl?: string; origin: 'mac' | 'upload' };
+type DramaRef = { id: string; title: string; coverUrl?: string; origin: 'mac' | 'upload'; episodeHint?: number };
 
 type Page = 'list' | 'episodes' | 'player' | 'settings';
 type Tab = 'home' | 'mac' | 'phone' | 'watch';
@@ -112,10 +112,12 @@ const TheaterApp: React.FC = () => {
   // ── 剧库首页筛选 ──
   const [srcFilter, setSrcFilter] = useState('');
   const [catFilter, setCatFilter] = useState('');
-  const [cats, setCats] = useState<{ id: string; name: string }[]>([]);
   const [sortKey, setSortKey] = useState('default');
   const [visible, setVisible] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 整部存手机时的「停一下」：这个必须用 ref，state 那个值在循环里是开始时的快照，
+  // 读它永远读不到用户中途点的「停」
+  const saveAllCancel = useRef(false);
 
   // ── 选中的剧 / 集 ──
   const [picked, setPicked] = useState<DramaRef | null>(null);
@@ -265,15 +267,22 @@ const TheaterApp: React.FC = () => {
     setSearchResults([]);
   };
 
-  // 选了站源才拉分类（短剧库要求分类必须带站源）
-  useEffect(() => {
-    if (!srcFilter || !online) { setCats([]); setCatFilter(''); return; }
-    let dead = false;
-    fetchCategories(addr, srcFilter)
-      .then((c) => { if (!dead) { setCats(c); setCatFilter(''); } })
-      .catch(() => { if (!dead) setCats([]); });
-    return () => { dead = true; };
-  }, [srcFilter, online, addr]);
+  // 分类按剧库里的 categoryName 汇总，跟网页版的分类下拉框一个做法
+  // （短剧库 internal/webui/library.js:106-117 就是这么建的）。
+  // 里面混着 'series' / 'video' 这种没映射干净的站源原值，滤掉。
+  const cats = useMemo(() => {
+    const junk = new Set(['series', 'video', 'movie', 'short_play', 'comic_series', 'ai_series']);
+    const map = new Map<string, number>();
+    dramas.forEach((d) => {
+      const c = d.categoryName;
+      if (!c || junk.has(c)) return;
+      map.set(c, (map.get(c) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 14)
+      .map(([name, count]) => ({ name, count }));
+  }, [dramas]);
 
   useEffect(() => { setVisible(PAGE); }, [srcFilter, catFilter, sortKey, tab, searched]);
 
@@ -287,7 +296,11 @@ const TheaterApp: React.FC = () => {
     const guess = Math.max(
       ph?.episodes[ph.episodes.length - 1]?.episode || 0,
       mac?.eps[mac.eps.length - 1] || 0,
-      mac?.total || 0
+      mac?.total || 0,
+      // 剧库列表里的集数先拿来顶着，选集页不用干等一次网络往返。
+      // 红果/罐罐/饭锅这三个站源这个值实测是真的（红果 2631 条里没有一条是 '1'）；
+      // 黄豆 56%、大帝 100% 是 '1'，所以 mapDrama 里已经把 1 当「没给」丢掉了。
+      d.episodeHint || 0
     );
     setEpTotal(guess);
     setCurrentEp(1);
@@ -372,15 +385,23 @@ const TheaterApp: React.FC = () => {
     }
   }, [srcKind, picked, phoneList, currentEp]);
 
-  const playEpisode = useCallback((n: number) => {
-    if (!picked) return;
+  /**
+   * 播第 n 集。
+   * drama 传进来是因为：从「本地剧库」「正在追剧」直接点播放时，
+   * setPicked 要到下一次渲染才生效，这里闭包里的 picked 还是上一部剧，
+   * 直接用就会播错剧。所以谁点的谁把剧名传进来。
+   */
+  const playEpisode = useCallback((n: number, drama?: DramaRef) => {
+    const d = drama || picked;
+    if (!d) return;
+    setPicked(d);
     setDrawer(false);
     setCinema(false);
     setCurrentEp(n);
     setCurDuration(0);
     setPage('player');
-    if (epState(picked.title, n) === 'phone') loadFromPhone(picked.title, n);
-    else loadFromMac(picked.title, n);
+    if (epState(d.title, n) === 'phone') loadFromPhone(d.title, n);
+    else loadFromMac(d.title, n);
   }, [picked, epState, loadFromPhone, loadFromMac]);
 
   // ── 观看记录 ──
@@ -398,10 +419,10 @@ const TheaterApp: React.FC = () => {
       total: epTotal,
       position: Math.round(pos),
       duration: Math.round(dur || curDuration),
-      origin: srcKind === 'phone' ? 'mac' : 'mac',
+      origin: picked.origin === 'upload' ? 'upload' : 'mac',
     });
     setWatch(listWatch());
-  }, [picked, currentEp, epTotal, curDuration, srcKind]);
+  }, [picked, currentEp, epTotal, curDuration]);
 
   const onEnded = useCallback(() => {
     recordWatch(true);
@@ -482,9 +503,10 @@ const TheaterApp: React.FC = () => {
     if (!todo.length) return addToast('电脑上有的集都已经在手机里了', 'info');
 
     setSaveAll({ busy: true, done: 0, total: todo.length, cancel: false });
+    saveAllCancel.current = false;
     let ok = 0;
     for (const ep of todo) {
-      if (saveAll.cancel) break;
+      if (saveAllCancel.current) break;
       try {
         const { blob } = await fetchVideoBytes(d.title, ep);
         await saveEpisodeToPhone({ title: d.title, coverUrl: d.coverUrl, origin: 'mac' }, ep, blob);
@@ -495,6 +517,7 @@ const TheaterApp: React.FC = () => {
       }
     }
     await reloadPhone();
+    saveAllCancel.current = false;
     setSaveAll({ busy: false, done: 0, total: 0, cancel: false });
     if (ok) addToast(`存了 ${ok} 集进手机，存完就跟电脑无关了`, 'success');
   };
@@ -527,13 +550,20 @@ const TheaterApp: React.FC = () => {
   const homeItems = useMemo(() => {
     let list = searched.length ? searchResults : dramas;
     if (srcFilter) list = list.filter((d) => d.source === srcFilter);
-    if (catFilter) list = list.filter((d) => (d as any).genre === catFilter);
+    if (catFilter) list = list.filter((d) => d.categoryName === catFilter);
     const sorted = [...list];
     if (!searched.length) {
-      if (sortKey === 'title') sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+      if (sortKey === 'title') sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
       else if (sortKey === 'newest' || sortKey === 'oldest') {
-        // 剧库列表实测没带上线时间字段，退回按站源 id 倒/正序（红果 id 是雪花号，越大越新）
-        sorted.sort((a, b) => (sortKey === 'newest' ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)));
+        // 剧库实测有真的上线日期（onlineDate: "2026-10-05"，10444 条里 5001 条有）。
+        // 没日期的排最后，别混在有日期的中间看着像刚上线的。
+        sorted.sort((a, b) => {
+          const x = a.onlineDate || '', y = b.onlineDate || '';
+          if (!x && !y) return 0;
+          if (!x) return 1;
+          if (!y) return -1;
+          return sortKey === 'newest' ? (x < y ? 1 : x > y ? -1 : 0) : x < y ? -1 : x > y ? 1 : 0;
+        });
       }
     }
     return sorted;
@@ -735,11 +765,11 @@ const TheaterApp: React.FC = () => {
                     <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-2">
                       {cats.map((c) => (
                         <button
-                          key={c.id || 'all'}
-                          onClick={() => setCatFilter(catFilter === c.id ? '' : c.id)}
-                          className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold ${catFilter === c.id ? p.chipOn : p.chip}`}
+                          key={c.name}
+                          onClick={() => setCatFilter(catFilter === c.name ? '' : c.name)}
+                          className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold ${catFilter === c.name ? p.chipOn : p.chip}`}
                         >
-                          {c.name}
+                          {c.name} {c.count}
                         </button>
                       ))}
                     </div>
@@ -771,7 +801,13 @@ const TheaterApp: React.FC = () => {
                     badge: { tone: 'no' as const, text: d.source ? sourceName(d.source) : '剧' },
                     ref: d,
                   }))}
-                  onOpen={(it) => openEpisodes({ id: it.ref.id, title: it.ref.title, coverUrl: it.ref.coverUrl, origin: 'mac' })}
+                  onOpen={(it) => openEpisodes({
+                    id: it.ref.id,
+                    title: it.ref.title,
+                    coverUrl: it.ref.coverUrl,
+                    origin: 'mac',
+                    episodeHint: it.ref.episodeHint,
+                  })}
                 />
               )}
               {online && visible < homeItems.length && (
@@ -875,7 +911,7 @@ const TheaterApp: React.FC = () => {
                             </p>
                             <div className="flex gap-1.5 mt-2">
                               <button
-                                onClick={() => playEpisode(d.episodes[0]?.episode || 1)}
+                                onClick={() => playEpisode(d.episodes[0]?.episode || 1, { id: '', title: d.title, coverUrl: d.coverUrl, origin: d.origin })}
                                 className="rounded-full bg-sky-500 px-3 py-1 text-[10px] font-bold text-white active:scale-95"
                               >
                                 从第 1 集看
@@ -959,10 +995,7 @@ const TheaterApp: React.FC = () => {
                     return (
                       <div key={w.title} className={`rounded-3xl p-3 flex items-center gap-3 ${p.card}`}>
                         <div
-                          onClick={() => {
-                            setPicked({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' });
-                            openEpisodes({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' });
-                          }}
+                          onClick={() => openEpisodes({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
                           className="shrink-0 w-12 h-16 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer active:scale-95"
                           style={{ background: p.night ? '#0f172a' : '#f1f5f9' }}
                         >
@@ -982,10 +1015,7 @@ const TheaterApp: React.FC = () => {
                           </div>
                         </div>
                         <button
-                          onClick={() => {
-                            setPicked({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' });
-                            playEpisode(w.episode);
-                          }}
+                          onClick={() => playEpisode(w.episode, { id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
                           className="shrink-0 rounded-full bg-sky-500 px-3.5 py-2 text-[11px] font-bold text-white active:scale-95"
                         >
                           接着看
@@ -1065,7 +1095,7 @@ const TheaterApp: React.FC = () => {
                   <div className={`flex-1 h-1 rounded-full overflow-hidden ${p.night ? 'bg-[#334155]' : 'bg-slate-100'}`}>
                     <div className="h-full bg-sky-400 rounded-full transition-all" style={{ width: `${saveAll.total ? (saveAll.done / saveAll.total) * 100 : 0}%` }} />
                   </div>
-                  <button onClick={() => setSaveAll((s) => ({ ...s, cancel: true }))} className="shrink-0 text-[10px] text-rose-400">停</button>
+                  <button onClick={() => { saveAllCancel.current = true; }} className="shrink-0 text-[10px] text-rose-400">停</button>
                 </div>
               )}
             </div>

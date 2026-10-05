@@ -186,6 +186,17 @@ export type RelayDrama = {
   // 剧库里的集数字段（episodeCount / total / episodes）实测值都是 '1'，是假数据，
   // 所以这里根本不带出来。真集数只能问 playback/open 的 episodes 长度。
   source?: string;
+  // ↓ 下面三个是实测真有的（10-05 重新核对过，之前说「集数全是假数据」说宽了）：
+  //   categoryName  网页版的分类下拉框就是拿这个字段建的
+  //                （短剧库源码 internal/webui/library.js:108 `map(categoryName)`，
+  //                  筛选也是 `categoryName(drama) !== channel`，见同文件 99 行）
+  //   onlineDate    "2026-10-05" 这种真日期，10444 条里 5001 条有
+  //   episodeHint   红果/罐罐/饭锅站源这个值是真的（红果 2631 条里 0 条是 '1'），
+  //                但黄豆 56% 是 '1'、大帝 100% 是 '1'，所以只当「先显示着」用，
+  //                最终集数还是 playback/open 说了算
+  categoryName?: string;
+  onlineDate?: string;
+  episodeHint?: number;
 };
 
 export type RelayTask = {
@@ -269,12 +280,17 @@ async function jget<T>(base: string, path: string, timeoutMs = 15000): Promise<T
 }
 
 function mapDrama(d: any): RelayDrama {
+  // episodeCount 和 totalEpisode 都见过，取大的那个；1 视为「没给」不当真
+  const hint = Math.max(Number(d.episodeCount) || 0, Number(d.totalEpisode) || 0);
   return {
     id: d.id,
     title: d.title || d.name || '未命名',
     coverUrl: d.coverUrl || d.cover_url || d.imageUrl || d.image_url || d.cover || d.image,
     intro: d.intro || d.desc || '',
     source: d.source,
+    categoryName: d.categoryName || undefined,
+    onlineDate: d.onlineDate || undefined,
+    episodeHint: hint > 1 ? hint : 0,
   };
 }
 
@@ -307,13 +323,14 @@ export async function fetchDramas(base: string): Promise<DramaSnapshot> {
   };
 }
 
-/** 某个站源下的分类（短剧库要求必须带 source） */
-export async function fetchCategories(base: string, source: string): Promise<{ id: string; name: string }[]> {
-  if (!source) return [];
-  const j = await jget<any>(base, `/api/ui/categories?source=${encodeURIComponent(source)}`, 25000);
-  const list: any[] = Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
-  return list.map((c) => ({ id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') })).filter((c) => c.name);
-}
+/**
+ * 剧库首页的分类不用这个接口。
+ * /api/ui/categories 回的是站源侧的内容类型（真人剧/漫剧/AI剧），
+ * 剧库里没有哪个字段对得上，筛不出东西。
+ * 网页版的分类下拉框是自己按 categoryName 汇总的
+ * （短剧库源码 internal/webui/library.js:106-117 rebuildChannels，
+ *  同文件 99 行按 `categoryName(drama) !== channel` 过滤），App 照抄这个做法。
+ */
 
 /** 电脑上（网页版播放器）看过的剧，合进「正在追剧」用 */
 export async function fetchMacWatchHistory(base: string): Promise<any[]> {

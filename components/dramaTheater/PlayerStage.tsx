@@ -111,7 +111,7 @@ const PlayerStage: React.FC<Props> = ({
   const pct = dur > 0 ? Math.min(100, Math.max(0, (shown / dur) * 100)) : 0;
 
   return (
-    <div className={`shrink-0 relative bg-black transition-all ${cinema ? 'h-[64vh]' : ''}`}>
+    <div className={`shrink-0 relative bg-black transition-all ${cinema ? 'h-[64vh]' : 'h-[42vh]'}`}>
       <video
         ref={videoRef}
         src={src}
@@ -119,7 +119,13 @@ const PlayerStage: React.FC<Props> = ({
         // 麦麦 2026-10-05：**不能**加 crossOrigin。
         // 电脑上取的剧已经变成浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
         // 第 3 步取帧直接能读；一加反而会去要跨域头，而这个地址没有跨域头，视频会直接播不了。
-        className={`w-full bg-black ${cinema ? 'h-full object-contain' : 'max-h-[42vh]'}`}
+        //
+        // h 固定 + object-contain（暮色 10-05：「高度也改成和播放时一样高」）：
+        // 原来写的是 max-h-[42vh]，那只是**上限**。视频元数据没读出来之前它没有
+        // 固有高度，容器就塌成一条细线，等 loadedmetadata 一到又猛地撑开 —— 加载中
+        // 看到的是一条，加载完才是满的，中间还跳一下。
+        // 固定高度 + 画面按比例缩进中间，两种状态高度一模一样。
+        className={`w-full h-full bg-black object-contain ${cinema ? '' : ''}`}
         onClick={toggle}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
@@ -139,27 +145,35 @@ const PlayerStage: React.FC<Props> = ({
         }}
       />
 
-      {/* 从电脑取视频要下完才能播，几十兆大概一两秒，给个说法免得以为卡死 */}
+      {/* 从电脑取视频要下完才能播，几十兆大概一两秒，给个说法免得以为卡死。
+          暮色 10-05 说原来那个「白字 + 一根细进度条」太难看 —— 黑底上一根 4px 的
+          细线看着像坏掉的界面。换成浮在黑底上的一张浅色圆角卡片，跟项目里
+          弹窗/浮层的观感一致。 */}
       {loading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90">
-          <div className="text-xs mb-2">正在从电脑取这一集…</div>
-          <div className="w-32 h-1 rounded-full bg-white/20 overflow-hidden">
-            <div className="h-full bg-white/80 rounded-full transition-all" style={{ width: `${Math.round(loadProgress * 100)}%` }} />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl">
+            <div className="w-9 h-9 rounded-full border-[3px] border-slate-200 border-t-sky-300 animate-spin" />
+            <div className="text-[13px] font-bold text-slate-700">正在从电脑取这一集</div>
+            <div className="w-28 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${Math.max(8, Math.round(loadProgress * 100))}%` }} />
+            </div>
+            <div className="text-[11px] text-slate-400 tabular-nums">{Math.round(loadProgress * 100)}%</div>
           </div>
-          <div className="text-[10px] mt-1.5 text-white/50">{Math.round(loadProgress * 100)}%</div>
         </div>
       )}
 
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center">
-          <div className="text-xs">{error}</div>
-          <button
-            onClick={onRetry}
-            className="mt-3 rounded-full bg-white/20 px-4 py-1.5 text-[11px] active:scale-95 flex items-center gap-1.5"
-          >
-            <ArrowCounterClockwise size={12} />
-            重试
-          </button>
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl max-w-[85%]">
+            <div className="text-[13px] font-bold text-slate-700 text-center leading-relaxed">{error}</div>
+            <button
+              onClick={onRetry}
+              className="rounded-full bg-sky-100 px-5 py-1.5 text-[12px] font-bold text-sky-700 active:scale-95 flex items-center gap-1.5"
+            >
+              <ArrowCounterClockwise size={13} weight="bold" />
+              重试
+            </button>
+          </div>
         </div>
       )}
 

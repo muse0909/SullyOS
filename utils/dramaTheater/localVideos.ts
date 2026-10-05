@@ -164,10 +164,22 @@ export function phoneEpisodeSize(list: PhoneDrama[], title: string, episode: num
   return d?.episodes.find((e) => e.episode === episode)?.size || 0;
 }
 
-/** 拿这一集在手机里的真实文件地址，交给播放器直接播（断网也能看） */
+/**
+ * 拿这一集在手机里的地址，交给播放器直接播（断网也能看）。
+ *
+ * **必须过 Capacitor.convertFileSrc**，不能把 Filesystem.getUri 给的 file:// 直接用。
+ * 真机 10-05 踩的：图上写着「这个本地地址播不了，换个方式再试…」，兜底也失败。
+ * 原因是本项目的 androidScheme 是 https（capacitor.config.json），WebView 的
+ * origin 被设成 https://localhost，页面里直接塞 file:// 属于跨源，内核不放行。
+ * convertFileSrc 就是官方给这个场景的转换：把本地路径翻译成 WebView 认得的地址。
+ * 它是同步的，不碰磁盘，也不会触发任何原生 reject（不产生红条）。
+ */
 export async function phoneEpisodeUri(key: string, episode: number): Promise<string> {
-  const r = await Filesystem.getUri({ path: epPath(key, episode), directory: Directory.Data });
-  return r.uri;
+  const path = epPath(key, episode);
+  if (!Capacitor.isNativePlatform()) return path;
+  // getUri 拿的是标准的 files/data 绝对路径，convertFileSrc 要的就是这个
+  const r = await Filesystem.getUri({ path, directory: Directory.Data });
+  return Capacitor.convertFileSrc(r.uri);
 }
 
 // ── 写入 ──

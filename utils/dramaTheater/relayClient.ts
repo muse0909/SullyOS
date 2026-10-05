@@ -180,6 +180,60 @@ export async function fetchVideoBlobUrl(
 // ── 在线剧（电脑上没下过的那些）─────────────────────────────
 
 /**
+ * 记住开过的会话，下次进来先把旧的还回去。
+ *
+ * 为什么需要：短剧库的并发名额默认只有 4 个（playback_resources.go:39
+ * `MaxSessions: 4`），闲置 **10 分钟**才回收（ui_playback.go:17
+ * `playbackIdleTimeout = 10 * time.Minute`）。正常退出会 close 掉，
+ * 但 app 被系统杀掉、来不及 close 的那些就赖在那儿占名额了 ——
+ * 表现就是「点首页的剧一直 429」，而等 10 分钟自己就好了。
+ *
+ * 所以本地留一份开过的会话号，每次进剧场先把没关的全关一遍。
+ */
+const OPEN_SESSIONS_KEY = 'theater_open_sessions';
+
+function readOpenSessions(): string[] {
+  try {
+    const raw = localStorage.getItem(OPEN_SESSIONS_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((s) => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSession(session: string): void {
+  try {
+    const list = readOpenSessions();
+    if (!list.includes(session)) {
+      list.push(session);
+      // 只留最近 8 个，别让这个 key 无限长
+      localStorage.setItem(OPEN_SESSIONS_KEY, JSON.stringify(list.slice(-8)));
+    }
+  } catch { /* 存不下就靠 10 分钟超时兜底 */ }
+}
+
+function forgetSession(session: string): void {
+  try {
+    localStorage.setItem(
+      OPEN_SESSIONS_KEY,
+      JSON.stringify(readOpenSessions().filter((s) => s !== session))
+    );
+  } catch { /* 忽略 */ }
+}
+
+/** 把之前开着没关的会话全还回去。进剧场时调一次。 */
+export function reclaimStaleSessions(): number {
+  const stale = readOpenSessions();
+  stale.forEach((s) => {
+    closeOnlinePlayback(s);
+    forgetSession(s);
+  });
+  return stale.length;
+}
+
+/**
  * 开一个播放会话。
  *
  * 电脑上没下载的剧（剧库首页那 10455 条里绝大多数）之前在剧场里点不动：
@@ -201,13 +255,69 @@ export async function openOnlinePlayback(
     body: JSON.stringify({ dramaId }),
     cache: 'no-store',
   });
-  if (!resp.ok) throw new Error(`取播放地址失败 HTTP ${resp.status}`);
+  if (!resp.ok) {
+    // 429 是这个接口唯一会「必然重试无效」的错误，单独说清楚该怎么办。
+    // 别只丢一个 HTTP 429 给用户 —— 他不知道是网络问题还是自己操作问题。
+    if (resp.status === 429) throw new Error(PLAYBACK_BUSY_MSG);
+    throw new Error(`取播放地址失败 HTTP ${resp.status}`);
+  }
   const j = await resp.json();
   if (j?.error) throw new Error(j.error);
   const session = String(j?.session || '');
   if (!session) throw new Error('短剧库没给播放会话');
+  rememberSession(session);
   const total = Number(j?.episodes?.length || 0);
   return { session, total };
+}
+
+/**
+ * 429 时给用户看的话。
+ *
+ * 名额总数是 4（playback_resources.go:39 `MaxSessions: 4`），电脑网页版在播
+ * 也占一个，所以「电脑在播 + 手机在播 + 之前崩掉留下的」很容易凑满。
+ * 占用 10 分钟才自动回收（ui_playback.go:17），但直接重启短剧库进程是**立刻**清的 ——
+ * 会话表 `app.playbacks` 是纯内存的（emby_playback.go:12 遍历的就是那个 map），
+ * 没有任何落盘，所以重启即清零。
+ */
+export const PLAYBACK_BUSY_MSG =
+  '电脑上的播放位满了。等 10 分钟自动清，或者把短剧库关掉重开一下就立刻腾出来（正在看的话先关掉网页版那个剧）。';
+
+/**
+ * 让电脑在后台把这部剧下下来（暮色 10-05：「点播放时就开始自动在电脑端下载」）。
+ *
+ * **只能用整部下载接口。** 短剧库只提供 `POST /api/ui/download`（ui_server.go:1111
+ * → enqueueDramasAsync），入参是 drama id 列表，粒度就是**整部**，
+ * 全项目没有任何单集下载的路由（`mux.HandleFunc("/api/ui/...")` 全部列过一遍确认过）。
+ * 网页版的「边播边下」不是独立下载，而是 `playback/prepare` —— 但那个接口
+ * 要求会话是「合集播放」模式：`input.Episode > len(session.downloadIDs)` 就回 400
+ * （ui_playback_collection.go:180），而按 dramaId 开的会话 `downloadIDs` 是 nil
+ * （ui_playback.go:273，只有走 taskId 的合集分支才会填），所以对在线剧**必然 400**。
+ *
+ * 这个函数是**故意 fire-and-forget 的**：它触发的是电脑上的下载任务，可能慢、
+ * 可能失败、可能电脑磁盘满了。播放本身完全不需要等它，所以任何一条岔路
+ * （没连电脑 / 电脑返回 4xx）都只静默吞掉，不往用户面前抛 —— 一个正在播的
+ * 视频突然冒红字，比「没顺便下下来」糟糕得多。
+ *
+ * 要停就去电脑网页版的下载列表停（那边本来就能看到并取消）。
+ */
+export function requestComputerDownload(dramaId: string): boolean {
+  const base = getRelayAddr();
+  if (!base || !dramaId) return false;
+  try {
+    void fetch(`${base}/api/ui/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // quality 传 0 = 用短剧库自己挑的最高可用清晰度（download_quality.go:29）
+      // 多传任何字段都会被 DisallowUnknownFields 打回 400，所以这里只能给这两个。
+      body: JSON.stringify({ ids: [dramaId], quality: 0 }),
+      cache: 'no-store',
+    }).catch(() => {
+      /* 顺手的事，失败不打扰用户 */
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -227,6 +337,7 @@ export function closeOnlinePlayback(session: string, progress?: number): void {
   if (!session) return;
   const base = getRelayAddr();
   if (!base) return;
+  forgetSession(session);
   const body = JSON.stringify({ session, action: 'close', ...(progress ? { progress } : {}) });
   const url = `${base}/api/ui/playback/control`;
   try {

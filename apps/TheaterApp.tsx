@@ -15,6 +15,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
   DeviceMobile, HardDrive, CloudSlash, Moon, Sun, DeviceMobileCamera, Sparkle,
+  DownloadSimple,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -24,6 +25,7 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
+  requestComputerDownload, reclaimStaleSessions,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -341,6 +343,14 @@ const TheaterApp: React.FC = () => {
   const [dlLoading, setDlLoading] = useState(false);
   const [dlProgress, setDlProgress] = useState(0);
   const [dlError, setDlError] = useState('');
+  /**
+   * 「已让电脑开始下载这部剧」的一次性提示。
+   *
+   * 在线播放顺手会让电脑整部下载（用户 10-05 要的），但这发生在手机上、
+   * 进度显示在电脑上 —— 不说一句的话，用户会以为是手机在偷偷下东西。
+   * 说清楚 + 告诉他要去哪看、怎么停，比偷偷下好。
+   */
+  const [autoDlNote, setAutoDlNote] = useState('');
   const [cinema, setCinema] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
@@ -414,6 +424,21 @@ const TheaterApp: React.FC = () => {
     }
     setLoading(true);
     setLoadError('');
+
+    /**
+     * 先把上次开着没关的会话还回去，再拉数据。
+     *
+     * 短剧库的并发名额只有 4 个（playback_resources.go:39），而且闲置
+     * **10 分钟**才回收（ui_playback.go:17）。正常退出会 close 掉，但 app
+     * 被系统杀掉、来不及 close 的就赖在那儿了 —— 表现是「点首页的剧一直 429」，
+     * 而干等十分钟自己就好了。
+     *
+     * 所以本地留一份开过的会话号（relayClient 的 theater_open_sessions），
+     * 每次进剧场先把它们全关一遍。必须在 pingRelay 之后做：关会话要发请求给
+     * 电脑，没连上电脑时发不出去，等下次进来再说。
+     */
+    reclaimStaleSessions();
+
     try {
       const [snap, ts, mw] = await Promise.all([
         fetchDramas(addr),
@@ -435,6 +460,13 @@ const TheaterApp: React.FC = () => {
   }, [addr, reloadPhone]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // 「已让电脑开始下载」这句提示 6 秒后自己收掉，别一直挂在播放页挡着内容
+  useEffect(() => {
+    if (!autoDlNote) return;
+    const t = setTimeout(() => setAutoDlNote(''), 6000);
+    return () => clearTimeout(t);
+  }, [autoDlNote]);
 
   const saveAddr = async (input: string) => {
     const clean = normalizeAddr(input);
@@ -580,6 +612,14 @@ const TheaterApp: React.FC = () => {
         if (old) URL.revokeObjectURL(old);
         return r.url;
       });
+
+      // 顺手让电脑把这部剧下下来（暮色 10-05 提的）。放在流起之后调：
+      // 确认播得起来了再说下载的事，万一这一集根本放不出来，也不用白下。
+      // 整部下而不是只下这一集 —— 短剧库只有整部下载的接口（详见
+      // relayClient.requestComputerDownload 的注释）。要停就去电脑网页版停。
+      if (requestComputerDownload(dramaId)) {
+        setAutoDlNote(`已让电脑开始下载《${picked?.title || '这部剧'}》`);
+      }
     } catch (e: any) {
       if (session) closeOnlinePlayback(session);
       if (ac.signal.aborted) return;
@@ -589,7 +629,7 @@ const TheaterApp: React.FC = () => {
     } finally {
       if (!ac.signal.aborted) setDlLoading(false);
     }
-  }, [closeOnline]);
+  }, [closeOnline, picked?.title]);
 
   // ── 播放 ──
   const loadFromMac = useCallback(async (title: string, episode: number) => {
@@ -638,28 +678,22 @@ const TheaterApp: React.FC = () => {
     }
   }, [phoneList]);
 
-  const onMediaError = useCallback(async () => {
-    if (mediaFallback.current || srcKind !== 'phone' || !picked) return;
-    mediaFallback.current = true;
-    setDlError('这个本地地址播不了，换个方式再试…');
-    try {
-      const ph = findPhoneDrama(phoneList, picked.title);
-      if (!ph) throw new Error('手机里没有这部剧');
-      const r = await Filesystem.readFile({
-        path: `theater/phone/${ph.key}/${String(currentEp).padStart(3, '0')}.mp4`,
-        directory: Directory.Data,
-      });
-      const blob = base64ToBlob(String(r.data));
-      const url = URL.createObjectURL(blob);
-      setBlobUrl((old) => {
-        if (old) URL.revokeObjectURL(old);
-        return url;
-      });
-      setDlError('');
-    } catch (e: any) {
-      setDlError(e?.message || '这一集在手机里读不出来');
-    }
-  }, [srcKind, picked, phoneList, currentEp]);
+  /**
+   * 手机里的文件还是放不出来时的最后一手。
+   *
+   * 原来这里兜底是「整集读成 base64 → atob → Blob」（真机 10-05 见过它失败）：
+   * 一集 11.9 MB，base64 后是 ~16 MB 字符串，atob 要一个字符一个字符解，
+   * 在安卓 WebView 上不是卡死就是直接失败，用户看到的就是那条
+   * 「换个方式再试…」一直挂着。现在 phoneEpisodeUri 走 Capacitor.convertFileSrc，
+   * 正常情况下根本进不到这里。
+   *
+   * 所以这里不再做那套重活，只做一件事：说清楚为什么不行 + 给个能点的重试，
+   * 并且**不再自己抛错**（原生的 reject 会被 Capacitor 打上 console.error → 红条）。
+   */
+  const onMediaError = useCallback(() => {
+    if (srcKind !== 'phone') return;
+    setDlError('这一集在手机里读不出来，重新下过一次可能就好');
+  }, [srcKind]);
 
   /**
    * 播第 n 集。
@@ -1558,6 +1592,20 @@ const TheaterApp: React.FC = () => {
             <Tag tone="mac">在线播，电脑上没这集</Tag>
           ) : (
             <Tag tone="no">这一集还没有</Tag>
+          )}
+
+          {/* 在线播顺手让电脑整部下载 —— 说清楚，别让用户以为手机在偷偷下。
+              6 秒后自己收掉；要停去电脑网页版的下载列表。 */}
+          {autoDlNote && (
+            <div className="w-full mt-1 flex items-center gap-2 rounded-2xl bg-sky-50 px-3 py-2">
+              <DownloadSimple size={13} weight="bold" className="text-sky-500 shrink-0" />
+              <span className="flex-1 text-[10px] leading-relaxed text-sky-700">
+                {autoDlNote}，进度在电脑网页版能看到，不想下了去那边停
+              </span>
+              <button onClick={() => setAutoDlNote('')} className="shrink-0 text-sky-400 active:scale-90">
+                <X size={12} weight="bold" />
+              </button>
+            </div>
           )}
 
           <div className="flex-1" />

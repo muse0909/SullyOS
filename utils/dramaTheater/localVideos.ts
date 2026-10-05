@@ -197,12 +197,24 @@ export async function phoneEpisodeUri(key: string, episode: number): Promise<str
  *
  * 拆开看就是：一集 11.9 MB → base64 变 ~16 MB 字符串 → 交给原生写文件时，
  * Java 侧 StringBuilder 再把它拼一遍（UTF-16 一次 74 MB 分配）→ WebView 的
- * 256 MB 上限直接穿顶。**一集就炸，跟大小基本无关，是架构问题。**
+ * 256 MB 上限穿顶。日志里「只剩 24 MB 可用、已占 250 MB」说明**不是单集太大，
+ * 是内存里本来还堆着别的东西**（没释放的临时地址、在线流…）——这条路迟早炸，
+ * 攒到哪一集就随机在哪一集炸。之前整部能下完只是当时还扛得住。
  *
- * `Filesystem.downloadFile`（Capacitor 5.1+）是原生自己发 HTTP 请求、
- * 自己写文件，JS 这边只递一个 URL 字符串过去，内存占用是常数级。
- * `recursive: true` 顺带把父目录建好（`FilesystemPlugin.java:104-114` 内部会
- * `getParentFile().mkdirs()`），所以也不用先 mkdir —— 那个会因目录已存在而 reject。
+ * `Filesystem.downloadFile` 是原生自己发 HTTP 请求、自己写文件，
+ * JS 这边只递一个 URL 字符串过去，内存占用是常数级。
+ *
+ * ⚠️ **它不会建父目录。** `Filesystem.java:349` 直接 `getFileObject` 就开写，
+ * 目录不存在就是 `open ENOENT`（真机 23:23 全军覆没就是这个）。
+ * 只有 `writeFile` 会建（`FilesystemPlugin.java:111`：
+ * `recursive && fileObject.getParentFile().mkdirs()`）。
+ * 而 `mkdir` 不能拿来预建 —— 目录已存在时它**照样 reject**
+ * （`Filesystem.java:80-85`），而任何原生 reject 都会被 Capacitor 打上
+ * console.error（`@capacitor/core/dist/index.js:137`）→ 状态栏红条。
+ *
+ * 所以这里的做法是：**先用 writeFile 写一个 0 字节占位文件把目录顶出来**
+ * （它带 recursive，会把 `theater/phone/<剧名>/` 一路建好），
+ * 下完再把占位文件删掉。全程不报错、不占内存。
  */
 export async function downloadEpisodeToPhone(
   url: string,
@@ -214,6 +226,16 @@ export async function downloadEpisodeToPhone(
 
   const key = dramaKey(meta.title);
   const rel = epPath(key, episode);
+  const keeper = `${ROOT}/${key}/.keep`;
+
+  // 把目录顶出来。data 传空串 → 走 Base64.decode("") → 0 字节文件，
+  // 但 `recursive: true` 已经把整条父目录链建好了，那才是我们要的。
+  await Filesystem.writeFile({
+    path: keeper,
+    data: '',
+    directory: Directory.Data,
+    recursive: true,
+  });
 
   let handle: { remove: () => Promise<void> } | null = null;
   // 原生只报「已下字节 / 总字节」，下完最后一个事件的 contentLength 就是文件真实大小。
@@ -234,10 +256,15 @@ export async function downloadEpisodeToPhone(
       url,
       path: rel,
       directory: Directory.Data,
+      // 这个参数对 downloadFile **无效**（它压根不建目录），
+      // 留着只是防止以后 Capacitor 改了实现。目录靠上面那个占位文件。
       recursive: true,
     });
   } finally {
     if (handle) await handle.remove().catch(() => {});
+    // 占位文件收掉。它是我们自己刚建的，deleteFile 一定成功；
+    // 万一失败就留着（0 字节，无害），也绝不在这里抛 —— 视频已经下好了。
+    Filesystem.deleteFile({ path: keeper, directory: Directory.Data }).catch(() => {});
   }
 
   const entry: PhoneEpisode = { episode, size: lastTotal, savedAt: Date.now() };

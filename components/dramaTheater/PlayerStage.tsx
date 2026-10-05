@@ -352,18 +352,6 @@ const PlayerStage: React.FC<Props> = ({
         </div>
       </div>
       )}
-
-      {/* 控制条藏着的时候给一下提示：手指点一下画面它会出来，
-          不然用户看着一个「没有按钮」的画面不知道还能不能操作。 */}
-      {!loading && !barOn && !error && (
-        <button
-          onClick={() => { setBarOn(true); scheduleHide(); }}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-black/45 px-3.5 py-1.5 text-white/85 text-[11px] active:scale-95"
-        >
-          <Play size={11} weight="fill" />
-          点一下出控制条
-        </button>
-      )}
     </div>
   );
 };

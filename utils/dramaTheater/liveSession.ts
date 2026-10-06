@@ -409,6 +409,9 @@ export class LiveSession {
           audio: { data: pcmBase64, mimeType: 'audio/pcm;rate=16000' },
         },
       }));
+      const w = window as any;
+      if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
+      w.__liveMedia.audio++;
       return true;
     } catch (e: any) {
       this.trace(`送声音失败：${e?.message || e}`);
@@ -422,12 +425,18 @@ export class LiveSession {
     const ss = Math.floor(at % 60);
     const text = `（画面：正在播到第 ${mm} 分 ${ss} 秒${duration ? ` / 共 ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : ''}）`;
     try {
+      // ⚠️⚠️ 字段名是 **`video`**，不是 `mediaChunks`（10-07 02:16 实锤）。
+      //
+      // 写错的时候**不报错**：setup 里的错字段服务端会当场甩 1007，
+      // 但 realtimeInput 里的错字段它**静默忽略** —— 于是表现是
+      // 「进度文字收到了，画面就是没有」，看不出是发错了字段。
+      // （`mediaChunks` / `media` 是云端平台版那篇文档里的写法。）
       this.ws.send(JSON.stringify({
         realtimeInput: {
-          mediaChunks: [{
+          video: {
             mimeType: 'image/jpeg',
             data,
-          }],
+          },
         },
       }));
       // 进度单独一句话。跟画面分开一条，模型才分得清哪个是画面哪个是事实
@@ -437,6 +446,12 @@ export class LiveSession {
         },
       }));
       this.framesSent = (this.framesSent || 0) + 1;
+      // 现场：画面确实发出去了吗
+      const w = window as any;
+      if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
+      w.__liveMedia.frames++;
+      w.__liveMedia.lastFrameBytes = data.length;
+      w.__liveMedia.lastFrameAt = at;
       return true;
     } catch (e: any) {
       this.trace(`送画面失败：${e?.message || e}`);

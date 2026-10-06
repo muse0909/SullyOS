@@ -146,6 +146,11 @@ export function useTheaterLive(opts: {
     if (!el) { audioOk.current = false; return; }
     if (!audioRef.current) audioRef.current = new AudioTap();
     audioOk.current = audioRef.current.attach(el);
+    // 现场：声音到底接上没。接不上（跨源/不支持）就只喂画面。
+    const w = window as any;
+    if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
+    w.__liveMedia.audioAttached = audioOk.current;
+    if (!audioOk.current) w.__liveMedia.audioWhy = 'attach 失败（多半是跨源或内核不支持 Web Audio）';
   }, []);
 
   const resetFrames = useCallback(() => {
@@ -492,7 +497,16 @@ export function useTheaterLive(opts: {
       if (!audioOk.current || !audioRef.current) return;
       audioRef.current.resume();
       const chunk = audioRef.current.takeChunk();
-      if (chunk) s.sendAudio(floatToPcmBase64(chunk));
+      if (chunk) {
+        s.sendAudio(floatToPcmBase64(chunk));
+      } else {
+        // 一包都攒不出来 —— 说明采集端根本没在出数据，记下来别再猜
+        const w = window as any;
+        if (w.__liveMedia && !w.__liveMedia.audioWarned) {
+          w.__liveMedia.audioWarned = true;
+          w.__liveMedia.audioWhy = `200ms 了还攒不出 100ms 的包（pending=${audioRef.current.pending}）`;
+        }
+      }
     }, 200);
     return () => {
       window.clearInterval(audioIv);

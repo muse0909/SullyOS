@@ -214,17 +214,11 @@ export class LiveSession {
       model: `models/${model}`,
       // ⚠️ 3.8 只支持音频输出。开音频 + 开转写拿文本，音频数据收到就丢。
       generationConfig: { responseModalities: ['AUDIO'] },
-      // 历史不走官方那条「入场历史」通道（实测就是 1007 的源头），
-      // 改成直接拼到系统指令里，照搬见面那条路。
-      // 多个小段表示这是合法的，暮色 6 月定。
-      systemInstruction: {
-        parts: [
-          { text: this.opts.systemPrompt },
-          ...((this.opts.history || []).map((h) => ({
-            text: `[历史 ${h.role === 'user' ? '用户' : '模型'}] ${h.text}`,
-          }))),
-        ],
-      },
+      // 历史**只**走 setup 之后的 clientContent.turns（见 flushHistory），
+      // 不塞进 systemInstruction。
+      // —— 实测塞进去模型会把里面的来源标记（[剧场]）当自己的台词 pattern，
+      // 然后输出切成 [剧场]xxx，[剧场]yyy 这种碎段。
+      systemInstruction: { parts: [{ text: this.opts.systemPrompt }] },
       outputAudioTranscription: {},
       // 长会话续命：服务端发新句柄，断了带它能接回上下文。
       sessionResumption: {},

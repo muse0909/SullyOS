@@ -186,7 +186,9 @@ export function useTheaterLive(opts: {
         .slice(-HISTORY_TURNS)
         .map((m: any) => ({
           role: (m.role === 'assistant' ? 'model' : 'user') as 'user' | 'model',
-          text: `${m.metadata?.source === 'theater' ? `[剧场] ` : ''}${m.content}`,
+          // ⚠️ 别给历史加前缀（比如 [剧场]）。模型会把这个当自己的台词 pattern，
+          // 然后每场都吐「[剧场] xxx，[剧场] yyy」出来 —— 现场模型自己卡到这种碎法。
+          text: m.content,
         }));
     } catch {}
 

@@ -342,9 +342,54 @@ export function useTheaterLive(opts: {
     await s.start();
   }, [char, apiKey, liveModel, liveBaseUrl, userProfile, buildSystemPrompt, addToast, onReady, addTrace]);
 
+  /**
+   * 🔥 会话生命周期。**这里以前是个每 0.7 秒转不停的死循环**（10-07 01:12 现场）。
+   *
+   * 现场记录（window.__liveDiag.traces）：
+   * ```
+   * 连上了，发 setup
+   * 灌历史 1 条
+   * 连接关闭 code=1000
+   * 连上了，发 setup      ← 0.7 秒后又是这三行，连了 30 多轮
+   * ...
+   * ```
+   * 一条转写都没发出来，全是空转，界面就一直闪「连上了吗」。
+   *
+   * 循环是这么转起来的：
+   *   1. 这段 effect 的依赖里有 `boot`，而 boot 的依赖链上有 `char` / `userProfile`
+   *      / `addToast` 这些**上游给的对象** —— 只要它们在两次渲染之间换了引用，
+   *      boot 就是新的，effect 就重跑。
+   *   2. 重跑前 React 先跑收尾，收尾里 `sessRef.current.close()` → 断开 → setState
+   *      → **触发重渲染**。
+   *   3. 重渲染 → boot 又是新的 → 回到第 1 步。自己喂自己，停不下来。
+   *
+   * 我上一轮加的守卫（按配置键判断要不要重连）本来能挡住，
+   * 但**收尾里把配置键清空了**，守卫每轮都判定成「配置变了」——
+   * 等于自己把自己废掉了。
+   *
+   * 现在的做法：
+   *   - boot 放进 ref，effect **不再依赖它**，它的引用变不变跟这段无关；
+   *   - 依赖只剩「在不在播放页」+ 配置键（都是原始值，不是对象）；
+   *   - **收尾里绝不关连接** —— 连接的生命周期只由 !active 和配置变化决定；
+   *   - 真正卸载时才收尾，那一段用空依赖，只跑一次。
+   *
+   * 顺带说明：复读也是这个循环造成的 —— 每 0.7 秒重建会话、每轮都重灌一遍历史，
+   * 模型每次都收到同一段内容、每次都重新回应一遍。
+   */
+  const cfgKey = `${char?.id || ''}|${liveModel || ''}|${liveBaseUrl || ''}|${apiKey ? 'k' : ''}`;
+
+  // 最新的 boot 放 ref 里用，绕开它的引用变化
+  const bootRef = useRef(boot);
+  bootRef.current = boot;
+
   useEffect(() => {
-    // 不在播放页就断开 —— 实时会话是长连接，不能在用户只是划海报的时候白挂着
     if (!active) {
+      // 离开播放页：这是唯一该关连接的地方
+      if (streamTimer.current) {
+        window.clearTimeout(streamTimer.current);
+        streamTimer.current = 0;
+      }
+      pendingStream.current = '';
       bootedKey.current = '';
       sessRef.current?.close();
       sessRef.current = null;
@@ -352,41 +397,19 @@ export function useTheaterLive(opts: {
       setNote('');
       return;
     }
-    /**
-     * ⚠️⚠️ **这一层守卫是「同样内容重复出 10 条」的根治点**（暮色 00:34 现场）。
-     *
-     * boot 的依赖链上有 `char`（useMemo 依赖 characters 数组）、
-     * `userProfile`、`apiConfig`…… 只要其中任何一个的对象引用在渲染之间变了，
-     * boot 就是新的，effect 就重跑一次 → **新建一条连接 + 把历史再灌一遍**。
-     * 模型每收到一遍历史就回应一遍，于是刷出十来条重复内容。
-     *
-     * 不去逐个排查哪个引用不稳（上游 useOS 的对象稳定性不由剧场控制），
-     * 直接按「配置没变就不重连」来挡：配置一样、连接还在，就什么都不做。
-     */
-    const key = `${char?.id || ''}|${liveModel || ''}|${liveBaseUrl || ''}|${apiKey ? 'k' : ''}`;
-    if (sessRef.current && bootedKey.current === key) return;
-    bootedKey.current = key;
+    // 配置没变、连接还在 → 什么都不做（这才是守卫该有的样子）
+    if (sessRef.current && bootedKey.current === cfgKey) return;
+    bootedKey.current = cfgKey;
+    bootRef.current();
+  }, [active, cfgKey]);
 
-    boot();
-    return () => {
-      // ⚠️ 节流定时器也要清 —— 不清的话它会往已经离开的组件里写状态
-      if (streamTimer.current) {
-        window.clearTimeout(streamTimer.current);
-        streamTimer.current = 0;
-      }
-      pendingStream.current = '';
-      sessRef.current?.close();
-      sessRef.current = null;
-      // 配置键留着：cleanup 之后如果 effect 再跑（比如 page 短暂来回），
-      // 只要连接还是同一个就跳过。但连接已经 close 了所以 bootedKey 要清 ——
-      // 见上面 active=false 分支和这里的下一行。
-      bootedKey.current = '';
-    };
-    // ⚠️ 依赖里**不能**放 scene / onReady 这类每次 render 都新建的回调，
-    // 放进去会让这个 effect 每次渲染都重跑一遍 = 反复重连。
-    // scene 是通过闭包读的，它自己不在依赖里（见接线处）。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, boot]);
+  // 只在真正卸载时收尾。空依赖 = 只在卸载跑一次，不会每轮都执行。
+  useEffect(() => () => {
+    if (streamTimer.current) window.clearTimeout(streamTimer.current);
+    pendingStream.current = '';
+    sessRef.current?.close();
+    sessRef.current = null;
+  }, []);
 
   // ── 记忆宫殿后处理（照抄 DateApp:242 的 runMemoryPalacePostHook）──
   const runMemoryPost = useCallback(async (c: any) => {

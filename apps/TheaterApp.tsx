@@ -154,6 +154,162 @@ type Tab = 'home' | 'mac' | 'phone' | 'watch';
 
 // ═══════════════════════════════════════════════════
 
+
+/**
+ * 下载选择窗：选要下哪几集到手机。
+ *
+ * 暮色 10-05 要求：点「下载到手机」弹窗，能手动输区间（比如 2-20），
+ * 有全选、全不选，全选就是整部。**必须显示体积**（同一天定的）——
+ * 之前「整部存到手机」一点就开下，实测 107 集 ≈ 1.5 GB，误触没有退路。
+ *
+ * 体积只能估：转发服务不吐单集大小（实测 /relay/local/video 的响应头里没有
+ * Content-Length 之外的可用信息），所以拿「电脑上已存的这几集的平均大小」乘，
+ * 再拿手机里已存的集数校准。第一次没有参照时给不出数字，就说「估不出来」。
+ */
+const DownloadPicker: React.FC<{
+  p: Palette;
+  title: string;
+  avail: number[];              // 电脑里有、手机还没有的集
+  checked: Set<number>;
+  range: string;
+  setRange: (v: string) => void;
+  avgBytes: number;             // 0 = 还没有参照，给不出体积
+  onToggle: (n: number) => void;
+  onApplyRange: () => void;
+  onAll: () => void;
+  onNone: () => void;
+  onClose: () => void;
+  onConfirm: () => void;
+  /**
+   * >0 表示「电脑上磁盘上真的一集都没有」（列表是空的），
+   * 弹窗改成一句话 + 「整部下」，而不是给一个空列表让人以为坏了。
+   */
+  fallbackTotal?: number;
+}> = ({ p, title, avail, checked, range, setRange, avgBytes, onToggle, onApplyRange, onAll, onNone, onClose, onConfirm, fallbackTotal = 0 }) => {
+  const picked = checked.size;
+  const est = avgBytes > 0 ? avgBytes * picked : 0;
+  const min = avail[0];
+  const max = avail[avail.length - 1];
+
+  return (
+    <Modal
+      isOpen={!!title}
+      title="下载到手机"
+      onClose={onClose}
+      zIndex={130}
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!picked && !(fallbackTotal > 0)}
+            className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40"
+          >
+            {picked ? `下载 ${picked} 集` : fallbackTotal > 0 ? `整部下（${fallbackTotal} 集）` : '先选集'}
+          </button>
+        </>
+      }
+    >
+      {fallbackTotal > 0 ? (
+        /* 电脑上还没有这部剧的集 —— 不是坏了，是还没下。直接说清楚，给一条路。 */
+        <div className="py-2 text-center">
+          <p className={`text-[12px] leading-relaxed ${p.sub}`}>
+            电脑上还没有这部剧，先让电脑把整部下下来。<br />
+            下完一集就会自动存一集进手机，断网也能看。
+          </p>
+          <p className="mt-2 text-[11px] text-slate-400">共 {fallbackTotal} 集</p>
+        </div>
+      ) : (
+        <p className={`text-[11px] text-center mb-3 ${p.sub}`}>
+          电脑里有 {avail.length} 集还没下到手机{min ? ` · 第 ${min}-${max} 集` : ''}
+        </p>
+      )}
+
+      {fallbackTotal > 0 ? (
+        /* 没有可选集的时候，下面那一整套（区间 / 全选 / 体积 / 网格）全都不成立，
+           硬渲染会因为 avail[0] 是 undefined 出 NaN，直接别画。 */
+        <p className={`py-3 text-center text-[11px] ${p.sub}`}>
+          点了「整部下」之后，电脑会先把这 {fallbackTotal} 集下下来，
+          下完一集就自动存一集进手机。
+        </p>
+      ) : (
+        <>
+      {/* 区间输入：2-20 这种。写完点「照这段」才生效。
+          电脑上一集都没有的时候没有可选区间，整块藏掉（avail[0] 会是 undefined）*/}
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          value={range}
+          onChange={(e) => setRange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onApplyRange(); }}
+          placeholder={`比如 ${min}-${Math.min(min + 18, max)}`}
+          inputMode="numeric"
+          className={`flex-1 min-w-0 rounded-2xl px-3 py-2.5 text-sm text-center outline-none ${p.input}`}
+        />
+        <button
+          onClick={onApplyRange}
+          disabled={!range.trim()}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 disabled:opacity-40 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          照这段
+        </button>
+        <button
+          onClick={onAll}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          全选
+        </button>
+        <button
+          onClick={onNone}
+          className={`shrink-0 rounded-full px-3 py-2.5 text-[11px] font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'}`}
+        >
+          全不选
+        </button>
+      </div>
+
+      {/* 体积：不显示就等于默认允许一次下 1.5 G */}
+      <div className={`rounded-2xl px-4 py-3 mb-3 text-center ${p.night ? 'bg-[#0f172a]' : 'bg-sky-50'}`}>
+        <p className={`text-[13px] font-bold ${p.title}`}>
+          这次要下 {picked} 集
+          {est > 0 ? `，大约 ${fmtBytes(est)}` : ''}
+        </p>
+        <p className={`text-[10px] mt-1 ${p.sub}`}>
+          {est > 0
+            ? '下完跟电脑就没关系了，断网也能看'
+            : picked ? '体积暂时估不出来' : '还没选集'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-6 gap-1.5 max-h-[26vh] overflow-y-auto no-scrollbar">
+        {avail.map((n) => {
+          const on = checked.has(n);
+          return (
+            <button
+              key={n}
+              onClick={() => onToggle(n)}
+              className={`aspect-square rounded-lg text-[11px] font-bold transition active:scale-95 ${
+                on
+                  ? 'bg-sky-500 text-white'
+                  : p.night
+                  ? 'bg-[#1e293b] text-slate-500'
+                  : 'bg-slate-100 text-slate-400'
+              }`}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </div>
+        </>
+      )}
+    </Modal>
+  );
+};
+
 const TheaterApp: React.FC = () => {
   const { activeCharacterId, characters, addToast } = useOS();
   const char = useMemo(
@@ -231,6 +387,18 @@ const TheaterApp: React.FC = () => {
    * 手机和电脑都看不了剧。电脑下载走的是任务队列，不占名额。
    */
 
+
+  // ── 下载选集窗（点「下载到手机」先选要哪几集）──
+  /**
+   * `avail` 是**电脑上磁盘上真有的、还没进手机的集**，不是短剧库那份名单
+   * （那份会把 666 集全报成可播，实际磁盘上只有 22 个文件，见 macByDrama）。
+   *
+   * 电脑上**一集都没有**的剧这里 avail 是空的 → 弹窗改成「整部下」，
+   * 让电脑先下、下完一集拷一集（还是走 startPhoneDownload 那一条路）。
+   */
+  const [dlPick, setDlPick] = useState<{ title: string; avail: number[]; total: number } | null>(null);
+  const [dlChecked, setDlChecked] = useState<Set<number>>(new Set());
+  const [dlRange, setDlRange] = useState('');
 
   // ── 上传 ──
   const fileRef = useRef<HTMLInputElement>(null);
@@ -867,7 +1035,7 @@ const TheaterApp: React.FC = () => {
    * 之前是两段式（等整部下完 → 再统一拷），用户看到「正在下到电脑 12/58」干等，
    * 拷的时候还得自己去缓存剧库找这部剧再点一次 —— 反馈是「整个下载逻辑又有点乱」。
    */
-  const [phoneDl, setPhoneDl] = useState<{ title: string; id: string; want: number; saved: number[] } | null>(null);
+  const [phoneDl, setPhoneDl] = useState<{ title: string; id: string; want: number[]; saved: number[] } | null>(null);
   /** 这一轮正在拷哪一集，避免下一轮又挑到同一集 */
   const phoneDlBusy = useRef(false);
   /** 试过一次还拿不到的集，别无限重试 */
@@ -882,18 +1050,25 @@ const TheaterApp: React.FC = () => {
   useEffect(() => { phoneDlRef.current = phoneDl; }, [phoneDl]);
 
   /** 点「下载到手机」。只此一个入口，没有中间步骤。 */
-  const startPhoneDownload = async (d: DramaRef, want: number) => {
+  /**
+   * 开始把指定的那几集下载到手机。`eps` 是**明确的集号列表**（不是「前 N 集」），
+   * 所以「点一下下整部」和「选了 2-20 才下」走的是同一条路，只是列表不同。
+   *
+   * 界面，全程只有这一个进度「已存进手机 x/N」：
+   *   电脑上没有这部 → 先排进短剧库的队列让它下，下完一集立刻拷一集到手机
+   *   电脑上有 → 直接开始拷
+   */
+  const startPhoneDownload = async (d: DramaRef, eps: number[]) => {
     if (!online) return addToast('还没连上电脑，先连上才能下载', 'error');
     if (phoneDlRef.current) return addToast('还有一部在下，等它下完', 'info');
-    if (want <= 0) return addToast('这部剧一集都没有', 'info');
+    if (!eps.length) return addToast('一集都没选', 'info');
     // 手机里已经有的先划掉，别白下一遍
-    const need = Array.from({ length: want }, (_, i) => i + 1)
-      .filter((n) => epState(d.title, n) !== 'phone');
+    const need = eps.filter((n) => epState(d.title, n) !== 'phone').sort((a, b) => a - b);
     if (!need.length) return addToast('这几集手机里已经有了', 'info');
 
     phoneDlSkip.current = new Set();
     phoneDlAt.current = Date.now();
-    setPhoneDl({ title: d.title, id: d.id, want: need.length, saved: [] });
+    setPhoneDl({ title: d.title, id: d.id, want: need, saved: [] });
 
     // 电脑上一集都没有 → 排进短剧库的队列让它开始下，下载在它那边后台进行
     const mac = macByDrama.get(d.title);
@@ -912,6 +1087,67 @@ const TheaterApp: React.FC = () => {
   };
 
   /**
+   * 打开选集窗。默认全选 = 整部，用户可以改成「只要 2-20」。
+   *
+   * 「全选」按**磁盘上真有的集**给，不是按系统那份假名单 —— 否则会默认勾上
+   * 几百集下不下来的，用户一脸莫名其妙还得自己一个个取消。
+   */
+  const openDownloadPicker = (d: DramaRef, total: number) => {
+    const mac = macByDrama.get(d.title);
+    const onDisk = mac?.eps || [];
+    const avail = onDisk.filter((n) => epState(d.title, n) !== 'phone').sort((a, b) => a - b);
+    setDlPick({ title: d.title, avail, total });
+    setDlChecked(new Set(avail));
+    setDlRange('');
+  };
+
+  const toggleDlEp = (n: number) => {
+    setDlChecked((old) => {
+      const next = new Set(old);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  };
+
+  /** 手输区间：「2-20」「2」「5-」都认，认不出来就当没输 */
+  const applyDlRange = () => {
+    if (!dlPick) return;
+    const s = dlRange.trim().replace(/\s/g, '');
+    if (!s) return;
+    let a = 0;
+    let b = 0;
+    if (/^\d+$/.test(s)) {
+      a = b = Number(s);
+    } else {
+      const m = s.match(/^(\d*)-(\d*)$/);
+      if (!m) return addToast('看不懂这个区间，写成 2-20 这样', 'error');
+      a = m[1] ? Number(m[1]) : dlPick.avail[0];
+      b = m[2] ? Number(m[2]) : dlPick.avail[dlPick.avail.length - 1];
+    }
+    if (a > b) [a, b] = [b, a];
+    const inRange = dlPick.avail.filter((n) => n >= a && n <= b);
+    if (!inRange.length) return addToast(`${a}-${b} 这段里电脑上没有`, 'info');
+    setDlChecked(new Set(inRange));
+    addToast(`选中了 ${inRange.length} 集`, 'info');
+  };
+
+  /** 体积参照：手机里已存集的平均单集大小（转发服务不吐单集真实大小，只能这么估） */
+  const avgPhoneEpBytes = useMemo(() => {
+    let bytes = 0;
+    let n = 0;
+    phoneList.forEach((d) =>
+      d.episodes.forEach((e) => {
+        if (e.size > 0) {
+          bytes += e.size;
+          n += 1;
+        }
+      })
+    );
+    return n > 0 ? Math.round(bytes / n) : 0;
+  }, [phoneList]);
+
+  /**
    * 主循环：每隔一会儿看一次「电脑磁盘上现在真有哪些集」，
    * 有新的、手机里还没有的，就立刻拷一集过来。
    *
@@ -927,6 +1163,8 @@ const TheaterApp: React.FC = () => {
       if (!cur) return;
       phoneDlBusy.current = true;
       const { title, want } = cur;
+      // want 现在是**明确的集号列表**（选集窗可能只选了 2-20），不是「前 N 集」
+      const wantSet = new Set(want);
       const coverUrl = dramas.find((x) => x.title === title)?.coverUrl;
       try {
         // 直接问转发服务要磁盘上真实存在的集（短剧库那份 playable 名单会骗人）
@@ -936,21 +1174,21 @@ const TheaterApp: React.FC = () => {
 
         const savedSet = new Set(cur.saved);
         const next = eps
-          .filter((n) => n <= want && !savedSet.has(n) && !phoneDlSkip.current.has(n))
+          .filter((n) => wantSet.has(n) && !savedSet.has(n) && !phoneDlSkip.current.has(n))
           .sort((a, b) => a - b)[0];
 
         if (next === undefined) {
           // 一个都没有了：要么全下完，要么剩下的电脑拉不下来
           const stalled = Date.now() - phoneDlAt.current > MAC_FETCH_TIMEOUT;
-          if (savedSet.size >= want || stalled) {
+          if (savedSet.size >= want.length || stalled) {
             setPhoneDl(null);
             await reloadPhone();
             if (savedSet.size > 0) {
               addToast(
-                savedSet.size >= want
+                savedSet.size >= want.length
                   ? `${savedSet.size} 集都存进手机了，断网也能看`
-                  : `存了 ${savedSet.size}/${want} 集，剩下几集电脑那边拉不下来`,
-                savedSet.size >= want ? 'success' : 'error'
+                  : `存了 ${savedSet.size}/${want.length} 集，剩下几集电脑那边拉不下来`,
+                savedSet.size >= want.length ? 'success' : 'error'
               );
             }
           }
@@ -1577,11 +1815,11 @@ const TheaterApp: React.FC = () => {
                     <Pill
                       primary
                       tone={p}
-                      onClick={() => startPhoneDownload(picked, total)}
+                      onClick={() => openDownloadPicker(picked, total)}
                       disabled={!online || !!phoneDl}
                     >
                       {mine
-                        ? `下载到手机 ${mine.saved.length}/${mine.want}`
+                        ? `下载到手机 ${mine.saved.length}/${mine.want.length}`
                         : `下载到手机（${pending} 集）`}
                     </Pill>
                   );
@@ -1607,13 +1845,13 @@ const TheaterApp: React.FC = () => {
                   <div className={`flex-1 h-1 rounded-full overflow-hidden ${p.night ? 'bg-[#334155]' : 'bg-slate-100'}`}>
                     <div
                       className="h-full bg-sky-400 rounded-full transition-all"
-                      style={{ width: `${Math.min(100, ((mine.saved.length - 1 + (saveEpProgress?.pct || 0)) / mine.want) * 100)}%` }}
+                      style={{ width: `${Math.min(100, ((mine.saved.length - 1 + (saveEpProgress?.pct || 0)) / mine.want.length) * 100)}%` }}
                     />
                   </div>
                   <span className="shrink-0 text-[10px] text-slate-400 tabular-nums">
                     {saveEpProgress
-                      ? `${mine.saved.length}/${mine.want} · 第 ${saveEpProgress.ep} 集 ${Math.round(saveEpProgress.pct * 100)}%`
-                      : `${mine.saved.length}/${mine.want}`}
+                      ? `${mine.saved.length}/${mine.want.length} · 第 ${saveEpProgress.ep} 集 ${Math.round(saveEpProgress.pct * 100)}%`
+                      : `${mine.saved.length}/${mine.want.length}`}
                   </span>
                   <button onClick={() => { setPhoneDl(null); setSaveEpProgress(null); }} className="shrink-0 text-[10px] text-rose-400">停</button>
                 </div>
@@ -1682,6 +1920,33 @@ const TheaterApp: React.FC = () => {
           </p>
         </div>
 
+        <DownloadPicker
+          p={p}
+          title={dlPick?.title || ''}
+          avail={dlPick?.avail || []}
+          checked={dlChecked}
+          range={dlRange}
+          setRange={setDlRange}
+          avgBytes={avgPhoneEpBytes}
+          onToggle={toggleDlEp}
+          onApplyRange={applyDlRange}
+          onAll={() => dlPick && setDlChecked(new Set(dlPick.avail))}
+          onNone={() => setDlChecked(new Set())}
+          onClose={() => setDlPick(null)}
+          onConfirm={async () => {
+            const d = picked;
+            const eps = Array.from(dlChecked).sort((a, b) => a - b);
+            const totalEps = dlPick?.total || 0;
+            setDlPick(null);
+            // 一集都没勾但全选也没东西可选 = 电脑上根本没有这部剧的集
+            // → 退化成「整部下」，让电脑先下、下完一集拷一集
+            const want = eps.length ? eps : Array.from({ length: totalEps }, (_, i) => i + 1);
+            if (!want.length) return;
+            await startPhoneDownload(d, want);
+          }}
+          /** 电脑上一集都没有时，弹窗改成「整部下」而不是空列表 */
+          fallbackTotal={dlPick && !dlPick.avail.length ? dlPick.total : 0}
+        />
       </div>
     );
   }

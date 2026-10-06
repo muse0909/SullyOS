@@ -24,7 +24,9 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
-  reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, queueDownload, PLAYBACK_BUSY_MSG,
+  fetchLocalEpisodes,
+  reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, queueDownload, probeLocalEpisode,
+  PLAYBACK_BUSY_MSG,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -304,6 +306,12 @@ const TheaterApp: React.FC = () => {
   const [dramas, setDramas] = useState<RelayDrama[]>([]);
   const [sources, setSources] = useState<RelaySource[]>([]);
   const [tasks, setTasks] = useState<RelayTask[]>([]);
+  /**
+   * 每部剧在电脑上**真有哪些集**（转发服务数磁盘得来的）。
+   * 用来盖掉短剧库那份会说谎的 playable 名单，见 macByDrama 的注释。
+   * 转发服务是旧版、拉不到时这里就是空的，自动退回旧行为。
+   */
+  const [localEps, setLocalEps] = useState<Map<string, number[]>>(new Map());
   const [phoneList, setPhoneList] = useState<PhoneDrama[]>([]);
   const [usage, setUsage] = useState({ bytes: 0, count: 0, dramas: 0 });
   const [macWatch, setMacWatch] = useState<any[]>([]);
@@ -403,7 +411,19 @@ const TheaterApp: React.FC = () => {
     try { return localStorage.getItem(AUTONEXT_KEY) !== '0'; } catch { return true; }
   });
 
-  // ── 电脑上已缓存的集（按剧名分桶）──
+  /**
+   * 电脑上真有哪些集 —— **直接数磁盘，优先于短剧库那份名单**。
+   *
+   * `localEps` 来自转发服务新加的 `/relay/local/episodes`（它 `listdir` 下载目录，
+   * 只认完整的 `NNN.mp4`，把 `.part.mp4` 半截文件和 `.drama-id` 排除在外）。
+   * 拉不到（转发服务是旧的）就退回 tasks 里的 playable 名单。
+   *
+   * 为什么不直接信 `tasks[].playable`：那个标志把「已排进队列」和
+   * 「文件已落盘」混在一起了。10-06 在电脑上逐集比对过 ——
+   * 「咱家剑宗团宠小师妹第二季」系统里 666 个集全部 playable，
+   * 磁盘上只有 22 个完整文件（另外 2 个是下到一半的 `.part.mp4`）。
+   * 照着假名单画格子、算「下载到手机（644）」，点下去 644 个 404。
+   */
   const macByDrama = useMemo(() => {
     const map = new Map<string, { eps: number[]; total: number; dramaId: string }>();
     tasks.forEach((t) => {
@@ -414,13 +434,20 @@ const TheaterApp: React.FC = () => {
       if ((t.total || 0) > cur.total) cur.total = t.total || 0;
       map.set(t.dramaTitle, cur);
     });
-    map.forEach((v) => {
+    map.forEach((v, title) => {
+      const real = localEps.get(title);
+      if (real) {
+        // 磁盘上真实存在的那几集才是「电脑里有的」
+        v.eps = real.slice();
+        // total 也不能信 tasks 的：说的是全剧 666 集，磁盘上就 22 集
+        v.total = Math.max(v.total, real[real.length - 1] || 0);
+      }
       v.eps.sort((a, b) => a - b);
       // task.total 实测是真实集数，比剧库列表里那个假的 episodeCount 靠谱
       if (v.total < v.eps[v.eps.length - 1]) v.total = v.eps[v.eps.length - 1];
     });
     return map;
-  }, [tasks]);
+  }, [tasks, localEps]);
 
   const epState = useCallback(
     (title: string, n: number): EpState => {
@@ -461,6 +488,24 @@ const TheaterApp: React.FC = () => {
     setUsage(u);
   }, []);
 
+  /**
+   * 把任务列表里出现的每部剧，都问一遍转发服务「你磁盘上真有哪些集」。
+   * 一共十来个请求，本地网络，并行发出去也就百来毫秒。
+   * 有一部拉不到就那部退回旧名单，不影响其它剧。
+   */
+  const pullLocalEps = async (base: string, ts: RelayTask[]) => {
+    const titles = Array.from(new Set(ts.filter((t) => t.dramaTitle).map((t) => t.dramaTitle)));
+    if (!titles.length) return new Map<string, number[]>();
+    const res = await Promise.all(titles.map((t) => fetchLocalEpisodes(base, t)));
+    const map = new Map<string, number[]>();
+    titles.forEach((t, i) => {
+      const eps = res[i];
+      if (eps) map.set(t, eps);
+    });
+    diag('数了一遍电脑上真实有的集', { 部数: titles.length, 数到: map.size });
+    return map;
+  };
+
   const refresh = useCallback(async () => {
     setChecking(true);
     setConnError('');
@@ -482,6 +527,7 @@ const TheaterApp: React.FC = () => {
       setLoadError('');
       setDramas([]);
       setTasks([]);
+      setLocalEps(new Map());
       setSources([]);
       setMacWatch([]);
       return;
@@ -515,6 +561,8 @@ const TheaterApp: React.FC = () => {
       // 顶着个不存在的站源首页就是一片空白，认不出来为什么空 —— 退回全部。
       setSrcFilter((cur) => (snap.sources.some((s) => s.key === DEFAULT_SOURCE) ? cur : ''));
       setTasks(ts.filter((t) => t.playable));
+      // 数一遍磁盘：短剧库那份 playable 名单会说谎（详见 macByDrama 的注释）
+      setLocalEps(await pullLocalEps(addr, ts));
       setMacWatch(mw);
     } catch (e: any) {
       setLoadError(e?.message || '拉数据失败');
@@ -962,6 +1010,12 @@ const TheaterApp: React.FC = () => {
     setSaveAll({ busy: true, done: 0, total: eps.length, cancel: false });
     saveAllCancel.current = false;
     let ok = 0;
+    /**
+     * 失败的集**攒起来最后一起说**，不是一集弹一条。
+     * 之前每集失败立刻 addToast，58 集全失败就是 58 条提示糊满整屏，
+     * 底下真正要点的按钮全被盖没了（10-06 实机截图）。
+     */
+    const failed: number[] = [];
     for (const ep of eps) {
       if (saveAllCancel.current) break;
       try {
@@ -978,7 +1032,9 @@ const TheaterApp: React.FC = () => {
         ok += 1;
         setSaveAll((s) => ({ ...s, done: s.done + 1 }));
       } catch (e: any) {
-        addToast(`第 ${ep} 集没存成：${e?.message || '取不到'}`, 'error');
+        // 这一集电脑上没有真的文件 —— 静默跳过（多半是 short剧库那边的记录在说谎）
+        diag('这一集没存成', { 剧: d.title, 集: ep, 原因: String(e?.message || e).slice(0, 60) });
+        failed.push(ep);
       }
     }
     setSaveEpProgress(null);
@@ -986,6 +1042,16 @@ const TheaterApp: React.FC = () => {
     saveAllCancel.current = false;
     setSaveAll({ busy: false, done: 0, total: 0, cancel: false });
     if (ok) addToast(`存了 ${ok} 集进手机，存完就跟电脑无关了`, 'success');
+    if (failed.length) {
+      // 只留前 12 个编号，58 集全失败时也不会把提示撑爆
+      const ids = failed.slice(0, 12).join('、') + (failed.length > 12 ? `…（共 ${failed.length} 集）` : '');
+      addToast(
+        ok
+          ? `第 ${ids} 集电脑上没有文件，没存成（可能是短剧库那边的记录没对上）`
+          : `一集都没存成：电脑上找不到这些集（${ids}）`,
+        'error'
+      );
+    }
   };
 
   /** 排进短剧库的下载队列，让电脑先把这部下下来 */
@@ -1012,6 +1078,7 @@ const TheaterApp: React.FC = () => {
       try {
         const ts = await fetchTasks(addr);
         if (alive) setTasks(ts);
+        if (alive) setLocalEps(await pullLocalEps(addr, ts));
       } catch {
         // 拉不到就下一轮再试，不打断正在下的队列
       }
@@ -1054,24 +1121,48 @@ const TheaterApp: React.FC = () => {
       origin: 'mac',
     };
     const want = enough ? macFetch.want : have;
-    const toSave = Array.from({ length: want }, (_, i) => i + 1)
+    const notOnPhone = Array.from({ length: want }, (_, i) => i + 1)
       .filter((n) => epState(macFetch.title, n) !== 'phone');
     setMacFetch(null);
+
     if (timedOut && !enough) {
-      addToast(`电脑上有 ${have}/${macFetch.want} 集下不下来，先把这 ${want} 集存进手机`, 'error');
+      addToast(`电脑上有 ${have}/${macFetch.want} 集下不下来，先把能存的存了`, 'error');
     }
-    if (toSave.length) downloadEps(d, toSave);
-    else addToast('这几集手机里已经有了', 'info');
-    // downloadEps / addToast 是普通函数、每次渲染都是新的，进依赖会一直重跑；
-    // 真正要盯的只有「下到几集了」（macByDrama 由 tasks 派生）
+    probeAndSave(d, notOnPhone);
+    // downloadEps / addToast / probeAndSave 是普通函数、每次渲染都是新的，
+    // 进依赖会一直重跑；真正要盯的只有「下到几集了」（macByDrama 由 tasks 派生）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [macFetch, macByDrama, tasks, addr]);
 
   /**
-   * 打开下载选择窗，默认勾上电脑上所有还没下到手机的集（=「全选就是整部」）。
-   * avgBytes 拿手机里已存集的平均大小当参照：转发服务不吐单集真实大小，
-   * 用实测值估比不给数字强。
+   * **下之前逐集问一句电脑「这集的文件真在吗」**，不在的直接跳过。
+   *
+   * 因为系统那份任务列表会骗人：「咱家剑宗团宠小师妹第二季」在系统里
+   * 666 个集全部 `playable`，磁盘上只有 25 个文件（10-06 逐集比对），
+   * 剩下 644 个是 `paused` 的、文件压根没落盘。照着这份名单一集集去下，
+   * 全 404，一集都存不进来 —— 10-06 实机就是这么糊了满屏报错。
+   *
+   * 探一次只要 1 个字节（Range: bytes=0-0），本地网络几十毫秒。
    */
+  const probeAndSave = async (d: DramaRef, eps: number[]) => {
+    if (!eps.length) return addToast('这几集手机里已经有了', 'info');
+    const toSave: number[] = [];
+    const missing: number[] = [];
+    for (const n of eps) {
+      if (await probeLocalEpisode(addr, d.title, n)) toSave.push(n);
+      else {
+        missing.push(n);
+        diag('电脑上说有、磁盘上没有', { 剧: d.title, 集: n });
+      }
+    }
+    if (missing.length) {
+      const ids = missing.slice(0, 12).join('、') + (missing.length > 12 ? `…（共 ${missing.length} 集）` : '');
+      addToast(`电脑上找不到第 ${ids} 集的文件（短剧库那边的记录没对上），跳过`, 'error');
+    }
+    if (toSave.length) downloadEps(d, toSave);
+  };
+
+  /**
   const openDownloadPicker = (d: DramaRef) => {
     const mac = macByDrama.get(d.title);
     if (!mac) return addToast('电脑上还没有这部剧', 'error');

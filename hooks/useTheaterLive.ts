@@ -30,6 +30,7 @@ import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemorie
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { LiveSession, type LiveState, type LiveTurn } from '../utils/dramaTheater/liveSession';
 import { FrameGrabber } from '../utils/dramaTheater/frameGrabber';
+import { AudioTap, floatToPcmBase64 } from '../utils/dramaTheater/audioTap';
 
 export type TheaterMsg = {
   id: string;
@@ -126,16 +127,31 @@ export function useTheaterLive(opts: {
    */
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const grabberRef = useRef<FrameGrabber | null>(null);
+  const audioRef = useRef<AudioTap | null>(null);
+  /** 接上声音没有（接不上就只喂画面，不影响别的） */
+  const audioOk = useRef(false);
   const framesFedRef = useRef(0);
   /** 多久问一次画面。1.2 秒是「切镜头基本抓得住、静止段几乎不耗」的折中 */
   const FRAME_EVERY = 1200;
 
+  /**
+   * 播放器把视频元素交过来。**画面和声音都从这里接**。
+   *
+   * ⚠️ 换 src 时元素不会重建（同一个 video 标签），所以 attach 内部有
+   * 「接过就不重复接」的判断 —— 同一个元素调两次 createMediaElementSource
+   * 会直接抛异常。
+   */
   const attachVideo = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el;
+    if (!el) { audioOk.current = false; return; }
+    if (!audioRef.current) audioRef.current = new AudioTap();
+    audioOk.current = audioRef.current.attach(el);
   }, []);
 
   const resetFrames = useCallback(() => {
     grabberRef.current?.reset();
+    // 换集了 —— 上一集攒的声音留着会串进下一集
+    audioRef.current?.flush();
   }, []);
 
   const framesFed = useMemo(() => framesFedRef.current, []);
@@ -203,19 +219,23 @@ export function useTheaterLive(opts: {
    你就说没看到 —— **绝对不要编剧情**。角色扮演最容易被顺着骗过去
    编出一整段不存在的剧情，这里一个字都不要编。
 
-2. **画面没送的时候，就是画面没变**（用户暂停了，或者在放不动的长镜头）。
+2. **你听得见声音**（短剧的台词会一起进来）。
+   有人说话你能听见。听见的那几句就是原话，用户问你「她刚说什么」，照实说。
+   静音、暂停、或者声音断断续续的时候，说明那会儿没传过来 —— 说没听到。
+
+3. **画面没送的时候，就是画面没变**（用户暂停了，或者在放不动的长镜头）。
    别把「没收到画面」当成「他关掉了」。
 
-3. **聊天区在视频下面，视频正在放，用户随时可能没在看你。**
+4. **聊天区在视频下面，视频正在放，用户随时可能没在看你。**
    他没跟你说话的时候，不要主动开口、不要评价剧情。
    用户没叫你的时候，安静看剧就好。
 
-4. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
+5. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
    不要用「我可以帮你分析剧情」这种服务腔，直接说人话。
 
-5. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
+6. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
 
-6. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
+7. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
 
 > ⚠️ 这里**故意不写「现在播到第几分钟」**：那写在提示词里就是个永远不变的
 > 假数字（画面是持续变的，一个数字很快就是错的，比不写更糟）。
@@ -460,10 +480,33 @@ export function useTheaterLive(opts: {
    */
   useEffect(() => {
     if (!active) return;
+    // 声音：200ms 跑一次，一包就是 100ms 的量。跑太快会空转，跑太慢攒太多。
+    const audioIv = window.setInterval(() => {
+      const v = videoRef.current;
+      const s = sessRef.current;
+      if (!v || !s || !s.isOpen) return;
+      if (v.paused) return;
+      if (!audioOk.current || !audioRef.current) return;
+      audioRef.current.resume();
+      const chunk = audioRef.current.takeChunk();
+      if (chunk) s.sendAudio(floatToPcmBase64(chunk));
+    }, 200);
+    return () => {
+      window.clearInterval(audioIv);
+      // ⚠️ 只丢队列，**不能 detach** ——
+      // 同一个 video 元素调第二次 createMediaElementSource 会直接抛异常，
+      // 那个元素就再也采不到声音了。离开播放页时保持挂着，切回来还能用。
+      audioRef.current?.flush();
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
     const iv = window.setInterval(() => {
       const v = videoRef.current;
       const s = sessRef.current;
       if (!v || !s || !s.isOpen) return;
+      if (v.paused) return;
       if (!grabberRef.current) grabberRef.current = new FrameGrabber();
       const dur = Number.isFinite(v.duration) ? v.duration : 0;
       const f = grabberRef.current!.grab(v);

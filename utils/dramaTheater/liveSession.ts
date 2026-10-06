@@ -242,6 +242,9 @@ export class LiveSession {
       model: `models/${model}`,
       // ⚠️ 3.8 只支持音频输出。开音频 + 开转写拿文本，音频数据收到就丢。
       generationConfig: { responseModalities: ['AUDIO'] },
+      // 画面已经压到 320 宽了，这里再跟官方说「就按低清晰度算」，
+      // 省 token 也省延迟（官方原话：lower = less tokens & latency）。
+      mediaResolution: 'LOW',
       // 历史**只**走 setup 之后的 clientContent.turns（见 flushHistory），
       // 不塞进 systemInstruction。
       // —— 实测塞进去模型会把里面的来源标记（[剧场]）当自己的台词 pattern，
@@ -366,6 +369,27 @@ export class LiveSession {
    *
    * 播放进度跟着一起送：画面本身不带「第几分钟」，不说它就永远停在开场。
    */
+  /**
+   * 送一包声音（第 3 步）。
+   *
+   * ⚠️ 官方硬要求：**16kHz 裸 PCM**（小端），所以外面先降采样过了。
+   * 每 100ms 一包是官方建议的节奏 —— 太大延迟高，太小包多。
+   */
+  sendAudio(pcmBase64: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify({
+        realtimeInput: {
+          audio: { data: pcmBase64, mimeType: 'audio/pcm;rate=16000' },
+        },
+      }));
+      return true;
+    } catch (e: any) {
+      this.trace(`送声音失败：${e?.message || e}`);
+      return false;
+    }
+  }
+
   sendFrame(data: string, at: number, duration = 0) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     const mm = Math.floor(at / 60);

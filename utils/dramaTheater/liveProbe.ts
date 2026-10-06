@@ -55,6 +55,49 @@ const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =
     new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${label}超时（${ms / 1000}秒）`)), ms)),
   ]);
 
+/**
+ * 收一条 WebSocket 消息并解析成对象。
+ *
+ * ## ⚠️ 这里踩过一次坑（10-06 21:45 真机）
+ *
+ * 浏览器 WebSocket 的 `event.data` **不一定是字符串**。`binaryType` 默认是 `"blob"`，
+ * 服务端一旦用二进制帧推过来，`event.data` 就是一个 Blob 对象，
+ * 直接 `JSON.parse(blob)` 会抛 `SyntaxError: [object Blob]`。
+ *
+ * 那个错被 `catch` 吞掉之后的现象极具误导性：**界面上一条消息都不显示**，
+ * 看起来像「服务端不回话」，实际上是**收到了但没解析出来**。
+ * 当时第 3 步卡了 15 秒，真实原因就在这里，跟网络、密钥、权限都没关系。
+ *
+ * 所以两件事必须一起做：
+ *   1 `binaryType = 'arraybuffer'` —— 在 onopen 里设，把 Blob 变成可读的 ArrayBuffer
+ *   2 解析时按类型分支，别假定一定是字符串
+ */
+function readWsMessage(data: any): Promise<any | null> {
+  if (typeof data === 'string') {
+    try { return Promise.resolve(JSON.parse(data)); } catch { return Promise.resolve(null); }
+  }
+  if (data instanceof ArrayBuffer) {
+    try { return Promise.resolve(JSON.parse(new TextDecoder().decode(data))); } catch { return Promise.resolve(null); }
+  }
+  if (data instanceof Blob) {
+    return new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => { try { resolve(JSON.parse(String(fr.result))); } catch { resolve(null); } };
+      fr.onerror = () => resolve(null);
+      fr.readAsText(data);
+    });
+  }
+  return Promise.resolve(null);
+}
+
+/** 只看原始形态，不解析 —— 万一解析不出来，至少知道服务器到底发了个啥 */
+function describeRaw(data: any): string {
+  if (typeof data === 'string') return `字符串 ${data.length} 字：${data.slice(0, 160)}`;
+  if (data instanceof ArrayBuffer) return `二进制 ${data.byteLength} 字节`;
+  if (data instanceof Blob) return `Blob ${data.size} 字节`;
+  return `未知类型（${typeof data}）`;
+}
+
 /** 第 1 步：普通 HTTPS 通不通、key 对不对 */
 async function probeHttps(key: string): Promise<ProbeStep> {
   const t0 = Date.now();
@@ -139,9 +182,18 @@ function probeSetup(key: string): Promise<ProbeStep> {
     let ws: WebSocket | null = null;
     const url = `${WS_BASE}?key=${encodeURIComponent(key)}`;
     let settled = false;
+    /** 收到过什么 —— 解析不出来时这就是唯一的证据 */
+    const seen: string[] = [];
     const done = (r: ProbeStep) => { if (!settled) { settled = true; try { ws?.close(); } catch {} resolve(r); } };
     const timer = setTimeout(
-      () => done({ n: 3, name: '没等到回应', ok: false, ms: Date.now() - t0, detail: 'setup 发出去了但 15 秒没回 setupComplete' }),
+      () => done({
+        n: 3, name: '没等到回应', ok: false, ms: Date.now() - t0,
+        detail: `setup 发出去了但 15 秒没等到回应。${
+          seen.length
+            ? `期间收到 ${seen.length} 条：${seen.slice(0, 3).join(' ／ ')}`
+            : '**一条都没收到** —— 可能是服务端握手后没接受这条连接'
+        }`,
+      }),
       15000,
     );
 
@@ -151,44 +203,59 @@ function probeSetup(key: string): Promise<ProbeStep> {
       return;
     }
 
+    // ⚠️ 必须在 onopen 之前设：默认是 'blob'，二进制帧到手就是个 Blob 对象
+    ws.binaryType = 'arraybuffer';
+
     ws.onopen = () => {
       ws!.send(JSON.stringify({
         setup: {
           model: 'models/gemini-3.8-live',
           generationConfig: { responseModalities: ['AUDIO'] },
           outputAudioTranscription: {},
-          sessionResumption: {},
           systemInstruction: { parts: [{ text: '测试连接，回复一个字就好。' }] },
         },
       }));
     };
 
     ws.onmessage = (ev) => {
-      let msg: any;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.setupComplete) {
-        clearTimeout(timer);
-        done({
-          n: 3, name: '通了', ok: true, ms: Date.now() - t0,
-          detail: '模型认了这次的配置，随时可以开聊',
-        });
-      } else if (msg.error) {
-        clearTimeout(timer);
-        done({
-          n: 3, name: '模型拒了', ok: false, ms: Date.now() - t0,
-          detail: msg.error?.message || JSON.stringify(msg.error).slice(0, 160),
-        });
-      }
+      const raw = describeRaw(ev.data);
+      seen.push(raw);
+
+      readWsMessage(ev.data).then((msg) => {
+        if (settled || !msg) return;
+        if (msg.setupComplete) {
+          clearTimeout(timer);
+          done({
+            n: 3, name: '通了', ok: true, ms: Date.now() - t0,
+            detail: '模型认了这次的配置，随时可以开聊',
+          });
+        } else if (msg.error) {
+          clearTimeout(timer);
+          done({
+            n: 3, name: '模型拒了', ok: false, ms: Date.now() - t0,
+            detail: msg.error?.message || JSON.stringify(msg.error).slice(0, 200),
+          });
+        } else {
+          // 还没到 setupComplete 的其它消息（比如 goAway），留着继续等
+          seen.push(`字段：${Object.keys(msg).join(',')}`);
+        }
+      });
     };
 
     ws.onerror = () => {
       clearTimeout(timer);
-      done({ n: 3, name: '中途断了', ok: false, ms: Date.now() - t0, detail: '连上了但发 setup 时断了' });
+      done({
+        n: 3, name: '中途断了', ok: false, ms: Date.now() - t0,
+        detail: `连上了但发 setup 时断了${seen.length ? `。断之前收到：${seen.slice(0, 2).join(' ／ ')}` : '。一条都没收到过'}`,
+      });
     };
     ws.onclose = (ev) => {
       clearTimeout(timer);
       if (settled) return;
-      done({ n: 3, name: '中途被关', ok: false, ms: Date.now() - t0, detail: `code ${ev.code}${ev.reason ? ` · ${ev.reason}` : ''}` });
+      done({
+        n: 3, name: '中途被关', ok: false, ms: Date.now() - t0,
+        detail: `code ${ev.code}${ev.reason ? ` · ${ev.reason}` : ''}${seen.length ? `。关之前收到：${seen.slice(0, 2).join(' ／ ')}` : '。一条都没收到过'}`,
+      });
     };
   });
 }

@@ -41,6 +41,8 @@ export type TheaterMsg = {
   streaming?: boolean;
   /** 哪一步剧、哪一集 —— 主聊天里就靠这个把剧里的话认出来 */
   tag?: string;
+  /** 空回时显示的那行提示，点它重试 */
+  failed?: boolean;
 };
 
 export type UseTheaterLive = {
@@ -231,12 +233,41 @@ export function useTheaterLive(opts: {
    * 角色扮演模型最容易被顺着诱导去编剧情，而剧场这个产品的价值恰恰是
    * 「只说自己看见的」（第 3 步接上画面之后）。第 2 步还没画面，
    * 更要提前堵死它「装作看过」的习惯。
+   *
+   * ## 暮色 02:52 报「没有人设、像旁白」，查下来的结论
+   *
+   * 先排除了两个常见嫌疑，都**不是**原因：
+   *   - 核心指令和世界书有没有带？**带了，而且一直都在。**
+   *     `buildSetup()` 里的 `systemInstruction` 是建会话时发一次、
+   *     整个会话期间持续生效的，**不是每轮重发，也就不会「后面就没了」**。
+   *     内容是 `ContextBuilder.buildCoreContext()` —— 身份、核心指令、世界观、
+   *     世界书、私密印象、记忆库、记忆宫殿、角色备忘录、情绪底色，全套。
+   *   - 是不是历史把它带跑了？历史走 `clientContent.turns`，也不影响系统指令。
+   *
+   * 真凶是**对话里塞满了它自己的「解说任务」**：
+   * 抽帧循环原来每 1.2 秒就以 `role:'user'` 的身份发一句
+   * `（背景画面：正在播到第 3 分 04 秒）`。对模型来说那就是「用户一直在说话，
+   * 而且一直在报进度」—— 它的隐含任务自然变成解说这部剧，人设自然掉光。
+   *
+   * **修法不在提示词里，在发法里**（`liveSession.sendFrame`）：
+   * 那句话不再单独成轮，只**攒着**；等用户真开口时拼在他那句话**前面**。
+   * 提示词里第 4 条「你不是解说员」只是补一道保险，不是主力。
    */
+  /**
+   * 现在有没有被邀请一起看（10-07 02:42）。
+   *
+   * ⚠️⚠️ **必须在组件顶层算，不能写在 buildSystemPrompt 里面** ——
+   * 写在里面的那次，真机直接崩了（`ReferenceError: see is not defined`），
+   * 因为依赖数组 `[char, userProfile, see]` 在函数**外面**，
+   * 那儿访问不到函数体里的局部变量。
+   *
+   * build + typecheck **两个都拦不住**（作用域错，运行时才炸），
+   * 只有真机能发现。跟 07-31 那次是同一类。
+   */
+  const see = invited;
+
   const buildSystemPrompt = useCallback((sc: { title: string; episode: number }) => {
     const core = ContextBuilder.buildCoreContext(char, userProfile);
-    // ⚠️ 这段要跟着「有没有邀请」变（10-07 02:42）。没邀请还写「你看得见画面」，
-    // 他就会开始装懂 —— 那比老实说不知道糟糕得多。
-    const see = invitedRef.current;
     return `${core}
 
 ### [剧场模式]
@@ -258,8 +289,9 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
 2. **没收到新的画面/声音，就是那会儿没变化**（暂停了，或者在放不动的长镜头）。
    别把「没收到」当成「他关掉了」。
 
-3. **他在安静看剧的时候不要插嘴。** 用户没叫你就不开口、不评价剧情。
-   哪怕你看到了什么，也憋着 —— 他在追剧，不是在等你点评。`
+3. **你在安静看剧的时候绝对不要插嘴。** 用户没叫你就不开口、不评价剧情。
+   哪怕你看到了什么，也憋着 —— 他在追剧，不是在等你点评。
+   画面是**背景**，不是话题。背景不会问你问题，所以背景不值得你回答。`
 : `1. **你现在看不见画面，也听不见声音。** 用户这次是**自己一个人看**，没有邀请你一起。
 
    他问你「演到哪了」「刚才是谁」，你就说不知道 —— 你真的什么都不知道。
@@ -268,12 +300,20 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
 
 2. 用户什么时候邀请你一起看，画面才会开始过来。他邀请之前你就一直这样。`}
 
-4. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
+   ${see ? `4. **你不是解说员。** 千万别养成「看到画面就播报」的毛病 ——
+   看到谁出场、说了什么、剧情走到哪，你就跟着复述一遍 —— **那是旁白，不是你**。
+   你要的是**${char?.name || '角色'}自己在这个房间里**，他叫你你才开口，
+   开口说的是**你自己的话**：你的性格、你的脾气、你想说的。
+   哪怕他正在看剧、你正好看见画面里有个角色跟你长得像，
+   那也该说的是「……你怎么跟剧里那个似的」，不是「画面里出现了一个人」。
+` : ''}
+
+5. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
    不要用「我可以帮你分析剧情」这种服务腔，直接说人话。
 
-5. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
+6. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
 
-6. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
+7. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
 
 > ⚠️ 这里**故意不写「现在播到第几分钟」**：那写在提示词里就是个永远不变的
 > 假数字（画面是持续变的，一个数字很快就是错的，比不写更糟）。
@@ -315,7 +355,10 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
         const last = mine[mine.length - 1];
         if (last && last.role === m.role && last.text === text) continue;
         mine.push({
-          id: m.id,
+          // ⚠️ 库里 id 是数字，这边统一存字符串 —— `TheaterMsg.id` 声明的是 string。
+          // 以前直接塞数字，typecheck 会报 TS2322（真机跑没事，但这条报错
+          // 会把真正新冒出来的错一起淹掉）。
+          id: String(m.id),
           role: m.role as 'user' | 'assistant',
           text,
           tag: (m.metadata as any)?.theaterTag as string || '',
@@ -359,6 +402,28 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
       addTrace(`准备上下文失败：${e?.message || e}`);
       core = buildSystemPrompt(scene());
     }
+
+    /**
+     * 现场：核心指令到底带没带（暮色 02:52 问的「是刚开始带了后面就没了，还是每一轮都带」）。
+     *
+     * 结论是「**建会话时发一次、整个会话持续生效**，不是每轮重发」——
+     * `buildSetup()` 里的 `systemInstruction` 就是这个机制，服务端那边
+     * 在关掉连接之前一直拿着它。所以不存在「后面就没了」这种可能。
+     *
+     * 这里把拼出来的东西记一份到 window上，真机上直接读：
+     * 能看到角色指令、世界观、世界书、私密印象、记忆库这些段都在不在。
+     */
+    const wDiag = window as any;
+    wDiag.__livePrompt = {
+      chars: core.length,
+      heads: (core.match(/^#{2,3} .+$/gm) || []).slice(0, 40),
+      hasChar: core.includes('核心性格/指令'),
+      hasWorldview: /世界观/.test(core),
+      hasWorldbook: /世界书|Worldbook|World Book/i.test(core),
+      hasImpression: /私密|印象/.test(core),
+      hasMemory: /记忆/.test(core),
+      at: Date.now(),
+    };
 
     // 3. 历史 —— 跨来源（同一个角色，主聊天里聊到哪他也该记得）
     //
@@ -411,7 +476,15 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
           streamTimer.current = 0;
           const text = pendingStream.current;
           pendingStream.current = '';
+          if (!text) return;
           setMsgs((old) => {
+            // ⚠️ 空回修复（暮色 02:52）：streamingId 是空 = 这轮还没建过泡。
+            // 真收到字了才补建 —— 之前是发送时就插空的，模型不回答就留个空气泡。
+            if (!streamingId.current) {
+              const mid = `m${Date.now()}`;
+              streamingId.current = mid;
+              return [...old, { id: mid, role: 'assistant', text, streaming: true, tag: tagRef.current }];
+            }
             const i = old.findIndex((m) => m.id === streamingId.current);
             if (i < 0) return old;
             const next = old.slice();
@@ -622,10 +695,18 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
     // ① 先让用户看到这条消息
     setMsgs((old) => [...old, { id: `u${Date.now()}`, role: 'user', text, tag }]);
 
-    // ② 给一条空的模型消息占位，等会儿流式往里填
-    const mid = `m${Date.now()}`;
+    // ② ⚠️ **不预插空泡了**（暮色 02:52 报「空气泡」）。
+    //
+    // 原来发送时就插一条空的占位，等流式往里填。问题是**模型这轮空回**
+    // （被打断 / 连接刚重连上 / 服务端只回了个 turnComplete），
+    // 那条空泡就永远留在屏幕上 —— 用户看到一个空白的 AI 气泡。
+    //
+    // 现在改成：**真收到第一个字的时候才建这个泡**。
+    // onText 里发现 streamingId 是空的就补建一条。
+    // 代价是模型响应快了的话，头一个字要等几十毫秒才出现 —— 那点延迟
+    // 换掉一个空气泡，值。
+    const mid = '';
     streamingId.current = mid;
-    setMsgs((old) => [...old, { id: mid, role: 'assistant', text: '', streaming: true, tag }]);
 
     // ③ 入库改成后台跑，不阻塞发送
     DB.saveMessage({
@@ -639,6 +720,33 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
 
     // ④ 发出去
     sessRef.current?.send(text);
+
+    // ⑤ 空回兜底（暮色 02:52 定的）。
+    //
+    // 模型这一轮如果什么都没说（被打断 / 刚重连上 / 服务端只回了个
+    // turnComplete），界面上就只剩用户那条消息，光看像「他没理我」。
+    // 这里等一会儿：还没出字就**自动重发一次**，再没有才显示一行提示。
+    //
+    // ⚠️ 重发的是**同一句**，不是新的话 —— 重发会多一条 user 记录进表，
+    // 但空气泡/失联比多一条历史糟糕得多。
+    window.setTimeout(() => {
+      if (streamingId.current) return;
+      // 重试一次
+      sessRef.current?.send(text);
+      window.setTimeout(() => {
+        if (streamingId.current) return;
+        setMsgs((old) => [
+          ...old,
+          {
+            id: `e${Date.now()}`,
+            role: 'assistant' as const,
+            text: '没收到回复，点这里再试一次',
+            tag: tagRef.current,
+            failed: true,
+          },
+        ]);
+      }, 12000);
+    }, 8000);
   }, [char, scene, addTrace]);
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */

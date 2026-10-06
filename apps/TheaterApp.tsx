@@ -834,32 +834,9 @@ const TheaterChat: React.FC<{
 
   return (
     <div className="flex-1 flex flex-col min-h-0" style={{ paddingBottom: kbH || 0 }}>
-      {/* 「邀请一起看」（10-07 02:42 暮色定的）。
-          没邀请 = 他自己安静追剧，角色看不见画面也听不见声音；
-          邀请了 = 角色才开始看。
-          ⚠️ 切换会重连一次（系统提示词变了），所以按钮上写清楚会做什么。 */}
-      <div className="shrink-0 px-4 pb-2">
-        <button
-          onClick={() => live.setInvited(!live.invited)}
-          className={`mx-auto flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[11px] font-bold transition-colors ${
-            live.invited
-              ? (p.night ? 'bg-sky-900/60 text-sky-200' : 'bg-sky-100 text-sky-600')
-              : (p.night ? 'bg-[#1e293b] text-slate-400' : 'bg-slate-100 text-slate-400')
-          }`}
-        >
-          {live.invited ? (
-            <>
-              <Eye size={13} />
-              <span>他正在陪我看 · 点一下收回</span>
-            </>
-          ) : (
-            <>
-              <EyeSlash size={13} />
-              <span>邀请他一起看</span>
-            </>
-          )}
-        </button>
-      </div>
+      {/* 「邀请一起看」的按钮**搬到上面那排，跟「自动连播」并排放**（暮色 02:52 定的）。
+          原来它单独占一行压在状态条上面，把「现在连没连上」挤到下面去了。
+          按钮本体在播放器那一排（TheaterApp 主组件里），这里不再重复一份。 */}
 
       {/* 状态条：断了就说，别装没事 */}
       {stateNote && (
@@ -883,7 +860,7 @@ const TheaterChat: React.FC<{
               {charName ? `这里会放跟${charName}聊天的框` : '这里会放聊天的框'}
             </p>
             <p className={`mt-1 text-[10px] ${p.faint}`}>
-              他现在只知道你在看剧，还看不到画面
+              {live.invited ? '他在陪你看 · 看得见画面也听得见声音' : '他这次没被邀请 · 只知道你在看剧'}
             </p>
           </div>
         )}
@@ -2859,6 +2836,21 @@ const TheaterApp: React.FC = () => {
           )}
 
           <div className="flex-1" />
+
+          {/* 「邀请他一起看」（10-07 02:42 暮色定的，02:52 挪到自动连播边上）。
+              没邀请 = 他自己安静追剧，角色看不见画面也听不见声音；
+              邀请了 = 角色才开始看（切换会重连一次，系统提示词变了）。 */}
+          <button
+            onClick={() => live.setInvited(!live.invited)}
+            className={`flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-bold active:scale-95 ${
+              live.invited
+                ? (p.night ? 'bg-sky-900/60 text-sky-200' : 'bg-sky-100 text-sky-600')
+                : (p.night ? 'bg-[#334155] text-slate-400' : 'bg-slate-100 text-slate-400')
+            }`}
+          >
+            {live.invited ? <Eye size={11} /> : <EyeSlash size={11} />}
+            {live.invited ? '他在陪我看' : '邀请他一起看'}
+          </button>
 
           <button
             onClick={() => {

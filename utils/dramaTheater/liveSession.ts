@@ -123,6 +123,15 @@ export class LiveSession {
   /** 已经送出去多少帧了（诊断用） */
   private framesSent = 0;
   private lastFrameAt = -1;
+  /**
+   * 攒着的画面背景说明（**只攒不发**，见 sendFrame）。
+   *
+   * 攒它是为了在用户开口时，把这句拼在他那句话**前面**一起发。
+   * 用完就清 —— 不然隔了很久之后的问话还会挂着一句八竿子打不着的进度。
+   */
+  private bgNote = '';
+  /** 用户最后一次发话的时间，用来判断模型是不是「自己主动插嘴」 */
+  private lastUserTurnAt = 0;
 
   constructor(opts: LiveOpts) {
     this.opts = opts;
@@ -379,22 +388,17 @@ export class LiveSession {
   private finishTurn() {
     const full = this.speaking.trim();
     this.speaking = '';
+    // 现场：模型是不是在用户没问的时候自己开口了。
+    // （声音进 realtimeInput 走的是服务端的活动检测，画面每 1.2 秒也进一次 ——
+    //  这两样都可能把模型勾起来说话。出现了就记一笔，别再靠猜。）
+    if (full && this.lastUserTurnAt && Date.now() - this.lastUserTurnAt > 5000) {
+      (window as any).__liveRaw?.push({
+        k: 'SPONT', gapMs: Date.now() - this.lastUserTurnAt, t: full.slice(0, 120),
+      });
+    }
     if (full) this.opts.onTurnComplete?.(full);
   }
 
-  /**
-   * 送一帧画面（第 3 步）。
-   *
-   * ⚠️ 走 `realtimeInput.mediaChunks`，**不跟打字的 clientContent 混** ——
-   * 那个的「一轮结束」是靠 turnComplete 显式收尾的，实时输入没有这个标记。
-   * 画面是「持续在发生的事」，不是一轮对话的一部分。
-   *
-   * ⚠️ 这里**故意不带 turnComplete**。带了会让每一帧都变成一轮对话，
-   * 模型对着每一帧都回一句 —— 那就是它开始不停插嘴的开关。
-   * 画面进去就好，它自己会在该说话的时候说话。
-   *
-   * 播放进度跟着一起送：画面本身不带「第几分钟」，不说它就永远停在开场。
-   */
   /**
    * 送一包声音（第 3 步）。
    *
@@ -419,11 +423,39 @@ export class LiveSession {
     }
   }
 
+  /**
+   * 送一帧画面（第 3 步）。
+   *
+   * ⚠️ 走 `realtimeInput.video`，**不跟打字的 clientContent 混** ——
+   * 那个的「一轮结束」是靠 turnComplete 显式收尾的，实时输入没有这个标记。
+   * 画面是「持续在发生的事」，不是一轮对话的一部分。
+   *
+   * ## 🔥 这里原来每 1.2 秒还跟着发一句 `（背景画面：正在播到第 X 分 X 秒）`，
+   * ##    这就是「答非所问」和「没人设像旁白」的病根（10-07 02:52 现场）
+   *
+   * 那句话是以 **`role: 'user'` 的身份**进对话的，1.2 秒一句、一直不停。
+   * 从模型那边看，它收到的对话长这样：
+   * ```
+   * user:（背景画面：正在播到第 3 分 04 秒）
+   * user:（背景画面：正在播到第 3 分 05 秒）
+   * user:（背景画面：正在播到第 3 分 06 秒）
+   * user:阿九好看吗          ← 他真正问的那句，夹在中间
+   * user:（背景画面：正在播到第 3 分 07 秒）
+   * ```
+   * 两个后果，正好对上暮色报的两个现象：
+   *   1. **答非所问** —— 他那句话**不是最后到达的**，模型按规矩回应最后那句，
+   *      于是回的是刚跳过去的那一帧画（"他在描述之前跳过去的画面"）。
+   *   2. **没有人设、像旁白** —— 对话里绝大多数是「背景画面」的轮次，
+   *      模型的隐含任务已经变成「解说这部剧」，人设自然掉光。
+   *
+   * 画面照送（模型得真看见），但**说明文字不再单独成轮**，只**攒起来**，
+   * 等他真的开口时，作为**他那句话前面的第一段**一起发出去（见 pushUserTurn）——
+   * 这就是暮色要的那句：「画面信息放在前面，用户最后一句放在请求最末尾」。
+   */
   sendFrame(data: string, at: number, duration = 0) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     const mm = Math.floor(at / 60);
     const ss = Math.floor(at % 60);
-    const text = `（画面：正在播到第 ${mm} 分 ${ss} 秒${duration ? ` / 共 ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : ''}）`;
     try {
       // ⚠️⚠️ 字段名是 **`video`**，不是 `mediaChunks`（10-07 02:16 实锤）。
       //
@@ -439,12 +471,10 @@ export class LiveSession {
           },
         },
       }));
-      // 进度单独一句话。跟画面分开一条，模型才分得清哪个是画面哪个是事实
-      this.ws.send(JSON.stringify({
-        clientContent: {
-          turns: [{ role: 'user', parts: [{ text }] }],
-        },
-      }));
+      // 进度**只攒着，不发**。等他开口时拼在他话前面（pushUserTurn）。
+      // 顺带这里也解释了为什么必须攒：每 1.2 秒发一次的话，那句话八成会排在他问句后面。
+      const len = duration ? `，整集约 ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : '';
+      this.bgNote = `（背景：这会儿在播第 ${mm} 分 ${ss} 秒${len}。画面是隔一阵自动送过来的，中间发生了什么你没看到。这是背景资料，不是他在跟你说话，不用回。）`;
       this.framesSent = (this.framesSent || 0) + 1;
       // 现场：画面确实发出去了吗
       const w = window as any;
@@ -462,6 +492,7 @@ export class LiveSession {
   /** 换集 / 重新播放时叫它一声：下一帧强制送，别接着上一集的进度说 */
   resetFrameClock() {
     this.lastFrameAt = -1;
+    this.bgNote = '';
   }
 
   /** 灌历史。turnComplete: true 才算灌完，但灌历史本身不会触发模型回话 */
@@ -495,14 +526,33 @@ export class LiveSession {
   /**
    * 发一句话。
    * ⚠️ 必须用 clientContent + turnComplete:true —— 见文件头第 1 点。
+   *
+   * ## 🎯 排版就是这个函数说了算（10-07 02:52 暮色定的）
+   *
+   * 他问「阿九好看吗」，模型却回了一段剧情解说。根因不是措辞不对，
+   * 是**他那句话不在请求的最末尾** —— 抽帧循环是独立的一条线，随时可能
+   * 有一句「背景画面…」排在他后面到达，模型照规矩回最后那句，于是答非所问。
+   *
+   * 现在这里拼成**同一个 turn 的两个 part**：
+   * ```
+   * [{ text: '（背景：…这是背景资料，不用回。）' }, { text: '阿九好看吗' }]
+   * ```
+   * 背景在前、他问的话在**整个请求的最后**。顺序由这一次发出去决定，
+   * 后面再怎么抽帧都不会插到它前面（`sendFrame` 只发图、不再发文字轮次）。
    */
   private pushUserTurn(text: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pendingInput.push(text); return; }
     // 用户插话 → 打断模型现在这段
     if (this.speaking) { this.speaking = ''; this.trace('用户插话，清掉未说完的'); }
+    const bg = this.bgNote;
+    this.bgNote = '';
+    const parts: Array<{ text: string }> = [];
+    if (bg) parts.push({ text: bg });
+    parts.push({ text });
+    this.lastUserTurnAt = Date.now();
     this.ws.send(JSON.stringify({
       clientContent: {
-        turns: [{ role: 'user', parts: [{ text }] }],
+        turns: [{ role: 'user', parts }],
         turnComplete: true,
       },
     }));
@@ -558,6 +608,9 @@ export class LiveSession {
     d.wantOpen = this.wantOpen;
     d.wsState = this.ws ? (this.ws as any).readyState : -1;
     d.model = (this.opts.model || '').replace(/^models\//, '');
+    d.promptChars = (this.opts.systemPrompt || '').length;
+    d.bgNote = this.bgNote ? this.bgNote.slice(0, 40) : '';
+    d.lastUserTurnAgo = this.lastUserTurnAt ? Math.round((Date.now() - this.lastUserTurnAt) / 1000) : -1;
     d.baseUrlHost = (() => {
         const u = this.opts.baseUrl || '';
         try { return new URL(u).host; } catch { return u.slice(0, 40); }

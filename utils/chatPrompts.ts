@@ -1239,6 +1239,9 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
         if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
             bp2Rules += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
         }
+        if (previousMsg && previousMsg.metadata?.source === 'theater') {
+            bp2Rules += `\n\n[系统提示: 你刚才陪用户在剧场里看了一集剧，现在回到主聊天。可以自然地提一句"刚才剧里那谁演得……"之类的观察；不要剧里每条都主动回到 IM，不要在电话里报告假剧情。]`;
+        }
 
         // Voice message prompt injection
         // ⚠️ 2026-07-17 4 断点方案：语音功能归 bp1Tools（属工具类，跟 Notion/朋友圈同类）

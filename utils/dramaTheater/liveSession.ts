@@ -210,18 +210,22 @@ export class LiveSession {
     const model = (this.opts.model || defaultLiveConfig.model).replace(/^models\//, '');
     const setup: any = {
       model: `models/${model}`,
-      // ⚠️ gemini-3.8-live 只支持 AUDIO 输出（官方原话）。
-      // 想只要文字也不行 —— 必须 AUDIO，然后开转写拿文本，音频数据收到就丢。
+      // ⚠️ 3.8 只支持音频输出。开音频 + 开转写拿文本，音频数据收到就丢。
       generationConfig: { responseModalities: ['AUDIO'] },
-      systemInstruction: { parts: [{ text: this.opts.systemPrompt }] },
+      // 历史不走官方那条「入场历史」通道（实测就是 1007 的源头），
+      // 改成直接拼到系统指令里，照搬见面那条路。
+      // 多个小段表示这是合法的，暮色 6 月定。
+      systemInstruction: {
+        parts: [
+          { text: this.opts.systemPrompt },
+          ...((this.opts.history || []).map((h) => ({
+            text: `[历史 ${h.role === 'user' ? '用户' : '模型'}] ${h.text}`,
+          }))),
+        ],
+      },
       outputAudioTranscription: {},
-      // 开了这个服务端才会发 newHandle；重连时带上它就能接回上下文
+      // 长会话续命：服务端发新句柄，断了带它能接回上下文。
       sessionResumption: {},
-      // ⚠️ 在 setup 顶层，不在 generationConfig 里。放错地方静默失效。
-      contextWindowCompression: { triggerTokens: 80000 },
-      // 进场的历史走这条路灌，不会触发模型回话
-      historyConfig: { initialHistoryInClientContent: true },
-      realtimeInputConfig: { turnCoverage: 'TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO' },
     };
     if (isResume && this.handle) setup.sessionResumption = { handle: this.handle };
     return { setup };

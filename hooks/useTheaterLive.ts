@@ -133,10 +133,10 @@ export function useTheaterLive(opts: {
   // ── 进场 ──────────────────────────────────────────────
   /**
    * 进场顺序（照抄陪伴模式）：
-   *   读历史 → 记忆注入 → 拼角色卡 → 连上 → 把历史灌进去
+   *   读历史 → 记忆注入 → 拼角色卡 → 连上 → 把历史灌进系统指令
    *
-   * ⚠️ 历史灌进 live 用的是 `historyConfig.initialHistoryInClientContent`，
-   * 灌完**不会**触发模型回话（官方文档原话：initial history will not trigger a model call）。
+   * ⚠️ 历史改成塞 systemInstruction（多 part 形式），不走进场的官方那条通道
+   * —— 实测官方那条是 1007 真凶；见面 app 走 system instruction 一直稳。
    */
   const boot = useCallback(async () => {
     if (!char) return;
@@ -280,51 +280,47 @@ export function useTheaterLive(opts: {
   }, [memoryPalaceConfig, apiConfig, userProfile?.name, updateCharacter]);
 
   // ── 发消息 ────────────────────────────────────────────
-  const send = useCallback(async (text: string) => {
+  // 暮色 23:06 拍板：「先显示再后台存」。
+  // 入库是写本地数据库，慢的话会卡住输入框里的「发出去」。
+  const send = useCallback((text: string) => {
     if (!char || !text.trim()) return;
     const s = scene();
     const tag = `《${s.title || '剧场'}》第${s.episode || 1}集`;
     tagRef.current = tag;
 
-    // ① 先入库（陪伴模式就是「先入库再发请求」）
-    try {
-      await DB.saveMessage({
-        charId: char.id,
-        role: 'user',
-        type: 'text',
-        content: text,
-        // ⚠️ source 是「接上主聊天」的关键；theaterTag 是让主聊天认出来源的线索
-        metadata: { source: 'theater', theaterTag: tag },
-      });
-    } catch (e: any) {
-      addTrace(`入库失败：${e?.message || e}`);
-    }
-
+    // ① 先让用户看到这条消息
     setMsgs((old) => [...old, { id: `u${Date.now()}`, role: 'user', text, tag }]);
 
-    // ② 先给一条空的模型消息占位，流式往里填
+    // ② 给一条空的模型消息占位，等会儿流式往里填
     const mid = `m${Date.now()}`;
     streamingId.current = mid;
     setMsgs((old) => [...old, { id: mid, role: 'assistant', text: '', streaming: true, tag }]);
 
-    // ③ 发出去
+    // ③ 入库改成后台跑，不阻塞发送
+    DB.saveMessage({
+      charId: char.id,
+      role: 'user',
+      type: 'text',
+      content: text,
+      // source 是「接上主聊天」的关键；theaterTag 是让主聊天认出来源的线索
+      metadata: { source: 'theater', theaterTag: tag },
+    }).catch((e: any) => addTrace(`用户消息入库失败：${e?.message || e}`));
+
+    // ④ 发出去
     sessRef.current?.send(text);
   }, [char, scene, addTrace]);
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */
-  const saveModel = useCallback(async (full: string) => {
+  // 入库仍然不阻塞（后面的字），记忆宫殿照常 await。
+  const saveModel = useCallback((full: string) => {
     if (!char || !full.trim()) return;
-    try {
-      await DB.saveMessage({
-        charId: char.id,
-        role: 'assistant',
-        type: 'text',
-        content: full,
-        metadata: { source: 'theater', theaterTag: tagRef.current },
-      });
-    } catch (e: any) {
-      addTrace(`入库失败：${e?.message || e}`);
-    }
+    DB.saveMessage({
+      charId: char.id,
+      role: 'assistant',
+      type: 'text',
+      content: full,
+      metadata: { source: 'theater', theaterTag: tagRef.current },
+    }).catch((e: any) => addTrace(`模型消息入库失败：${e?.message || e}`));
     runMemoryPost(char);
   }, [char, runMemoryPost, addTrace]);
 

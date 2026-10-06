@@ -181,11 +181,11 @@ const DownloadPicker: React.FC<{
   onClose: () => void;
   onConfirm: () => void;
   /**
-   * >0 表示「电脑上磁盘上真的一集都没有」（列表是空的），
-   * 弹窗改成一句话 + 「整部下」，而不是给一个空列表让人以为坏了。
+   * true = 这部电脑上还没有，选集列的是「全剧集号」，不是电脑上真有的。
+   * 弹窗要说清楚：这几集要先让电脑下下来，选中的才会进手机。
    */
-  fallbackTotal?: number;
-}> = ({ p, title, avail, checked, range, setRange, avgBytes, onToggle, onApplyRange, onAll, onNone, onClose, onConfirm, fallbackTotal = 0 }) => {
+  fromNetwork?: boolean;
+}> = ({ p, title, avail, checked, range, setRange, avgBytes, onToggle, onApplyRange, onAll, onNone, onClose, onConfirm, fromNetwork = false }) => {
   const picked = checked.size;
   const est = avgBytes > 0 ? avgBytes * picked : 0;
   const min = avail[0];
@@ -207,35 +207,30 @@ const DownloadPicker: React.FC<{
           </button>
           <button
             onClick={onConfirm}
-            disabled={!picked && !(fallbackTotal > 0)}
+            disabled={!picked}
             className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40"
           >
-            {picked ? `下载 ${picked} 集` : fallbackTotal > 0 ? `整部下（${fallbackTotal} 集）` : '先选集'}
+            {picked ? `下载 ${picked} 集` : '先选集'}
           </button>
         </>
       }
     >
-      {fallbackTotal > 0 ? (
-        /* 电脑上还没有这部剧的集 —— 不是坏了，是还没下。直接说清楚，给一条路。 */
-        <div className="py-2 text-center">
-          <p className={`text-[12px] leading-relaxed ${p.sub}`}>
-            电脑上还没有这部剧，先让电脑把整部下下来。<br />
-            下完一集就会自动存一集进手机，断网也能看。
-          </p>
-          <p className="mt-2 text-[11px] text-slate-400">共 {fallbackTotal} 集</p>
-        </div>
+      {fromNetwork ? (
+        <p className={`text-[11px] text-center mb-3 leading-relaxed ${p.sub}`}>
+          电脑上有 {avail.length} 集 · 选中的先让电脑下下来，下完一集就存一集进手机
+        </p>
       ) : (
         <p className={`text-[11px] text-center mb-3 ${p.sub}`}>
           电脑里有 {avail.length} 集还没下到手机{min ? ` · 第 ${min}-${max} 集` : ''}
         </p>
       )}
 
-      {fallbackTotal > 0 ? (
-        /* 没有可选集的时候，下面那一整套（区间 / 全选 / 体积 / 网格）全都不成立，
+      {!avail.length ? (
+        /* 真的一集都没有（比如整部都没下过）：下面那一整套
+           （区间 / 全选 / 体积 / 网格）全都不成立，
            硬渲染会因为 avail[0] 是 undefined 出 NaN，直接别画。 */
         <p className={`py-3 text-center text-[11px] ${p.sub}`}>
-          点了「整部下」之后，电脑会先把这 {fallbackTotal} 集下下来，
-          下完一集就自动存一集进手机。
+          这部剧在电脑上一集都还没有，手机上自然也没有。
         </p>
       ) : (
         <>
@@ -396,7 +391,7 @@ const TheaterApp: React.FC = () => {
    * 电脑上**一集都没有**的剧这里 avail 是空的 → 弹窗改成「整部下」，
    * 让电脑先下、下完一集拷一集（还是走 startPhoneDownload 那一条路）。
    */
-  const [dlPick, setDlPick] = useState<{ title: string; avail: number[]; total: number } | null>(null);
+  const [dlPick, setDlPick] = useState<{ title: string; avail: number[]; total: number; allFromNetwork?: boolean } | null>(null);
   const [dlChecked, setDlChecked] = useState<Set<number>>(new Set());
   const [dlRange, setDlRange] = useState('');
 
@@ -517,20 +512,24 @@ const TheaterApp: React.FC = () => {
 
   /**
    * 把任务列表里出现的每部剧，都问一遍转发服务「你磁盘上真有哪些集」。
-   * 一共十来个请求，本地网络，并行发出去也就百来毫秒。
-   * 有一部拉不到就那部退回旧名单，不影响其它剧。
+   *
+   * ⚠️ **必须串行，一次一个，不能 `Promise.all`。**
+   * 17:11 实测翻车：进剧场时对 11 部剧**并行**发 11 个请求，同一次刷新里
+   * 还有一个 21 MB 的剧库列表要转发，连接队列直接打满，多出来的那个请求
+   * **压根没发出去**，手机报 `Failed to fetch`，服务器日志里连记录都没有
+   * （对比：同秒之后的 11 个批量请求全部 200）。
+   *
+   * 串行之后最坏 11 × 几十毫秒，反正本地网络。而且拉不到就跳过，
+   * 那一部暂时退回旧名单（可能不准），下次进剧场再补。
    */
   const pullLocalEps = async (base: string, ts: RelayTask[]) => {
-    // 类型守卫：filter(t => t.dramaTitle) 不会让 TS 收窄出 string，
-    // 后面 map.get(title) 就会因为 string | undefined 报错（tsc 报的就是这个）
-    const titles = Array.from(new Set(ts.map((t) => t.dramaTitle).filter((x): x is string => !!x)));
-    if (!titles.length) return new Map<string, number[]>();
-    const res = await Promise.all(titles.map((t) => fetchLocalEpisodes(base, t)));
     const map = new Map<string, number[]>();
-    titles.forEach((t, i) => {
-      const eps = res[i];
+    // 类型守卫：filter((x) => !!x) 不会让 TS 收窄出 string
+    const titles = Array.from(new Set(ts.map((t) => t.dramaTitle).filter((x): x is string => !!x)));
+    for (const t of titles) {
+      const eps = await fetchLocalEpisodes(base, t);
       if (eps) map.set(t, eps);
-    });
+    }
     diag('数了一遍电脑上真实有的集', { 部数: titles.length, 数到: map.size });
     return map;
   };
@@ -590,9 +589,10 @@ const TheaterApp: React.FC = () => {
       // 顶着个不存在的站源首页就是一片空白，认不出来为什么空 —— 退回全部。
       setSrcFilter((cur) => (snap.sources.some((s) => s.key === DEFAULT_SOURCE) ? cur : ''));
       setTasks(ts.filter((t) => t.playable));
-      // 数一遍磁盘：短剧库那份 playable 名单会说谎（详见 macByDrama 的注释）
-      setLocalEps(await pullLocalEps(addr, ts));
       setMacWatch(mw);
+      // 数一遍磁盘：短剧库那份 playable 名单会说谎（详见 macByDrama 的注释）。
+      // **故意不 await** —— 这是串行的十一几个请求，await 会把首屏卡住两秒。
+      pullLocalEps(addr, ts).then(setLocalEps);
     } catch (e: any) {
       setLoadError(e?.message || '拉数据失败');
     } finally {
@@ -695,6 +695,16 @@ const TheaterApp: React.FC = () => {
   const openEpisodes = async (incoming: DramaRef) => {
     const d = resolveDramaId(incoming);
     setPicked(d);
+    /**
+     * 进选集页时把**这一部**的磁盘实况单独拉一次。
+     * 后台那批是「进剧场时拉的全部」，可能不包含这部（刚搜出来的、或名字对不上），
+     * 而这一部的集数格子、颜色、「下载到手机（N）」全靠它。
+     */
+    if (d.id || macByDrama.has(d.title)) {
+      fetchLocalEpisodes(addr, d.title).then((eps) => {
+        if (eps) setLocalEps((old) => { const m = new Map(old); m.set(d.title, eps); return m; });
+      });
+    }
     const ph = findPhoneDrama(phoneList, d.title);
     const mac = macByDrama.get(d.title);
     const guess = Math.max(
@@ -1095,8 +1105,20 @@ const TheaterApp: React.FC = () => {
   const openDownloadPicker = (d: DramaRef, total: number) => {
     const mac = macByDrama.get(d.title);
     const onDisk = mac?.eps || [];
-    const avail = onDisk.filter((n) => epState(d.title, n) !== 'phone').sort((a, b) => a - b);
-    setDlPick({ title: d.title, avail, total });
+    let avail = onDisk.filter((n) => epState(d.title, n) !== 'phone').sort((a, b) => a - b);
+    /**
+     * 电脑上**一集都还没有**时（剧库首页那批从没下过的），照样给选集窗，
+     * 可选集用全剧集号。
+     *
+     * 之前的做法是退化成一个「整部下」按钮 —— 用户反馈「还是只能整部下载」。
+     * 现在按他的原话做：**电脑照旧下整部（那是电脑自己的队列），
+     * 手机只拷他选中的那几集**，拷完就停，剩下的电脑继续下它的。
+     */
+    if (!avail.length && total > 0) {
+      avail = Array.from({ length: total }, (_, i) => i + 1)
+        .filter((n) => epState(d.title, n) !== 'phone');
+    }
+    setDlPick({ title: d.title, avail, total, allFromNetwork: avail.length > 0 && onDisk.length === 0 });
     setDlChecked(new Set(avail));
     setDlRange('');
   };
@@ -1936,16 +1958,12 @@ const TheaterApp: React.FC = () => {
           onConfirm={async () => {
             const d = picked;
             const eps = Array.from(dlChecked).sort((a, b) => a - b);
-            const totalEps = dlPick?.total || 0;
             setDlPick(null);
-            // 一集都没勾但全选也没东西可选 = 电脑上根本没有这部剧的集
-            // → 退化成「整部下」，让电脑先下、下完一集拷一集
-            const want = eps.length ? eps : Array.from({ length: totalEps }, (_, i) => i + 1);
-            if (!want.length) return;
-            await startPhoneDownload(d, want);
+            // 一集都没勾就是不下，不偷偷变成「整部下」
+            if (!eps.length) return;
+            await startPhoneDownload(d, eps);
           }}
-          /** 电脑上一集都没有时，弹窗改成「整部下」而不是空列表 */
-          fallbackTotal={dlPick && !dlPick.avail.length ? dlPick.total : 0}
+          fromNetwork={!!dlPick?.allFromNetwork}
         />
       </div>
     );

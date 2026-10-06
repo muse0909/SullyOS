@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
-  DeviceMobile, HardDrive, CloudSlash, Moon, Sun, DeviceMobileCamera, Sparkle,
+  DeviceMobile, HardDrive, CloudSlash, CloudArrowDown, Moon, Sun, DeviceMobileCamera, Sparkle,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -403,6 +403,28 @@ const TheaterApp: React.FC = () => {
       return 'none';
     },
     [phoneList, macByDrama]
+  );
+
+  /**
+   * 当前这部剧能不能**在线**播（电脑上没这一集、靠电脑边下边播）。
+   *
+   * 这一个定义给**所有**地方用，别再各写各的 —— 这个项目里同一个问题
+   * 一共写过三套标准，漏了两套，用户看到的现象是「有的集能点有的不能、
+   * 而且没人说得清为什么」（2026-10-06 排查了一整晚的根因）：
+   *   - 自动连播  onEnded        —— 早就有对的（st !== 'none' || (id && online)）
+   *   - 选集抽屉  EpisodeDrawer   —— 10-06 改了
+   *   - 播放页网格（用户实际点的那处）—— 10-06 漏了，onClick 还在挡着
+   * 判据沿用自动连播那一套：epState 认不出来，但有剧 id + 连着电脑，
+   * 就说明能走在线播放（文件在不在，和能不能看，是两件事）。
+   */
+  const canPlayOnline = !!picked?.id && online;
+  /** 某一集能不能点：手机有 / 电脑有 / 能在线播，任一即可 */
+  const canPlayEpisode = useCallback(
+    (title: string, n: number) => {
+      const d = picked;
+      return epState(title, n) !== 'none' || (!!d?.id && online) || d?.origin === 'upload';
+    },
+    [epState, picked?.id, picked?.origin, online]
   );
 
   // ── 探活 + 拉数据 ──
@@ -841,11 +863,10 @@ const TheaterApp: React.FC = () => {
     // 之前只认手机和电脑，在线这条路（剧库首页那批剧）自动连播直接断在这儿。
     const d = picked;
     if (!d) return;
-    const st = epState(d.title, next);
-    const canPlay = st !== 'none' || (!!d.id && online) || d.origin === 'upload';
-    if (!canPlay) return;
+    // 用和网格同一套判据（canPlayEpisode），别再各写各的
+    if (!canPlayEpisode(d.title, next)) return;
     playEpisode(next);
-  }, [autoNext, currentEp, epState, picked, playEpisode, recordWatch, online]);
+  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode]);
 
   // ── 存到手机 ──
   // 单集保存的活儿原来在播放页（saveCurrent / saveOne），暮色 10-05 明确
@@ -1562,7 +1583,14 @@ const TheaterApp: React.FC = () => {
             <div className="flex items-center gap-3 text-[10px] text-slate-400">
               <span className="flex items-center gap-1"><DeviceMobile size={11} className="text-emerald-500" />手机里</span>
               <span className="flex items-center gap-1"><HardDrive size={11} className="text-sky-500" />电脑里</span>
-              <span className="flex items-center gap-1"><CloudSlash size={11} className="text-slate-300" />都没有</span>
+              {canPlayOnline ? (
+                <span className="flex items-center gap-1"><CloudArrowDown size={11} className="text-violet-400" />在线看</span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <CloudSlash size={11} className="text-slate-300" />
+                  {!online ? '没连上电脑' : '没认出来这部剧'}
+                </span>
+              )}
             </div>
             <div className="mt-2.5 grid grid-cols-5 gap-2">
               {Array.from({ length: Math.max(total, 1) }, (_, i) => i + 1).map((n) => {
@@ -1575,13 +1603,16 @@ const TheaterApp: React.FC = () => {
                 return (
                   <button
                     key={n}
-                    onClick={() => st !== 'none' && playEpisode(n)}
-                    disabled={st === 'none' && !(picked.id && online)}
+                    onClick={() => canPlayEpisode(picked.title, n) && playEpisode(n)}
+                    disabled={!canPlayEpisode(picked.title, n)}
                     className={`relative aspect-square rounded-xl text-xs font-bold transition active:scale-95 ${
                       st === 'phone'
                         ? 'bg-emerald-50 text-emerald-600'
                         : st === 'mac'
                         ? 'bg-sky-50 text-sky-600'
+                        // 文件不在但能在线播：不能还用那个灰 —— 看着就像点不动
+                        : canPlayOnline
+                        ? 'bg-violet-50 text-violet-500'
                         : p.night
                         ? 'bg-[#1e293b] text-slate-600'
                         : 'bg-slate-100 text-slate-300'

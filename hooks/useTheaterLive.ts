@@ -56,6 +56,9 @@ export function useTheaterLive(opts: {
   char: any;
   userProfile: any;
   apiKey: string;
+  /** 剧场自己配的模型名 / 端点（独立于聊天的主 API，暮色 22:10 要求的） */
+  liveModel?: string;
+  liveBaseUrl?: string;
   memoryPalaceConfig: any;
   apiConfig: any;
   updateCharacter: (id: string, patch: any) => void;
@@ -73,7 +76,7 @@ export function useTheaterLive(opts: {
   onReady?: () => void;
 }): UseTheaterLive {
   const {
-    char, userProfile, apiKey, memoryPalaceConfig, apiConfig,
+    char, userProfile, apiKey, liveModel, liveBaseUrl, memoryPalaceConfig, apiConfig,
     updateCharacter, addToast, scene, active, onReady,
   } = opts;
 
@@ -190,6 +193,8 @@ export function useTheaterLive(opts: {
     // 4. 连上
     const s = new LiveSession({
       apiKey,
+      model: liveModel,
+      baseUrl: liveBaseUrl,
       systemPrompt: core,
       history,
       onTrace: addTrace,
@@ -223,7 +228,7 @@ export function useTheaterLive(opts: {
     });
     sessRef.current = s;
     await s.start();
-  }, [char, apiKey, userProfile, buildSystemPrompt, addToast, onReady, addTrace]);
+  }, [char, apiKey, liveModel, liveBaseUrl, userProfile, buildSystemPrompt, addToast, onReady, addTrace]);
 
   useEffect(() => {
     // 不在播放页就断开 —— 实时会话是长连接，不能在用户只是划海报的时候白挂着

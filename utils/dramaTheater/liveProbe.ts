@@ -39,8 +39,10 @@ export type ProbeStep = {
   ms: number;
 };
 
+import { LIVE_WS_BASE, defaultLiveConfig } from './liveConfig';
+
 const BASE = 'https://generativelanguage.googleapis.com';
-const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+const WS_BASE = LIVE_WS_BASE;
 
 /** key 脱敏：任何对外输出都不许出现完整 key */
 export function maskKey(k: string): string {
@@ -132,7 +134,7 @@ async function probeHttps(key: string): Promise<ProbeStep> {
 }
 
 /** 第 2 步：WebSocket 能不能建起来（长连接可能被 NAT 掐） */
-function probeWs(key: string): Promise<ProbeStep> {
+function probeWs(key: string, base: string): Promise<ProbeStep> {
   const t0 = Date.now();
   return new Promise((resolve) => {
     let ws: WebSocket | null = null;
@@ -176,7 +178,7 @@ function probeWs(key: string): Promise<ProbeStep> {
 }
 
 /** 第 3 步：真的发 setup，看会不会回 setupComplete */
-function probeSetup(key: string): Promise<ProbeStep> {
+function probeSetup(key: string, base: string, model: string): Promise<ProbeStep> {
   const t0 = Date.now();
   return new Promise((resolve) => {
     let ws: WebSocket | null = null;
@@ -209,7 +211,7 @@ function probeSetup(key: string): Promise<ProbeStep> {
     ws.onopen = () => {
       ws!.send(JSON.stringify({
         setup: {
-          model: 'models/gemini-3.8-live',
+          model: `models/${model.replace(/^models\//, '')}`,
           generationConfig: { responseModalities: ['AUDIO'] },
           outputAudioTranscription: {},
           systemInstruction: { parts: [{ text: '测试连接，回复一个字就好。' }] },
@@ -267,6 +269,8 @@ function probeSetup(key: string): Promise<ProbeStep> {
 export async function probeLive(
   key: string,
   onStep: (s: ProbeStep) => void,
+  model: string = defaultLiveConfig.model,
+  base: string = LIVE_WS_BASE,
 ): Promise<ProbeStep[]> {
   const out: ProbeStep[] = [];
   if (!key) {
@@ -282,10 +286,10 @@ export async function probeLive(
   push(one);
   if (!one.ok) return out;
 
-  const two = await probeWs(key);
+  const two = await probeWs(key, base);
   push(two);
   if (!two.ok) return out;
 
-  push(await probeSetup(key));
+  push(await probeSetup(key, base, model));
   return out;
 }

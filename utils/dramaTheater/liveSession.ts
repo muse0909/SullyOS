@@ -28,11 +28,10 @@
  */
 
 import { maskKey } from './liveProbe';
+import { LIVE_WS_BASE, defaultLiveConfig } from './liveConfig';
 
-const WS_BASE =
-  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
-
-export const LIVE_MODEL = 'models/gemini-3.8-live';
+const WS_BASE = LIVE_WS_BASE;
+export const LIVE_MODEL = `models/${defaultLiveConfig.model}`;
 
 export type LiveState =
   | 'idle' | 'connecting' | 'ready'
@@ -48,6 +47,10 @@ export type LiveTurn = {
 
 export type LiveOpts = {
   apiKey: string;
+  /** 剧场设置里配的模型名（不带 models/ 前缀）。不传就用默认那个 */
+  model?: string;
+  /** 剧场设置里配的 WebSocket 端点 */
+  baseUrl?: string;
   systemPrompt: string;
   /** 进场时带的历史（角色卡之外的上下文） */
   history?: LiveTurn[];
@@ -147,9 +150,10 @@ export class LiveSession {
       return;
     }
 
+    const base = this.opts.baseUrl || WS_BASE;
     let ws: WebSocket;
     try {
-      ws = new WebSocket(`${WS_BASE}?key=${encodeURIComponent(key)}`);
+      ws = new WebSocket(`${base}?key=${encodeURIComponent(key)}`);
     } catch (e: any) {
       this.scheduleRetry(`建不了连接：${e?.message || e}`);
       return;
@@ -203,8 +207,9 @@ export class LiveSession {
 
   /** setup。字段名严格按 BidiGenerateContentSetup 的表格，别自作主张改下划线 */
   private buildSetup(isResume: boolean) {
+    const model = (this.opts.model || defaultLiveConfig.model).replace(/^models\//, '');
     const setup: any = {
-      model: LIVE_MODEL,
+      model: `models/${model}`,
       // ⚠️ gemini-3.8-live 只支持 AUDIO 输出（官方原话）。
       // 想只要文字也不行 —— 必须 AUDIO，然后开转写拿文本，音频数据收到就丢。
       generationConfig: { responseModalities: ['AUDIO'] },

@@ -15,6 +15,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
   DeviceMobile, HardDrive, CloudSlash, CloudArrowDown, Moon, Sun, DeviceMobileCamera, Sparkle,
+  CaretDown,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -40,6 +41,10 @@ import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheate
 import { loadCoverBlob, cachedCoverUrl, coverCacheSize } from '../utils/dramaTheater/coverBlob';
 import { probeLive, maskKey, type ProbeStep } from '../utils/dramaTheater/liveProbe';
 import { useTheaterLive, type UseTheaterLive } from '../hooks/useTheaterLive';
+import {
+  loadLiveConfig, saveLiveConfig, subscribeLiveConfig, defaultLiveConfig, maskLiveKey,
+  LIVE_WS_BASE, type TheaterLiveConfig,
+} from '../utils/dramaTheater/liveConfig';
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
@@ -550,16 +555,16 @@ const CoverDiagModal: React.FC<{ p: Palette; addr: string; onClose: () => void }
  *
  * ⚠️ key 只显示脱敏后的几位，绝不把完整地址打到日志里（手机上有调试浮标会记录）。
  */
-const LiveProbeModal: React.FC<{ p: Palette; apiKey: string; onClose: () => void }> = ({ p, apiKey, onClose }) => {
+const LiveProbeModal: React.FC<{ p: Palette; apiKey: string; model: string; baseUrl: string; onClose: () => void }> = ({ p, apiKey, model, baseUrl, onClose }) => {
   const [steps, setSteps] = useState<ProbeStep[]>([]);
   const [running, setRunning] = useState(false);
 
   const run = useCallback(async () => {
     setRunning(true);
     setSteps([]);
-    await probeLive(apiKey, (s) => setSteps((old) => [...old, s]));
+    await probeLive(apiKey, (s) => setSteps((old) => [...old, s]), model, baseUrl);
     setRunning(false);
-  }, [apiKey]);
+  }, [apiKey, model, baseUrl]);
 
   const passed = steps.length > 0 && steps.every((s) => s.ok);
   const firstFail = steps.find((s) => !s.ok);
@@ -581,6 +586,7 @@ const LiveProbeModal: React.FC<{ p: Palette; apiKey: string; onClose: () => void
     >
       <div className={`rounded-2xl px-3 py-2 mb-2.5 text-[10px] ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
         用的密钥：<span className="font-mono font-bold">{maskKey(apiKey)}</span>
+        <div className="text-slate-400 mt-0.5">模型：<span className="font-mono">{model}</span></div>
         <div className="text-slate-400 mt-0.5">失败很正常，这一步就是用来告诉你卡在哪的</div>
       </div>
 
@@ -639,6 +645,101 @@ const SpinnerIcon: React.FC = () => (
     ))}
   </div>
 );
+
+/**
+ * 剧场的实时模型配置（10-06 22:25）。
+ *
+ * 暮色要求：放在设置页**最上面**、**折叠起来**、点一下才展开。
+ * 为什么折叠 —— 这个东西十个页面里用一次，不该占首屏；
+ * 为什么在最上面 —— 它是剧场能不能用的开关，卡在下面一堆设置中间找不到。
+ *
+ * ⚠️ 独立于聊天的主 API（暮色 22:10 指出）：主聊天用别的模型，
+ * 只有剧场要用 live 模型，借主 API 的配置既不对也会互相牵连。
+ */
+const LiveConfigCard: React.FC<{
+  p: Palette;
+  cfg: TheaterLiveConfig;
+  onSave: (c: TheaterLiveConfig) => void;
+}> = ({ p, cfg, onSave }) => {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(cfg);
+  // 外面换了配置（另一个 app 改了）就把草稿同步过来
+  useEffect(() => { setDraft(cfg); }, [cfg]);
+
+  const ready = !!(draft.apiKey && draft.model);
+  const dirty = draft.apiKey !== cfg.apiKey || draft.model !== cfg.model || draft.baseUrl !== cfg.baseUrl;
+
+  return (
+    <div className={`rounded-3xl p-5 ${p.card}`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 text-left active:scale-[0.99] transition-transform"
+      >
+        <div className="flex-1 min-w-0">
+          <h3 className={`text-sm font-bold ${p.title}`}>实时模型</h3>
+          <p className={`mt-1 text-[11px] ${ready ? (p.night ? 'text-emerald-400' : 'text-emerald-600') : p.sub}`}>
+            {ready
+              ? `已配置 · ${draft.model}`
+              : '还没配密钥 —— 配完才能跟角色边看边聊'}
+          </p>
+        </div>
+        {/* 展开箭头：转 180° 表示「点这里展开」 */}
+        <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+          p.night ? 'bg-[#1e293b]' : 'bg-white/70'
+        }`}>
+          <CaretDown size={16} className={`${p.sub} transition-transform ${open ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          <p className={`text-[11px] leading-relaxed ${p.sub}`}>
+            跟聊天那边的 API **完全独立** —— 你聊天用哪个模型都行，这里只管剧场的。
+            <br />
+            实时协议只有 Google 官方有（中转站不做双向流），所以不用切协议，
+            密钥填 AIStudio 那个就行。
+          </p>
+
+          <label className={`block mt-3 text-[10px] ${p.faint}`}>密钥</label>
+          <input
+            value={draft.apiKey}
+            onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+            placeholder="AIza…"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className={`mt-1 w-full rounded-2xl px-4 py-3 text-sm outline-none ${p.input}`}
+          />
+
+          <label className={`block mt-3 text-[10px] ${p.faint}`}>模型</label>
+          <input
+            value={draft.model}
+            onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+            placeholder="gemini-3.8-live"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className={`mt-1 w-full rounded-2xl px-4 py-3 text-sm outline-none ${p.input}`}
+          />
+
+          <label className={`block mt-3 text-[10px] ${p.faint}`}>接口地址（一般不用改）</label>
+          <input
+            value={draft.baseUrl}
+            onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+            placeholder={LIVE_WS_BASE}
+            autoCapitalize="none"
+            autoCorrect="off"
+            className={`mt-1 w-full rounded-2xl px-4 py-3 text-[11px] outline-none ${p.input}`}
+          />
+
+          <div className="mt-4 flex justify-center">
+            <Pill tone={p} onClick={() => onSave(draft)} disabled={dirty ? false : true}>
+              {dirty ? '保存' : '已保存'}
+            </Pill>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * 剧场聊天区（第 2 步）。
@@ -884,6 +985,13 @@ const TheaterApp: React.FC = () => {
   const [diagOpen, setDiagOpen] = useState(false);
   const [probeOpen, setProbeOpen] = useState(false);
 
+  /**
+   * 剧场的实时模型配置（独立的，不跟聊天共用）。
+   * 独立的原因见 utils/dramaTheater/liveConfig.ts 顶部注释。
+   */
+  const [liveCfg, setLiveCfg] = useState<TheaterLiveConfig>(() => loadLiveConfig());
+  useEffect(() => subscribeLiveConfig(() => setLiveCfg(loadLiveConfig())), []);
+
   // ── 转发服务连接 ──
   const [addr, setAddr] = useState(getRelayAddr());
   const [online, setOnline] = useState(false);
@@ -941,7 +1049,10 @@ const TheaterApp: React.FC = () => {
   const live = useTheaterLive({
     char,
     userProfile,
-    apiKey: apiConfig.apiKey,
+    // ⚠️ 用剧场自己的配置，不是聊天的主 API —— 暮色 22:10 要求的独立
+    apiKey: liveCfg.apiKey,
+    liveModel: liveCfg.model,
+    liveBaseUrl: liveCfg.baseUrl,
     memoryPalaceConfig,
     apiConfig,
     updateCharacter,
@@ -2719,6 +2830,9 @@ const TheaterApp: React.FC = () => {
       <TopBar p={p} title="剧场设置" onBack={() => setPage('list')} />
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 space-y-3">
+        {/* 暮色 22:10：放在设置最上面 + 折叠 */}
+        <LiveConfigCard p={p} cfg={liveCfg} onSave={(c) => { saveLiveConfig(c); setLiveCfg(loadLiveConfig()); }} />
+
         <SectionCard p={p} title="夜间模式" desc="只在剧场里换皮，不动其他 app。默认跟着手机系统的深浅色走。">
           <div className={`flex gap-1 rounded-full p-1 ${p.night ? 'bg-[#0f172a]' : 'bg-slate-100'}`}>
             {([['auto', '跟随系统', DeviceMobileCamera], ['light', '白天', Sun], ['dark', '夜间', Moon]] as const).map(([k, label, Icon]) => (
@@ -2835,14 +2949,13 @@ const TheaterApp: React.FC = () => {
           <div className="flex flex-col items-center gap-2">
             <Pill tone={p} onClick={() => setProbeOpen(true)}>测一下能不能连</Pill>
             <p className={`text-[10px] text-center ${p.faint}`}>
-              用的密钥：{maskKey(apiConfig.apiKey)}
-              {!apiConfig.apiKey && <span className="text-rose-400"> （还没填）</span>}
+              用的密钥：{maskLiveKey(liveCfg.apiKey)}
             </p>
           </div>
         </SectionCard>
 
         {probeOpen && (
-          <LiveProbeModal p={p} apiKey={apiConfig.apiKey} onClose={() => setProbeOpen(false)} />
+          <LiveProbeModal p={p} apiKey={liveCfg.apiKey} model={liveCfg.model} baseUrl={liveCfg.baseUrl} onClose={() => setProbeOpen(false)} />
         )}
 
         <div className="text-center text-[10px] text-slate-300 pt-2 pb-6">

@@ -250,9 +250,22 @@ const PlayerStage: React.FC<Props> = ({
   // 不知道比例（第一次播这部剧）就先给 42vh 占位，元数据到了再修正。
   const maxH = cinema ? '64vh' : '42vh';
   const stageStyle: React.CSSProperties = ratio
-    ? { aspectRatio: String(ratio), maxHeight: maxH, maxWidth: '100%', margin: '0 auto' }
-    : { height: maxH };
+    ? { aspectRatio: String(ratio), maxHeight: maxH, maxWidth: '100%', margin: '0 auto', isolation: 'isolate' }
+    : { height: maxH, isolation: 'isolate' };
 
+  /**
+   * 播放区内部**只能有一个视频**，控制条永远压在它上面 ——
+   * 所以这里写死三层，谁也别想盖住进度条（暮色 10-06：「所有的进度条都显示在最上面一层」）：
+   *
+   *   z-0   video     画面
+   *   z-20  遮罩/出错卡片
+   *   z-30  控制条（进度条在这条里）
+   *
+   * 容器上那个 `isolation: isolate` 是**必须的**：它开出一个新的层叠上下文，
+   * 播放区里面的 z 值就不再跟外面比。否则外层任何一个 `transform` / `filter` /
+   * `backdrop-filter` 都能把整块播放区压到别的东西底下，表现就是「进度条被挡住」，
+   * 而且横版竖版表现还不一样（谁被压取决于谁先建了自己的层叠上下文）。
+   */
   return (
     <div className="shrink-0 relative bg-black flex justify-center" style={stageStyle}>
       <video
@@ -277,7 +290,7 @@ const PlayerStage: React.FC<Props> = ({
         //
         // object-contain 而不是 fill：容器已经按比例算好了高度，
         // 但比例是「记住的那一部剧的比例」，万一是别的比例也不能拉伸变形。
-        className="w-full h-full bg-black object-contain"
+        className="relative z-0 w-full h-full bg-black object-contain"
         onClick={() => {
           if (!barOn) { setBarOn(true); scheduleHide(); return; }
           toggle();
@@ -314,7 +327,7 @@ const PlayerStage: React.FC<Props> = ({
           细线看着像坏掉的界面。换成浮在黑底上的一张浅色圆角卡片，跟项目里
           弹窗/浮层的观感一致。 */}
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center">
+        <div className="absolute inset-0 z-20 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl">
             <div className="w-9 h-9 rounded-full border-[3px] border-slate-200 border-t-sky-300 animate-spin" />
             <div className="text-[13px] font-bold text-slate-700">{loadHint || '正在从电脑取这一集'}</div>
@@ -327,7 +340,7 @@ const PlayerStage: React.FC<Props> = ({
       )}
 
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center px-6">
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
           <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl max-w-[85%]">
             <div className="text-[13px] font-bold text-slate-700 text-center leading-relaxed">{error}</div>
             <div className="flex items-center gap-2">
@@ -363,7 +376,7 @@ const PlayerStage: React.FC<Props> = ({
           用户要的是「重试」那一个动作，不需要同时给他一条拖不动的进度条。 */}
       {!loading && !error && (
       <div
-        className={`z-10 absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
+        className={`z-30 absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
           barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >

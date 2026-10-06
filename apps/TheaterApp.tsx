@@ -321,6 +321,150 @@ const DownloadPicker: React.FC<{
     </Modal>
   );
 };
+// ═══════════════════════ 渲染零件 ═══════════════════════
+//
+// ⚠️⚠️ 这几个组件**必须写在 TheaterApp 外面**（模块级），别再写回函数体里。
+//
+// 写进函数体 = 每次渲染都造出全新的函数对象 → React 认定组件类型变了 →
+// 整棵子树先卸载再挂载 → 网格里每一个 <img> 都被销毁重建 → 所有海报重新加载。
+// 转发服务又是 `Cache-Control: no-store`（浏览器不留缓存），于是每次重渲染
+// 都要重新走一遍网络 —— 这就是真机 10-06 19:16 / 19:42 的「片名在海报位置一闪一闪」：
+// 图片没加载完那一瞬间，内核会把 alt 文字画在图片框里，而 alt 传的正好是片名。
+//
+// 主题色 `p`、转发地址 `addr` 改成从 props 进来，就是为了能把它们搬出函数体。
+
+const TopBar: React.FC<{ p: Palette; title: string; onBack?: () => void; right?: React.ReactNode; center?: boolean }> = ({
+  p, title, onBack, right, center,
+}) => (
+  <div className={`shrink-0 flex items-center gap-3 px-4 py-3 backdrop-blur-xl border-b border-white/40 ${p.bar}`}>
+    {onBack
+      ? <button onClick={onBack} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
+          <ArrowLeft size={18} weight="bold" className={p.title} />
+        </button>
+      : <div className="shrink-0 w-9" />}
+    <h1 className={`flex-1 ${center === false ? '' : 'text-center'} text-base font-bold truncate ${p.title}`}>{title}</h1>
+    {right || <div className="shrink-0 w-9" />}
+  </div>
+);
+
+/**
+ * 封面图。
+ *
+ * 两个关键点，少一个就会退回「一闪一闪」：
+ *
+ * 1. **占位图标铺在下面，图片盖在上面**，不是二选一渲染。图片还在路上的时候
+ *    看到的是图标；`alt` 传空串（片名就在下面的 h3 里，重复一遍没意义），
+ *    这样内核**任何时候**都不会把文字画进图片框。
+ * 2. **记失败的是「哪个地址」，不是「失败过没有」**。记布尔量的话，换剧/换源时
+ *    会把新地址也一起判死（上一张的失败连坐下一张）。
+ *
+ * `src` 由调用方用 `coverSrc()` 拼好：相对路径要拼上转发地址，老记录里的 CDN
+ * 直链原样用。别在各处单独拼 —— 漏一处就整页海报全挂（10-06 19:15 首页漏拼）。
+ */
+const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
+  const [badSrc, setBadSrc] = useState('');
+  const failed = !!src && badSrc === src;
+  return (
+    <div className="absolute inset-0">
+      <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
+        <FilmSlate size={26} />
+      </div>
+      {!failed && src && (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => setBadSrc(src)}
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+        />
+      )}
+    </div>
+  );
+};
+
+/**
+ * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
+ * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
+ * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
+ */
+const HoldItem: React.FC<{
+  children: React.ReactNode;
+  onClick: () => void;
+  onHold?: () => void;
+}> = ({ children, onClick, onHold }) => {
+  const timer = useRef<number | null>(null);
+  const fired = useRef(false);
+  const clear = () => {
+    if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+  };
+  useEffect(() => clear, []);
+  return (
+    <div
+      className="cursor-pointer min-w-0 active:scale-95 transition-transform"
+      onClick={() => { if (!fired.current) onClick(); fired.current = false; }}
+      onTouchStart={() => {
+        fired.current = false;
+        if (!onHold) return;
+        clear();
+        timer.current = window.setTimeout(() => { fired.current = true; onHold(); }, 500);
+      }}
+      onTouchMove={clear}
+      onTouchEnd={clear}
+      onTouchCancel={clear}
+    >
+      {children}
+    </div>
+  );
+};
+
+/**
+ * 网格。`onHold` 不传就没有长按。
+ * 长按用 touch 计时（500ms）而不是 HTML 的 onContextMenu ——
+ * 安卓上 onContextMenu 会先弹系统的「复制/保存图片」，抢在长按之前。
+ *
+ * 封面地址在这里统一用 `coverSrc()` 拼好再交给 CoverImg，
+ * CoverImg 自己不再管拼地址 —— 别在两处都拼。
+ */
+const Grid: React.FC<{
+  p: Palette;
+  addr: string;
+  items: any[];
+  onOpen: (it: any) => void;
+  onHold?: (it: any) => void;
+}> = ({ p, addr, items, onOpen, onHold }) => (
+  <div className="grid grid-cols-3 gap-2.5">
+    {items.map((it) => (
+      <HoldItem key={it.key} onClick={() => onOpen(it)} onHold={onHold ? () => onHold(it) : undefined}>
+        <div className={`relative w-full aspect-[3/4] rounded-xl overflow-hidden ${p.night ? 'bg-[#1e293b]' : 'bg-slate-200'}`}>
+          <CoverImg p={p} src={coverSrc(addr, it.cover)} />
+          <div className="absolute top-1.5 left-1.5">
+            <Tag tone={it.badge.tone}>{it.badge.text}</Tag>
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100">
+            <div className="w-7 h-7 rounded-full bg-black/40 flex items-center justify-center">
+              <Play size={12} weight="fill" className="text-white" />
+            </div>
+          </div>
+        </div>
+        <h3 className={`mt-1.5 text-[11px] font-bold truncate ${p.title}`}>{it.title}</h3>
+        <p className={`text-[9.5px] truncate ${p.sub}`}>{it.sub}</p>
+      </HoldItem>
+    ))}
+  </div>
+);
+
+const Empty: React.FC<{ p: Palette; text: string }> = ({ p, text }) => (
+  <div className={`text-center text-xs py-10 whitespace-pre-line leading-relaxed ${p.sub}`}>{text}</div>
+);
+
+const SectionCard: React.FC<{ p: Palette; title?: string; desc?: string; children: React.ReactNode }> = ({ p, title, desc, children }) => (
+  <div className={`rounded-3xl p-5 ${p.card}`}>
+    {title && <h3 className={`text-sm font-bold ${p.title}`}>{title}</h3>}
+    {desc && <p className={`mt-1.5 text-[11px] leading-relaxed ${p.sub}`}>{desc}</p>}
+    <div className={title || desc ? 'mt-3' : ''}>{children}</div>
+  </div>
+);
 
 const TheaterApp: React.FC = () => {
   /**
@@ -1423,125 +1567,6 @@ const TheaterApp: React.FC = () => {
     }
   };
 
-  // ═══════════════ 渲染零件 ═══════════════
-
-  const TopBar: React.FC<{ title: string; onBack?: () => void; right?: React.ReactNode; center?: boolean }> = ({
-    title, onBack, right, center,
-  }) => (
-    <div className={`shrink-0 flex items-center gap-3 px-4 py-3 backdrop-blur-xl border-b border-white/40 ${p.bar}`}>
-      {onBack
-        ? <button onClick={onBack} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
-            <ArrowLeft size={18} weight="bold" className={p.title} />
-          </button>
-        : <div className="shrink-0 w-9" />}
-      <h1 className={`flex-1 ${center === false ? '' : 'text-center'} text-base font-bold truncate ${p.title}`}>{title}</h1>
-      {right || <div className="shrink-0 w-9" />}
-    </div>
-  );
-
-  /**
-   * 封面图。加载失败**一次**就换成占位图标，不再让内核反复重试 ——
-   * 重试的表现是「封面上的字一闪一闪」（真机 10-06 19:16）。
-   *
-   * `src` 由调用方用 `coverSrc()` 拼好：相对路径要拼上转发地址，
-   * 老记录里的 CDN 直链原样用。别在各处单独拼 —— 漏一处就整页海报全挂
-   * （10-06 19:15 就是首页漏拼，缓存剧库拼对了，两边一起挂）。
-   */
-  const CoverImg: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
-    const [broken, setBroken] = useState(false);
-    // 地址变了（换剧 / 重进列表）要重置，否则上一张失败会把下一张也判死
-    useEffect(() => { setBroken(false); }, [src]);
-    if (!src || broken) {
-      return (
-        <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
-          <FilmSlate size={26} />
-        </div>
-      );
-    }
-    return (
-      <img
-        src={src}
-        alt={alt}
-        onError={(e) => { e.currentTarget.style.display = 'none'; setBroken(true); }}
-        className="w-full h-full object-cover pointer-events-none"
-      />
-    );
-  };
-
-  /**
-   * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
-   * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
-   * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
-   */
-  const HoldItem: React.FC<{
-    children: React.ReactNode;
-    onClick: () => void;
-    onHold?: () => void;
-  }> = ({ children, onClick, onHold }) => {
-    const timer = useRef<number | null>(null);
-    const fired = useRef(false);
-    const clear = () => {
-      if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
-    };
-    useEffect(() => clear, []);
-    return (
-      <div
-        className="cursor-pointer min-w-0 active:scale-95 transition-transform"
-        onClick={() => { if (!fired.current) onClick(); fired.current = false; }}
-        onTouchStart={() => {
-          fired.current = false;
-          if (!onHold) return;
-          clear();
-          timer.current = window.setTimeout(() => { fired.current = true; onHold(); }, 500);
-        }}
-        onTouchMove={clear}
-        onTouchEnd={clear}
-        onTouchCancel={clear}
-      >
-        {children}
-      </div>
-    );
-  };
-
-  /**
-   * 网格。`onHold` 不传就没有长按。
-   * 长按用 touch 计时（500ms）而不是 HTML 的 onContextMenu ——
-   * 安卓上 onContextMenu 会先弹系统的「复制/保存图片」，抢在长按之前。
-   */
-  const Grid: React.FC<{ items: any[]; onOpen: (it: any) => void; onHold?: (it: any) => void }> = ({ items, onOpen, onHold }) => (
-    <div className="grid grid-cols-3 gap-2.5">
-      {items.map((it) => (
-        <HoldItem key={it.key} onClick={() => onOpen(it)} onHold={onHold ? () => onHold(it) : undefined}>
-          <div className={`relative w-full aspect-[3/4] rounded-xl overflow-hidden ${p.night ? 'bg-[#1e293b]' : 'bg-slate-200'}`}>
-            {/* 拼地址统一在 CoverImg 里做，不在各处的 map 里拼 */}
-            <CoverImg src={coverSrc(addr, it.cover)} alt={it.title} />
-            <div className="absolute top-1.5 left-1.5">
-              <Tag tone={it.badge.tone}>{it.badge.text}</Tag>
-            </div>
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100">
-              <div className="w-7 h-7 rounded-full bg-black/40 flex items-center justify-center">
-                <Play size={12} weight="fill" className="text-white" />
-              </div>
-            </div>
-          </div>
-          <h3 className={`mt-1.5 text-[11px] font-bold truncate ${p.title}`}>{it.title}</h3>
-          <p className={`text-[9.5px] truncate ${p.sub}`}>{it.sub}</p>
-        </HoldItem>
-      ))}
-    </div>
-  );
-
-  const Empty: React.FC<{ text: string }> = ({ text }) => (
-    <div className={`text-center text-xs py-10 whitespace-pre-line leading-relaxed ${p.sub}`}>{text}</div>
-  );
-
-  const SectionCard: React.FC<{ title?: string; desc?: string; children: React.ReactNode }> = ({ title, desc, children }) => (
-    <div className={`rounded-3xl p-5 ${p.card}`}>
-      {title && <h3 className={`text-sm font-bold ${p.title}`}>{title}</h3>}
-      {desc && <p className={`mt-1.5 text-[11px] leading-relaxed ${p.sub}`}>{desc}</p>}
-      <div className={title || desc ? 'mt-3' : ''}>{children}</div>
-    </div>
-  );
 
   // ═══════════ 页面 1：列表 ═══════════
   if (page === 'list') {
@@ -1550,6 +1575,7 @@ const TheaterApp: React.FC = () => {
     return (
       <div className={`absolute inset-0 flex flex-col ${p.page}`}>
         <TopBar
+          p={p}
           title="剧场"
           onBack={() => { closeOnline(); if (activeCharacterId) jumpToChat(activeCharacterId); }}
           right={
@@ -1662,9 +1688,11 @@ const TheaterApp: React.FC = () => {
                 </>
               )}
 
-              {online && homeList.length === 0 && <Empty text={searched ? '没搜到' : '这个筛选下没有剧'} />}
+              {online && homeList.length === 0 && <Empty p={p} text={searched ? '没搜到' : '这个筛选下没有剧'} />}
               {online && homeList.length > 0 && (
                 <Grid
+                  p={p}
+                  addr={addr}
                   items={homeList.map((d) => ({
                     key: d.id,
                     title: d.title,
@@ -1691,7 +1719,7 @@ const TheaterApp: React.FC = () => {
           {/* ── 缓存剧库（电脑上的）── */}
           {!loading && tab === 'mac' && (
             <>
-              {!online && <Empty text="没连上电脑看不到缓存" />}
+              {!online && <Empty p={p} text="没连上电脑看不到缓存" />}
               {online && macItems.length === 0 && (
                 macHidden.length > 0 ? (
                   /* 全被长按移走了 —— 给一条回来的路，不然用户以为剧没了 */
@@ -1708,7 +1736,7 @@ const TheaterApp: React.FC = () => {
                     </button>
                   </div>
                 ) : (
-                  <Empty text="短剧库里还没有下载好的剧" />
+                  <Empty p={p} text="短剧库里还没有下载好的剧" />
                 )
               )}
               {online && macItems.length > 0 && (
@@ -1718,6 +1746,8 @@ const TheaterApp: React.FC = () => {
                     <span className="text-slate-300">长按某部可以把它从这页移走（不会删电脑里的文件）</span>
                   </div>
                   <Grid
+                    p={p}
+                    addr={addr}
                     items={macItems.map((d) => {
                       const mac = macByDrama.get(d.title)!;
                       const ph = findPhoneDrama(phoneList, d.title);
@@ -1782,7 +1812,7 @@ const TheaterApp: React.FC = () => {
                 </p>
               </div>
 
-              {phoneList.length === 0 && <Empty text="手机里还没有剧，先从电脑上存几集过来" />}
+              {phoneList.length === 0 && <Empty p={p} text="手机里还没有剧，先从电脑上存几集过来" />}
               {phoneList.length > 0 && (
                 <div className="space-y-2.5">
                   {phoneList.map((d) => {
@@ -1883,7 +1913,7 @@ const TheaterApp: React.FC = () => {
                   </button>
                 </div>
               )}
-              {watchItems.length === 0 && <Empty text="还没看过剧\n看过的会自动记在这儿" />}
+              {watchItems.length === 0 && <Empty p={p} text="还没看过剧\n看过的会自动记在这儿" />}
               {watchItems.length > 0 && (
                 <div className="space-y-2.5">
                   {watchItems.map((w: any) => {
@@ -1986,7 +2016,7 @@ const TheaterApp: React.FC = () => {
 
     return (
       <div className={`absolute inset-0 flex flex-col ${p.page}`}>
-        <TopBar title={picked.title} onBack={() => setPage('list')} />
+        <TopBar p={p} title={picked.title} onBack={() => setPage('list')} />
 
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4">
           {/* 头：封面 + 三个状态说清楚 */}
@@ -2169,6 +2199,7 @@ const TheaterApp: React.FC = () => {
     return (
       <div className={`absolute inset-0 flex flex-col ${night ? 'bg-[#0f172a]' : 'bg-white'}`}>
         <TopBar
+          p={p}
           title={picked.title}
           onBack={() => { recordWatch(true); setPage('episodes'); }}
           right={
@@ -2278,10 +2309,10 @@ const TheaterApp: React.FC = () => {
   // ═══════════ 页面 4：设置 ═══════════
   return (
     <div className={`absolute inset-0 flex flex-col ${p.page}`}>
-      <TopBar title="剧场设置" onBack={() => setPage('list')} />
+      <TopBar p={p} title="剧场设置" onBack={() => setPage('list')} />
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 space-y-3">
-        <SectionCard title="夜间模式" desc="只在剧场里换皮，不动其他 app。默认跟着手机系统的深浅色走。">
+        <SectionCard p={p} title="夜间模式" desc="只在剧场里换皮，不动其他 app。默认跟着手机系统的深浅色走。">
           <div className={`flex gap-1 rounded-full p-1 ${p.night ? 'bg-[#0f172a]' : 'bg-slate-100'}`}>
             {([['auto', '跟随系统', DeviceMobileCamera], ['light', '白天', Sun], ['dark', '夜间', Moon]] as const).map(([k, label, Icon]) => (
               <button
@@ -2296,7 +2327,7 @@ const TheaterApp: React.FC = () => {
           </div>
         </SectionCard>
 
-        <SectionCard title="自动连播" desc="一集放完自动接下一集。下一集手机和电脑都没有的时候不会瞎跳。">
+        <SectionCard p={p} title="自动连播" desc="一集放完自动接下一集。下一集手机和电脑都没有的时候不会瞎跳。">
           <div className={`flex gap-1 rounded-full p-1 ${p.night ? 'bg-[#0f172a]' : 'bg-slate-100'}`}>
             {([[true, '开'], [false, '关']] as const).map(([k, label]) => (
               <button
@@ -2310,7 +2341,7 @@ const TheaterApp: React.FC = () => {
           </div>
         </SectionCard>
 
-        <SectionCard title="手机里的剧" desc={`${usage.dramas} 部 · ${usage.count} 集 · 占了 ${fmtBytes(usage.bytes)}`}>
+        <SectionCard p={p} title="手机里的剧" desc={`${usage.dramas} 部 · ${usage.count} 集 · 占了 ${fmtBytes(usage.bytes)}`}>
           {usage.dramas > 0 ? (
             <div className="flex justify-center gap-2">
               <Pill
@@ -2339,7 +2370,7 @@ const TheaterApp: React.FC = () => {
           )}
         </SectionCard>
 
-        <SectionCard title="连你的电脑" desc="电脑上打开短剧库和「剧场转发」，它会显示一个地址。手机连同一个 WiFi，填进去就行。">
+        <SectionCard p={p} title="连你的电脑" desc="电脑上打开短剧库和「剧场转发」，它会显示一个地址。手机连同一个 WiFi，填进去就行。">
           <input
             value={addr}
             onChange={(e) => setAddr(e.target.value)}
@@ -2361,7 +2392,7 @@ const TheaterApp: React.FC = () => {
         </SectionCard>
 
         {known.length > 0 && (
-          <SectionCard title="之前连过">
+          <SectionCard p={p} title="之前连过">
             <div className="space-y-2">
               {known.map((k) => (
                 <div key={k.base} className="flex items-center gap-2">
@@ -2383,7 +2414,7 @@ const TheaterApp: React.FC = () => {
           </SectionCard>
         )}
 
-        <SectionCard title="出门在外" desc="装了 Tailscale 之后，出门也能连上家里。不想带电脑就先「存到手机」，存完跟电脑无关，断网也能看。">
+        <SectionCard p={p} title="出门在外" desc="装了 Tailscale 之后，出门也能连上家里。不想带电脑就先「存到手机」，存完跟电脑无关，断网也能看。">
           <div className="flex justify-center">
             <Pill tone={p} onClick={() => { setPage('list'); setTab('phone'); }}>去本地剧库</Pill>
           </div>

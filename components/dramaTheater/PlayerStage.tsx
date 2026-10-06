@@ -33,6 +33,8 @@ type Props = {
   onTime: (position: number, duration: number) => void;
   loading: boolean;
   loadProgress: number;
+  /** 加载遮罩上那行字 —— 在线流和「从电脑取文件」不是一回事，别一律写「从电脑取」 */
+  loadHint?: string;
   error: string;
   onRetry: () => void;
   /** 播放位满了：给一个「一次清空所有播放位」的动作（短剧库新加的 closeAll） */
@@ -89,7 +91,7 @@ function saveRatio(title: string | undefined, ratio: number): void {
 
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
+  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -203,8 +205,20 @@ const PlayerStage: React.FC<Props> = ({
   return (
     <div className="shrink-0 relative bg-black flex justify-center" style={stageStyle}>
       <video
+        /**
+         * `key={src}` —— **换片就重建这个元素**，这是「切剧时旧画面继续播」的解法。
+         *
+         * 为什么光把 src 置空不够：React 只是把 `src` 属性从 A 的地址改成 `''`，
+         * 同一个元素还在，网络层和解码器都还挂着上一段流，屏幕上就是旧画面 + 旧声音。
+         * 而且 `src=""` 在 Chromium 里会把 currentSrc 落到**文档 URL** 上，
+         * 反而多发一次没意义的请求。
+         *
+         * 换成 `key`：旧元素直接从 DOM 上摘掉（浏览器随即停掉它的取流和解码），
+         * 新元素 `src={src || undefined}` 什么都不带，什么都不请求。干净。
+         */
+        key={src || '空'}
         ref={videoRef}
-        src={src}
+        src={src || undefined}
         playsInline
         // 麦麦 2026-10-05：**不能**加 crossOrigin。
         // 电脑上取的剧已经变成浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
@@ -252,7 +266,7 @@ const PlayerStage: React.FC<Props> = ({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl">
             <div className="w-9 h-9 rounded-full border-[3px] border-slate-200 border-t-sky-300 animate-spin" />
-            <div className="text-[13px] font-bold text-slate-700">正在从电脑取这一集</div>
+            <div className="text-[13px] font-bold text-slate-700">{loadHint || '正在从电脑取这一集'}</div>
             <div className="w-28 h-1.5 rounded-full bg-slate-100 overflow-hidden">
               <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${Math.max(8, Math.round(loadProgress * 100))}%` }} />
             </div>

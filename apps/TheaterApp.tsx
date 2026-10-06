@@ -559,29 +559,37 @@ const TheaterApp: React.FC = () => {
   // ── 选集 ──
   // 集数不采信剧库列表里的 episodeCount —— 实测那个字段的值是 '1'，是假数据。
   // 三个来源按可信度排：手机本地集数 > task.total（实测真实）> playback/open 的 episodes 长度。
-  const openEpisodes = async (incoming: DramaRef) => {
-    /**
-     * 进选集页前先把剧 id 补上。
-     *
-     * 「正在追剧」和「本地剧库」两处传进来的是 `id: ''`（原来的代码就是这么写的），
-     * 于是 `canPlayOnline = !!picked.id && online` 判成否，选集页的集数全灰、
-     * 一集都点不动 —— 用户 10-06 深夜实测就是这样。
-     *
-     * 两条补法：
-     *   1. 新记的追剧条目自带 dramaId（watchHistory 里已加）
-     *   2. 老条目没有，就按剧名在**已经拉到内存的剧库**里查一次
-     *      （不是去网络搜，dramas 这会儿就在手上，10455 条全在）
-     */
-    let d = incoming;
-    if (!d.id) {
-      const hit = dramas.find((x) => x.title === d.title);
-      if (hit?.id) {
-        d = { ...d, id: hit.id };
-        diag('按剧名补到了剧 id', { 剧: d.title, id: hit.id.slice(0, 22) });
-      } else {
-        diag('这部没找到剧 id（可能不是剧库里的剧）', { 剧: d.title });
-      }
+
+  /**
+   * 把剧 id 补上 —— **进选集页和直接点播放，两个入口都得走这一条**。
+   *
+   * 为什么要有这个函数：没有剧 id，在线播放这条路整个判死
+   * （`canPlayOnline = !!id && online`、`playEpisode` 里 `d.id && online`）。
+   * 10-06 深夜先修了选集页那条（`openEpisodes`），结果 10-06 下午「正在追剧 →
+   * 接着看」还是弹「这一集电脑上没有，手机上也没有」—— 那是**另一个入口**，
+   * 直接跳播放页，压根没经过 `openEpisodes`，补 id 的逻辑一次都没跑。
+   *
+   * 同一个 bug 藏在两个入口里，只修一个就等于没修。规矩记死：
+   * **任何拿 `DramaRef` 往里跳的地方，都要先过 `resolveDramaId`。**
+   *
+   * 两条补法：
+   *   1. 新记的追剧条目自带 dramaId（watchHistory 里已加）
+   *   2. 老条目没有，就按剧名在**已经拉到内存的剧库**里查一次
+   *      （不是去网络搜，dramas 这会儿就在手上，一万多条全在）
+   */
+  const resolveDramaId = useCallback((incoming: DramaRef): DramaRef => {
+    if (incoming.id) return incoming;
+    const hit = dramas.find((x) => x.title === incoming.title);
+    if (hit?.id) {
+      diag('按剧名补到了剧 id', { 剧: incoming.title, id: hit.id.slice(0, 22) });
+      return { ...incoming, id: hit.id };
     }
+    diag('这部没找到剧 id（可能不是剧库里的剧）', { 剧: incoming.title });
+    return incoming;
+  }, [dramas]);
+
+  const openEpisodes = async (incoming: DramaRef) => {
+    const d = resolveDramaId(incoming);
     setPicked(d);
     const ph = findPhoneDrama(phoneList, d.title);
     const mac = macByDrama.get(d.title);
@@ -802,23 +810,56 @@ const TheaterApp: React.FC = () => {
    * （上传的单集剧会被显示成上一部剧的集数，见 guessTotal 的注释）。
    */
   const playEpisode = useCallback((n: number, drama?: DramaRef) => {
-    const d = drama || picked;
-    if (!d) return;
+    const raw = drama || picked;
+    if (!raw) return;
+    // 剧 id 必补 —— 见 resolveDramaId 的注释（同一个 bug 藏在两个入口里）
+    const d = resolveDramaId(raw);
     // 切剧/切集先把手上的在线会话还回去，别占着短剧库的并发名额
     closeOnline();
+
+    /**
+     * **把上一段视频彻底拆掉**，再开始取新的。
+     *
+     * 之前这里只 `closeOnline()`（那只是还短剧库的播放名额，跟播放器没关系），
+     * `blobUrl` 里还挂着上一集/上一部剧的视频地址，所以切过去的头几秒
+     * 屏幕上还是旧画面、声音也还在放 —— 10-06 下午用户实机反馈。
+     *
+     * 只 `setPage('player')` / `setCurrentEp(n)` 是拆不掉的：PlayerStage 拿到
+     * 的还是同一个 `src`，`useEffect(..., [src])` 压根不触发，旧流继续拉、继续解码。
+     *
+     * 这里先 revoke 再置空，PlayerStage 那边用 `key={src}` 强制重建 `<video>`，
+     * 新元素不带任何源，什么都不请求。
+     */
+    setBlobUrl((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return '';
+    });
+    setSrcKind('');
+    setBlobEp(0);
+    setCurDuration(0);
+    // 遮罩要在取新片**之前**就挂上，否则空 src 的那一帧会闪一帧黑屏/旧画面
+    setDlLoading(true);
+    setDlError('');
+    setBusyStall(false);
+    mediaBroken.current = false;
+    if (mediaErrTimer.current) { window.clearTimeout(mediaErrTimer.current); mediaErrTimer.current = null; }
+
     setPicked(d);
     setDrawer(false);
     setCinema(false);
     setCurrentEp(n);
-    setCurDuration(0);
     setEpTotal(guessTotal(d));
     setPage('player');
+    diag('切到', { 剧: d.title, 集: n, 剧id: d.id ? d.id.slice(0, 22) : '没有' });
     const st = epState(d.title, n);
     if (st === 'phone') loadFromPhone(d.title, n);
     else if (st === 'mac') loadFromMac(d.title, n);
     else if (d.id && online) loadOnline(d.id, n);
-    else setDlError('这一集电脑上没有，手机上也没有');
-  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal, closeOnline]);
+    else {
+      setDlLoading(false);
+      setDlError('这一集电脑上没有，手机上也没有');
+    }
+  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal, closeOnline, resolveDramaId]);
 
   // ── 观看记录 ──
   const recordWatch = useCallback((force = false) => {
@@ -1463,7 +1504,11 @@ const TheaterApp: React.FC = () => {
                           </div>
                         </div>
                         <button
-                          onClick={() => playEpisode(w.episode, { id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
+                          /* 剧 id 必须一起传过去（原来硬编码 id: ''）：
+                             没它就判不出「这一集能在线播」，直接弹「这一集电脑上没有」。
+                             老的追剧条目没存 dramaId，playEpisode 里的 resolveDramaId
+                             会再按剧名兜底查一次。 */
+                          onClick={() => playEpisode(w.episode, { id: w.dramaId || '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
                           className="shrink-0 rounded-full bg-sky-500 px-3.5 py-2 text-[11px] font-bold text-white active:scale-95"
                         >
                           接着看
@@ -1697,6 +1742,7 @@ const TheaterApp: React.FC = () => {
           onTime={(pos, dur) => { posRef.current = { pos, dur }; if (dur) setCurDuration(dur); recordWatch(); }}
           loading={dlLoading}
           loadProgress={dlProgress}
+          loadHint={srcKind === 'online' ? '正在从电脑取这一集（边下边播）' : srcKind === 'phone' ? '正在打开手机里的这一集' : '正在从电脑取这一集'}
           error={dlError}
           onRetry={() => (st === 'phone' ? loadFromPhone(picked.title, currentEp) : loadFromMac(picked.title, currentEp))}
           onClearAll={busyStall ? clearStallsAndRetry : undefined}

@@ -411,6 +411,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-07-31 | 角色 API 重开抽屉时输入框不同步（按 protocol 重新同步 + 补 deps） | [`changelogs/2026-07-31-chatsettings-reopen-sync.md`](./changelogs/2026-07-31-chatsettings-reopen-sync.md) |
 | 2026-07-31 | useChatAI 角色 API 优先级判断扩展到 3 套 baseUrl（修 Gemini/Claude 角色 API 被全局顶掉） | [`changelogs/2026-07-31-perchar-api-3tab-eval.md`](./changelogs/2026-07-31-perchar-api-3tab-eval.md) |
 | 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
+| 2026-10-06 | 剧场：海报全不显示的真根因 —— 「修 429」那次顺手把封面换成局域网 http，显示那条路断了（同视频 1f838f27 同一个坑） | [`changelogs/2026-10-06-theater-cover-mixed-content-root-cause.md`](./changelogs/2026-10-06-theater-cover-mixed-content-root-cause.md) |
 | 2026-10-06 | 剧场：海报「完全不显示」——电脑侧全排除（36/36 张实测真图、混合内容开关确认生效），加诊断让页面自报 | [`changelogs/2026-10-06-theater-cover-not-showing-diag.md`](./changelogs/2026-10-06-theater-cover-not-showing-diag.md) |
 | 2026-10-06 | 剧场：海报「片名一闪一闪」真根因（组件写在函数体里）+ 控制条压到最上层 | [`changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md`](./changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md) |
 | 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |

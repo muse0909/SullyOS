@@ -333,7 +333,10 @@ export function useTheaterLive(opts: {
     try {
       const all = await DB.getMessagesByCharId(char.id, true);
       history = all
+        // 工具标签 + 控制字符垃圾
+        // ⚠️ `<ctrl46>` 这种是调试期脏数据（复制粘贴带进来的），模型学它会吐乱码
         .filter((m: any) => !/<\/?(语音|主动消息|分享|转账|位置|表情|戳一戳|引用|功能)>/.test(m.content || ''))
+        .filter((m: any) => !/<ctrl\d+>/.test(m.content || ''))
         .slice(-HISTORY_TURNS)
         .map((m: any) => ({
           role: (m.role === 'assistant' ? 'model' : 'user') as 'user' | 'model',

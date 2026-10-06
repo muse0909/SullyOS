@@ -1,6 +1,22 @@
 /**
  * 实时会话（gemini-3.8-live，走 WebSocket 直连 Google 官方）。
  *
+ * ## 🔴 setup 里**只能放服务端 schema 里有的字段名**（10-07 02:03 实锤）
+ *
+ * 服务端原话：
+ * > `Invalid JSON payload received. Unknown name "mediaResolution" at 'setup': Cannot find field.`
+ *
+ * 翻译：**1007 = 你发过去的配置里有我不认识的字段。** 不是密钥、不是权限、
+ * 不是网络、不是断线 —— 我在这上面绕了一整晚（见下面第 4 点）。
+ *
+ * ⚠️ 查文档时**要看清楚是哪一家的文档**：
+ * `docs.cloud.google.cn`（云端平台版）和 `ai.google.dev`（官方直连版）
+ * 字段名和摆放位置**不一样**。那次照着云端那篇加 `mediaResolution`，
+ * 官方直连直接拒收。以后加字段先想一句「这条是不是云端版的」。
+ *
+ * 加新字段的代价是**整个会话连不上**，不是「这个功能不生效」——
+ * 所以不确定就宁可不加。
+ *
  * ## 为什么必须封装在这一层
  * 协议细节（setup 字段、重连、恢复码、二进制帧、流式转写）全关在里面，
  * 组件只管「发一句话、收一段流式文字」。别把 WebSocket 散到组件里去。
@@ -12,15 +28,23 @@
  *    （*"derived from user activity"*）。纯打字没有语音活动，边界不确定，
  *    模型会一直等。clientContent 要显式 `turnComplete: true` 才收尾。
  *    附带好处：clientContent 会**打断**模型当前生成 —— 你打字它立刻停嘴。
+ *    （**画面和声音例外**，它们本来就该走 realtimeInput，见 sendFrame / sendAudio）
  *
  * 2. **`contextWindowCompression` 在 setup 顶层，不在 generationConfig 里**
  *    放错位置不会报错，只是静默不生效。
+ *    ⚠️ 但 10-07 实锤之后**这个字段整个拿掉了** —— 到底它属不属于
+ *    官方直连这条路，当时没验证过。宁可少一个优化，不拿整个会话冒险。
  *
  * 3. **收到的消息不保证是字符串**（10-06 真机踩过）
  *    WebSocket 的 `binaryType` 默认 `'blob'`，服务端用二进制帧推过来时
  *    `event.data` 是 Blob，`JSON.parse(blob)` 抛错 —— 而错被 catch 吞掉之后，
  *    现象是**界面上一条都不显示**，长得像「服务端不回话」，实际是收到了没读出来。
  *    必须 `binaryType = 'arraybuffer'` + 按类型分支解析。
+ *
+ * 4. **1007 的真正含义**（10-07 01:17 才搞明白，前面绕了一晚上）
+ *    见文件头第一段。当时的修法是「砍掉三个可疑字段」，方向对了但**没找到证据**，
+ *    所以一直不确定是不是真修好了。02:03 又自己撞了一次同款报错，才拿到服务端原话。
+ *    **教训**：连接类报错要拿到服务端那句原文，别靠猜哪个字段有问题。
  *
  * ## 密钥
  * key 在 URL 里，**绝不 console.log 完整 URL**（手机上有调试浮标会记录）。
@@ -226,7 +250,12 @@ export class LiveSession {
       if (ev.code === 1000) { this.setState('idle'); return; }
       // 认证类错误重连没有意义
       if (ev.code === 1007 || ev.code === 1008) {
-        this.setState('failed', `被服务端拒了 code=${ev.code}${why} —— 多半是密钥或权限`);
+        // ⚠️ 1007 **绝大多数是「setup 里有服务端不认识的字段」**（10-07 02:03 实锤），
+        // 不是密钥、不是权限。之前这里一律写「多半是密钥或权限」，把方向带偏了一晚上。
+        const why1007 = ev.code === 1007
+          ? '（1007 = 配置里有服务端不认识的字段，去 buildSetup 对字段名）'
+          : '';
+        this.setState('failed', `被服务端拒了 code=${ev.code}${why}${why1007 ? '' : why} —— 这个多半才是密钥或权限`);
         return;
       }
       this.scheduleRetry(`断了 code=${ev.code}${why}`);
@@ -242,9 +271,6 @@ export class LiveSession {
       model: `models/${model}`,
       // ⚠️ 3.8 只支持音频输出。开音频 + 开转写拿文本，音频数据收到就丢。
       generationConfig: { responseModalities: ['AUDIO'] },
-      // 画面已经压到 320 宽了，这里再跟官方说「就按低清晰度算」，
-      // 省 token 也省延迟（官方原话：lower = less tokens & latency）。
-      mediaResolution: 'LOW',
       // 历史**只**走 setup 之后的 clientContent.turns（见 flushHistory），
       // 不塞进 systemInstruction。
       // —— 实测塞进去模型会把里面的来源标记（[剧场]）当自己的台词 pattern，

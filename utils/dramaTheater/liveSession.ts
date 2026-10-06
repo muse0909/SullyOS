@@ -290,16 +290,14 @@ export class LiveSession {
       if (sc) {
         if (sc.outputTranscription?.text) {
           const t = String(sc.outputTranscription.text);
-          /**
-           * ⚠️ 转写是**累积**的整段，不是增量。
-           *
-           * 但不能只靠 `startsWith` 判断是不是新一轮 —— 实测服务端偶尔会把上一轮
-           * 的内容重新吐一遍（带轻微差异），`startsWith` 一失败就误判成新一轮，
-           * `finishTurn()` 立刻把一条话切成两个气泡。
-           *
-           * 现在的判据：**只有 turnComplete / 被打断 才算一轮结束**。
-           * 中途来的文字一律往当前气泡里接，接不上就换个策略接，不切气泡。
-           */
+          // 🔍 **原始记录**。上面那些 startsWith / 拼接全是照着一个假设写的
+          // （「转写一轮之内累积」），从没在真机上验证过。先把服务端到底发了
+          // 什么记下来，假设对不对一看就知道。
+          const w = window as any;
+          if (!w.__liveRaw) w.__liveRaw = [];
+          w.__liveRaw.push({ k: 'tr', t: t.slice(0, 300), n: t.length });
+          if (w.__liveRaw.length > 200) w.__liveRaw.splice(0, w.__liveRaw.length - 200);
+
           if (t === this.speaking) {
             // 完全一样 —— 服务端重发，忽略
           } else if (t.startsWith(this.speaking)) {
@@ -310,19 +308,30 @@ export class LiveSession {
             // 服务端把尾巴收了（转写会自我修正），以长的为准
             this.speaking = t;
           } else {
-            // 真接不上：可能是新一轮，但**先不切气泡** —— 交给 turnComplete 收尾。
-            // 宁可一条气泡里多几秒，也不让一句话碎成三个泡。
+            // 真接不上 —— 这才是要查的地方，不是「新一轮」就完事了。
+            // 现场要能看到：接不上时是「同样的句子又来一遍」还是「真的换内容了」。
+            const w2 = window as any;
+            if (!w2.__liveRaw) w2.__liveRaw = [];
+            w2.__liveRaw.push({
+              k: 'MISS',
+              had: this.speaking.slice(-120),
+              got: t.slice(0, 120),
+              t2: t.slice(0, 300),
+              n2: t.length,
+            });
             this.speaking += t;
             this.opts.onText?.(t, this.speaking);
           }
         }
         if (sc.interrupted) {
           this.trace('模型被打断');
+          (window as any).__liveRaw?.push({ k: 'INTR', len: this.speaking.length, t: this.speaking.slice(-80) });
           this.speaking = '';
           this.opts.onInterrupted?.();
           return;
         }
         if (sc.turnComplete) {
+          (window as any).__liveRaw?.push({ k: 'TC', len: this.speaking.length, t: this.speaking.slice(-160) });
           this.finishTurn();
         }
         // 🔇 modelTurn.parts[].inlineData 就是音频数据。

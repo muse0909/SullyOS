@@ -129,34 +129,18 @@ export function useTheaterLive(opts: {
   }, []);
 
   /**
-   * 掐掉模型的自言自语式复读。
-   *
-   * ⚠️ 现象（10-07 00:56 现场）：模型在一个气泡里把同一段话翻来覆去说四遍，
-   * 「我反省，是我太敏感了…」那段连着来四回。
-   *
-   * 不是显示重复（那个按 id 对不上导致的已修），是**它真的生成了四遍**。
-   * 实时模型偶尔会陷进这种循环，靠提示词喊「别重复」不一定管用，
-   * 所以在落库前按「滑动窗口内反复出现同一句」把尾巴砍掉 ——
-   * 宁可少半句，也别让用户看一大坨复读。
-   *
-   * 只比**相邻**的重复：隔几句又说同一句是正常聊天。
-   */
-  const cutSelfRepeat = (s: string): string => {
-    if (!s || s.length < 40) return s;
-    // 把内容按句号切成段，从后往前看有没有跟前一段完全一样的
-    const parts = s.split(/(?<=[。！？!?\n])/).filter((x) => x.trim());
-    if (parts.length < 4) return s;
-    const out: string[] = [];
-    for (const part of parts) {
-      const prev = out[out.length - 1];
-      if (prev && prev.trim() === part.trim()) continue;
-      // 连着三段都一样就认为陷进去了，从这段开始截断
-      const p2 = out[out.length - 2];
-      if (prev && p2 && p2.trim() === part.trim() && prev.trim() === p2.trim()) break;
-      out.push(part);
-    }
-    return out.join('');
-  };
+ * 【已撤掉 10-07 01:05】
+ *
+ * 原来这里有个「掐掉复读」的补丁 —— 模型把同一段话说四遍时就截断。
+ * 暮色指出那是治标不治本（对），撤掉了。
+ *
+ * 真正的怀疑点在 liveSession 的转写合并：
+ * 它假设「outputTranscription.text 是一轮之内累积的整段」，
+ * 这个假设从没在真机上验证过。如果服务端其实是**每小段重新累积**，
+ * 那段 `startsWith` 接不上就往上拼的逻辑，正好会把重叠的段落粘在一起 ——
+ * 复读就是这么来的。所以改成先记录服务端发了什么（window.__liveRaw），
+ * 假设对不对一看就知道，再决定怎么改。
+ */
 
   // ── 剧场专属的系统提示 ──────────────────────────────────
   /**
@@ -343,13 +327,11 @@ export function useTheaterLive(opts: {
         setMsgs((old) => old.map((m) => (m.id === id ? { ...m, streaming: false } : m)));
         streamingId.current = '';
       },
-      onTurnComplete: async (raw) => {
+      onTurnComplete: async (full) => {
         const id = streamingId.current;
         streamingId.current = '';
-        // ⚠️ 收尾必须先把节流里攒着的最后一段刷出来，否则最后几个字会丢。
-        // 刷完再掐复读 —— 顺序反了会把刚攒的那段一起砍掉。
+        // ⚠️ 收尾必须先把节流里攒着的最后一段刷出来，否则最后几个字会丢
         flushStreamNow();
-        const full = cutSelfRepeat(raw);
         if (full) {
           setMsgs((old) => old.map((m) => (m.id === id ? { ...m, text: full, streaming: false } : m)));
         }
@@ -471,10 +453,8 @@ export function useTheaterLive(opts: {
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */
   // 入库仍然不阻塞（后面的字），记忆宫殿照常 await。
-  const saveModel = useCallback((raw: string) => {
-    if (!char) return;
-    const full = cutSelfRepeat(raw);
-    if (!full.trim()) return;
+  const saveModel = useCallback(async (full: string) => {
+    if (!char || !full.trim()) return;
     DB.saveMessage({
       charId: char.id,
       role: 'assistant',

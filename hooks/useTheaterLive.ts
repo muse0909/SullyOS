@@ -29,6 +29,7 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { LiveSession, type LiveState, type LiveTurn } from '../utils/dramaTheater/liveSession';
+import { FrameGrabber } from '../utils/dramaTheater/frameGrabber';
 
 export type TheaterMsg = {
   id: string;
@@ -47,6 +48,17 @@ export type UseTheaterLive = {
   send: (text: string) => void;
   retry: () => void;
   trace: string[];
+  /**
+   * 第 3 步：把正在播的画面喂进去。
+   *
+   * 播放器那边定时调它。**抽帧、压缩、判重都在 grabber 里**
+   * （`utils/dramaTheater/frameGrabber.ts`），这里只管送。
+   */
+  attachVideo: (el: HTMLVideoElement | null) => void;
+  /** 换集 / 重新播放时叫一声：下一帧强制送，别接着上一集的进度说 */
+  resetFrames: () => void;
+  /** 已经喂了多少帧（设置页显示用） */
+  framesFed: number;
 };
 
 /** 进场时灌多少条历史给模型。太多会挤掉角色卡，也慢（暮色 00:34 定的 100） */
@@ -106,6 +118,27 @@ export function useTheaterLive(opts: {
    * 配置没变、连接还在 → 什么都不做。
    */
   const bootedKey = useRef('');
+  /**
+   * 第 3 步：正在播的视频元素 + 抽帧器。
+   *
+   * ⚠️ 用 ref 不进依赖 —— 这个对象跟实时会话是两条独立的线，
+   * 播放器换元素不该触发重连。
+   */
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const grabberRef = useRef<FrameGrabber | null>(null);
+  const framesFedRef = useRef(0);
+  /** 多久问一次画面。1.2 秒是「切镜头基本抓得住、静止段几乎不耗」的折中 */
+  const FRAME_EVERY = 1200;
+
+  const attachVideo = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+  }, []);
+
+  const resetFrames = useCallback(() => {
+    grabberRef.current?.reset();
+  }, []);
+
+  const framesFed = useMemo(() => framesFedRef.current, []);
   /** 节流攒着的最后一段，立刻刷出来（收尾/被打断时调用，不然会丢字） */
   const flushStreamNow = useCallback(() => {
     if (streamTimer.current) {
@@ -162,24 +195,31 @@ export function useTheaterLive(opts: {
 
 **几条硬的，务必照做：**
 
-1. **你看不到画面，也不知道剧情演到哪了。** 你只能从用户说的话里知道发生了什么。
-   用户问你「现在演到哪了」「刚才是谁」，老实说不知道 —— **绝对不要编剧情**。
-   角色扮演最容易被顺着骗过去编出一整段不存在的剧情，这里一个字都不要编。
+1. **你现在看得见画面。** 画面会隔一阵自己送进来，每张都告诉你播到第几分钟。
+   你看到的就是用户正在看的那一帧。问他「刚才是谁」「演到哪了」，看你**已经看到的**，
+   照实说。
 
-2. **聊天区在视频下面，视频正在放，用户随时可能没在看你。**
+   但**画面只隔一阵送一次，中间发生了什么你不知道**。中间那段他要问你，
+   你就说没看到 —— **绝对不要编剧情**。角色扮演最容易被顺着骗过去
+   编出一整段不存在的剧情，这里一个字都不要编。
+
+2. **画面没送的时候，就是画面没变**（用户暂停了，或者在放不动的长镜头）。
+   别把「没收到画面」当成「他关掉了」。
+
+3. **聊天区在视频下面，视频正在放，用户随时可能没在看你。**
    他没跟你说话的时候，不要主动开口、不要评价剧情。
    用户没叫你的时候，安静看剧就好。
 
-3. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
+4. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
    不要用「我可以帮你分析剧情」这种服务腔，直接说人话。
 
-4. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
+5. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
 
-5. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
+6. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
 
-> ⚠️ 这里**故意不写「播到第几分钟」**：播放进度只在开场那一刻读一次，
-> 写在提示词里就是个一直不变的假数字，比不写更糟（用户会以为它准）。
-> 等第 3 步接上画面，模型自己就知道看到哪了。`;
+> ⚠️ 这里**故意不写「现在播到第几分钟」**：那写在提示词里就是个永远不变的
+> 假数字（画面是持续变的，一个数字很快就是错的，比不写更糟）。
+> 真实进度每张画面都单独告诉你，别在提示词里编一个。`;
   }, [char, userProfile]);
 
   // ── 进场 ──────────────────────────────────────────────
@@ -411,6 +451,29 @@ export function useTheaterLive(opts: {
     sessRef.current = null;
   }, []);
 
+  /**
+   * ── 第 3 步：抽帧循环 ──
+   *
+   * ⚠️ 依赖只留 `active`，**不放 sessRef / state** —— 会话连上、断开会改状态，
+   * 放进依赖就变成「一连接就重开抽帧循环」的另一个自我喂养循环
+   * （10-07 01:12 刚踩过这个坑，别再踩一次）。sessRef 是 ref，读它不触发重跑。
+   */
+  useEffect(() => {
+    if (!active) return;
+    const iv = window.setInterval(() => {
+      const v = videoRef.current;
+      const s = sessRef.current;
+      if (!v || !s || !s.isOpen) return;
+      if (!grabberRef.current) grabberRef.current = new FrameGrabber();
+      const dur = Number.isFinite(v.duration) ? v.duration : 0;
+      const f = grabberRef.current!.grab(v);
+      // 没变化 → 不送（省下的不是流量，是不让它对着静止画面反复琢磨）
+      if (!f) return;
+      if (s.sendFrame(f.data, f.at, dur)) framesFedRef.current++;
+    }, FRAME_EVERY);
+    return () => window.clearInterval(iv);
+  }, [active]);
+
   // ── 记忆宫殿后处理（照抄 DateApp:242 的 runMemoryPalacePostHook）──
   const runMemoryPost = useCallback(async (c: any) => {
     if (!c?.memoryPalaceEnabled) return;
@@ -494,5 +557,8 @@ export function useTheaterLive(opts: {
     boot();
   }, [boot]);
 
-  return useMemo(() => ({ msgs, state, note, send, retry, trace }), [msgs, state, note, send, retry, trace]);
+  return useMemo(
+    () => ({ msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed }),
+    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed],
+  );
 }

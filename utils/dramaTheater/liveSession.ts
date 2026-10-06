@@ -96,6 +96,9 @@ export class LiveSession {
   private gen = 0;
   /** 历史灌过没有 —— 只灌一次，重连不重复灌 */
   private historySent = false;
+  /** 已经送出去多少帧了（诊断用） */
+  private framesSent = 0;
+  private lastFrameAt = -1;
 
   constructor(opts: LiveOpts) {
     this.opts = opts;
@@ -348,6 +351,52 @@ export class LiveSession {
     const full = this.speaking.trim();
     this.speaking = '';
     if (full) this.opts.onTurnComplete?.(full);
+  }
+
+  /**
+   * 送一帧画面（第 3 步）。
+   *
+   * ⚠️ 走 `realtimeInput.mediaChunks`，**不跟打字的 clientContent 混** ——
+   * 那个的「一轮结束」是靠 turnComplete 显式收尾的，实时输入没有这个标记。
+   * 画面是「持续在发生的事」，不是一轮对话的一部分。
+   *
+   * ⚠️ 这里**故意不带 turnComplete**。带了会让每一帧都变成一轮对话，
+   * 模型对着每一帧都回一句 —— 那就是它开始不停插嘴的开关。
+   * 画面进去就好，它自己会在该说话的时候说话。
+   *
+   * 播放进度跟着一起送：画面本身不带「第几分钟」，不说它就永远停在开场。
+   */
+  sendFrame(data: string, at: number, duration = 0) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    const mm = Math.floor(at / 60);
+    const ss = Math.floor(at % 60);
+    const text = `（画面：正在播到第 ${mm} 分 ${ss} 秒${duration ? ` / 共 ${Math.floor(duration / 60)} 分 ${Math.floor(duration % 60)} 秒` : ''}）`;
+    try {
+      this.ws.send(JSON.stringify({
+        realtimeInput: {
+          mediaChunks: [{
+            mimeType: 'image/jpeg',
+            data,
+          }],
+        },
+      }));
+      // 进度单独一句话。跟画面分开一条，模型才分得清哪个是画面哪个是事实
+      this.ws.send(JSON.stringify({
+        clientContent: {
+          turns: [{ role: 'user', parts: [{ text }] }],
+        },
+      }));
+      this.framesSent = (this.framesSent || 0) + 1;
+      return true;
+    } catch (e: any) {
+      this.trace(`送画面失败：${e?.message || e}`);
+      return false;
+    }
+  }
+
+  /** 换集 / 重新播放时叫它一声：下一帧强制送，别接着上一集的进度说 */
+  resetFrameClock() {
+    this.lastFrameAt = -1;
   }
 
   /** 灌历史。turnComplete: true 才算灌完，但灌历史本身不会触发模型回话 */

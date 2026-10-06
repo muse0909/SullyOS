@@ -9,7 +9,7 @@
  * 顺带的好处：第 3 步要往画布上取视频帧喂给 live，自己画的条不影响取帧。
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, SkipForward, ArrowCounterClockwise, Broom,
 } from '@phosphor-icons/react';
@@ -47,6 +47,13 @@ type Props = {
   onMediaError?: () => void;
   /** 真的播起来了（用来把「误报的 error」撤回去） */
   onMediaReady?: () => void;
+  /**
+   * 第 3 步：把视频元素交出去，外层要抓帧喂给角色。
+   *
+   * ⚠️ 用回调 ref，**不要**跟 `videoRef` 合成一个 ——
+   * 合成的话外层拿到的引用会随内部重建变，通知不上。
+   */
+  onVideoEl?: (el: HTMLVideoElement | null) => void;
   /**
    * 从第几秒开始播（「接着看」要接着上次的进度）。
    * 只在这一集第一次 ready 时生效一次，拖过之后不再管。
@@ -96,9 +103,16 @@ function saveRatio(title: string | undefined, ratio: number): void {
 
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, resumeAt, p,
+  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek,
+  onMediaError, onMediaReady, onVideoEl, resumeAt, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 第 3 步：把元素交给外层抓帧。回调 ref 每次都返回 null 再返回 el，
+  // 这样换 src 时外层也知道「旧的没了」，不会拿着已卸载的元素去抽帧。
+  const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+    onVideoEl?.(el);
+  }, [onVideoEl]);
   const barRef = useRef<HTMLDivElement>(null);
   const scrubbing = useRef(false);
   /** 诊断：视频元素自身的事件（见 apps/TheaterApp.tsx 里的 diag 说明） */
@@ -281,7 +295,7 @@ const PlayerStage: React.FC<Props> = ({
          * 新元素 `src={src || undefined}` 什么都不带，什么都不请求。干净。
          */
         key={src || '空'}
-        ref={videoRef}
+        ref={setVideoRef}
         src={src || undefined}
         playsInline
         // 麦麦 2026-10-05：**不能**加 crossOrigin。

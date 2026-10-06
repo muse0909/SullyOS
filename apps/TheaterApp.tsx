@@ -1696,6 +1696,9 @@ const TheaterApp: React.FC = () => {
     const d = resolveDramaId(raw);
     // 切剧/切集先把手上的在线会话还回去，别占着短剧库的并发名额
     closeOnline();
+    // 第 3 步：换集就把画面时钟归零。下一帧强制送，
+    // 不然它还拿着上一集的最后位置说话（幕色 01:39「第 3 步」定）
+    live.resetFrames();
 
     /**
      * **把上一段视频彻底拆掉**，再开始取新的。
@@ -2807,6 +2810,7 @@ const TheaterApp: React.FC = () => {
           onNext={() => playEpisode(currentEp + 1)}
           onMediaError={onMediaError}
           onMediaReady={onMediaOk}
+          onVideoEl={live.attachVideo}
           resumeAt={resumeAt}
           p={p}
         />

@@ -360,3 +360,57 @@ test -z "$(tsc … | grep -cE '…')"
 | 有记录，返回 4xx/5xx | 服务端：路径、权限、上游状态 |
 | 返回 200 但客户端读不到 | `Access-Control-Expose-Headers` 没列这个头 |
 | 偶尔失败、并发时更容易 | 队列打满 → 改串行 |
+
+---
+
+## 18:30 加更：在线播放拖进度条崩（`a5d58846`）
+
+### 现象
+
+真机 18:25，点一下进度条就抛：
+
+```
+TypeError: The provided double value is non-finite.
+    at onPointerUp (PlayerStage)
+```
+
+### 根因（一行）
+
+```js
+if (v.duration) setDur(v.duration);     // ❌
+```
+
+在线流走 MediaSource 边下边播，`video.duration` 是 **`Infinity`**。
+而 **`Infinity` 在程序里是「真」** —— 所以这行判断放行了，
+「无限」被存进了 `dur`。
+
+后面拖进度条：
+
+```js
+const pct = min(1, max(0, (clientX - left) / width));
+return pct * dur;              // 拖中间 = Infinity，拖最左 = 0 * Infinity = NaN
+v.currentTime = t;             // ❌ 两种都不是合法数字
+```
+
+### 为什么之前没发现
+
+`fmtTime()` 里有 `isFinite` 检查，所以界面上显示的是「0:00」——
+看着只是「时长不准」，实际是**一拖就崩**。
+（这条本来就在 todo 里挂着，当时以为只是显示问题。）
+**显示层挡住了症状，掩盖了底层是崩的。**
+
+### 修法：三道防线
+
+1. 抽 `durOk(x) = Number.isFinite(x) && x > 0`，元数据和 timeupdate 两处都走它
+2. `seekTo` 算完再验一次 `isFinite(t) && t >= 0`，不合格返回 `null`
+3. `onPointerUp` 赋值处 `try/catch` + 有限性检查（有些内核 seek 越界也会抛）
+
+### 顺带的产品决策：时长未知就不给拖
+
+画一条拖不动的进度条，用户只会以为坏了。
+改成写「已播 x / 边下边播」，条保留但不画滑块、不响应拖动。
+
+### 通则（写进教程了）
+
+> **任何从媒体 / DOM API 拿到的数字，赋给别处之前都要过一遍 `Number.isFinite`。**
+> `NaN` 和 `Infinity` 都不是 `null`，`||` 和 `if (x)` 都挡不住它们。

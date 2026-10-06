@@ -190,20 +190,40 @@ export function useTheaterLive(opts: {
     // 现象是「我发的字闪一下就没了，过一阵又冒出来」。
     try {
       const all = await DB.getMessagesByCharId(char.id, true);
-      const mine = all
+      const rows = all
         .filter((m: any) => m.metadata?.source === 'theater')
         .sort((a: any, b: any) => a.timestamp - b.timestamp)
-        .slice(-40)
-        .map((m: any) => ({
+        .slice(-40);
+      // ⚠️ 库里也可能已经躺着重复行（重连反复灌历史那几轮留下的）。
+      // 连续**相邻**同角色同内容才算重复 —— 隔了几轮又说同一句
+      // 是真在重复说话，不该被误删。
+      const mine: TheaterMsg[] = [];
+      for (const m of rows) {
+        const text = m.content || '';
+        const last = mine[mine.length - 1];
+        if (last && last.role === m.role && last.text === text) continue;
+        mine.push({
           id: m.id,
           role: m.role as 'user' | 'assistant',
-          text: m.content,
+          text,
           tag: (m.metadata as any)?.theaterTag as string || '',
-        }));
+        });
+      }
       setMsgs((old) => {
-        // 内存里已经有的（还没入库的）一律保留，库里的只补缺的那些
-        const seen = new Set(old.map((m) => m.id));
-        const missing = mine.filter((m) => !seen.has(m.id));
+        // ⚠️⚠️ 光按 id 去重**不够**（暮色 00:48 现场：同一条消息显示两遍）。
+        //
+        // 内存里的消息 id 是 `m${Date.now()}` 这种临时 id，入库之后数据库
+        // 会给它一个**完全不同的 id**。下一次 boot() 重跑时，按 id 比对
+        // 认不出这两条是同一条 —— 于是把库里那条又追加了一遍，
+        // 同一条内容就在列表里出现两次。
+        //
+        // 现象对得上：闪退重进就没了（两边都从库来，只有一条），
+        // 页面上却是两条（一条内存里的、一条刚从库里补进来的）。
+        //
+        // 所以还得按「角色 + 内容」判重 —— 观众能分辨的重复只有这两种。
+        const seenIds = new Set(old.map((m) => m.id));
+        const seenText = new Set(old.map((m) => `${m.role}|${m.text}`));
+        const missing = mine.filter((m) => !seenIds.has(m.id) && !seenText.has(`${m.role}|${m.text}`));
         if (!missing.length) return old;
         return [...old, ...missing];
       });

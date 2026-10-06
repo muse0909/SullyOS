@@ -138,6 +138,24 @@ npm run typecheck          # 全量 —— 这个项目历史包袱有几百条�
 **另一个要点**：别把「外面也要用」的值塞进 `{(() => { ... })()}` 那种当场执行的小函数里。
 要么提到 return 前跟其它值平级，要么就老老实实拆成具名变量。
 
+### ⚠️ 组件不许写在函数体里（2026-10-06 血泪）
+
+`grep -n "^  const X: React.FC" <文件>` —— **有输出就是写错地方了**。
+
+组件定义写在函数体里 = 每次渲染都造出新的函数对象 → React 认定组件类型变了
+→ 整棵子树先卸载再挂载 → 里面每一个 `<img>` 都被销毁重建。
+
+**`npm run build` 拦不住，`npm run typecheck` 也拦不住** —— 类型签名完全合法。
+表现只是「闪一下」「图加载慢」，极容易误判成网络 / 图片格式 / 缓存问题，
+然后一路修错地方（10-06 剧场海报修了两轮都白修就是这个）。
+
+要移到模块级的话，把依赖（主题色、地址之类）改成 props 传进来。
+
+**配套两条**：
+- `alt` 文字会被内核画进图片框（加载中 / 失败时）。别把用户能读的文案塞 alt，
+  尤其当它会闪的时候 —— 装饰图一律 `alt=""`。
+- 失败状态记「哪个地址失败」而不是「失败过没有」，否则换源时被上一张连坐。
+
 ### 4.4 全屏输入 / 编辑器
 - 新代码一律用 `FullScreenEditor`（v2）
 - `FullScreenInput`（v1）保留是因为旧代码还在引用，不要硬删，**只在新功能用 v2**
@@ -393,6 +411,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-07-31 | 角色 API 重开抽屉时输入框不同步（按 protocol 重新同步 + 补 deps） | [`changelogs/2026-07-31-chatsettings-reopen-sync.md`](./changelogs/2026-07-31-chatsettings-reopen-sync.md) |
 | 2026-07-31 | useChatAI 角色 API 优先级判断扩展到 3 套 baseUrl（修 Gemini/Claude 角色 API 被全局顶掉） | [`changelogs/2026-07-31-perchar-api-3tab-eval.md`](./changelogs/2026-07-31-perchar-api-3tab-eval.md) |
 | 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
+| 2026-10-06 | 剧场：海报「片名一闪一闪」真根因（组件写在函数体里）+ 控制条压到最上层 | [`changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md`](./changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md) |
 | 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |
 | 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |
 | 2026-07-28 | API 浮窗 4 张配置卡片统一 | [`changelogs/2026-07-28-api-quickfloat-unify.md`](./changelogs/2026-07-28-api-quickfloat-unify.md) |

@@ -47,6 +47,11 @@ type Props = {
   onMediaError?: () => void;
   /** 真的播起来了（用来把「误报的 error」撤回去） */
   onMediaReady?: () => void;
+  /**
+   * 从第几秒开始播（「接着看」要接着上次的进度）。
+   * 只在这一集第一次 ready 时生效一次，拖过之后不再管。
+   */
+  resumeAt?: number;
   p: Palette;
 };
 
@@ -91,7 +96,7 @@ function saveRatio(title: string | undefined, ratio: number): void {
 
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, p,
+  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek, onMediaError, onMediaReady, resumeAt, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -126,6 +131,35 @@ const PlayerStage: React.FC<Props> = ({
 
   // 换剧就换回这部剧记着的比例
   useEffect(() => { setRatio(readRatio(title)); }, [title]);
+
+  /**
+   * 「接着看」：这一集第一次能播的时候，跳到上次看到的位置。
+   *
+   * 只做一次（`resumedFor` 记住是给哪个 src 做的），用户自己拖过之后不再插手。
+   * 换了集就重来（src 变 → effect 重跑 → `resumedFor` 不匹配 → 重新 seek）。
+   *
+   * 在线流时长未知（Infinity），跳不过去，所以只有手机/电脑里那两种能接着看 ——
+   * 这跟用户看到的现象一致：之前三种都从 0 开始。
+   */
+  const resumedFor = useRef('');
+  useEffect(() => {
+    if (!src || !resumeAt || resumeAt < 5) return;
+    if (resumedFor.current === src) return;
+    const t = setTimeout(() => {
+      const el = videoRef.current;
+      if (!el) return;
+      const target = Number.isFinite(resumeAt) ? resumeAt : 0;
+      if (target <= 0) return;
+      try {
+        el.currentTime = target;
+        d('接着上次的进度', { 跳到: target });
+      } catch {
+        d('跳不过去', { 想跳到: target });
+      }
+      resumedFor.current = src;
+    }, 250);
+    return () => clearTimeout(t);
+  }, [src, resumeAt]);
 
   /**
    * 只有**有限的**时长才算数。

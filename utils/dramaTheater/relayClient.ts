@@ -557,6 +557,20 @@ const SOURCE_NAMES: Record<string, string> = {
   emby: '本地',
 };
 
+/**
+ * 把封面路径拼成能直接塞进 `<img src>` 的地址。
+ *
+ * `coverUrl` 可能是两种东西（历史上混着存的）：
+ *  - 以 `/` 开头的**相对路径** —— 指向短剧库的图片代理，要拼转发服务的地址
+ *  - `https://…` 的 **CDN 直链** —— 老记录，但一半是 HEIC，手机上会空
+ *    （真遇到空的话，下一次记 watchHistory 时会换成代理路径）
+ */
+export function coverSrc(base: string, cover?: string): string {
+  if (!cover) return '';
+  if (cover.startsWith('/')) return `${base.replace(/\/+$/, '')}${cover}`;
+  return cover;
+}
+
 export function sourceName(key: string): string {
   return SOURCE_NAMES[key] || key;
 }
@@ -623,7 +637,23 @@ function mapDrama(d: any): RelayDrama {
   return {
     id: d.id,
     title: d.title || d.name || '未命名',
-    coverUrl: d.coverUrl || d.cover_url || d.imageUrl || d.image_url || d.cover || d.image,
+    /**
+     * 封面**优先用短剧库的图片代理路径**（`cover` 字段，形如
+     * `/api/ui/image?url=<编码>&dramaId=…`），不要直接用 CDN 原地址。
+     *
+     * 原因：红果的 CDN 有相当一部分封面返回 **`image/heic`**，
+     * 安卓 WebView 不支持，一半剧名的海报是空白的（真机 10-06 18:53 实测：
+     * 180万之征地风云 / 1991从柴房到天明 / 24小时紧急营救 全是 heic，
+     * 同地址走短剧库代理一律返回 `image/jpeg`）。
+     *
+     * 存相对路径（以 `/` 开头），渲染时由 `coverSrc()` 拼上转发地址。
+     * 老记录里存的是 CDN 直链，`coverSrc` 也照样认。
+     */
+    coverUrl:
+      (typeof d.cover === 'string' && d.cover.startsWith('/') ? d.cover : '') ||
+      (d.coverUrl
+        ? `/api/ui/image?url=${encodeURIComponent(d.coverUrl)}&dramaId=${encodeURIComponent(d.id || '')}`
+        : d.cover_url || d.imageUrl || d.image_url || d.cover || d.image),
     intro: d.intro || d.desc || '',
     source: d.source,
     categoryName: d.categoryName || undefined,

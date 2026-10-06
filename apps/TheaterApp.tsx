@@ -24,7 +24,7 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
-  fetchLocalEpisodes,
+  fetchLocalEpisodes, coverSrc,
   reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, queueDownload,
   PLAYBACK_BUSY_MSG,
   type RelayDrama, type RelayTask, type RelaySource,
@@ -40,13 +40,30 @@ import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/th
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
 /**
+ * 「缓存剧库」里被长按移走的剧。
+ *
+ * 只存在手机本地，**不碰电脑上的文件** —— 用户原话：
+ * 「长按删除，就不在手机列表显示了，不影响电脑里的储存」。
+ * 电脑里那份照旧能看、能再下回来；这里只是不再占他手机的列表位置。
+ * 「恢复全部」在缓存剧库页顶部。
+ */
+const MAC_HIDDEN_KEY = 'theater_mac_hidden';
+/**
+ * 「下载到手机」多久没进展就认输。
+ *
+ * 红果源有些集拉不下来（续读 403 / 资源已变化），短剧库会一直重试，
+ * 不设兜底的话进度条永远停在某个数字上，用户以为死机。
+ * 电脑实测单集只要 4 秒，10 分钟足够下完一整部。
+ */
+const MAC_FETCH_TIMEOUT = 10 * 60 * 1000;
+/**
  * 「下到电脑」等到多久就认输。
  *
  * 实测单集中位 4 秒、最长 38 秒（电脑上的 1126 个集实测），一部 58 集也就
  * 四五分钟。给 10 分钟是留足余量 —— 超过就说明有集拉不下来（红果源续读 403 /
  * 资源已变化那种），这时候把已经下到的先存进手机，比干等着强。
  */
-const MAC_FETCH_TIMEOUT = 10 * 60 * 1000;
+
 
 /**
  * 诊断记录：把在线播放的**每一步**写进 window.__theaterDiag。
@@ -306,7 +323,8 @@ const DownloadPicker: React.FC<{
 };
 
 const TheaterApp: React.FC = () => {
-  const { activeCharacterId, characters, addToast } = useOS();
+  // closeApp 回上一个 app（剧场是从聊天页打开的，所以就是回聊天页）
+  const { activeCharacterId, characters, addToast, closeApp } = useOS();
   const char = useMemo(
     () => characters.find((c: any) => c.id === activeCharacterId),
     [characters, activeCharacterId]
@@ -364,9 +382,17 @@ const TheaterApp: React.FC = () => {
   const [epTotal, setEpTotal] = useState(0);
   const [currentEp, setCurrentEp] = useState(1);
   const [curDuration, setCurDuration] = useState(0);
+  /**
+   * 「接着看」要跳到的秒数。只在从「正在追剧 → 接着看」进来时设一次，
+   * 正常从选集页点集数进来不给（那就是「我要从头看」）。
+   */
+  const [resumeAt, setResumeAt] = useState(0);
 
   // ── 存到手机 ──
   const [expandedPhone, setExpandedPhone] = useState('');
+  const [macHidden, setMacHidden] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(MAC_HIDDEN_KEY) || '[]'); } catch { return []; }
+  });
 
   /**
    * 正在往电脑上下的剧。
@@ -723,11 +749,27 @@ const TheaterApp: React.FC = () => {
     if (d.origin === 'upload') return;
     const id = d.id || mac?.dramaId;
     if (!id || !online) return;
+    /**
+     * ⚠️ 问集数**也要占一个播放名额**，这里必须用完就还。
+     *
+     * `/api/ui/playback/open` 开的是**真的播放会话**（不是只读的「查集数」接口），
+     * 短剧库给它记一条、算进并发名额。原来拿到 `r.session` 就扔了，
+     * **每进一次选集页漏一个名额**，进几次就再也开不出来（真机 10-06 反复 429 的真凶）。
+     *
+     * 复现数据：连开 3 次，第 3 次就 429，而清空一次关掉了 4 个 ——
+     * 说明其中 2 个是历史泄漏的。
+     *
+     * `closeOnlinePlayback` 放在 finally 里：成功、失败、页面中途切走都得还。
+     */
+    let probeSession = '';
     try {
       const r = await fetchEpisodes(addr, id);
+      probeSession = r.session;
       if (r.total) setEpTotal(r.total);
     } catch {
       // 问不到就先用本地已有的，最差也就只显示存过的那几集
+    } finally {
+      if (probeSession) closeOnlinePlayback(probeSession);
     }
   };
 
@@ -818,11 +860,17 @@ const TheaterApp: React.FC = () => {
   const clearStallsAndRetry = useCallback(async () => {
     setBusyStall(false);
     const n = await clearAllOnlinePlayback();
-    if (n <= 0) {
-      addToast('清空播放位没成功，先看看电脑上短剧库是不是开着', 'error');
-      return;
-    }
-    addToast(`清掉了 ${n} 个占着的播放位，正在重试`, 'info');
+    /**
+     * `closed: 0` **不是失败** —— 它的意思是「本来就没有占着的播放位」。
+     *
+     * 之前一律判成失败并 return，结果用户点了没反应、白等一场。
+     * 真失败是**请求压根没发出去**（短剧库没开 / 网络不通），
+     * 那在 `clearAllOnlinePlayback` 里已经抛异常了，走到这里的都是成功的。
+     *
+     * 而且不管关掉了几个，都要重试一次当前这一集 —— 名额腾出来了就试，
+     * 没腾出来重试也只是再撞一次 429，不会更糟。
+     */
+    addToast(n > 0 ? `清掉了 ${n} 个占着的播放位，正在重试` : '本来就没有占着的播放位，重新试一次', 'info');
     if (picked?.id) loadOnline(picked.id, currentEp);
   }, [loadOnline, addToast, picked?.id, currentEp]);
 
@@ -950,6 +998,8 @@ const TheaterApp: React.FC = () => {
     });
     setSrcKind('');
     setBlobEp(0);
+    // 从选集页点进来的不算「接着看」，除非「接着看」按钮刚设过
+    if (!drama) setResumeAt(0);
     setCurDuration(0);
     // 遮罩要在取新片**之前**就挂上，否则空 src 的那一帧会闪一帧黑屏/旧画面
     setDlLoading(true);
@@ -998,6 +1048,21 @@ const TheaterApp: React.FC = () => {
     });
     setWatch(listWatch());
   }, [picked, currentEp, curDuration, guessTotal]);
+
+  /**
+   * 只要「不在播放页了」就把在线流收掉、播放位还回去。
+   *
+   * 之前只有两个时机：切集时（playEpisode 里）和整个页面被回收时（pagehide）。
+   * **中间漏了一大段**：从播放页按返回回选集页、点标题栏回聊天页、
+   * 打开选集抽屉挑另一部 —— 这些都会让流一直挂着、名额一直占着。
+   * 名额一共才 2 个（实测），漏两三次就再也开不出新片了。
+   *
+   * 靠 `page !== 'player'` 触发，而不是在每个返回按钮上补 —— 少一个入口就少一处漏。
+   */
+  useEffect(() => {
+    if (page === 'player') return;
+    closeOnline();
+  }, [page, closeOnline]);
 
   // 离开剧场（含退到后台被系统回收）时把在线流收掉：
   // 不收的话那条转码长连接会一直挂着，手机上白白耗电耗流量。
@@ -1294,7 +1359,7 @@ const TheaterApp: React.FC = () => {
     return sorted;
   }, [dramas, searchResults, searched, srcFilter, sortKey]);
 
-  const macItems = useMemo<DramaRef[]>(() => {
+  const macItemsAll = useMemo<DramaRef[]>(() => {
     const out: DramaRef[] = [];
     macByDrama.forEach((v, title) => {
       const cover = dramas.find((d) => d.title === title)?.coverUrl;
@@ -1302,6 +1367,28 @@ const TheaterApp: React.FC = () => {
     });
     return out.sort((a, b) => (macByDrama.get(b.title)?.eps.length || 0) - (macByDrama.get(a.title)?.eps.length || 0));
   }, [macByDrama, dramas]);
+
+  /** 缓存剧库列表 = 全部减去「被长按移走」的（只影响手机列表，不碰电脑上的文件） */
+  const macItems = useMemo(
+    () => macItemsAll.filter((d) => !macHidden.includes(d.title)),
+    [macItemsAll, macHidden]
+  );
+
+  const hideMacDrama = useCallback((title: string) => {
+    setMacHidden((old) => {
+      if (old.includes(title)) return old;
+      const next = [...old, title];
+      try { localStorage.setItem(MAC_HIDDEN_KEY, JSON.stringify(next)); } catch { /* 存不下就算了 */ }
+      return next;
+    });
+    addToast(`《${title}》已从缓存剧库移走，电脑里的文件没动`, 'success');
+  }, [addToast]);
+
+  const restoreMacHidden = useCallback(() => {
+    setMacHidden([]);
+    try { localStorage.removeItem(MAC_HIDDEN_KEY); } catch { /* 忽略 */ }
+    addToast('都恢复了', 'success');
+  }, [addToast]);
 
   const watchItems = useMemo(() => {
     const local = watch.map((w) => ({ ...w, from: 'phone' as const }));
@@ -1346,10 +1433,50 @@ const TheaterApp: React.FC = () => {
     </div>
   );
 
-  const Grid: React.FC<{ items: any[]; onOpen: (it: any) => void }> = ({ items, onOpen }) => (
+  /**
+   * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
+   * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
+   * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
+   */
+  const HoldItem: React.FC<{
+    children: React.ReactNode;
+    onClick: () => void;
+    onHold?: () => void;
+  }> = ({ children, onClick, onHold }) => {
+    const timer = useRef<number | null>(null);
+    const fired = useRef(false);
+    const clear = () => {
+      if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+    };
+    useEffect(() => clear, []);
+    return (
+      <div
+        className="cursor-pointer min-w-0 active:scale-95 transition-transform"
+        onClick={() => { if (!fired.current) onClick(); fired.current = false; }}
+        onTouchStart={() => {
+          fired.current = false;
+          if (!onHold) return;
+          clear();
+          timer.current = window.setTimeout(() => { fired.current = true; onHold(); }, 500);
+        }}
+        onTouchMove={clear}
+        onTouchEnd={clear}
+        onTouchCancel={clear}
+      >
+        {children}
+      </div>
+    );
+  };
+
+  /**
+   * 网格。`onHold` 不传就没有长按。
+   * 长按用 touch 计时（500ms）而不是 HTML 的 onContextMenu ——
+   * 安卓上 onContextMenu 会先弹系统的「复制/保存图片」，抢在长按之前。
+   */
+  const Grid: React.FC<{ items: any[]; onOpen: (it: any) => void; onHold?: (it: any) => void }> = ({ items, onOpen, onHold }) => (
     <div className="grid grid-cols-3 gap-2.5">
       {items.map((it) => (
-        <div key={it.key} onClick={() => onOpen(it)} className="cursor-pointer min-w-0 active:scale-95 transition-transform">
+        <HoldItem key={it.key} onClick={() => onOpen(it)} onHold={onHold ? () => onHold(it) : undefined}>
           <div className={`relative w-full aspect-[3/4] rounded-xl overflow-hidden ${p.night ? 'bg-[#1e293b]' : 'bg-slate-200'}`}>
             {it.cover ? (
               <img src={it.cover} className="w-full h-full object-cover pointer-events-none" alt={it.title} />
@@ -1369,7 +1496,7 @@ const TheaterApp: React.FC = () => {
           </div>
           <h3 className={`mt-1.5 text-[11px] font-bold truncate ${p.title}`}>{it.title}</h3>
           <p className={`text-[9.5px] truncate ${p.sub}`}>{it.sub}</p>
-        </div>
+        </HoldItem>
       ))}
     </div>
   );
@@ -1392,11 +1519,15 @@ const TheaterApp: React.FC = () => {
 
     return (
       <div className={`absolute inset-0 flex flex-col ${p.page}`}>
-        <TopBar title="剧场" right={
-          <button onClick={() => setPage('settings')} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
-            <GearSix size={18} className={p.sub} />
-          </button>
-        } />
+        <TopBar
+          title="剧场"
+          onBack={() => { closeOnline(); closeApp(); }}
+          right={
+            <button onClick={() => setPage('settings')} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
+              <GearSix size={18} className={p.sub} />
+            </button>
+          }
+        />
 
         {/* 没连上电脑：先给个能填的地址 */}
         {!online && (
@@ -1531,11 +1662,39 @@ const TheaterApp: React.FC = () => {
           {!loading && tab === 'mac' && (
             <>
               {!online && <Empty text="没连上电脑看不到缓存" />}
-              {online && macItems.length === 0 && <Empty text="短剧库里还没有下载好的剧" />}
+              {online && macItems.length === 0 && (
+                macHidden.length > 0 ? (
+                  /* 全被长按移走了 —— 给一条回来的路，不然用户以为剧没了 */
+                  <div className="py-10 text-center">
+                    <p className={`text-xs mb-3 leading-relaxed ${p.sub}`}>
+                      你移走了 {macHidden.length} 部。<br />
+                      电脑里的文件都还在，没删。
+                    </p>
+                    <button
+                      onClick={restoreMacHidden}
+                      className="rounded-full bg-sky-500 px-5 py-2.5 text-xs font-bold text-white active:scale-95"
+                    >
+                      全部恢复
+                    </button>
+                  </div>
+                ) : (
+                  <Empty text="短剧库里还没有下载好的剧" />
+                )
+              )}
               {online && macItems.length > 0 && (
                 <>
                   <div className={`text-[11px] mb-3 text-center ${p.sub}`}>
                     电脑上缓存了 {macItems.length} 部 · 这些要连着电脑才看得成
+                    {macHidden.length > 0 && (
+                      <>
+                        <br />
+                        <button onClick={restoreMacHidden} className="mt-1 text-sky-500 active:scale-95">
+                          已移走 {macHidden.length} 部，点这里恢复
+                        </button>
+                      </>
+                    )}
+                    <br />
+                    <span className="text-slate-300">长按某部可以把它从这页移走（不会删电脑里的文件）</span>
                   </div>
                   <Grid
                     items={macItems.map((d) => {
@@ -1544,13 +1703,14 @@ const TheaterApp: React.FC = () => {
                       return {
                         key: d.title,
                         title: d.title,
-                        cover: d.coverUrl,
+                        cover: coverSrc(addr, d.coverUrl),
                         sub: `电脑 ${mac.eps.length} 集${ph ? ` · 手机 ${ph.episodes.length} 集` : ''}`,
                         badge: ph ? { tone: 'ok' as const, text: `手机 ${ph.episodes.length}` } : { tone: 'mac' as const, text: `电脑 ${mac.eps.length}` },
                         ref: d,
                       };
                     })}
                     onOpen={(it) => openEpisodes(it.ref)}
+                    onHold={(it) => hideMacDrama(it.key)}
                   />
                 </>
               )}
@@ -1612,7 +1772,7 @@ const TheaterApp: React.FC = () => {
                             style={{ background: d.coverUrl ? undefined : (p.night ? '#0f172a' : '#f1f5f9') }}
                           >
                             {d.coverUrl
-                              ? <img src={d.coverUrl} className="w-full h-full object-cover" alt="" />
+                              ? <img src={coverSrc(addr, d.coverUrl)} className="w-full h-full object-cover" alt="" />
                               : <FilmSlate size={20} className={p.faint} />}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -1715,7 +1875,7 @@ const TheaterApp: React.FC = () => {
                           style={{ background: p.night ? '#0f172a' : '#f1f5f9' }}
                         >
                           {w.coverUrl
-                            ? <img src={w.coverUrl} className="w-full h-full object-cover" alt="" />
+                            ? <img src={coverSrc(addr, w.coverUrl)} className="w-full h-full object-cover" alt="" />
                             : <FilmSlate size={18} className={p.faint} />}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1734,7 +1894,11 @@ const TheaterApp: React.FC = () => {
                              没它就判不出「这一集能在线播」，直接弹「这一集电脑上没有」。
                              老的追剧条目没存 dramaId，playEpisode 里的 resolveDramaId
                              会再按剧名兜底查一次。 */
-                          onClick={() => playEpisode(w.episode, { id: w.dramaId || '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
+                          onClick={() => {
+                            // 记着上次看到哪儿，「接着看」才真的是接着看
+                            setResumeAt(Math.max(0, Number(w.position) || 0));
+                            playEpisode(w.episode, { id: w.dramaId || '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' });
+                          }}
                           className="shrink-0 rounded-full bg-sky-500 px-3.5 py-2 text-[11px] font-bold text-white active:scale-95"
                         >
                           接着看
@@ -1803,7 +1967,7 @@ const TheaterApp: React.FC = () => {
           {/* 头：封面 + 三个状态说清楚 */}
           <div className="flex gap-3">
             <div className="w-20 rounded-2xl overflow-hidden shrink-0 flex items-center justify-center" style={{ height: '6.7rem', background: p.night ? '#0f172a' : '#e2e8f0' }}>
-              {picked.coverUrl && <img src={picked.coverUrl} className="w-full h-full object-cover" alt="" />}
+              {picked.coverUrl && <img src={coverSrc(addr, picked.coverUrl)} className="w-full h-full object-cover" alt="" />}
             </div>
             <div className="flex-1 min-w-0">
               <h2 className={`text-sm font-bold leading-snug ${p.title}`}>{picked.title}</h2>
@@ -2011,6 +2175,7 @@ const TheaterApp: React.FC = () => {
           onNext={() => playEpisode(currentEp + 1)}
           onMediaError={onMediaError}
           onMediaReady={onMediaOk}
+          resumeAt={resumeAt}
           p={p}
         />
 

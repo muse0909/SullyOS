@@ -60,6 +60,12 @@ export function cachedCoverUrl(src: string): string {
 /**
  * 取一张封面，变成手机本地的 blob 地址。
  * 失败会抛出去 —— 调用方记成「这张图挂了」，不要把整个页面的图连坐。
+ *
+ * ## 为什么重试一次
+ * 进场立刻要 60 张，而同一时刻还有 21MB 的剧库列表在传。浏览器对同一个地址只有
+ * 6 个连接，排队的那些**有概率压根没发出去就报 `Failed to fetch`** ——
+ * 排队的失败跟地址不通是两回事，重试一次通常就成了。
+ * 真不通的话重试也就多花 0.6 秒，划得来。
  */
 export async function loadCoverBlob(src: string): Promise<string> {
   if (!src) return '';
@@ -72,14 +78,23 @@ export async function loadCoverBlob(src: string): Promise<string> {
   const task = (async () => {
     await acquire();
     try {
-      const resp = await fetch(src, { cache: 'force-cache' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      if (!blob.size || blob.type.indexOf('image/') !== 0) throw new Error('不是图片');
-      const url = URL.createObjectURL(blob);
-      cache.set(src, url);
-      if (cache.size > MAX_CACHE) evictOldest();
-      return url;
+      let lastErr: any;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 600));
+        try {
+          const resp = await fetch(src, { cache: 'force-cache', silentFetch: true } as RequestInit);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const blob = await resp.blob();
+          if (!blob.size || blob.type.indexOf('image/') !== 0) throw new Error('不是图片');
+          const url = URL.createObjectURL(blob);
+          cache.set(src, url);
+          if (cache.size > MAX_CACHE) evictOldest();
+          return url;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr;
     } finally {
       inflight.delete(src);
       release();
@@ -90,13 +105,18 @@ export async function loadCoverBlob(src: string): Promise<string> {
   return task;
 }
 
-/** 只留最近的 MAX_CACHE 张。故意不 revoke —— 见文件头说明 */
+/**
+ * 腾位置时**不立刻** revoke：被踢掉的那张图可能正被某个 `<img>` 用着，
+ * 立刻 revoke 会让已经显示出来的图突然变空白。隔一分钟再放，这时引用早没了。
+ */
 function evictOldest() {
   const drop = cache.size - MAX_CACHE;
   let i = 0;
   for (const key of cache.keys()) {
     if (i++ >= drop) break;
+    const url = cache.get(key);
     cache.delete(key);
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 }
 

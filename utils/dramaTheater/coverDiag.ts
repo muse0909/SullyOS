@@ -90,7 +90,37 @@ export function pageEnv() {
     loaded: bucket().filter((x) => x.ok).length,
     failed: bucket().filter((x) => !x.ok && x.complete).length,
     records: bucket().slice(-12).reverse(),
+    perf: perfRows(),
   };
+}
+
+/**
+ * 浏览器**实际发出去**的图片请求。
+ *
+ * 这是「请求压根没发出去」和「发出去了但没显示」的唯一分界：
+ *  - 这里只有 0~6 条，而 `<img>` 有 60 个 → 连接池被别的东西占满，其余在排队。
+ *    HTTP/1.1 对同一个域名最多 6 个并发连接，超出的就一直排队 —— 排队期间
+ *    `img.complete` 永远是 false，于是统计出来就是「成功 0 / 失败 0」。
+ *  - 这里有 60 条、每条都有 duration → 请求全回来了，问题在显示/安全层。
+ *  - 这里有 60 条但都没有 duration → 还在飞，说明连不上或者极慢。
+ */
+export function perfRows() {
+  if (typeof performance === 'undefined' || !performance.getEntriesByType) return [];
+  try {
+    return (performance.getEntriesByType('resource') as any[])
+      .filter((e) => e.initiatorType === 'img' && /image|cover/i.test(e.name))
+      .slice(-14)
+      .reverse()
+      .map((e) => ({
+        name: e.name,
+        ms: Math.round(e.duration),
+        size: e.transferSize,
+        /** startTime 很接近 0 = 一进页面就发；后面才陆续出现 = 在排队等连接 */
+        started: Math.round(e.startTime),
+      }));
+  } catch {
+    return [];
+  }
 }
 
 export function snapshot() {

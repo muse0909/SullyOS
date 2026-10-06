@@ -416,7 +416,7 @@ const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
  *
  * 定位完就能删。留着是因为「电脑好好的、手机就是不出图」这类问题还会有第二次。
  */
-const CoverDiagModal: React.FC<{ p: Palette; onClose: () => void }> = ({ p, onClose }) => {
+const CoverDiagModal: React.FC<{ p: Palette; addr: string; onClose: () => void }> = ({ p, addr, onClose }) => {
   const [env, setEnv] = useState(() => pageEnv());
   const [probe, setProbe] = useState<string>('');
   const [busy, setBusy] = useState(false);
@@ -429,7 +429,10 @@ const CoverDiagModal: React.FC<{ p: Palette; onClose: () => void }> = ({ p, onCl
     if (!first?.src) return setProbe('还没有记录到任何地址');
     setBusy(true);
     const r: any = await refetchOne(first.src);
-    setProbe(`${r.ok ? '成功' : '失败'} · ${r.ms}ms · ${r.status ?? ''} ${r.type ?? ''} ${r.size ?? r.error ?? ''}\n${r.note}`);
+    setProbe(
+      `请求地址：\n${first.src}\n\n` +
+      `${r.ok ? '成功' : '失败'} · ${r.ms}ms · ${r.status ?? ''} ${r.type ?? ''} ${r.size ?? r.error ?? ''}\n${r.note}`
+    );
     setBusy(false);
     refresh();
   }, [env.records, refresh]);
@@ -449,35 +452,64 @@ const CoverDiagModal: React.FC<{ p: Palette; onClose: () => void }> = ({ p, onCl
         </>
       }
     >
+      {/**
+       * 手机里存的电脑地址 —— 10-06 真机海报全挂的第一嫌疑人。
+       * 电脑换 WiFi / 换网段就换 IP（10-05 是 .102，现在是 .106），而设置里存的是
+       * 旧地址时：剧目列表还能显示（那是上次拉到的，state 没被清掉），
+       * 但图片请求全打到一个不通的地址上，**一直挂着既不成功也不报错**。
+       * 这个「失败 0 / 成功 0」就是它的指纹。
+       */}
+      <div className={`rounded-2xl px-3 py-2.5 mb-2 text-[11px] leading-relaxed ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
+        <div>手机里存的电脑地址：</div>
+        <div className="font-mono font-bold break-all" style={{ color: addr.includes('192.168.0.102') ? '#f59e0b' : undefined }}>
+          {addr || '（空）'}
+        </div>
+        {addr.includes('192.168.0.102') && <div className="text-amber-600 font-bold mt-1">← 这是旧地址，电脑早换了</div>}
+      </div>
+
       <div className={`rounded-2xl px-3 py-2.5 mb-2 text-[11px] leading-relaxed ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
         <div>页面协议：<b>{env.protocol || '?'}</b>{env.pageIsHttps ? '（https）' : ''}</div>
-        <div>海报张数：共 {env.total} · 成功 {env.loaded} · 失败 {env.failed}</div>
+        <div>海报张数：共 {env.total} · 成功 {env.loaded} · 失败 {env.failed}{env.total > env.loaded + env.failed ? ` · **还在加载 ${env.total - env.loaded - env.failed}**` : ''}</div>
         <div style={{ color: env.upgraded ? '#f59e0b' : undefined, fontWeight: env.upgraded ? 700 : 400 }}>
           地址被内核改写：{env.upgraded} 张
-          {env.upgraded ? ' ← 就是它（http 被自动升级成 https 了）' : ''}
         </div>
       </div>
 
       {probe && (
-        <div className="rounded-2xl bg-sky-50 px-3 py-2.5 mb-2 text-[11px] text-sky-700 leading-relaxed whitespace-pre-wrap">
-          {probe}
+        <div className="rounded-2xl bg-sky-50 px-3 py-2.5 mb-2 text-[10px] text-sky-700 leading-relaxed break-all">
+          <div className="whitespace-pre-wrap">{probe}</div>
         </div>
       )}
 
-      <div className="text-[10px] text-slate-400 mb-1.5 text-center">最近 {env.records.length} 张</div>
+      <div className="text-[10px] text-slate-400 mb-1.5 text-center">最近 {env.records.length} 张（完整地址）</div>
       {env.records.map((r) => {
         const changed = r.currentSrc && r.currentSrc !== r.src;
-        const tail = r.src.slice(-46);
         return (
           <div key={r.src} className={`rounded-xl px-2.5 py-1.5 mb-1 text-[10px] leading-tight ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
-            <div className="font-mono text-slate-400 truncate">…{tail}</div>
+            <div className="font-mono text-slate-500 break-all">{r.src.replace(/\?.*$/, '?…')}</div>
             <div className={r.ok ? 'text-emerald-600' : 'text-rose-500'}>
-              {r.ok ? '成功' : '失败'} · {r.naturalWidth}×{r.naturalHeight}
-              {changed && <span className="text-amber-600 font-bold"> · 内核改成了 {r.currentSrc.replace(/^https?:\/\//, '').slice(0, 40)}</span>}
+              {r.ok ? '成功' : r.complete ? '失败' : '卡住不动'} · {r.naturalWidth}×{r.naturalHeight}
             </div>
+            {changed && <div className="text-amber-600 font-bold break-all">内核改成了 {r.currentSrc}</div>}
           </div>
         );
       })}
+
+      {/**
+       * 浏览器实际发出去几个请求 —— 「压根没发」和「发了没显示」的唯一分界。
+       * 只有 0~6 条 = 连接池被别的东西占满，剩下 54 张在排队（所以永远「成功 0 失败 0」）。
+       */}
+      <div className="text-[10px] text-slate-400 mt-3 mb-1.5 text-center">
+        浏览器实际发出的图片请求：{env.perf.length} 条
+      </div>
+      {env.perf.map((r: any, i: number) => (
+        <div key={i} className={`rounded-xl px-2.5 py-1.5 mb-1 text-[10px] leading-tight ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
+          <div className="font-mono text-slate-500 break-all">{String(r.name).replace(/^https?:\/\//, '').split('/')[0]}</div>
+          <div className={r.ms > 0 ? 'text-emerald-600' : 'text-amber-600'}>
+            {r.ms > 0 ? `回来了 · ${r.ms}ms · ${r.size}B` : '还飞着'} · 第 {r.started}ms 发出
+          </div>
+        </div>
+      ))}
     </Modal>
   );
 };
@@ -2098,7 +2130,7 @@ const TheaterApp: React.FC = () => {
           onCancel={() => setPending([])}
           onConfirm={doUpload}
         />
-        {diagOpen && <CoverDiagModal p={p} onClose={() => setDiagOpen(false)} />}
+        {diagOpen && <CoverDiagModal p={p} addr={addr} onClose={() => setDiagOpen(false)} />}
       </div>
     );
   }

@@ -356,10 +356,14 @@ const PlayerStage: React.FC<Props> = ({
       {/* 控制条：暮色 10-05 —— 下一集放在音量左边
           切集正在取的时候整条不画：那会儿 blobUrl 里还是上一集，
           画出来会是「上一集的时间 + 这一集的集号」，自己骗自己。
-          10-05 追加：正在播的时候整条藏起来（3 秒后），点画面才出来。 */}
-      {!loading && (
+          10-05 追加：正在播的时候整条藏起来（3 秒后），点画面才出来。
+          10-06 追加：**出错的时候也不画** —— 错误卡片是 `absolute inset-0`
+          铺满整个播放区的，控制条叠在上面就成了「卡片盖住半个进度条、
+          最右边全屏按钮被挡」（真机 19:15 截图）。出错了就只有错误卡片，
+          用户要的是「重试」那一个动作，不需要同时给他一条拖不动的进度条。 */}
+      {!loading && !error && (
       <div
-        className={`absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
+        className={`z-10 absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
           barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >

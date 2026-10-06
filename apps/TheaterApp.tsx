@@ -323,8 +323,14 @@ const DownloadPicker: React.FC<{
 };
 
 const TheaterApp: React.FC = () => {
-  // closeApp 回上一个 app（剧场是从聊天页打开的，所以就是回聊天页）
-  const { activeCharacterId, characters, addToast, closeApp } = useOS();
+  /**
+   * 返回：回**打开剧场时所在的那个聊天**，不是桌面。
+   *
+   * 用 `closeApp()` 回的是 `parentApp`，而剧场这个入口历史上没传 parent，
+   * 于是 `closeApp()` 落到 Launcher = 回桌面（用户 10-06 19:15 实测）。
+   * `activeCharacterId` 就是当时那个聊天，直接跳回去最稳。
+   */
+  const { activeCharacterId, characters, addToast, jumpToChat } = useOS();
   const char = useMemo(
     () => characters.find((c: any) => c.id === activeCharacterId),
     [characters, activeCharacterId]
@@ -1381,7 +1387,7 @@ const TheaterApp: React.FC = () => {
       try { localStorage.setItem(MAC_HIDDEN_KEY, JSON.stringify(next)); } catch { /* 存不下就算了 */ }
       return next;
     });
-    addToast(`《${title}》已从缓存剧库移走，电脑里的文件没动`, 'success');
+    addToast(`《${title}》手机端已移除，电脑里的文件没动`, 'success');
   }, [addToast]);
 
   const restoreMacHidden = useCallback(() => {
@@ -1434,6 +1440,35 @@ const TheaterApp: React.FC = () => {
   );
 
   /**
+   * 封面图。加载失败**一次**就换成占位图标，不再让内核反复重试 ——
+   * 重试的表现是「封面上的字一闪一闪」（真机 10-06 19:16）。
+   *
+   * `src` 由调用方用 `coverSrc()` 拼好：相对路径要拼上转发地址，
+   * 老记录里的 CDN 直链原样用。别在各处单独拼 —— 漏一处就整页海报全挂
+   * （10-06 19:15 就是首页漏拼，缓存剧库拼对了，两边一起挂）。
+   */
+  const CoverImg: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+    const [broken, setBroken] = useState(false);
+    // 地址变了（换剧 / 重进列表）要重置，否则上一张失败会把下一张也判死
+    useEffect(() => { setBroken(false); }, [src]);
+    if (!src || broken) {
+      return (
+        <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
+          <FilmSlate size={26} />
+        </div>
+      );
+    }
+    return (
+      <img
+        src={src}
+        alt={alt}
+        onError={(e) => { e.currentTarget.style.display = 'none'; setBroken(true); }}
+        className="w-full h-full object-cover pointer-events-none"
+      />
+    );
+  };
+
+  /**
    * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
    * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
    * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
@@ -1478,13 +1513,8 @@ const TheaterApp: React.FC = () => {
       {items.map((it) => (
         <HoldItem key={it.key} onClick={() => onOpen(it)} onHold={onHold ? () => onHold(it) : undefined}>
           <div className={`relative w-full aspect-[3/4] rounded-xl overflow-hidden ${p.night ? 'bg-[#1e293b]' : 'bg-slate-200'}`}>
-            {it.cover ? (
-              <img src={it.cover} className="w-full h-full object-cover pointer-events-none" alt={it.title} />
-            ) : (
-              <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
-                <FilmSlate size={26} />
-              </div>
-            )}
+            {/* 拼地址统一在 CoverImg 里做，不在各处的 map 里拼 */}
+            <CoverImg src={coverSrc(addr, it.cover)} alt={it.title} />
             <div className="absolute top-1.5 left-1.5">
               <Tag tone={it.badge.tone}>{it.badge.text}</Tag>
             </div>
@@ -1521,7 +1551,7 @@ const TheaterApp: React.FC = () => {
       <div className={`absolute inset-0 flex flex-col ${p.page}`}>
         <TopBar
           title="剧场"
-          onBack={() => { closeOnline(); closeApp(); }}
+          onBack={() => { closeOnline(); if (activeCharacterId) jumpToChat(activeCharacterId); }}
           right={
             <button onClick={() => setPage('settings')} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
               <GearSix size={18} className={p.sub} />
@@ -1684,16 +1714,7 @@ const TheaterApp: React.FC = () => {
               {online && macItems.length > 0 && (
                 <>
                   <div className={`text-[11px] mb-3 text-center ${p.sub}`}>
-                    电脑上缓存了 {macItems.length} 部 · 这些要连着电脑才看得成
-                    {macHidden.length > 0 && (
-                      <>
-                        <br />
-                        <button onClick={restoreMacHidden} className="mt-1 text-sky-500 active:scale-95">
-                          已移走 {macHidden.length} 部，点这里恢复
-                        </button>
-                      </>
-                    )}
-                    <br />
+                    电脑上缓存了 {macItems.length} 部 · 这些要连着电脑才看得成<br />
                     <span className="text-slate-300">长按某部可以把它从这页移走（不会删电脑里的文件）</span>
                   </div>
                   <Grid
@@ -1703,7 +1724,7 @@ const TheaterApp: React.FC = () => {
                       return {
                         key: d.title,
                         title: d.title,
-                        cover: coverSrc(addr, d.coverUrl),
+                        cover: d.coverUrl,
                         sub: `电脑 ${mac.eps.length} 集${ph ? ` · 手机 ${ph.episodes.length} 集` : ''}`,
                         badge: ph ? { tone: 'ok' as const, text: `手机 ${ph.episodes.length}` } : { tone: 'mac' as const, text: `电脑 ${mac.eps.length}` },
                         ref: d,
@@ -1712,6 +1733,10 @@ const TheaterApp: React.FC = () => {
                     onOpen={(it) => openEpisodes(it.ref)}
                     onHold={(it) => hideMacDrama(it.key)}
                   />
+                  {/* 恢复提示放最底下（用户 10-06 19:16 要求） */}
+                  <p className={`mt-4 text-center text-[10px] leading-relaxed ${p.sub}`}>
+                    已移除剧集可搜索重新下载恢复
+                  </p>
                 </>
               )}
             </>

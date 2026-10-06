@@ -38,6 +38,7 @@ import { listWatch, upsertWatch, removeWatch, clearWatch } from '../utils/dramaT
 import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/theme';
 import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheater/coverDiag';
 import { loadCoverBlob, cachedCoverUrl, coverCacheSize } from '../utils/dramaTheater/coverBlob';
+import { probeLive, maskKey, type ProbeStep } from '../utils/dramaTheater/liveProbe';
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
@@ -535,6 +536,110 @@ const CoverDiagModal: React.FC<{ p: Palette; addr: string; onClose: () => void }
 };
 
 /**
+ * 实时连接测试窗（10-06 21:45）。
+ *
+ * 存在的理由：「手机能不能连上实时接口」是整套第 2 步的生死关口，而这一步
+ * **没法在电脑上验** —— curl 和 nc 不读系统代理，浏览器和 WebView 读，
+ * 两种环境结论正好相反。只能让手机自己说。
+ *
+ * 分三步递进，因为三步失败的原因完全不同：
+ *   1 普通 HTTPS 通不通、key 对不对  ← 90% 的情况在这一步就能定性
+ *   2 WebSocket 长连接能不能建起来    ← 长连接可能被 NAT / 代理规则单独挡掉
+ *   3 真的发 setup，看模型认不认配置
+ *
+ * ⚠️ key 只显示脱敏后的几位，绝不把完整地址打到日志里（手机上有调试浮标会记录）。
+ */
+const LiveProbeModal: React.FC<{ p: Palette; apiKey: string; onClose: () => void }> = ({ p, apiKey, onClose }) => {
+  const [steps, setSteps] = useState<ProbeStep[]>([]);
+  const [running, setRunning] = useState(false);
+
+  const run = useCallback(async () => {
+    setRunning(true);
+    setSteps([]);
+    await probeLive(apiKey, (s) => setSteps((old) => [...old, s]));
+    setRunning(false);
+  }, [apiKey]);
+
+  const passed = steps.length > 0 && steps.every((s) => s.ok);
+  const firstFail = steps.find((s) => !s.ok);
+
+  return (
+    <Modal isOpen title="实时连接测试" onClose={onClose} zIndex={130}
+      footer={
+        <>
+          <button onClick={onClose}
+            className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}>
+            关闭
+          </button>
+          <button onClick={run} disabled={running}
+            className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40">
+            {running ? '正在试…' : steps.length ? '再试一次' : '开始测试'}
+          </button>
+        </>
+      }
+    >
+      <div className={`rounded-2xl px-3 py-2 mb-2.5 text-[10px] ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
+        用的密钥：<span className="font-mono font-bold">{maskKey(apiKey)}</span>
+        <div className="text-slate-400 mt-0.5">失败很正常，这一步就是用来告诉你卡在哪的</div>
+      </div>
+
+      {steps.length === 0 && !running && (
+        <p className={`text-[11px] text-center py-4 ${p.sub}`}>点下面开始，一次测三步</p>
+      )}
+
+      {steps.map((s, i) => (
+        <div key={i} className={`rounded-xl px-3 py-2.5 mb-2 text-[11px] leading-relaxed ${
+          s.ok ? (p.night ? 'bg-emerald-950/40' : 'bg-emerald-50')
+               : (p.night ? 'bg-rose-950/40' : 'bg-rose-50')
+        }`}>
+          <div className="flex items-center gap-2">
+            <span className={s.ok ? 'text-emerald-600' : 'text-rose-500'}>
+              {s.ok ? '✓' : '✗'}
+            </span>
+            <span className="font-bold">第{s.n}步 · {s.name}</span>
+            <span className="text-slate-400 ml-auto">{s.ms}ms</span>
+          </div>
+          <div className="text-slate-500 mt-1">{s.detail}</div>
+        </div>
+      ))}
+
+      {running && (
+        <div className="text-center py-2">
+          <SpinnerIcon />
+          <p className={`text-[11px] mt-1 ${p.sub}`}>正在试…</p>
+        </div>
+      )}
+
+      {passed && (
+        <div className={`rounded-2xl px-3 py-2.5 text-[11px] leading-relaxed text-center ${
+          p.night ? 'bg-emerald-950/40 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>
+          三步全过。手机这边能直连实时接口，下一步可以接了。
+        </div>
+      )}
+
+      {firstFail && (
+        <div className={`rounded-2xl px-3 py-2.5 text-[10px] leading-relaxed ${
+          p.night ? 'bg-[#1e293b] text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+          {firstFail.n === 1
+            ? '第 1 步就断了 = 请求压根发不出去，跟密钥无关，是网络这条路没通。'
+            : firstFail.n === 2
+              ? '网页能通但长连接不行 = 代理只放行了网页请求，去把长连接也放行。'
+              : '前两步都通了、这一步才断 = 密钥或权限有问题。'}
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+const SpinnerIcon: React.FC = () => (
+  <div className="flex justify-center gap-1">
+    {[0, 1, 2].map((i) => (
+      <span key={i} className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" style={{ animationDelay: `${i * 160}ms` }} />
+    ))}
+  </div>
+);
+
+/**
  * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
  * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
  * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
@@ -625,7 +730,13 @@ const TheaterApp: React.FC = () => {
    * 于是 `closeApp()` 落到 Launcher = 回桌面（用户 10-06 19:15 实测）。
    * `activeCharacterId` 就是当时那个聊天，直接跳回去最稳。
    */
-  const { activeCharacterId, characters, addToast, jumpToChat } = useOS();
+  /**
+   * ⚠️ `apiConfig` 必须在这里解构出来：第 2 步的实时连接测试要用密钥。
+   * 漏解构是真机崩过的事（悬浮窗漏 addApiPreset、剧场漏 jumpToMessage），
+   * 而 `vite build` 只转译不查作用域、`typecheck` 也只在用得到的地方才报 ——
+   * **改动后一定要跑 `npm run typecheck:theater`，别只跑 build。**
+   */
+  const { activeCharacterId, characters, addToast, jumpToChat, apiConfig } = useOS();
   const char = useMemo(
     () => characters.find((c: any) => c.id === activeCharacterId),
     [characters, activeCharacterId]
@@ -637,6 +748,7 @@ const TheaterApp: React.FC = () => {
   const [page, setPage] = useState<Page>('list');
   const [tab, setTab] = useState<Tab>('home');
   const [diagOpen, setDiagOpen] = useState(false);
+  const [probeOpen, setProbeOpen] = useState(false);
 
   // ── 转发服务连接 ──
   const [addr, setAddr] = useState(getRelayAddr());
@@ -2579,6 +2691,24 @@ const TheaterApp: React.FC = () => {
             <Pill tone={p} onClick={() => { setPage('list'); setTab('phone'); }}>去本地剧库</Pill>
           </div>
         </SectionCard>
+
+        {/**
+         * 第 2 步的前置闸门：连不上实时接口，后面全部白做。
+         * 三步递进测试的原因写在这个组件的注释里，别删。
+         */}
+        <SectionCard p={p} title="实时模型（接下来接）" desc="测一下这台手机能不能连上。分三步，一步步卡住了会告诉你卡在哪。">
+          <div className="flex flex-col items-center gap-2">
+            <Pill tone={p} onClick={() => setProbeOpen(true)}>测一下能不能连</Pill>
+            <p className={`text-[10px] text-center ${p.faint}`}>
+              用的密钥：{maskKey(apiConfig.apiKey)}
+              {!apiConfig.apiKey && <span className="text-rose-400"> （还没填）</span>}
+            </p>
+          </div>
+        </SectionCard>
+
+        {probeOpen && (
+          <LiveProbeModal p={p} apiKey={apiConfig.apiKey} onClose={() => setProbeOpen(false)} />
+        )}
 
         <div className="text-center text-[10px] text-slate-300 pt-2 pb-6">
           第 1 步 · 还不接 AI，第 2 步才接

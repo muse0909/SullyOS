@@ -89,6 +89,13 @@ export class LiveSession {
   private timers: number[] = [];
   /** 排队等重连用的历史，断了期间用户又发了的话 */
   private pendingInput: string[] = [];
+  /**
+   * 连接代数。每开一条连接 +1，旧连接的所有回调先比对这个号，对不上直接扔。
+   * ⚠️ 这是「重连几次之后渲染进程崩掉」的根治点（见 open() 的注释）。
+   */
+  private gen = 0;
+  /** 历史灌过没有 —— 只灌一次，重连不重复灌 */
+  private historySent = false;
 
   constructor(opts: LiveOpts) {
     this.opts = opts;
@@ -144,6 +151,18 @@ export class LiveSession {
 
   private async open(isResume: boolean) {
     this.clearTimers();
+    // 上一条连接先彻底关掉再开新的 —— 不关的话它的事件还会继续触发状态机
+    const prev = this.ws;
+    if (prev) {
+      try { prev.onopen = prev.onmessage = prev.onerror = prev.onclose = null as any; } catch {}
+      try { prev.close(); } catch {}
+    }
+    this.ws = null;
+    // ⚠️ 代数守卫：每开一条连接 +1。所有事件回调先比对自己的代数，
+    // 对不上直接扔掉。不这么做的话，旧连接迟到的 onclose/onerror 会把
+    // 新连接的状态机搅乱（旧连接的 onclose 走 1000 分支会把整个会话置成 idle，
+    // 于是新连接好好的却显示不出来，还会被心跳判定成没动静）。
+    const gen = ++this.gen;
     this.setState(isResume ? 'reconnecting' : 'connecting');
 
     const key = this.opts.apiKey;
@@ -157,6 +176,7 @@ export class LiveSession {
     try {
       ws = new WebSocket(`${base}?key=${encodeURIComponent(key)}`);
     } catch (e: any) {
+      if (gen !== this.gen) return;
       this.scheduleRetry(`建不了连接：${e?.message || e}`);
       return;
     }
@@ -165,6 +185,7 @@ export class LiveSession {
     ws.binaryType = 'arraybuffer';
 
     const connectTimer = window.setTimeout(() => {
+      if (gen !== this.gen) return;
       if (ws.readyState !== WebSocket.OPEN) {
         try { ws.close(); } catch {}
         this.scheduleRetry('15 秒没连上');
@@ -173,6 +194,7 @@ export class LiveSession {
     this.timers.push(connectTimer);
 
     ws.onopen = () => {
+      if (gen !== this.gen) return;
       this.lastBeat = Date.now();
       this.retry = 0;
       this.trace('连上了，发 setup');
@@ -180,17 +202,20 @@ export class LiveSession {
     };
 
     ws.onmessage = (ev) => {
+      if (gen !== this.gen) return;
       this.lastBeat = Date.now();
       this.onMessage(ev.data);
     };
 
     ws.onerror = () => {
+      if (gen !== this.gen) return;
       // ⛔ 不在这里下结论。浏览器的 WebSocket 错误**不给原因**，
       // 原因要去 onclose 的 code/reason 里看，或者根本没 close（那就是超时）。
       this.trace('连接出错');
     };
 
     ws.onclose = (ev) => {
+      if (gen !== this.gen) return;
       const why = ev.reason ? `（${ev.reason}）` : '';
       this.trace(`连接关闭 code=${ev.code}${why}`);
       // 用户主动关的不算断
@@ -232,7 +257,13 @@ export class LiveSession {
       if (!msg) return;
       if (msg.setupComplete) {
         this.setState('ready');
-        this.flushHistory();
+        // ⚠️ 历史**只在第一次连上时灌**。
+        // 重连带 sessionResumption 的话上下文已经在了，再灌一遍就是重复 ——
+        // 实测重连时模型会对着重复的历史吐一大段（10-07 现场）。
+        if (!this.historySent) {
+          this.historySent = true;
+          this.flushHistory();
+        }
         this.flushPending();
         return;
       }
@@ -354,24 +385,23 @@ export class LiveSession {
     }));
   }
 
-  /** 服务端预告要断：立刻在旧连接还活着的时候把新的接上 */
+  /**
+   * 服务端预告要断：立刻在旧连接还活着的时候把新的接上。
+   *
+   * ⚠️ 原来这里用 300ms 轮询等新连接 ready，等到了才关旧的。等不到就
+   * **永远不关**、而且那个 interval 也永远不清 —— 每次重连泄漏一条连接 +
+   * 一个 300ms 的定时器。1011 反复重连几轮之后，渲染进程里的 WebSocket
+   * 越堆越多，直接 SIGTRAP 崩掉（10-07 三次崩溃地址完全相同，不是随机问题）。
+   *
+   * 现在不轮询了：直接开新连接，旧的立刻关。代数守卫保证旧连接的事件
+   * 不会再搅乱状态机（open() 里已经做了）。
+   */
   private reconnectEarly() {
     if (this.reconnecting) return;
     this.reconnecting = true;
     this.trace('趁没断先接上');
-    // 旧连接别急着关，等新的 ready 再说
-    const old = this.ws;
-    const fresh = new Promise<void>((resolve) => {
-      this.open(true);
-      const iv = window.setInterval(() => {
-        if (this.state === 'ready') { clearInterval(iv); resolve(); }
-        if (this.state === 'failed') { clearInterval(iv); resolve(); }
-      }, 300);
-    });
-    fresh.then(() => {
-      this.reconnecting = false;
-      try { old?.close(); } catch {}
-    });
+    this.open(true);
+    this.reconnecting = false;
   }
 
   private reconnecting = false;

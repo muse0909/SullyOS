@@ -36,6 +36,7 @@ import {
 } from '../utils/dramaTheater/localVideos';
 import { listWatch, upsertWatch, removeWatch, clearWatch } from '../utils/dramaTheater/watchHistory';
 import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/theme';
+import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheater/coverDiag';
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
@@ -363,7 +364,25 @@ const TopBar: React.FC<{ p: Palette; title: string; onBack?: () => void; right?:
  */
 const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
   const [badSrc, setBadSrc] = useState('');
+  const ref = useRef<HTMLImageElement | null>(null);
   const failed = !!src && badSrc === src;
+
+  /**
+   * 每张图都报一次状态到 `window.__theaterDiag`（详见 utils/dramaTheater/coverDiag.ts）。
+   *
+   * 为什么加载完还要再报一次：`currentSrc`（内核最终真去请求的地址）在图片**真正开始加载
+   * 之前是空串**，只有 onLoad 之后才拿得到最能说明问题的那份。https 页面里的 http 图片
+   * 被内核自动升级成 https 就是靠这个字段看出来的 —— `<img>` 不会抛异常，
+   * 界面上只是一片占位图标，不报这个就永远看不出是这个原因。
+   */
+  const report = useCallback(() => {
+    if (!src) return;
+    probeCover(ref.current, src);
+    window.setTimeout(() => probeCover(ref.current, src), 600);
+  }, [src]);
+
+  useEffect(() => { report(); }, [report]);
+
   return (
     <div className="absolute inset-0">
       <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
@@ -371,15 +390,95 @@ const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
       </div>
       {!failed && src && (
         <img
+          ref={ref}
           src={src}
           alt=""
           loading="lazy"
           decoding="async"
-          onError={() => setBadSrc(src)}
+          onLoad={report}
+          onError={() => { setBadSrc(src); probeCover(ref.current, src); }}
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
         />
       )}
     </div>
+  );
+};
+
+/**
+ * 封面诊断窗（10-06「海报完全不显示」取证用）。
+ *
+ * 电脑这边已经全查过、全是好的（数据、转发、拼地址、apk 配置、混合内容开关），
+ * 只有手机不出图。这种 bug 读代码读不出来，只能让页面自己报告。
+ *
+ * 最要紧的一行是「内核实际请求的地址」—— https 页面里的 http 图片会被自动升级成 https，
+ * 电脑上的转发服务没有 https，升级就失败。`<img>` 不报错、不抛异常，
+ * 界面上只是一片占位图标，不专门看这个字段永远猜不到。
+ *
+ * 定位完就能删。留着是因为「电脑好好的、手机就是不出图」这类问题还会有第二次。
+ */
+const CoverDiagModal: React.FC<{ p: Palette; onClose: () => void }> = ({ p, onClose }) => {
+  const [env, setEnv] = useState(() => pageEnv());
+  const [probe, setProbe] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => setEnv(pageEnv()), []);
+
+  /** 绕开 <img> 直接发一次请求：能拿到图 = 地址没问题，问题在内核显示/安全层 */
+  const retest = useCallback(async () => {
+    const first = pageEnv().records.find((r) => r.src) || (env.records[0] as any);
+    if (!first?.src) return setProbe('还没有记录到任何地址');
+    setBusy(true);
+    const r: any = await refetchOne(first.src);
+    setProbe(`${r.ok ? '成功' : '失败'} · ${r.ms}ms · ${r.status ?? ''} ${r.type ?? ''} ${r.size ?? r.error ?? ''}\n${r.note}`);
+    setBusy(false);
+    refresh();
+  }, [env.records, refresh]);
+
+  return (
+    <Modal isOpen title="海报诊断" onClose={onClose} zIndex={130}
+      footer={
+        <>
+          <button onClick={() => { resetDiag(); setProbe(''); refresh(); }}
+            className={`flex-1 rounded-full py-2.5 text-xs font-bold active:scale-95 ${p.night ? 'bg-[#334155] text-slate-300' : 'bg-slate-100 text-slate-500'}`}>
+            清空重记
+          </button>
+          <button onClick={retest} disabled={busy}
+            className="flex-1 rounded-full py-2.5 text-xs font-bold bg-sky-500 text-white active:scale-95 disabled:opacity-40">
+            {busy ? '正在测…' : '重新检测'}
+          </button>
+        </>
+      }
+    >
+      <div className={`rounded-2xl px-3 py-2.5 mb-2 text-[11px] leading-relaxed ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
+        <div>页面协议：<b>{env.protocol || '?'}</b>{env.pageIsHttps ? '（https）' : ''}</div>
+        <div>海报张数：共 {env.total} · 成功 {env.loaded} · 失败 {env.failed}</div>
+        <div style={{ color: env.upgraded ? '#f59e0b' : undefined, fontWeight: env.upgraded ? 700 : 400 }}>
+          地址被内核改写：{env.upgraded} 张
+          {env.upgraded ? ' ← 就是它（http 被自动升级成 https 了）' : ''}
+        </div>
+      </div>
+
+      {probe && (
+        <div className="rounded-2xl bg-sky-50 px-3 py-2.5 mb-2 text-[11px] text-sky-700 leading-relaxed whitespace-pre-wrap">
+          {probe}
+        </div>
+      )}
+
+      <div className="text-[10px] text-slate-400 mb-1.5 text-center">最近 {env.records.length} 张</div>
+      {env.records.map((r) => {
+        const changed = r.currentSrc && r.currentSrc !== r.src;
+        const tail = r.src.slice(-46);
+        return (
+          <div key={r.src} className={`rounded-xl px-2.5 py-1.5 mb-1 text-[10px] leading-tight ${p.night ? 'bg-[#1e293b]' : 'bg-slate-50'}`}>
+            <div className="font-mono text-slate-400 truncate">…{tail}</div>
+            <div className={r.ok ? 'text-emerald-600' : 'text-rose-500'}>
+              {r.ok ? '成功' : '失败'} · {r.naturalWidth}×{r.naturalHeight}
+              {changed && <span className="text-amber-600 font-bold"> · 内核改成了 {r.currentSrc.replace(/^https?:\/\//, '').slice(0, 40)}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </Modal>
   );
 };
 
@@ -485,6 +584,7 @@ const TheaterApp: React.FC = () => {
 
   const [page, setPage] = useState<Page>('list');
   const [tab, setTab] = useState<Tab>('home');
+  const [diagOpen, setDiagOpen] = useState(false);
 
   // ── 转发服务连接 ──
   const [addr, setAddr] = useState(getRelayAddr());
@@ -1579,9 +1679,16 @@ const TheaterApp: React.FC = () => {
           title="剧场"
           onBack={() => { closeOnline(); if (activeCharacterId) jumpToChat(activeCharacterId); }}
           right={
-            <button onClick={() => setPage('settings')} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
-              <GearSix size={18} className={p.sub} />
-            </button>
+            <div className="flex items-center gap-2">
+              {/* 取证用：海报出不来时点开，让页面自己报告每张图卡在哪一步 */}
+              <button onClick={() => setDiagOpen(true)} title="海报诊断"
+                className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
+                <FilmSlate size={18} className={p.sub} />
+              </button>
+              <button onClick={() => setPage('settings')} className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${p.night ? 'bg-[#1e293b]' : 'bg-white/70'}`}>
+                <GearSix size={18} className={p.sub} />
+              </button>
+            </div>
           }
         />
 
@@ -1991,6 +2098,7 @@ const TheaterApp: React.FC = () => {
           onCancel={() => setPending([])}
           onConfirm={doUpload}
         />
+        {diagOpen && <CoverDiagModal p={p} onClose={() => setDiagOpen(false)} />}
       </div>
     );
   }

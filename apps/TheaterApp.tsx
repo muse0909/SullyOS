@@ -24,7 +24,7 @@ import {
   getRelayAddr, setRelayAddr, normalizeAddr, pingRelay, forgetRelay, getKnownRelays,
   fetchDramas, fetchTasks, searchDramas, fetchEpisodes, fetchVideoBlobUrl, fetchVideoBytes,
   fetchMacWatchHistory, sourceName, openOnlinePlayback, streamOnlineEpisode, closeOnlinePlayback,
-  reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, PLAYBACK_BUSY_MSG,
+  reclaimStaleSessions, localVideoUrl, clearAllOnlinePlayback, queueDownload, PLAYBACK_BUSY_MSG,
   type RelayDrama, type RelayTask, type RelaySource,
 } from '../utils/dramaTheater/relayClient';
 import {
@@ -37,6 +37,14 @@ import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/th
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
+/**
+ * 「下到电脑」等到多久就认输。
+ *
+ * 实测单集中位 4 秒、最长 38 秒（电脑上的 1126 个集实测），一部 58 集也就
+ * 四五分钟。给 10 分钟是留足余量 —— 超过就说明有集拉不下来（红果源续读 403 /
+ * 资源已变化那种），这时候把已经下到的先存进手机，比干等着强。
+ */
+const MAC_FETCH_TIMEOUT = 10 * 60 * 1000;
 
 /**
  * 诊断记录：把在线播放的**每一步**写进 window.__theaterDiag。
@@ -330,6 +338,25 @@ const TheaterApp: React.FC = () => {
   // ── 存到手机 ──
   const [saveAll, setSaveAll] = useState({ busy: false, done: 0, total: 0, cancel: false });
   const [expandedPhone, setExpandedPhone] = useState('');
+
+  /**
+   * 正在往电脑上下的剧。
+   *
+   * 电脑上完全没有的剧，**没法直接「下载到手机」** —— 原来那条路是拿电脑上的
+   * 文件（`localVideoUrl` 去电脑下载目录里找），电脑没文件就没什么可拷。
+   * 所以点下载得先排进短剧库的下载队列（实测单集中位 4 秒），
+   * 下完了再自动接着拷进手机。
+   *
+   * 为什么不让手机直接从在线流下载：在线流是「边转边送」，一集要实时流完
+   * （服务器忽略 Range），比电脑直接拉源文件慢好几倍，而且**占播放名额** ——
+   * 名额总共才 4 个（playback_resources.go:39），拿它来下载等于下载期间
+   * 手机和电脑都看不了剧。电脑下载走的是任务队列，不占名额。
+   */
+  const [macFetch, setMacFetch] = useState<{ title: string; id: string; want: number } | null>(null);
+  /** 「下完自动拷手机」只做一次的标记 —— 靠 state 会重复触发（轮询每次都重新判断） */
+  const macFetchHandled = useRef('');
+  /** 这次「下到电脑」是几点开始的（超时兜底要用，不能靠 state，state 会跟着渲染变） */
+  const macFetchAt = useRef(0);
 
   // ── 下载选择窗（暮色 10-05：点「下载到手机」先选要哪几集）──
   // 存的是「这部剧里电脑有、手机还没有的集」，勾选状态用一个 Set 存，
@@ -961,6 +988,85 @@ const TheaterApp: React.FC = () => {
     if (ok) addToast(`存了 ${ok} 集进手机，存完就跟电脑无关了`, 'success');
   };
 
+  /** 排进短剧库的下载队列，让电脑先把这部下下来 */
+  const fetchToMac = async (d: DramaRef, want: number) => {
+    if (!online) return addToast('还没连上电脑，先连上才能下载', 'error');
+    if (!d.id) return addToast('没认出这部剧的编号，下不了', 'error');
+    if (macFetch) return addToast('还有一部正在往电脑下，等它下完', 'info');
+    try {
+      macFetchHandled.current = '';
+      macFetchAt.current = Date.now();
+      await queueDownload(addr, [d.id], 0);
+      setMacFetch({ title: d.title, id: d.id, want });
+      addToast('开始往电脑下，下完自动帮你存进手机', 'info');
+    } catch (e: any) {
+      addToast(`电脑那边没接下：${e?.message || '下不了'}`, 'error');
+    }
+  };
+
+  /** 正在往电脑下的时候，每 3 秒把电脑上的任务列表拉回来（好让集数格子变蓝、报进度） */
+  useEffect(() => {
+    if (!macFetch) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const ts = await fetchTasks(addr);
+        if (alive) setTasks(ts);
+      } catch {
+        // 拉不到就下一轮再试，不打断正在下的队列
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 3000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [macFetch, addr]);
+
+  /**
+   * 电脑上够了就自动接着拷进手机 —— 用户只点一下，不用点第二下。
+   *
+   * 「够不够」按 `macFetch.want` 算（= 点按钮时这部一共多少集），
+   * 不是按 `mac.total`：剧库列表给的集数有时候比真集数大（多出来的那几集压根拉不到），
+   * 按它算就会永远等在这儿。
+   *
+   * **有超时兜底。** 红果源有些集是拉不下来的（续读 403 / 资源已变化），
+   * 短剧库会一直重试，任务永远不到 success —— 不设兜底的话按钮就永远停在
+   * 「正在下到电脑 12/58」，用户以为死机了。实测单集中位 4 秒，
+   * 10 分钟足够下完一整部，到点就把已经下到的先存进手机。
+   */
+  useEffect(() => {
+    if (!macFetch) return;
+    if (macFetchHandled.current === macFetch.title) return;
+    const mac = macByDrama.get(macFetch.title);
+    const have = new Set(mac?.eps || []).size;
+    const need = Math.min(macFetch.want, mac?.total || macFetch.want);
+    // 集数够了 = 全部下到；超时 = 有一集拉不下来，先把能存的存了
+    const enough = have >= macFetch.want;
+    const timedOut = Date.now() - macFetchAt.current > MAC_FETCH_TIMEOUT;
+    if (!enough && !timedOut) return;
+    if (enough && !mac) return;
+
+    // 打上标记再干活：setMacFetch 是异步的，这一帧里 effect 可能再跑一次
+    macFetchHandled.current = macFetch.title;
+    const d: DramaRef = {
+      id: macFetch.id,
+      title: macFetch.title,
+      coverUrl: dramas.find((x) => x.title === macFetch.title)?.coverUrl,
+      origin: 'mac',
+    };
+    const want = enough ? macFetch.want : have;
+    const toSave = Array.from({ length: want }, (_, i) => i + 1)
+      .filter((n) => epState(macFetch.title, n) !== 'phone');
+    setMacFetch(null);
+    if (timedOut && !enough) {
+      addToast(`电脑上有 ${have}/${macFetch.want} 集下不下来，先把这 ${want} 集存进手机`, 'error');
+    }
+    if (toSave.length) downloadEps(d, toSave);
+    else addToast('这几集手机里已经有了', 'info');
+    // downloadEps / addToast 是普通函数、每次渲染都是新的，进依赖会一直重跑；
+    // 真正要盯的只有「下到几集了」（macByDrama 由 tasks 派生）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [macFetch, macByDrama, tasks, addr]);
+
   /**
    * 打开下载选择窗，默认勾上电脑上所有还没下到手机的集（=「全选就是整部」）。
    * avgBytes 拿手机里已存集的平均大小当参照：转发服务不吐单集真实大小，
@@ -1585,11 +1691,27 @@ const TheaterApp: React.FC = () => {
                 ) : macEps.length > 0 ? (
                   /* 电脑上有的都已在手机 —— 这句只在真缓存过的时候才准 */
                   <Pill tone={p} disabled>电脑上有的都已在手机</Pill>
+                ) : macFetch?.title === picked.title ? (
+                  /* 正在往电脑下：报实数，别让人对着一个不动的界面等 */
+                  <Pill tone={p} disabled>
+                    正在下到电脑 {new Set(macByDrama.get(picked.title)?.eps || []).size}/{macFetch.want}
+                  </Pill>
                 ) : (
-                  /* 电脑上没缓存这部：能在线看，但没法「下载到手机」
-                     —— 下载走的是电脑上的文件，电脑没文件就没什么可下载的。
-                     这句要跟用户说清楚，不然会以为整部都看不了。 */
-                  <Pill tone={p} disabled>电脑没存 · 在线看</Pill>
+                  /* 电脑上没缓存这部原来只写一句「电脑没存 · 在线看」，看着像整部都看不了。
+                     其实能看（在线流），也能存 —— 只是要先让电脑把它下下来，
+                     因为「存到手机」拷的是电脑上的文件，电脑没文件就没什么可拷。
+                     这里给一个真能点的按钮，别再是一句只读的提示。 */
+                  <Pill
+                    primary
+                    tone={p}
+                    onClick={() => fetchToMac(picked, total)}
+                    disabled={!online || !!macFetch}
+                  >
+                    下载到手机（共 {total} 集）
+                  </Pill>
+                )}
+                {!macOnly.length && macEps.length === 0 && macFetch?.title !== picked.title && (
+                  <span className="self-center text-[10px] text-slate-400">先下到电脑，再存进手机</span>
                 )}
                 {phoneEps.length > 0 && (
                   <Pill

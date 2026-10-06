@@ -132,8 +132,16 @@ npm run typecheck          # 全量 —— 这个项目历史包袱有几百条�
 ```
 
 `typecheck:theater` 只看 `apps/TheaterApp.tsx`、`components/dramaTheater/`、
-`utils/dramaTheater/`，退出码 0 = 这几块是干净的。别的模块想这么查，
-照着改 `package.json` 里那条命令的 grep 路径即可。
+`utils/dramaTheater/`、`hooks/useTheaterLive.ts`，退出码 0 = 这几块是干净的。
+别的模块想这么查，照着改 `package.json` 里那条命令的 grep 路径即可。
+
+⚠️ **这条清单会过期，忘了更新比没有更危险**（2026-10-07 实锤）。
+`see is not defined` 一路走到手机上崩了，而**唯一能拦住它的是 typecheck**（TS2304）——
+build 拦不住（只转译），`typecheck:theater` 也拦不住，因为 `hooks/useTheaterLive.ts`
+**压根不在 grep 范围里**。给人「已经查过了」的错觉，比压根没这条命令更糟。
+
+所以：**改这份清单要对着「本次改动实际动了哪些文件」核一遍**，
+新加的剧场文件顺手加进 `package.json` 那条 grep。
 
 **两个检查各管一半，别指望一个顶俩（2026-10-06 实测）：**
 
@@ -359,6 +367,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-07 | 剧场：答非所问 + 没人设像旁白（病根是画面说明每 1.2 秒当成一句用户发言）+ `see is not defined` 崩溃 + 空气泡 + 邀请按钮换位 + `typecheck:theater` 范围漏了 hooks | [`changelogs/2026-10-07-theater-frame-text-order-and-persona.md`](./changelogs/2026-10-07-theater-frame-text-order-and-persona.md) |
 | 2026-10-06 | 切剧继续播上一部（关在线会话≠关播放器）+ 追剧「接着看」报没这一集（同一 bug 第二个入口）+ 电脑没缓存的剧也能下载到手机 + `playable` 标志在说谎（磁盘上根本没有） | [`changelogs/2026-10-06-theater-switch-teardown-and-download-online.md`](./changelogs/2026-10-06-theater-switch-teardown-and-download-online.md) |
 | 2026-10-05 | 剧场：在线剧放不出来 —— 编码标记缺失 + 转发没暴露 X-Playback-MIME（真机实测画面在动） | [`changelogs/2026-10-05-theater-online-play-mime-fix.md`](./changelogs/2026-10-05-theater-online-play-mime-fix.md) |
 | 2026-10-05 | 剧场：下载 ENOENT 全挂（downloadFile 不建目录）+ 短剧库残留治理（1 分钟回收 / 一键清空） | [`changelogs/2026-10-05-theater-enoent-and-playback-stalls.md`](./changelogs/2026-10-05-theater-enoent-and-playback-stalls.md) |

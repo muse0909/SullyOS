@@ -89,6 +89,32 @@ export function useTheaterLive(opts: {
   const tagRef = useRef('');
   /** 正在流式输出的那条消息 id */
   const streamingId = useRef('');
+  /**
+   * 流式节流（暮色 00:20「好卡，点也不动」）。
+   *
+   * ⚠️ 模型是一秒几十段地推字，原来每段都直接 setMsgs 一次，
+   * 每次重渲染整个消息列表 —— 渲染进程被打爆，10-07 现场是
+   * 「发一条消息就崩」。攒 120ms 刷一次，人眼看不出差别。
+   */
+  const pendingStream = useRef('');
+  const streamTimer = useRef(0);
+  /** 节流攒着的最后一段，立刻刷出来（收尾/被打断时调用，不然会丢字） */
+  const flushStreamNow = useCallback(() => {
+    if (streamTimer.current) {
+      window.clearTimeout(streamTimer.current);
+      streamTimer.current = 0;
+    }
+    const text = pendingStream.current;
+    pendingStream.current = '';
+    if (!text) return;
+    setMsgs((old) => {
+      const i = old.findIndex((m) => m.id === streamingId.current);
+      if (i < 0) return old;
+      const next = old.slice();
+      next[i] = { ...next[i], text };
+      return next;
+    });
+  }, []);
 
   const addTrace = useCallback((s: string) => {
     setTrace((old) => [...old.slice(-40), s]);
@@ -125,9 +151,9 @@ export function useTheaterLive(opts: {
 3. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
    不要用「我可以帮你分析剧情」这种服务腔，直接说人话。
 
-4. **绝对不要输出 \`<语音>\` 标签。** 那是主聊天那边的语音消息功能，
-   剧场这边没有播放语音的地方，吐出来就是一串没用的方括号字符露在气泡里。
-   只输出纯文字。
+4. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
+
+5. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
 
 > ⚠️ 这里**故意不写「播到第几分钟」**：播放进度只在开场那一刻读一次，
 > 写在提示词里就是个一直不变的假数字，比不写更糟（用户会以为它准）。
@@ -148,6 +174,12 @@ export function useTheaterLive(opts: {
     sessRef.current = null;
 
     // 1. 剧场自己的聊天记录（只看到剧场里聊的）
+    //
+    // ⚠️ **只能往后追加，不能整体覆盖**（10-07 现场）。
+    // 入库是后台跑的（暮色 23:06 定的「先显示再后台存」），
+    // 所以内存里的新消息有一小段时间还没进库。整体覆盖的话，
+    // 重连触发 boot() 重跑那一刻就把这些还没入库的消息抹掉了 ——
+    // 现象是「我发的字闪一下就没了，过一阵又冒出来」。
     try {
       const all = await DB.getMessagesByCharId(char.id, true);
       const mine = all
@@ -158,9 +190,15 @@ export function useTheaterLive(opts: {
           id: m.id,
           role: m.role as 'user' | 'assistant',
           text: m.content,
-          tag: (m.metadata?.theaterTag as string) || '',
+          tag: (m.metadata as any)?.theaterTag as string || '',
         }));
-      setMsgs(mine);
+      setMsgs((old) => {
+        // 内存里已经有的（还没入库的）一律保留，库里的只补缺的那些
+        const seen = new Set(old.map((m) => m.id));
+        const missing = mine.filter((m) => !seen.has(m.id));
+        if (!missing.length) return old;
+        return [...old, ...missing];
+      });
     } catch (e: any) {
       addTrace(`读剧场历史失败：${e?.message || e}`);
     }
@@ -182,11 +220,20 @@ export function useTheaterLive(opts: {
       core = buildSystemPrompt(scene());
     }
 
-    // 3. 历史（不限来源 —— 同一个角色，主聊天里聊到哪他也该记得）
+    // 3. 历史 —— **只喂剧场自己聊的**
+    //
+    // ⚠️ 之前是「不限来源」（同一个角色主聊天聊到哪也该记得），但实测这会
+    // 把主聊天那边的**功能残留**带进剧场：模型翻到自己以前说过
+    // 「我设置了10分钟后的主动消息」，就当成事实继续说，
+    // 反复念叨这些有的没的（10-07 现场）。
+    //
+    // 剧场是独立场景，喂干净的历史反而更连贯、更快。
     let history: LiveTurn[] = [];
     try {
       const all = await DB.getMessagesByCharId(char.id, true);
       history = all
+        .filter((m: any) => m.metadata?.source === 'theater')
+        .filter((m: any) => !/<\/?(语音|主动消息|分享|转账|位置|表情|戳一戳|引用)>/.test(m.content || ''))
         .slice(-HISTORY_TURNS)
         .map((m: any) => ({
           role: (m.role === 'assistant' ? 'model' : 'user') as 'user' | 'model',
@@ -210,24 +257,43 @@ export function useTheaterLive(opts: {
         if (st === 'ready') onReady?.();
       },
       onText: (delta, full) => {
-        setMsgs((old) => {
-          const i = old.findIndex((m) => m.id === streamingId.current);
-          if (i < 0) return old;
-          const next = old.slice();
-          next[i] = { ...next[i], text: full, streaming: true };
-          return next;
-        });
+        /**
+         * ⚠️ 流式**必须节流**（暮色 00:20「好卡，点也不动」）。
+         *
+         * 原来模型每吐一小段就直接 setMsgs 一次 —— 一秒能来几十次，
+         * 每次都重渲染整个消息列表 + 重算滚动位置。渲染进程直接被打爆
+         * （10-07 现场：发一条消息就崩）。
+         *
+         * 现在攒 120ms 一起刷。人眼看不出差别，渲染压力降一个数量级。
+         */
+        pendingStream.current = full;
+        if (streamTimer.current) return;
+        streamTimer.current = window.setTimeout(() => {
+          streamTimer.current = 0;
+          const text = pendingStream.current;
+          pendingStream.current = '';
+          setMsgs((old) => {
+            const i = old.findIndex((m) => m.id === streamingId.current);
+            if (i < 0) return old;
+            const next = old.slice();
+            next[i] = { ...next[i], text, streaming: true };
+            return next;
+          });
+        }, 120);
       },
       onInterrupted: () => {
         // 用户插话把它打断了：把没说完的那条定稿，别留半句
         const id = streamingId.current;
         if (!id) return;
+        flushStreamNow();
         setMsgs((old) => old.map((m) => (m.id === id ? { ...m, streaming: false } : m)));
         streamingId.current = '';
       },
       onTurnComplete: async (full) => {
         const id = streamingId.current;
         streamingId.current = '';
+        // ⚠️ 收尾必须先把节流里攒着的最后一段刷掉，否则最后几个字会丢
+        flushStreamNow();
         setMsgs((old) => old.map((m) => (m.id === id ? { ...m, text: full, streaming: false } : m)));
         await saveModel(full);
       },
@@ -246,7 +312,16 @@ export function useTheaterLive(opts: {
       return;
     }
     boot();
-    return () => { sessRef.current?.close(); sessRef.current = null; };
+    return () => {
+      // ⚠️ 节流定时器也要清 —— 不清的话它会往已经离开的组件里写状态
+      if (streamTimer.current) {
+        window.clearTimeout(streamTimer.current);
+        streamTimer.current = 0;
+      }
+      pendingStream.current = '';
+      sessRef.current?.close();
+      sessRef.current = null;
+    };
     // ⚠️ 依赖里**不能**放 scene / onReady 这类每次 render 都新建的回调，
     // 放进去会让这个 effect 每次渲染都重跑一遍 = 反复重连。
     // scene 是通过闭包读的，它自己不在依赖里（见接线处）。

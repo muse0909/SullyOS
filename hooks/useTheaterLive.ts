@@ -128,6 +128,36 @@ export function useTheaterLive(opts: {
     setTrace((old) => [...old.slice(-40), s]);
   }, []);
 
+  /**
+   * 掐掉模型的自言自语式复读。
+   *
+   * ⚠️ 现象（10-07 00:56 现场）：模型在一个气泡里把同一段话翻来覆去说四遍，
+   * 「我反省，是我太敏感了…」那段连着来四回。
+   *
+   * 不是显示重复（那个按 id 对不上导致的已修），是**它真的生成了四遍**。
+   * 实时模型偶尔会陷进这种循环，靠提示词喊「别重复」不一定管用，
+   * 所以在落库前按「滑动窗口内反复出现同一句」把尾巴砍掉 ——
+   * 宁可少半句，也别让用户看一大坨复读。
+   *
+   * 只比**相邻**的重复：隔几句又说同一句是正常聊天。
+   */
+  const cutSelfRepeat = (s: string): string => {
+    if (!s || s.length < 40) return s;
+    // 把内容按句号切成段，从后往前看有没有跟前一段完全一样的
+    const parts = s.split(/(?<=[。！？!?\n])/).filter((x) => x.trim());
+    if (parts.length < 4) return s;
+    const out: string[] = [];
+    for (const part of parts) {
+      const prev = out[out.length - 1];
+      if (prev && prev.trim() === part.trim()) continue;
+      // 连着三段都一样就认为陷进去了，从这段开始截断
+      const p2 = out[out.length - 2];
+      if (prev && p2 && p2.trim() === part.trim() && prev.trim() === p2.trim()) break;
+      out.push(part);
+    }
+    return out.join('');
+  };
+
   // ── 剧场专属的系统提示 ──────────────────────────────────
   /**
    * 陪伴模式里没有这一段（它是在系统提示后面追加场景说明）。
@@ -250,10 +280,8 @@ export function useTheaterLive(opts: {
 
     // 3. 历史 —— 跨来源（同一个角色，主聊天里聊到哪他也该记得）
     //
-    // 条数跟着主聊天走（`char.contextLimit`，默认 500），
-    // 但**剧场不能照抄那么多**（暮色 00:34 定的 100 条）：
-    // 灌太多既慢又把主聊天那边的功能残渣带进来
-    // （模型翻到自己说过「设置了10分钟主动消息」就当事实反复念）。
+    // 条数 100（暮色 00:34 定的）。主聊天那边是 `char.contextLimit` 默认 500，
+    // 剧场照抄那么多又慢又没必要。
     //
     // ⚠️ 别给历史加 [剧场] 之类前缀 —— 模型会把它当自己的台词 pattern，
     // 然后输出切成「[剧场]xxx，[剧场]yyy」这种碎段（10-06 现场）。
@@ -315,12 +343,16 @@ export function useTheaterLive(opts: {
         setMsgs((old) => old.map((m) => (m.id === id ? { ...m, streaming: false } : m)));
         streamingId.current = '';
       },
-      onTurnComplete: async (full) => {
+      onTurnComplete: async (raw) => {
         const id = streamingId.current;
         streamingId.current = '';
-        // ⚠️ 收尾必须先把节流里攒着的最后一段刷掉，否则最后几个字会丢
+        // ⚠️ 收尾必须先把节流里攒着的最后一段刷出来，否则最后几个字会丢。
+        // 刷完再掐复读 —— 顺序反了会把刚攒的那段一起砍掉。
         flushStreamNow();
-        setMsgs((old) => old.map((m) => (m.id === id ? { ...m, text: full, streaming: false } : m)));
+        const full = cutSelfRepeat(raw);
+        if (full) {
+          setMsgs((old) => old.map((m) => (m.id === id ? { ...m, text: full, streaming: false } : m)));
+        }
         await saveModel(full);
       },
     });
@@ -439,8 +471,10 @@ export function useTheaterLive(opts: {
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */
   // 入库仍然不阻塞（后面的字），记忆宫殿照常 await。
-  const saveModel = useCallback((full: string) => {
-    if (!char || !full.trim()) return;
+  const saveModel = useCallback((raw: string) => {
+    if (!char) return;
+    const full = cutSelfRepeat(raw);
+    if (!full.trim()) return;
     DB.saveMessage({
       charId: char.id,
       role: 'assistant',

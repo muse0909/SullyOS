@@ -127,10 +127,23 @@ const PlayerStage: React.FC<Props> = ({
   // 换剧就换回这部剧记着的比例
   useEffect(() => { setRatio(readRatio(title)); }, [title]);
 
+  /**
+   * 只有**有限的**时长才算数。
+   *
+   * ⚠️ 在线流（边下边播，走 MediaSource）的 `video.duration` 是 `Infinity`，
+   * 而 `if (v.duration)` 对 `Infinity` 判的是**真** —— 于是「无限」被存进了 dur，
+   * 后面拖进度条 `pct * Infinity` 得出 `Infinity`（拖中间）或 `NaN`（拖最左），
+   * 赋给 `currentTime` 直接抛
+   * `TypeError: The provided double value is non-finite`（真机 10-06 18:25）。
+   *
+   * 判断时长合不合法一律走这个函数，别写 `if (dur)`。
+   */
+  const durOk = (x: number) => Number.isFinite(x) && x > 0;
+
   /** 元数据到了 = 真实比例知道了，更新并记住（以后加载页就能提前算对） */
   const onMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;
-    if (v.duration) setDur(v.duration);
+    if (durOk(v.duration)) setDur(v.duration);
     const r = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
     d('元数据到了', { 宽: v.videoWidth, 高: v.videoHeight, 时长: v.duration });
     if (r > 0.1 && r < 10) {
@@ -184,13 +197,17 @@ const PlayerStage: React.FC<Props> = ({
 
   const seekTo = (clientX: number): number | null => {
     const el = barRef.current;
-    if (!el || !dur) return null;
+    if (!el || !durOk(dur)) return null;
     const r = el.getBoundingClientRect();
     if (r.width <= 0) return null;
     const pct = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    return pct * dur;
+    const t = pct * dur;
+    // 最后一道路闸：这个值要赋给 currentTime，必须是有限的非负数
+    return Number.isFinite(t) && t >= 0 ? t : null;
   };
 
+  /** 时长未知（在线边下边播）就拖不了 —— 也不知道往哪儿拖 */
+  const canSeek = durOk(dur);
   const shown = scrub !== null ? scrub : pos;
   const pct = dur > 0 ? Math.min(100, Math.max(0, (shown / dur) * 100)) : 0;
 
@@ -234,8 +251,8 @@ const PlayerStage: React.FC<Props> = ({
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
           setPos(v.currentTime);
-          if (v.duration) setDur(v.duration);
-          onTime(v.currentTime, v.duration || 0);
+          if (durOk(v.duration)) setDur(v.duration);
+          onTime(v.currentTime, durOk(v.duration) ? v.duration : 0);
         }}
         onLoadedMetadata={onMeta}
         onCanPlay={() => { d('可以播了', { readyState: videoRef.current?.readyState }); onMediaReady?.(); }}
@@ -312,12 +329,15 @@ const PlayerStage: React.FC<Props> = ({
           barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* 进度条：触摸区做高一点，手指粗也拖得动 */}
+        {/* 进度条：触摸区做高一点，手指粗也拖得动。
+            在线边下边播时长是「无限」→ 不知道往哪儿拖，所以不给拖，
+            也不画滑块（画了拖不动，用户只会以为坏了）。
+            判断走 canSeek/durOk，不要写 `if (dur)` —— 对 Infinity 判真。*/}
         <div
           ref={barRef}
-          className="h-6 flex items-center touch-none"
+          className={`h-6 flex items-center touch-none ${canSeek ? '' : 'pointer-events-none'}`}
           onPointerDown={(e) => {
-            if (!dur) return;
+            if (!canSeek) return;
             scrubbing.current = true;
             try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
             setScrub(seekTo(e.clientX));
@@ -332,19 +352,29 @@ const PlayerStage: React.FC<Props> = ({
             const t = seekTo(e.clientX);
             setScrub(null);
             const v = videoRef.current;
-            if (t !== null && v) {
-              v.currentTime = t;
-              onSeek?.(t);
+            // t 可能是 null（时长未知 / 拖到无效位置），也可能非有限 —— 两种都不能赋
+            if (v && t !== null && Number.isFinite(t) && t >= 0) {
+              try {
+                v.currentTime = t;
+                onSeek?.(t);
+              } catch {
+                // 有些内核会在这里抛（seek 越界之类），拖不动就算了，别让整页崩
+                d('定位失败', { 想跳到: t });
+              }
             }
           }}
           onPointerCancel={() => { scrubbing.current = false; setScrub(null); }}
         >
           <div className="relative h-1 w-full rounded-full bg-white/25">
-            <div className="absolute inset-y-0 left-0 rounded-full bg-white/75" style={{ width: `${pct}%` }} />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow"
-              style={{ left: `${pct}%` }}
-            />
+            {canSeek && (
+              <div className="absolute inset-y-0 left-0 rounded-full bg-white/75" style={{ width: `${pct}%` }} />
+            )}
+            {canSeek && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow"
+                style={{ left: `${pct}%` }}
+              />
+            )}
           </div>
         </div>
 
@@ -354,7 +384,7 @@ const PlayerStage: React.FC<Props> = ({
           </button>
 
           <span className="shrink-0 text-[11px] tabular-nums text-white/85">
-            {fmtTime(shown)} / {fmtTime(dur)}
+            {canSeek ? `${fmtTime(shown)} / ${fmtTime(dur)}` : `${fmtTime(shown)} / 边下边播`}
           </span>
 
           <span className="shrink-0 text-[10px] text-white/40">第 {episode} 集</span>

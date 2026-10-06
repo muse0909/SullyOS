@@ -49,8 +49,8 @@ export type UseTheaterLive = {
   trace: string[];
 };
 
-/** 进场时灌多少条历史给模型。太多会挤掉角色卡，太少接不上话 */
-const HISTORY_TURNS = 20;
+/** 进场时灌多少条历史给模型。太多会挤掉角色卡，也慢（暮色 00:34 定的 100） */
+const HISTORY_TURNS = 100;
 
 export function useTheaterLive(opts: {
   char: any;
@@ -98,6 +98,14 @@ export function useTheaterLive(opts: {
    */
   const pendingStream = useRef('');
   const streamTimer = useRef(0);
+  /**
+   * 当前这条实时会话是按哪套配置开的（角色 + 模型 + 地址 + 有没有密钥）。
+   *
+   * ⚠️ 用来挡住「effect 反复重跑 → 每次重灌历史 → 模型重复回一堆」
+   * （暮色 00:34 现场：同样内容一下刷出十来条）。
+   * 配置没变、连接还在 → 什么都不做。
+   */
+  const bootedKey = useRef('');
   /** 节流攒着的最后一段，立刻刷出来（收尾/被打断时调用，不然会丢字） */
   const flushStreamNow = useCallback(() => {
     if (streamTimer.current) {
@@ -220,25 +228,23 @@ export function useTheaterLive(opts: {
       core = buildSystemPrompt(scene());
     }
 
-    // 3. 历史 —— **只喂剧场自己聊的**
+    // 3. 历史 —— 跨来源（同一个角色，主聊天里聊到哪他也该记得）
     //
-    // ⚠️ 之前是「不限来源」（同一个角色主聊天聊到哪也该记得），但实测这会
-    // 把主聊天那边的**功能残留**带进剧场：模型翻到自己以前说过
-    // 「我设置了10分钟后的主动消息」，就当成事实继续说，
-    // 反复念叨这些有的没的（10-07 现场）。
+    // 条数跟着主聊天走（`char.contextLimit`，默认 500），
+    // 但**剧场不能照抄那么多**（暮色 00:34 定的 100 条）：
+    // 灌太多既慢又把主聊天那边的功能残渣带进来
+    // （模型翻到自己说过「设置了10分钟主动消息」就当事实反复念）。
     //
-    // 剧场是独立场景，喂干净的历史反而更连贯、更快。
+    // ⚠️ 别给历史加 [剧场] 之类前缀 —— 模型会把它当自己的台词 pattern，
+    // 然后输出切成「[剧场]xxx，[剧场]yyy」这种碎段（10-06 现场）。
     let history: LiveTurn[] = [];
     try {
       const all = await DB.getMessagesByCharId(char.id, true);
       history = all
-        .filter((m: any) => m.metadata?.source === 'theater')
-        .filter((m: any) => !/<\/?(语音|主动消息|分享|转账|位置|表情|戳一戳|引用)>/.test(m.content || ''))
+        .filter((m: any) => !/<\/?(语音|主动消息|分享|转账|位置|表情|戳一戳|引用|功能)>/.test(m.content || ''))
         .slice(-HISTORY_TURNS)
         .map((m: any) => ({
           role: (m.role === 'assistant' ? 'model' : 'user') as 'user' | 'model',
-          // ⚠️ 别给历史加前缀（比如 [剧场]）。模型会把这个当自己的台词 pattern，
-          // 然后每场都吐「[剧场] xxx，[剧场] yyy」出来 —— 现场模型自己卡到这种碎法。
           text: m.content,
         }));
     } catch {}
@@ -305,12 +311,28 @@ export function useTheaterLive(opts: {
   useEffect(() => {
     // 不在播放页就断开 —— 实时会话是长连接，不能在用户只是划海报的时候白挂着
     if (!active) {
+      bootedKey.current = '';
       sessRef.current?.close();
       sessRef.current = null;
       setState('idle');
       setNote('');
       return;
     }
+    /**
+     * ⚠️⚠️ **这一层守卫是「同样内容重复出 10 条」的根治点**（暮色 00:34 现场）。
+     *
+     * boot 的依赖链上有 `char`（useMemo 依赖 characters 数组）、
+     * `userProfile`、`apiConfig`…… 只要其中任何一个的对象引用在渲染之间变了，
+     * boot 就是新的，effect 就重跑一次 → **新建一条连接 + 把历史再灌一遍**。
+     * 模型每收到一遍历史就回应一遍，于是刷出十来条重复内容。
+     *
+     * 不去逐个排查哪个引用不稳（上游 useOS 的对象稳定性不由剧场控制），
+     * 直接按「配置没变就不重连」来挡：配置一样、连接还在，就什么都不做。
+     */
+    const key = `${char?.id || ''}|${liveModel || ''}|${liveBaseUrl || ''}|${apiKey ? 'k' : ''}`;
+    if (sessRef.current && bootedKey.current === key) return;
+    bootedKey.current = key;
+
     boot();
     return () => {
       // ⚠️ 节流定时器也要清 —— 不清的话它会往已经离开的组件里写状态
@@ -321,6 +343,10 @@ export function useTheaterLive(opts: {
       pendingStream.current = '';
       sessRef.current?.close();
       sessRef.current = null;
+      // 配置键留着：cleanup 之后如果 effect 再跑（比如 page 短暂来回），
+      // 只要连接还是同一个就跳过。但连接已经 close 了所以 bootedKey 要清 ——
+      // 见上面 active=false 分支和这里的下一行。
+      bootedKey.current = '';
     };
     // ⚠️ 依赖里**不能**放 scene / onReady 这类每次 render 都新建的回调，
     // 放进去会让这个 effect 每次渲染都重跑一遍 = 反复重连。
@@ -405,7 +431,11 @@ export function useTheaterLive(opts: {
     runMemoryPost(char);
   }, [char, runMemoryPost, addTrace]);
 
-  const retry = useCallback(() => { boot(); }, [boot]);
+  /** 手动「再试一次」。⚠️ 必须先清配置键 —— 不清的话会被上面的守卫当重复给挡掉 */
+  const retry = useCallback(() => {
+    bootedKey.current = '';
+    boot();
+  }, [boot]);
 
   return useMemo(() => ({ msgs, state, note, send, retry, trace }), [msgs, state, note, send, retry, trace]);
 }

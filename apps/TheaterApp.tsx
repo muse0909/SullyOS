@@ -39,6 +39,7 @@ import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/th
 import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheater/coverDiag';
 import { loadCoverBlob, cachedCoverUrl, coverCacheSize } from '../utils/dramaTheater/coverBlob';
 import { probeLive, maskKey, type ProbeStep } from '../utils/dramaTheater/liveProbe';
+import { useTheaterLive, type UseTheaterLive } from '../hooks/useTheaterLive';
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
@@ -640,6 +641,133 @@ const SpinnerIcon: React.FC = () => (
 );
 
 /**
+ * 剧场聊天区（第 2 步）。
+ *
+ * 为什么不直接用主聊天那个气泡组件：它依赖一整套主题上下文，而且气泡是给
+ * 全屏聊天设计的（带头像、时间戳、右键菜单）。剧场这边聊天区挤在播放器旁边，
+ * 空间有限 —— 要的是**能一眼认出是同一段对话**，但气泡本身要轻。
+ * 所以手写一个轻量的，配色跟主聊天观感对齐。
+ *
+ * ⚠️ 「重连中…」必须如实显示。断了就断了，装没事只会让用户以为角色在装死。
+ */
+const TheaterChat: React.FC<{
+  p: Palette;
+  live: UseTheaterLive;
+  charName?: string;
+  disabled?: boolean;
+}> = ({ p, live, charName, disabled }) => {
+  const [draft, setDraft] = useState('');
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [kbH, setKbH] = useState(0);
+
+  // 流式出字时贴着底部滚
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [live.msgs]);
+
+  /**
+   * 安卓软键盘会把 `100vh` 算错（`AGENTS.md` §6.2 记着这个老坑）。
+   * 用 visualViewport 拿到键盘真实高度，输入栏跟着抬，**别把播放器挤没**。
+   */
+  useEffect(() => {
+    const vv: any = (window as any).visualViewport;
+    if (!vv) return;
+    const onResize = () => setKbH(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    onResize();
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
+
+  const submit = () => {
+    const t = draft.trim();
+    if (!t || disabled) return;
+    setDraft('');
+    live.send(t);
+  };
+
+  const stateNote =
+    live.state === 'connecting' ? '连上了吗…'
+    : live.state === 'reconnecting' ? `重连中…${live.note ? `（${live.note}）` : ''}`
+    : live.state === 'failed' ? (live.note || '连不上')
+    : live.state === 'ready' ? ''
+    : '';
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0" style={{ paddingBottom: kbH || 0 }}>
+      {/* 状态条：断了就说，别装没事 */}
+      {stateNote && (
+        <div className={`shrink-0 mx-4 mb-1.5 rounded-full px-3 py-1 text-center text-[10px] ${
+          live.state === 'failed'
+            ? (p.night ? 'bg-rose-950/50 text-rose-300' : 'bg-rose-50 text-rose-500')
+            : (p.night ? 'bg-[#1e293b] text-slate-400' : 'bg-amber-50 text-amber-600')
+        }`}>
+          {stateNote}
+          {live.state === 'failed' && (
+            <button onClick={live.retry} className="ml-2 underline font-bold">再试一次</button>
+          )}
+        </div>
+      )}
+
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 py-3">
+        {live.msgs.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center">
+            <FilmSlate size={28} className={p.faint} />
+            <p className={`mt-2 text-[11px] ${p.faint}`}>
+              {charName ? `这里会放跟${charName}聊天的框` : '这里会放聊天的框'}
+            </p>
+            <p className={`mt-1 text-[10px] ${p.faint}`}>
+              他现在只知道你在看剧，还看不到画面
+            </p>
+          </div>
+        )}
+
+        {live.msgs.map((m) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} mb-2`}>
+            <div className={`max-w-[78%] px-3 py-2 text-[13px] leading-relaxed ${
+              m.role === 'user'
+                ? (p.night ? 'bg-sky-900/60 text-slate-100 rounded-[1.1rem] rounded-br-md' : 'bg-sky-100 text-slate-700 rounded-[1.1rem] rounded-br-md')
+                : (p.night ? 'bg-[#1e293b] text-slate-200 rounded-[1.1rem] rounded-bl-md' : 'bg-white text-slate-700 rounded-[1.1rem] rounded-bl-md shadow-sm')
+            }`}>
+              {/* 剧里的话带个来源，主聊天里也有对应的标签 */}
+              {m.role === 'assistant' && m.tag && (
+                <div className={`text-[9px] mb-0.5 ${p.faint}`}>{m.tag}</div>
+              )}
+              {m.text || (m.streaming ? <span className="opacity-40">…</span> : null)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 输入框 */}
+      <div className={`shrink-0 px-4 pt-2 pb-3 border-t ${p.line}`}>
+        <div className={`flex items-center gap-2 rounded-full px-4 py-2.5 ${
+          p.night ? 'bg-[#1e293b]' : 'bg-slate-100'
+        }`}>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+            placeholder={disabled ? '先选个角色' : '说点什么…'}
+            disabled={disabled}
+            className={`flex-1 bg-transparent text-sm outline-none ${
+              disabled ? (p.night ? 'text-slate-600' : 'text-slate-400') : (p.night ? 'text-slate-100' : 'text-slate-700')
+            }`}
+          />
+          <button
+            onClick={submit}
+            disabled={!draft.trim() || disabled}
+            className="shrink-0 w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center active:scale-95 disabled:opacity-30"
+          >
+            <Play size={14} weight="fill" className="text-white" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
  * 长按识别。用 touch 起手 + 500ms 计时器，不依赖 `onContextMenu` ——
  * 安卓上长按会先弹系统的「复制 / 保存图片」，那一下就把事件吃掉了。
  * 手指按住不动 500 毫秒就算长按；按住期间动了或松开了就不算。
@@ -735,8 +863,14 @@ const TheaterApp: React.FC = () => {
    * 漏解构是真机崩过的事（悬浮窗漏 addApiPreset、剧场漏 jumpToMessage），
    * 而 `vite build` 只转译不查作用域、`typecheck` 也只在用得到的地方才报 ——
    * **改动后一定要跑 `npm run typecheck:theater`，别只跑 build。**
+   *
+   * 第 2 步补的：`userProfile` / `memoryPalaceConfig` / `updateCharacter` 也是
+   * 照抄陪伴模式要用到的 —— 三个都不是 theater 的，漏一个就是崩。
    */
-  const { activeCharacterId, characters, addToast, jumpToChat, apiConfig } = useOS();
+  const {
+    activeCharacterId, characters, addToast, jumpToChat, apiConfig,
+    userProfile, memoryPalaceConfig, updateCharacter,
+  } = useOS();
   const char = useMemo(
     () => characters.find((c: any) => c.id === activeCharacterId),
     [characters, activeCharacterId]
@@ -795,6 +929,26 @@ const TheaterApp: React.FC = () => {
   const [picked, setPicked] = useState<DramaRef | null>(null);
   const [epTotal, setEpTotal] = useState(0);
   const [currentEp, setCurrentEp] = useState(1);
+
+  /**
+   * 第 2 步：接实时模型。
+   *
+   * ⚠️ 必须在组件顶层无条件调用 —— 放进 `if (page === 'player')` 里是违反
+   * Hooks 规则，React 会直接崩。「什么时候连」靠 `active` 开关控制。
+   * ⚠️ scene 每次 render 都新建，但它**不能**进 useTheaterLive 的依赖，
+   *    否则 hook 每次渲染都重连。里面靠闭包读 picked/currentEp 就够了。
+   */
+  const live = useTheaterLive({
+    char,
+    userProfile,
+    apiKey: apiConfig.apiKey,
+    memoryPalaceConfig,
+    apiConfig,
+    updateCharacter,
+    addToast,
+    scene: () => ({ title: picked?.title || '', episode: currentEp, at: 0 }),
+    active: page === 'player',
+  });
   const [curDuration, setCurDuration] = useState(0);
   /**
    * 「接着看」要跳到的秒数。只在从「正在追剧 → 接着看」进来时设一次，
@@ -2537,27 +2691,8 @@ const TheaterApp: React.FC = () => {
           </button>
         </div>
 
-        {/* 聊天区：第 2 步接 live */}
-        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-3">
-          <div className="h-full flex flex-col items-center justify-center text-center">
-            <FilmSlate size={30} className={p.faint} />
-            <p className={`mt-2 text-[11px] ${p.faint}`}>
-              {char ? `这里会放跟${char.name}聊天的框` : '这里会放聊天的框'}
-            </p>
-            <p className={`mt-1 text-[10px] ${p.faint}`}>第 2 步才接上</p>
-          </div>
-        </div>
-
-        {/* 输入框（第 2 步才通）*/}
-        <div className={`shrink-0 px-4 py-3 border-t ${p.line}`}>
-          <div className={`flex items-center gap-2 rounded-full px-4 py-2.5 ${p.night ? 'bg-[#1e293b]' : 'bg-slate-100'}`}>
-            <input
-              disabled
-              placeholder="说点什么…"
-              className={`flex-1 bg-transparent text-sm outline-none ${p.night ? 'text-slate-500' : 'text-slate-400'}`}
-            />
-          </div>
-        </div>
+        {/* 聊天区 + 输入框（第 2 步：接 live） */}
+        <TheaterChat p={p} live={live} charName={char?.name} disabled={!char} />
 
         <EpisodeDrawer
           open={drawer}

@@ -1756,6 +1756,24 @@ const MessageItem = React.memo(({
                 </div>
             )}
 
+            {/**
+             * 剧场来源标记（10-06 第 2 步）。
+             *
+             * 剧场的话跟主聊天存在**同一张表**（暮色 21:12 定的：打标记就天然接上，
+             * 不做「同步」这个动作）。好处是切过去就能看到，代价是**分不出哪句来自剧里**。
+             *
+             * 主聊天里没有这个标记的话，剧里那句「他刚转身走掉」会跟真人说的话混在一起，
+             * 你自己都认不出来是哪段戏里聊的。user 那边也标 —— 不然连「哪句是我在剧里
+             * 按的」都看不出来。
+             *
+             * 只在 theaterTag 存在时渲染，普通消息一点痕迹都不留。
+             */}
+            {(m.metadata as any)?.theaterTag && (
+                <div className="relative z-10 text-[9px] mb-1 opacity-45 select-none" style={{ color: styleConfig.textColor }}>
+                    剧场 {(m.metadata as any).theaterTag}
+                </div>
+            )}
+
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {displayContent && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>

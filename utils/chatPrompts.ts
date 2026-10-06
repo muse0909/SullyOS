@@ -1383,6 +1383,20 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    /**
+                     * 剧场（10-06 第 2 步）。
+                     *
+                     * 剧场的话跟主聊天**存在同一张表**（暮色 21:12 定的：打标记就天然接上，
+                     * 不做「同步」这个动作），所以这里**必须**认出来。
+                     *
+                     * 不认会串味：剧里说「他刚转身走掉」，模型不知道这是剧里的事，
+                     * 会当成真实发生的事接下去 —— 角色扮演模型尤其吃这一套。
+                     * 带上剧名和集数，模型才知道这段是「看剧时聊的」。
+                     */
+                    if (source === 'theater') {
+                        const tag = (m.metadata as any)?.theaterTag;
+                        return tag ? `[剧场 ${tag}]` : '[剧场]';
+                    }
                     return '[聊天]';
                 })();
                 

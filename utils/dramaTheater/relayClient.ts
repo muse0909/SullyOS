@@ -598,46 +598,6 @@ export async function fetchLocalEpisodes(
   }
 }
 
-/**
- * 这一集在电脑上**到底有没有文件**。
- *
- * 为什么必须专门问一句，不能信 `/api/ui/tasks` 里的 `playable`：
- * **那个字段会说谎。** 真机 10-06 在电脑上逐集比对过 ——
- * 「咱家剑宗团宠小师妹第二季」系统里 666 个集**全部 `playable: true`**，
- * 磁盘下载目录里只有 25 个文件，**644 个集是 `paused` 的，文件压根不存在**。
- * （短剧库把「已排进队列」和「文件已落盘」混在同一个标志里了。）
- *
- * 信它的后果很直接：转发服务从磁盘找文件，找不到就回 404，
- * 原生下载拿到 404 抛 `Error downloading file` —— 10-06 实机就是
- * 58 集全弹一遍报错，屏幕上糊成一片。
- *
- * 怎么探：`Range: bytes=0-0` 只要 1 个字节，206/200 = 文件在，404 = 不在。
- * （不能发 HEAD —— 转发服务只实现了 GET，发 HEAD 会 501。）
- */
-export async function probeLocalEpisode(
-  base: string,
-  dramaTitle: string,
-  episode: number
-): Promise<boolean> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
-  try {
-    const resp = await fetch(localVideoUrl(base, dramaTitle, episode), {
-      headers: { Range: 'bytes=0-0' },
-      signal: ctrl.signal,
-      cache: 'no-store',
-    });
-    // 读完那 1 个字节就断开，别真把整个文件拉下来
-    try { await resp.arrayBuffer(); } catch { /* 已经够了 */ }
-    return resp.status === 200 || resp.status === 206;
-  } catch {
-    // 探不到就当「可能有」，让真下载去给准话 —— 宁可多试一次，不能漏下一集
-    return true;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function jget<T>(base: string, path: string, timeoutMs = 15000): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);

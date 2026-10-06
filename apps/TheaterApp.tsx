@@ -353,7 +353,9 @@ const TheaterApp: React.FC = () => {
    * 有一部拉不到就那部退回旧名单，不影响其它剧。
    */
   const pullLocalEps = async (base: string, ts: RelayTask[]) => {
-    const titles = Array.from(new Set(ts.filter((t) => t.dramaTitle).map((t) => t.dramaTitle)));
+    // 类型守卫：filter(t => t.dramaTitle) 不会让 TS 收窄出 string，
+    // 后面 map.get(title) 就会因为 string | undefined 报错（tsc 报的就是这个）
+    const titles = Array.from(new Set(ts.map((t) => t.dramaTitle).filter((x): x is string => !!x)));
     if (!titles.length) return new Map<string, number[]>();
     const res = await Promise.all(titles.map((t) => fetchLocalEpisodes(base, t)));
     const map = new Map<string, number[]>();
@@ -1522,6 +1524,16 @@ const TheaterApp: React.FC = () => {
     const phoneEps = ph?.episodes.map((e) => e.episode) || [];
     const total = Math.max(epTotal, macEps[macEps.length - 1] || 0, phoneEps[phoneEps.length - 1] || 0);
     const macOnly = macEps.filter((n) => !phoneEps.includes(n));
+    /**
+     * 「正在往手机里下」的是不是当前这部剧。
+     *
+     * ⚠️ 这个必须提到 return 之前、跟其它值一个层级 —— 10-06 下午在这儿栽了：
+     * 它原来是写在下面那个当场执行的小函数里的，**只有按钮那段能用**，
+     * 而进度条在函数外面 → 真机直接 `ReferenceError: mine is not defined`，
+     * 整个剧场页崩掉。作用域不对的错 `vite build` 是拦不住的
+     * （esbuild 只转译不做检查），所以别再往那个小函数里塞外面要用的值。
+     */
+    const mine = phoneDl?.title === picked.title ? phoneDl : null;
 
     return (
       <div className={`absolute inset-0 flex flex-col ${p.page}`}>
@@ -1554,7 +1566,6 @@ const TheaterApp: React.FC = () => {
                     0,
                     total - new Set(phoneEps).size
                   );
-                  const mine = phoneDl?.title === picked.title ? phoneDl : null;
                   if (pending === 0) {
                     return (
                       <Pill tone={p} disabled>

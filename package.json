@@ -14,7 +14,9 @@
     "build:workers": "node scripts/build-workers.mjs",
     "build:worker:amsg": "node scripts/build-workers.mjs amsg",
     "build:worker:proactive-push": "node scripts/build-workers.mjs proactive-push",
-    "deploy:worker:amsg": "npm run build:worker:amsg && npx wrangler deploy"
+    "deploy:worker:amsg": "npm run build:worker:amsg && npx wrangler deploy",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:theater": "tsc --noEmit -p tsconfig.json 2>&1 | grep -E '^(apps/TheaterApp|components/dramaTheater|utils/dramaTheater)' ; test -z \"$(tsc --noEmit -p tsconfig.json 2>&1 | grep -cE '^(apps/TheaterApp|components/dramaTheater|utils/dramaTheater)')\""
   },
   "dependencies": {
     "@capacitor-community/media": "^6.0.0",

@@ -305,7 +305,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
-| 2026-10-06 | 切剧继续播上一部（关在线会话≠关播放器，要 key 重建 video）+ 追剧「接着看」报没这一集（同一 bug 第二个入口）+ 电脑没缓存的剧也能下载到手机 | [`changelogs/2026-10-06-theater-switch-teardown-and-download-online.md`](./changelogs/2026-10-06-theater-switch-teardown-and-download-online.md) |
+| 2026-10-06 | 切剧继续播上一部（关在线会话≠关播放器）+ 追剧「接着看」报没这一集（同一 bug 第二个入口）+ 电脑没缓存的剧也能下载到手机 + `playable` 标志在说谎（磁盘上根本没有） | [`changelogs/2026-10-06-theater-switch-teardown-and-download-online.md`](./changelogs/2026-10-06-theater-switch-teardown-and-download-online.md) |
 | 2026-10-05 | 剧场：在线剧放不出来 —— 编码标记缺失 + 转发没暴露 X-Playback-MIME（真机实测画面在动） | [`changelogs/2026-10-05-theater-online-play-mime-fix.md`](./changelogs/2026-10-05-theater-online-play-mime-fix.md) |
 | 2026-10-05 | 剧场：下载 ENOENT 全挂（downloadFile 不建目录）+ 短剧库残留治理（1 分钟回收 / 一键清空） | [`changelogs/2026-10-05-theater-enoent-and-playback-stalls.md`](./changelogs/2026-10-05-theater-enoent-and-playback-stalls.md) |
 | 2026-10-05 | 剧场：下载闪退根因（原生传 74MB 字符串穿顶 256MB）+ 高度按比例 + 播时藏控制条 | [`changelogs/2026-10-05-theater-download-crash-and-ratio-height.md`](./changelogs/2026-10-05-theater-download-crash-and-ratio-height.md) |

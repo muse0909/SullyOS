@@ -37,6 +37,7 @@ import {
 import { listWatch, upsertWatch, removeWatch, clearWatch } from '../utils/dramaTheater/watchHistory';
 import { useTheaterTheme, palette, type Palette } from '../utils/dramaTheater/theme';
 import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheater/coverDiag';
+import { loadCoverBlob, cachedCoverUrl, coverCacheSize } from '../utils/dramaTheater/coverBlob';
 
 const AUTONEXT_KEY = 'theater_autonext';
 const PAGE = 60;
@@ -351,35 +352,55 @@ const TopBar: React.FC<{ p: Palette; title: string; onBack?: () => void; right?:
 /**
  * 封面图。
  *
- * 两个关键点，少一个就会退回「一闪一闪」：
+ * ⚠️ 10-06 真机「海报全不显示」——**地址不直接交给图片框**，先取回来变成手机本地的
+ * 临时地址再显示（`utils/dramaTheater/coverBlob.ts`）。真机证据：同一个地址、同一个
+ * 时刻，程序主动去取 200/98KB，而图片框那条路 60 张全部卡住不动。跟当初放视频
+ * 是同一个坑（1f838f27），那次也是「先取回来再播」。
+ *
+ * 另外三个关键点，少一个就会退回「一闪一闪」：
  *
  * 1. **占位图标铺在下面，图片盖在上面**，不是二选一渲染。图片还在路上的时候
  *    看到的是图标；`alt` 传空串（片名就在下面的 h3 里，重复一遍没意义），
  *    这样内核**任何时候**都不会把文字画进图片框。
  * 2. **记失败的是「哪个地址」，不是「失败过没有」**。记布尔量的话，换剧/换源时
  *    会把新地址也一起判死（上一张的失败连坐下一张）。
+ * 3. **不能再用图片框自己的懒加载**。我们自己限并发了（最多 4 张同时在飞），
+ *    否则排队的那些在图片框里会一直「卡住不动」—— 正是这次查了两小时的现象。
  *
  * `src` 由调用方用 `coverSrc()` 拼好：相对路径要拼上转发地址，老记录里的 CDN
  * 直链原样用。别在各处单独拼 —— 漏一处就整页海报全挂（10-06 19:15 首页漏拼）。
  */
 const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
   const [badSrc, setBadSrc] = useState('');
+  /**
+   * 拿同步的缓存值当初始值：缓存里有就**这一帧直接显示**，不会先闪一下占位。
+   * 没有才空着，等下面取回来再填。
+   */
+  const [blobUrl, setBlobUrl] = useState(() => cachedCoverUrl(src));
   const ref = useRef<HTMLImageElement | null>(null);
   const failed = !!src && badSrc === src;
+
+  useEffect(() => {
+    let alive = true;
+    if (!src) { setBlobUrl(''); return; }
+
+    const hit = cachedCoverUrl(src);
+    if (hit) { setBlobUrl(hit); return; }
+
+    setBlobUrl('');
+    loadCoverBlob(src)
+      .then((u) => { if (alive) setBlobUrl(u); })
+      .catch(() => { if (alive) { setBadSrc(src); probeCover(ref.current, src); } });
+    return () => { alive = false; };
+  }, [src]);
 
   /**
    * 每张图都报一次状态到 `window.__theaterDiag`（详见 utils/dramaTheater/coverDiag.ts）。
    *
    * 为什么加载完还要再报一次：`currentSrc`（内核最终真去请求的地址）在图片**真正开始加载
-   * 之前是空串**，只有 onLoad 之后才拿得到最能说明问题的那份。https 页面里的 http 图片
-   * 被内核自动升级成 https 就是靠这个字段看出来的 —— `<img>` 不会抛异常，
-   * 界面上只是一片占位图标，不报这个就永远看不出是这个原因。
+   * 之前是空串**，只有 onLoad 之后才拿得到最能说明问题的那份。
    */
-  const report = useCallback(() => {
-    if (!src) return;
-    probeCover(ref.current, src);
-    window.setTimeout(() => probeCover(ref.current, src), 600);
-  }, [src]);
+  const report = useCallback(() => { if (src) probeCover(ref.current, src); }, [src]);
 
   useEffect(() => { report(); }, [report]);
 
@@ -388,12 +409,11 @@ const CoverImg: React.FC<{ p: Palette; src: string }> = ({ p, src }) => {
       <div className={`w-full h-full flex items-center justify-center ${p.night ? 'text-slate-600' : 'text-slate-300'}`}>
         <FilmSlate size={26} />
       </div>
-      {!failed && src && (
+      {!failed && src && blobUrl && (
         <img
           ref={ref}
-          src={src}
+          src={blobUrl}
           alt=""
-          loading="lazy"
           decoding="async"
           onLoad={report}
           onError={() => { setBadSrc(src); probeCover(ref.current, src); }}
@@ -1962,11 +1982,11 @@ const TheaterApp: React.FC = () => {
                         <div className="flex items-center gap-3">
                           <div
                             onClick={() => openEpisodes({ id: '', title: d.title, coverUrl: d.coverUrl, origin: d.origin })}
-                            className="shrink-0 w-14 h-[4.2rem] rounded-xl overflow-hidden flex items-center justify-center cursor-pointer active:scale-95"
+                            className="shrink-0 w-14 h-[4.2rem] rounded-xl overflow-hidden flex items-center justify-center relative cursor-pointer active:scale-95"
                             style={{ background: d.coverUrl ? undefined : (p.night ? '#0f172a' : '#f1f5f9') }}
                           >
                             {d.coverUrl
-                              ? <img src={coverSrc(addr, d.coverUrl)} className="w-full h-full object-cover" alt="" />
+                              ? <CoverImg p={p} src={coverSrc(addr, d.coverUrl)} />
                               : <FilmSlate size={20} className={p.faint} />}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -2065,11 +2085,11 @@ const TheaterApp: React.FC = () => {
                       <div key={w.title} className={`rounded-3xl p-3 flex items-center gap-3 ${p.card}`}>
                         <div
                           onClick={() => openEpisodes({ id: '', title: w.title, coverUrl: w.coverUrl, origin: 'mac' })}
-                          className="shrink-0 w-12 h-16 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer active:scale-95"
+                          className="shrink-0 w-12 h-16 rounded-xl overflow-hidden flex items-center justify-center relative cursor-pointer active:scale-95"
                           style={{ background: p.night ? '#0f172a' : '#f1f5f9' }}
                         >
                           {w.coverUrl
-                            ? <img src={coverSrc(addr, w.coverUrl)} className="w-full h-full object-cover" alt="" />
+                            ? <CoverImg p={p} src={coverSrc(addr, w.coverUrl)} />
                             : <FilmSlate size={18} className={p.faint} />}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -2161,8 +2181,8 @@ const TheaterApp: React.FC = () => {
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4">
           {/* 头：封面 + 三个状态说清楚 */}
           <div className="flex gap-3">
-            <div className="w-20 rounded-2xl overflow-hidden shrink-0 flex items-center justify-center" style={{ height: '6.7rem', background: p.night ? '#0f172a' : '#e2e8f0' }}>
-              {picked.coverUrl && <img src={coverSrc(addr, picked.coverUrl)} className="w-full h-full object-cover" alt="" />}
+            <div className="w-20 rounded-2xl overflow-hidden shrink-0 flex items-center justify-center relative" style={{ height: '6.7rem', background: p.night ? '#0f172a' : '#e2e8f0' }}>
+              {picked.coverUrl && <CoverImg p={p} src={coverSrc(addr, picked.coverUrl)} />}
             </div>
             <div className="flex-1 min-w-0">
               <h2 className={`text-sm font-bold leading-snug ${p.title}`}>{picked.title}</h2>

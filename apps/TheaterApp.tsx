@@ -760,11 +760,30 @@ const TheaterChat: React.FC<{
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [kbH, setKbH] = useState(0);
+  /**
+   * 用户自己往上翻了就别再把他拽回底部。
+   *
+   * ⚠️ 之前是无条件 `scrollTop = scrollHeight`，模型每吐一个字就拽一次 ——
+   * 用户想回看上面的话根本看不了，而且每帧强制滚动会把渲染进程压爆
+   * （10-06 现场抓到的闪退就是这个：Chromium 渲染进程 native crash）。
+   */
+  const stickBottom = useRef(true);
 
-  // 流式出字时贴着底部滚
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const onScroll = () => {
+      // 离底部 40px 以内才算「贴着底部」，中间地带一律视为用户在翻历史
+      stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // 流式出字时贴着底部滚 —— 只在「本来就在底部」时才滚
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stickBottom.current) el.scrollTop = el.scrollHeight;
   }, [live.msgs]);
 
   /**
@@ -784,6 +803,8 @@ const TheaterChat: React.FC<{
     const t = draft.trim();
     if (!t || disabled) return;
     setDraft('');
+    // 用户主动发消息 = 明确要看新回复，解除「别滚到底」的锁定
+    stickBottom.current = true;
     live.send(t);
   };
 
@@ -825,15 +846,14 @@ const TheaterChat: React.FC<{
 
         {live.msgs.map((m) => (
           <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} mb-2`}>
-            <div className={`max-w-[78%] px-3 py-2 text-[13px] leading-relaxed ${
+            <div className={`max-w-[78%] px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
               m.role === 'user'
                 ? (p.night ? 'bg-sky-900/60 text-slate-100 rounded-[1.1rem] rounded-br-md' : 'bg-sky-100 text-slate-700 rounded-[1.1rem] rounded-br-md')
                 : (p.night ? 'bg-[#1e293b] text-slate-200 rounded-[1.1rem] rounded-bl-md' : 'bg-white text-slate-700 rounded-[1.1rem] rounded-bl-md shadow-sm')
             }`}>
-              {/* 剧里的话带个来源，主聊天里也有对应的标签 */}
-              {m.role === 'assistant' && m.tag && (
-                <div className={`text-[9px] mb-0.5 ${p.faint}`}>{m.tag}</div>
-              )}
+              {/* ⚠️ 这里**不显示**剧名集数（暮色 23:54 定的）。
+                  剧名集数是给 LLM 的上下文线索（存在 metadata.theaterTag），
+                  不是给人看的角标 —— 每个气泡都顶一行小字太吵。 */}
               {m.text || (m.streaming ? <span className="opacity-40">…</span> : null)}
             </div>
           </div>

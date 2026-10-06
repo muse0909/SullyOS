@@ -954,7 +954,7 @@ const Chat: React.FC = () => {
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = sanitizeChatMessages(allMsgs)
-                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
@@ -969,7 +969,7 @@ const Chat: React.FC = () => {
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
                 const chatScopeMsgs = sanitizeChatMessages(retryMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -1040,7 +1040,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
                 const filtered = sanitizeChatMessages(allMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
             });
@@ -2764,8 +2764,12 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
+    //
+    // ⚠️ theater（剧场）跟 date/ccall 一样**只过滤视觉层，不动 prompt**。
+    // 剧场里聊的照样进 historySlice 发给 LLM（chatPrompts.ts 打 `[剧场 剧名第N集]`），
+    // 所以他记得看剧时说过什么，但聊天界面上不刷屏（暮色 23:54 定的）。
     const displayMessages = useMemo(() => sanitizeChatMessages(messages)
-        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),

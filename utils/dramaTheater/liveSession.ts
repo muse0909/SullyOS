@@ -259,16 +259,30 @@ export class LiveSession {
       if (sc) {
         if (sc.outputTranscription?.text) {
           const t = String(sc.outputTranscription.text);
-          // ⚠️ 转写是**累积**的整段，不是增量。所以不能每次都拼。
-          if (t.startsWith(this.speaking)) {
+          /**
+           * ⚠️ 转写是**累积**的整段，不是增量。
+           *
+           * 但不能只靠 `startsWith` 判断是不是新一轮 —— 实测服务端偶尔会把上一轮
+           * 的内容重新吐一遍（带轻微差异），`startsWith` 一失败就误判成新一轮，
+           * `finishTurn()` 立刻把一条话切成两个气泡。
+           *
+           * 现在的判据：**只有 turnComplete / 被打断 才算一轮结束**。
+           * 中途来的文字一律往当前气泡里接，接不上就换个策略接，不切气泡。
+           */
+          if (t === this.speaking) {
+            // 完全一样 —— 服务端重发，忽略
+          } else if (t.startsWith(this.speaking)) {
             const delta = t.slice(this.speaking.length);
             this.speaking = t;
             if (delta) this.opts.onText?.(delta, t);
-          } else {
-            // 不是同一段（新一轮），先结上一轮
-            if (this.speaking.trim()) this.finishTurn();
+          } else if (this.speaking.startsWith(t)) {
+            // 服务端把尾巴收了（转写会自我修正），以长的为准
             this.speaking = t;
-            if (t) this.opts.onText?.(t, t);
+          } else {
+            // 真接不上：可能是新一轮，但**先不切气泡** —— 交给 turnComplete 收尾。
+            // 宁可一条气泡里多几秒，也不让一句话碎成三个泡。
+            this.speaking += t;
+            this.opts.onText?.(t, this.speaking);
           }
         }
         if (sc.interrupted) {

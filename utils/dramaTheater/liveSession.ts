@@ -127,6 +127,7 @@ export class LiveSession {
 
   private setState(s: LiveState, note?: string) {
     this.state = s;
+    this.diag();
     this.opts.onState?.(s, note);
   }
 
@@ -138,6 +139,7 @@ export class LiveSession {
   private trace(s: string) {
     // ⚠️ 绝不打完整 URL（里面有密钥）
     this.opts.onTrace?.(s.replace(WS_BASE, '[ws]'));
+    this.diag(s);
   }
 
   private async open(isResume: boolean) {
@@ -378,6 +380,27 @@ export class LiveSession {
     this.setState('reconnecting', note);
     const wait = Math.min(1000 * this.retry, 5000);
     this.timers.push(window.setTimeout(() => this.open(true), wait));
+    this.diag(note);
+  }
+
+  /** 诊断 dump：写到 window 上方便 adb/CDP 抓现场 */
+  private diag(note?: string) {
+    const w = window as any;
+    if (!w.__liveDiag) w.__liveDiag = { traces: [] };
+    const d = w.__liveDiag;
+    if (note) d.traces.push({ at: Date.now(), text: note });
+    if (d.traces.length > 80) d.traces = d.traces.slice(-80);
+    d.state = this.state;
+    d.retry = this.retry;
+    d.handle = this.handle ? (this.handle.length > 12 ? this.handle.slice(0, 12) + '...' : this.handle) : '';
+    d.speaking = this.speaking ? this.speaking.slice(0, 60) : '';
+    d.wantOpen = this.wantOpen;
+    d.wsState = this.ws ? (this.ws as any).readyState : -1;
+    d.model = (this.opts.model || '').replace(/^models\//, '');
+    d.baseUrlHost = (() => {
+        const u = this.opts.baseUrl || '';
+        try { return new URL(u).host; } catch { return u.slice(0, 40); }
+      })();
   }
 
   /**

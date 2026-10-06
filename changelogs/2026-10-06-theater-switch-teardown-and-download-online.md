@@ -213,3 +213,51 @@ currentSrc 落到**文档 URL** 上，反而多发一次没意义的请求。
 **没拿到截图，App 侧还没定位到** —— 本轮一起验。
 
 `origin/master` 仍是 `ef17e1aa`，全程未动。
+
+---
+
+## 17:05 加更：`mine is not defined` 崩掉整个选集页（我的错）
+
+### 现象
+
+17:03 打开剧场 → `ReferenceError: mine is not defined` → 整个页白屏，
+顶栏挂红色 SYSTEM ERROR。
+
+### 根因
+
+上一轮重写下载流程时，我把
+
+```jsx
+{(() => {
+  const mine = phoneDl?.title === picked.title ? phoneDl : null;
+  ...
+  return <Pill>...</Pill>;      // ← 按钮这段能用 mine
+})()}
+{/* 进度条这段在函数外面，也写了 mine → ReferenceError */}
+{mine && <div className="进度条">…</div>}
+```
+
+`mine` 只在那个当场执行的小函数里可见，进度条在外面够不着。**一进选集页就抛。**
+
+### 为什么 build 没拦住 —— 这才是真问题
+
+`package.json` 里 **`"build": "vite build"`，没有 `tsc`**。
+esbuild 只转译不做检查，作用域错误、类型不匹配它统统不管。
+所以「跑一下 build 通过了」在这里**不等于**代码没问题。
+
+### 修法
+
+1. `mine` 提到 return 之前、跟其它值同一层级
+2. 加类型检查：
+   - `npm run typecheck:theater` —— 只查剧场这几个文件，退出码 0 = 干净
+   - `npm run typecheck` —— 全量（这个项目历史包袱几百条错，只当参考）
+3. 顺手修掉 `pullLocalEps` 里两处 `string | undefined`
+   （`filter(t => t.dramaTitle)` **不会**让 TS 收窄，要写类型守卫 `filter((x): x is string => !!x)`）
+
+规矩写进 `AGENTS.md` §4.3 了。
+
+### 附带说明：第一张图那个 `Failed to fetch` 不是独立故障
+
+它报的是 `/relay/local/episodes?drama=重生扬子鳄…`。翻日志：
+转发服务是 `ThreadingHTTPServer`、进程一直在、15:44 那次 11 个请求全是 200。
+所以它只是**页面崩了，顺手把正在飞的那个请求打断了**。根因还是 `mine`。

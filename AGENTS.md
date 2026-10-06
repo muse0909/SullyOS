@@ -115,6 +115,29 @@ SullyOS-master/
 - 改共享组件前先 `grep` 一下所有引用点
 - 编辑后跑 `npm run build` 确认通过（**不**跑 dev）
 
+#### ⚠️ `npm run build` 拦不住作用域错误 —— 改完还要跑类型检查
+
+**`"build": "vite build"` 里没有 `tsc`。** esbuild 只转译、不做检查，
+所以「变量定义在函数里、外面却用了」这类错**一路能溜到真机上崩**。
+
+2026-10-06 实机就是这么崩的：选集页里 `const mine = ...` 写在当场执行的小函数里，
+进度条在函数外面也用了它 → `ReferenceError: mine is not defined` → 整个剧场页白屏。
+
+**规矩：改完代码跑这两个，缺一不可**
+
+```bash
+npm run build              # 转译能过（不检查作用域！）
+npm run typecheck:theater  # 只查剧场这几个文件（改剧场的必跑）
+npm run typecheck          # 全量 —— 这个项目历史包袱有几百条错，只当参考，别指望它是 0
+```
+
+`typecheck:theater` 只看 `apps/TheaterApp.tsx`、`components/dramaTheater/`、
+`utils/dramaTheater/`，退出码 0 = 这几块是干净的。别的模块想这么查，
+照着改 `package.json` 里那条命令的 grep 路径即可。
+
+**另一个要点**：别把「外面也要用」的值塞进 `{(() => { ... })()}` 那种当场执行的小函数里。
+要么提到 return 前跟其它值平级，要么就老老实实拆成具名变量。
+
 ### 4.4 全屏输入 / 编辑器
 - 新代码一律用 `FullScreenEditor`（v2）
 - `FullScreenInput`（v1）保留是因为旧代码还在引用，不要硬删，**只在新功能用 v2**

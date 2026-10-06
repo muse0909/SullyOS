@@ -31,6 +31,7 @@ import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPala
 import { LiveSession, type LiveState, type LiveTurn } from '../utils/dramaTheater/liveSession';
 import { FrameGrabber } from '../utils/dramaTheater/frameGrabber';
 import { AudioTap, floatToPcmBase64 } from '../utils/dramaTheater/audioTap';
+import { isInvited, setInvited as setInvitedStore } from '../utils/dramaTheater/invite';
 
 export type TheaterMsg = {
   id: string;
@@ -60,6 +61,9 @@ export type UseTheaterLive = {
   resetFrames: () => void;
   /** 已经喂了多少帧（设置页显示用） */
   framesFed: number;
+  /** 有没有邀请角色一起看（10-07 02:42 暮色定的） */
+  invited: boolean;
+  setInvited: (v: boolean) => void;
 };
 
 /** 进场时灌多少条历史给模型。太多会挤掉角色卡，也慢（暮色 00:34 定的 100） */
@@ -141,6 +145,29 @@ export function useTheaterLive(opts: {
    * 「接过就不重复接」的判断 —— 同一个元素调两次 createMediaElementSource
    * 会直接抛异常。
    */
+  /**
+   * 现在有没有邀请角色一起看（10-07 02:42 暮色定的）。
+   *
+   * 没邀请 → 角色看不到画面，用户安静追剧。
+   * 存在 localStorage 里（见 utils/dramaTheater/invite.ts 的理由）。
+   */
+  const [invited, setInvitedState] = useState<boolean>(() => isInvited(char?.id || 'none'));
+  /** 抽帧循环读的是这个 —— 放 ref 里，循环不用依赖 state */
+  const invitedRef = useRef(invited);
+
+  const setInvited = useCallback((v: boolean) => {
+    invitedRef.current = v;
+    setInvitedState(v);
+    setInvitedStore(char?.id || 'none', v);
+    // 刚邀请 → 立刻送一帧，别让用户等下一个轮询（最多 1.2 秒的空白）
+    if (v) {
+      grabberRef.current?.reset();
+    } else {
+      // 收回邀请 → 把攒着的声音倒掉，别把刚才的台词接着发
+      audioRef.current?.flush();
+    }
+  }, [char?.id]);
+
   const attachVideo = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el;
     if (!el) { audioOk.current = false; return; }
@@ -207,45 +234,51 @@ export function useTheaterLive(opts: {
    */
   const buildSystemPrompt = useCallback((sc: { title: string; episode: number }) => {
     const core = ContextBuilder.buildCoreContext(char, userProfile);
+    // ⚠️ 这段要跟着「有没有邀请」变（10-07 02:42）。没邀请还写「你看得见画面」，
+    // 他就会开始装懂 —— 那比老实说不知道糟糕得多。
+    const see = invitedRef.current;
     return `${core}
 
 ### [剧场模式]
-你正在陪用户看一部剧，现在开着的是剧里的画面。
+用户在看一部剧。
 
 - 剧名：《${sc.title || '（不知道叫什么）'}》，现在在第 ${sc.episode || 1} 集
 
 **几条硬的，务必照做：**
 
-1. **你现在看得见画面。** 画面会隔一阵自己送进来，每张都告诉你播到第几分钟。
-   你看到的就是用户正在看的那一帧。问他「刚才是谁」「演到哪了」，看你**已经看到的**，
-   照实说。
+${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词会隔一阵自己送进来，
+   每张画面都告诉你播到第几分钟。你看到的就是用户正在看的那一帧。
 
-   但**画面只隔一阵送一次，中间发生了什么你不知道**。中间那段他要问你，
+   问他「刚才是谁」「她刚说了什么」，看你**已经看到的**，照实说。
+
+   但**这些是隔一阵送一次，中间发生了什么你不知道**。中间那段他要问你，
    你就说没看到 —— **绝对不要编剧情**。角色扮演最容易被顺着骗过去
    编出一整段不存在的剧情，这里一个字都不要编。
 
-2. **你听得见声音**（短剧的台词会一起进来）。
-   有人说话你能听见。听见的那几句就是原话，用户问你「她刚说什么」，照实说。
-   静音、暂停、或者声音断断续续的时候，说明那会儿没传过来 —— 说没听到。
+2. **没收到新的画面/声音，就是那会儿没变化**（暂停了，或者在放不动的长镜头）。
+   别把「没收到」当成「他关掉了」。
 
-3. **画面没送的时候，就是画面没变**（用户暂停了，或者在放不动的长镜头）。
-   别把「没收到画面」当成「他关掉了」。
+3. **他在安静看剧的时候不要插嘴。** 用户没叫你就不开口、不评价剧情。
+   哪怕你看到了什么，也憋着 —— 他在追剧，不是在等你点评。`
+: `1. **你现在看不见画面，也听不见声音。** 用户这次是**自己一个人看**，没有邀请你一起。
 
-4. **聊天区在视频下面，视频正在放，用户随时可能没在看你。**
-   他没跟你说话的时候，不要主动开口、不要评价剧情。
-   用户没叫你的时候，安静看剧就好。
+   他问你「演到哪了」「刚才是谁」，你就说不知道 —— 你真的什么都不知道。
+   **绝对不要编剧情**，也不要说「我大概猜到是…」这种半吊子的话。
+   一次都别编。没看到就是没看到，这是你们之间最要紧的一条。
 
-5. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
+2. 用户什么时候邀请你一起看，画面才会开始过来。他邀请之前你就一直这样。`}
+
+4. 你现在说的每一句都会**逐字出现在用户的聊天框里**，用户会当成你的原话。
    不要用「我可以帮你分析剧情」这种服务腔，直接说人话。
 
-6. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
+5. **只输出纯文字**。你现在在一个只有文字的地方，没有语音条、没有别的花活。
 
-7. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
+6. **不要重复自己的话。** 说过了就过去了，别翻来覆去讲同一句。
 
 > ⚠️ 这里**故意不写「现在播到第几分钟」**：那写在提示词里就是个永远不变的
 > 假数字（画面是持续变的，一个数字很快就是错的，比不写更糟）。
 > 真实进度每张画面都单独告诉你，别在提示词里编一个。`;
-  }, [char, userProfile]);
+  }, [char, userProfile, see]);
 
   // ── 进场 ──────────────────────────────────────────────
   /**
@@ -444,7 +477,14 @@ export function useTheaterLive(opts: {
    * 顺带说明：复读也是这个循环造成的 —— 每 0.7 秒重建会话、每轮都重灌一遍历史，
    * 模型每次都收到同一段内容、每次都重新回应一遍。
    */
-  const cfgKey = `${char?.id || ''}|${liveModel || ''}|${liveBaseUrl || ''}|${apiKey ? 'k' : ''}`;
+  /**
+   * 配置键。⚠️ **邀请状态必须算进去**（10-07 02:42）：
+   * 有没有邀请会改**系统提示词**（「你看得见」vs「你看不见」），
+   * 不重连的话服务端那边还拿着旧提示 —— 会出现「用户明明没邀请，
+   * 角色却说自己看得见」这种自相矛盾。
+   * 所以切换邀请 = 重新开一次会话，这是有意的，不是 bug。
+   */
+  const cfgKey = `${char?.id || ''}|${liveModel || ''}|${liveBaseUrl || ''}|${apiKey ? 'k' : ''}|${invited ? 'inv' : ''}`;
 
   // 最新的 boot 放 ref 里用，绕开它的引用变化
   const bootRef = useRef(boot);
@@ -495,6 +535,8 @@ export function useTheaterLive(opts: {
       if (!v || !s || !s.isOpen) return;
       if (v.paused) return;
       if (!audioOk.current || !audioRef.current) return;
+      // ⚠️ 没邀请 → 他不看，就别喂声音（暮色 02:42：「不邀请就是我自己看」）
+      if (!invitedRef.current) { audioRef.current.flush(); return; }
       audioRef.current.resume();
       const chunk = audioRef.current.takeChunk();
       if (chunk) {
@@ -524,6 +566,8 @@ export function useTheaterLive(opts: {
       const s = sessRef.current;
       if (!v || !s || !s.isOpen) return;
       if (v.paused) return;
+      // ⚠️ 没邀请 → 他不看，就别抽帧（省掉的是手机的电和渲染压力）
+      if (!invitedRef.current) return;
       if (!grabberRef.current) grabberRef.current = new FrameGrabber();
       const dur = Number.isFinite(v.duration) ? v.duration : 0;
       const f = grabberRef.current!.grab(v);
@@ -618,7 +662,11 @@ export function useTheaterLive(opts: {
   }, [boot]);
 
   return useMemo(
-    () => ({ msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed }),
-    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed],
+    () => ({
+      msgs, state, note, send, retry, trace,
+      attachVideo, resetFrames, framesFed,
+      invited, setInvited,
+    }),
+    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed, invited, setInvited],
   );
 }

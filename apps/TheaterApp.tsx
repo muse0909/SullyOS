@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import {
   ArrowLeft, GearSix, MagnifyingGlass, Play, FilmSlate, X, UploadSimple, Trash,
+  Eye, EyeSlash,
   DeviceMobile, HardDrive, CloudSlash, CloudArrowDown, Moon, Sun, DeviceMobileCamera, Sparkle,
   CaretDown,
 } from '@phosphor-icons/react';
@@ -833,6 +834,33 @@ const TheaterChat: React.FC<{
 
   return (
     <div className="flex-1 flex flex-col min-h-0" style={{ paddingBottom: kbH || 0 }}>
+      {/* 「邀请一起看」（10-07 02:42 暮色定的）。
+          没邀请 = 他自己安静追剧，角色看不见画面也听不见声音；
+          邀请了 = 角色才开始看。
+          ⚠️ 切换会重连一次（系统提示词变了），所以按钮上写清楚会做什么。 */}
+      <div className="shrink-0 px-4 pb-2">
+        <button
+          onClick={() => live.setInvited(!live.invited)}
+          className={`mx-auto flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[11px] font-bold transition-colors ${
+            live.invited
+              ? (p.night ? 'bg-sky-900/60 text-sky-200' : 'bg-sky-100 text-sky-600')
+              : (p.night ? 'bg-[#1e293b] text-slate-400' : 'bg-slate-100 text-slate-400')
+          }`}
+        >
+          {live.invited ? (
+            <>
+              <Eye size={13} />
+              <span>他正在陪我看 · 点一下收回</span>
+            </>
+          ) : (
+            <>
+              <EyeSlash size={13} />
+              <span>邀请他一起看</span>
+            </>
+          )}
+        </button>
+      </div>
+
       {/* 状态条：断了就说，别装没事 */}
       {stateNote && (
         <div className={`shrink-0 mx-4 mb-1.5 rounded-full px-3 py-1 text-center text-[10px] ${

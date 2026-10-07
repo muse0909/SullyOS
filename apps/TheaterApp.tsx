@@ -42,6 +42,7 @@ import { probeCover, pageEnv, refetchOne, resetDiag } from '../utils/dramaTheate
 import { loadCoverBlob, cachedCoverUrl, coverCacheSize } from '../utils/dramaTheater/coverBlob';
 import { probeLive, maskKey, type ProbeStep } from '../utils/dramaTheater/liveProbe';
 import { useTheaterLive, type UseTheaterLive } from '../hooks/useTheaterLive';
+import { DB } from '../utils/db';
 import {
   loadLiveConfig, saveLiveConfig, subscribeLiveConfig, defaultLiveConfig, maskLiveKey,
   LIVE_WS_BASE, type TheaterLiveConfig,
@@ -1822,10 +1823,117 @@ const TheaterApp: React.FC = () => {
    * ⚠️ 必须写在 `recordWatch` 下面：它是 const，定义之前引用就是 TDZ 崩溃
    *（AGENTS.md §4.3 那条「漏用一个还没定义的名字」的同类事故）。
    */
+  /**
+   * **「一起看结束了」**（10-07 21:59 暮色要的）
+   *
+   * ## 他说的现象
+   *
+   * 「最下面一条是我退出去又重新进时又刷了一条」—— 退出剧场再进来，模型又发了一条。
+   * 他自己判断的病根是对的：**模型并不知道刚刚退出重进了**。
+   *
+   * 重连时 `boot()` 会把库里的剧场记录重新灌一遍（那是**对的**，不灌它就完全失忆）。
+   * 但灌进去的是「用户问了→ 角色答了→ 用户又问了 →（没了）」，
+   * **最后一条是用户的话**。模型看到「我上一轮没回」，于是又补一条 ——
+   * 表现就是「一进来它又自己说了一句」。10-07 截图里那个复读就是这么滚起来的。
+   *
+   * ## 做法
+   *
+   * 收尾时往消息表里插一条 `[剧场结束]`，把这次一起看的**原话**整理进去
+   * （剧名集数 + 它自己说过的几句），末尾写「现在回到主聊天了」。
+   *
+   * 这条同时解决三件事：
+   *   1. 历史最后一条不再是用户的话 → 重进时模型不会以为漏了回复
+   *   2. 主聊天里有明确的「一起看结束了」交代 → 主聊天的模型知道刚才发生了什么
+   *   3. 它落在剧场记录块里（`source: 'theater'`）→ 主聊天最上面能看见、能删
+   *
+   * ## 为什么内容是「原话」而不是「让模型再写一遍」
+   *
+   * 零额外调用。而且这一场里**它对画面的描述本来就在这些话里**
+   *（「画面显示女孩来到牢房看望链子上的男人」），
+   * 原样带过去，主聊天的模型就知道它当时看见了什么 —— 这就是「把剧情串起来」
+   * 的第一步。真正的剧情摘要（调模型写 3-5 句）是下一版的事，先别混进来。
+   *
+   * ⚠️ 存 `role: 'system'` + `[剧场结束]` 前缀 —— 照抄主聊天 `[系统: …]` 铃铛胶囊的
+   * 惯例（`pushImageBedWarning` 那样）。别存成 user/assistant，
+   * 那样主聊天会以为是暮色说的话、或角色说的话。
+   */
+  const finishTheaterSession = useCallback(async () => {
+    if (!char?.id) return;
+    try {
+      const all = await DB.getMessagesByCharId(char.id, true);
+      const rows = all
+        .filter((m: any) => m.metadata?.source === 'theater')
+        .sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+      // 上一次「结束」之后的就是这一次（连着看几集也算一场）
+      let start = 0;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i]?.metadata?.theaterEnd) { start = i + 1; break; }
+      }
+      const seg = rows.slice(start).filter((m: any) => m.role !== 'system' && (m.content || '').trim());
+      if (!seg.length) return; // 这场一句没说，别留空记录
+
+      // 剧名集数用最后一条的标记（「《xxx》第N集」）
+      const tag = seg[seg.length - 1]?.metadata?.theaterTag || '剧场';
+
+      // 只挑它说过的、相邻不重复的，最多 5 句；每句太长掐掉
+      const said: string[] = [];
+      for (const m of seg) {
+        if (m.role !== 'assistant') continue;
+        const t = String(m.content || '').replace(/\s+/g, ' ').trim();
+        if (!t || said[said.length - 1] === t) continue;
+        said.push(t.length > 42 ? `${t.slice(0, 42)}…` : t);
+      }
+
+      const lines = [
+        `[剧场结束]${tag}`,
+        '',
+        '你们刚才在剧场里聊了这些：',
+        ...said.slice(-5).map((t) => `「${t}」`),
+        '',
+        '现在回到主聊天了。',
+      ].join('\n');
+
+      await DB.saveMessage({
+        charId: char.id,
+        role: 'system',
+        type: 'text',
+        content: lines,
+        metadata: { source: 'theater', theaterTag: tag, theaterEnd: true },
+      });
+      diag('写了剧场结束记录', { 条数: seg.length, 引用: said.length });
+    } catch (e: any) {
+      // 收尾失败不许挡着退出去 —— 用户要点返回，不能因为写记录失败卡住
+      diag('写剧场结束记录失败', { 报错: String(e?.message || e) });
+    }
+  }, [char?.id]);
+
+  /** 离开剧场 app 回主聊天 —— 收尾 + 真的走 */
+  const leaveTheater = useCallback(() => {
+    closeOnline();
+    finishTheaterSession();
+    if (activeCharacterId) jumpToChat(activeCharacterId);
+  }, [closeOnline, finishTheaterSession, activeCharacterId, jumpToChat]);
+
+  /**
+   * 「关闭播放」（10-07 17:xx 更正）。
+   *
+   * 之前这一版是「收起浮窗 = 暂停 + 藏起来」，然后在聊天页顶栏**自己加**了一颗
+   * 「打开播放器」按钮想把人捞回来 —— 暮色的原话是：
+   * 「那个关闭按钮不是要把播放器收起来，是关闭播放。你不要自己灵机一动行吗？」
+   *
+   * 字面意思优先：**关闭 = 停掉播放**，不是「把界面藏起来」。
+   * 所以这里跟顶栏那个返回键做同一件事：记一笔观看进度、回选集页。
+   *
+   * ⚠️ 必须写在 `recordWatch` / `finishTheaterSession` 下面：它们都是 const，
+   * 定义之前引用就是 TDZ 崩溃（AGENTS.md §4.3，同类事故已经炸过三次）。
+   */
   const closePlayback = useCallback(() => {
     recordWatch(true);
+    // 关掉播放器也是「看完了这一段」——不发收尾的话，重开时模型又会以为漏了回复
+    finishTheaterSession();
     setPage('episodes');
-  }, [recordWatch]);
+  }, [recordWatch, finishTheaterSession]);
 
   /**
    * 只要「不在播放页了」就把在线流收掉、播放位还回去。
@@ -2205,7 +2313,7 @@ const TheaterApp: React.FC = () => {
         <TopBar
           p={p}
           title="剧场"
-          onBack={() => { closeOnline(); if (activeCharacterId) jumpToChat(activeCharacterId); }}
+          onBack={leaveTheater}
           right={
             <div className="flex items-center gap-2">
               {/* 取证用：海报出不来时点开，让页面自己报告每张图卡在哪一步 */}

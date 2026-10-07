@@ -140,21 +140,35 @@ const Chat: React.FC = () => {
      * 恰恰是他要清的那些。
      */
     const [theaterMsgs, setTheaterMsgs] = useState<Message[]>([]);
+    // 纯记录，不改行为（10-07 22:42「闪一下就没」查了两轮才定位，加这个免得再来一次）。
+    // 浏览器控制台敲 __theaterBlock 就能看：每次查询的角色 id 和捞到几条。
+    const tbTrace = (charId: string | undefined, n: number, why: string) => {
+        try {
+            const w = window as unknown as { __theaterBlock?: unknown[] };
+            if (!w.__theaterBlock) w.__theaterBlock = [];
+            w.__theaterBlock.push({ t: new Date().toISOString().slice(11, 19), charId: charId || '(空)', 捞到: n, why });
+            if (w.__theaterBlock.length > 30) w.__theaterBlock.shift();
+        } catch { /* 忽略 */ }
+    };
     const loadTheaterMsgs = useCallback(async (charId?: string) => {
-        if (!charId) { setTheaterMsgs([]); return; }
+        // ⚠️⚠️ 这里**不能**因为 charId 为空就 `setTheaterMsgs([])` ——
+        // 角色列表是异步加载的（OSContext 里 `characters` 初始就是空数组），
+        // 加载途中 activeCharacterId 会短暂对不上任何角色。
+        // 那时候一清空，块就是「闪一下就没了」（暮色 10-07 22:42 现场）。
+        // 空的时候**什么都不做**，等真的有值了再查。
+        if (!charId) { tbTrace(charId, -1, '角色还没就位，不动'); return; }
         try {
             const all = await DB.getMessagesByCharId(charId, true);
-            setTheaterMsgs(
-                all.filter((m: any) => m.metadata?.source === 'theater')
-                    .sort((a: any, b: any) => a.timestamp - b.timestamp)
-            );
+            const hit = all.filter((m: any) => m.metadata?.source === 'theater')
+                .sort((a: any, b: any) => a.timestamp - b.timestamp);
+            tbTrace(charId, hit.length, '查完');
+            setTheaterMsgs(hit);
         } catch (e) {
+            tbTrace(charId, -1, `查询报错 ${String((e as any)?.message || e)}`);
             console.warn('🎬 捞剧场记录失败:', e);
         }
     }, []);
-    // ⚠️ 这一句**必须**放到下面 `char` 定义之后才能写：char 是 const，
-    //   在它定义之前引用就是 TDZ 崩溃（`Cannot access 'char' before initialization`）。
-    //   第一版就写在 state 旁边，typecheck 报了 TS2448 —— 项目里同款已经炸过三次。
+    // ⚠️ effect 挂在下面 `activeCharacterId` 那里，不在这里 —— 见那儿的注释
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -260,8 +274,15 @@ const Chat: React.FC = () => {
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
 
-    // 剧场记录跟着角色换而重捞（state 和 loadTheaterMsgs 定义在上面，这里才敢碰 char）
-    useEffect(() => { loadTheaterMsgs(char?.id); }, [char?.id, loadTheaterMsgs]);
+    // 剧场记录跟着角色换而重捞。
+    //
+    // ⚠️ 绑 `activeCharacterId`，**不要**绑 `char?.id` ——
+    // `char` 是 `characters.find(...) || characters[0]` 算出来的。
+    // 角色列表一刷新（云同步合并、导入备份），它就会漂到别的角色上，
+    // 于是「查对了 → 又按别的角色查一遍 → 那个角色没有剧场记录 → 块自己消失」。
+    // 暮色 10-07 22:42 现场：「闪一下就没有」。
+    // `activeCharacterId` 是稳定的状态，只有用户真的切角色才会变。
+    useEffect(() => { loadTheaterMsgs(activeCharacterId); }, [activeCharacterId, loadTheaterMsgs]);
     charRef.current = char; // Keep ref in sync for async callbacks
     // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');

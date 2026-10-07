@@ -32,6 +32,50 @@ const TARGET_RATE = 16000;
 /** 官方建议 100ms 一包（1024~2048 个采样点）。1600 个正好 100ms */
 const CHUNK_SAMPLES = 1600;
 
+/**
+ * 🔍 现场记录（10-07 17:07 加 —— **只读状态，一行行为都没改**）
+ *
+ * ## 为什么加这个
+ *
+ * 暮色反馈「一点声音都没有」，我连着两次都推错了方向：
+ *   - 第一次推「切集重建通道 → 新通道睡着」，他说「刚进播放页就没声，还没切集」
+ *   - 第二次推「唤醒调用被挡在 invited 后面」，他说「邀请了也还是没声」
+ *
+ * 两次都被现场否掉。**所以不再猜了**，先把数据记下来。
+ * 真机复现一次，读这份记录就能一次分清四种可能：
+ *   1. 压根没接上（attach 抛异常 / 跳过）
+ *   2. 接上了但通道是睡的（`ctxState: 'suspended'`）← 睡着就一个字都不出声
+ *   3. 接着但采不出数据（`pending` 一直是 0）
+ *   4. 数据正常（那就是别的地方，比如音量为 0 / 播放器静音）
+ *
+ * 手机连调试口就能读：
+ *   `window.__audioTap.log`    —— 时间线
+ *   `window.__audioTap.now`    —— 最后一条
+ *   `window.__audioTap.pending` —— 队列里攒了多少采样点（0 = 一直没出数据）
+ */
+function tapLog(step: string, extra?: Record<string, unknown>) {
+  try {
+    const w = window as any;
+    if (!w.__audioTap) w.__audioTap = { log: [] };
+    const t = w.__audioTap;
+    t.log.push({ at: Date.now(), step, ...(extra || {}) });
+    if (t.log.length > 120) t.log.splice(0, t.log.length - 120);
+    t.now = t.log[t.log.length - 1];
+  } catch { /* 记录失败不能影响功能 */ }
+}
+
+/** 给元素发个稳定编号，日志里才能看出「换了新元素」还是「同一个」 */
+let EL_SEQ = 0;
+function elId(el: any): string {
+  try {
+    if (!el) return 'null';
+    if (!el.__tapId) el.__tapId = 'el' + (++EL_SEQ);
+    return el.__tapId;
+  } catch {
+    return '未知';
+  }
+}
+
 export class AudioTap {
   private ctx: AudioContext | null = null;
   private source: MediaElementAudioSourceNode | null = null;
@@ -43,29 +87,16 @@ export class AudioTap {
   /** 已经接过的元素 —— 同一个 video 只能 createMediaElementSource 一次，第二次直接抛 */
   private attached = false;
 
-  /**
-   * 接上视频元素。返回 false = 接不上（这时画面那条路还在，不影响）
-   *
-   * ⚠️⚠️ **元素换了要整条链重建**（10-07 顺手修的既有 bug）。
-   *
-   * 原来是 `if (this.attached) return true;` —— 一旦接上就永远说「接好了」。
-   * 但**切集会让 video 元素整个重建**（PlayerStage 里 `key={src}`，
-   * 为了让旧画面别继续播）。于是新一集的视频元素**从来没被接过**，
-   * `attached` 却还是真 —— 采到的是已经销毁的旧元素的数据，
-   * 表现是**切集之后角色就听不见声音了**，而且没有任何报错。
-   *
-   * ⚠️ 千万别把这里写成「先 detach 再无条件 attach 同一个元素」：
-   * `createMediaElementSource` 对**同一个元素**只能调一次，第二次直接抛。
-   * 文件头「坑 3」记的就是这个。**换元素是安全的**（一个元素一个 SourceNode），
-   * 不安全的是重复接同一个。所以判据是「是不是同一个元素」，不是「有没有接过」。
-   */
+  /** 接上视频元素。返回 false = 接不上（这时画面那条路还在，不影响） */
   attach(el: HTMLMediaElement): boolean {
-    if (this.attached && this.el === el) return true;
-    // 换了新元素 —— 旧的整条链先彻底拆掉（不拆的话旧 ctx 一直在跑，白耗电）
-    if (this.attached) this.teardown();
+    tapLog('attach 调进来', {
+      元素: elId(el), 手上那个: elId(this.el), attached: this.attached,
+      通道状态: this.ctx?.state || '还没建',
+    });
+    if (this.attached) { tapLog('attach 直接返回（已接过）', {}); return true; }
     const Ctor: any =
       (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!Ctor) return false;
+    if (!Ctor) { tapLog('内核没有 AudioContext', {}); return false; }
     try {
       const ctx: AudioContext = new Ctor();
       const source = ctx.createMediaElementSource(el);
@@ -81,34 +112,33 @@ export class AudioTap {
       this.proc = proc;
       this.inRate = ctx.sampleRate || 48000;
       this.attached = true;
+      // 🔍 关键：通道建出来是什么状态。
+      // 'suspended' = 睡着 = 一个字都不出声（接管了视频但没在跑）
+      tapLog('接上了', { 元素: elId(el), 通道状态: ctx.state, 采样率: this.inRate });
       return true;
-    } catch (e) {
+    } catch (e: any) {
       // 跨源污染 / 已被接过 —— 认了，画面那条路继续走
-      this.teardown();
+      tapLog('attach 抛异常', { 元素: elId(el), 错: String(e?.message || e) });
       return false;
     }
   }
 
-  /** 把整条采集链拆干净，回到「没接过」的状态 */
-  private teardown() {
-    try { this.proc?.disconnect(); } catch {}
-    // ⚠️ 可选链**不能**写在赋值左边（TS2779），得先取出来判空
-    try { const p: any = this.proc; if (p) p.onaudioprocess = null; } catch {}
-    try { this.source?.disconnect(); } catch {}
-    try { this.ctx?.close(); } catch {}
-    this.proc = null;
-    this.source = null;
-    this.ctx = null;
-    this.el = null;
-    this.attached = false;
-    // 队列里攒的是**上一集**的声音，别带进新一集
-    this.outBuf = new Float32Array(0);
-  }
-
   /** 浏览器要求音频上下文在用户手势后才能跑 */
   resume() {
-    try { if (this.ctx?.state === 'suspended') this.ctx.resume(); } catch {}
+    // 🔍 醒来到底成功没有 —— 「调用了」和「真的醒了」是两回事
+    try {
+      if (this.ctx?.state !== 'suspended') return;
+      this.ctx.resume().then(
+        () => tapLog('resume 成功', { 之后: this.ctx?.state }),
+        (e: any) => tapLog('resume 被拒', { 错: String(e?.message || e), 还是: this.ctx?.state }),
+      );
+    } catch (e: any) {
+      tapLog('resume 抛异常', { 错: String(e?.message || e) });
+    }
   }
+
+  /** 🔍 攒着的采样点数。0 = 一直没出数据（通道睡着就永远是 0） */
+  // 说明：真正那个 getter 在下面（takeChunk 旁边），这里只补一句诊断用途。
 
   private onAudio(e: AudioProcessingEvent) {
     if (!this.ctx) return;

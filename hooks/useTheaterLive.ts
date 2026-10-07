@@ -641,21 +641,52 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
     const audioIv = window.setInterval(() => {
       const v = videoRef.current;
       const s = sessRef.current;
-      if (!v || !s || !s.isOpen) return;
-      if (v.paused) return;
-      if (!audioOk.current || !audioRef.current) return;
-      // ⚠️ 没邀请 → 他不看，就别喂声音（暮色 02:42：「不邀请就是我自己看」）
-      if (!invitedRef.current) { audioRef.current.flush(); return; }
-      audioRef.current.resume();
-      const chunk = audioRef.current.takeChunk();
+
+      /**
+       * 🔍 现场记录（10-07 17:07，**只读，不改行为**）
+       *
+       * 「一点声音都没有」这个现象我连推两次都错了，所以现在只记不改。
+       * 这几行能把四种可能一次分清（详见 utils/dramaTheater/audioTap.ts 顶上那段）：
+       *   循环根本进不来   → 看到「没进来」且原因那栏写着 noVideo/noSession…
+       *   接上了但通道睡着 → 「进了」里 通道状态: 'suspended'
+       *   接着但不出数据   → 通道状态 running，但 pending 一直是 0
+       *   数据正常         → pending 有数、送出去有计数
+       *
+       * ⚠️ 一定要**在所有 return 之前**记，否则「循环没进来」这种情况恰恰
+       * 是最关键的证据，却什么都留不下（前两轮就是死在这）。
+       */
+      const w = window as any;
+      if (!w.__audioTick) w.__audioTick = { n: 0 };
+      // ⚠️ 先收一个局部引用 —— 直接在下面连着写 `audioRef.current.xxx`，
+      // TS 会判可空（TS18047），因为它在每一行之间都可能被别处改掉
+      const tap = audioRef.current;
+      w.__audioTick.n++;
+      w.__audioTick.pending = tap?.pending ?? -1;
+      w.__audioTick.hasVideo = !!v;
+      w.__audioTick.sessionOpen = !!s?.isOpen;
+      w.__audioTick.audioOk = audioOk.current;
+      w.__audioTick.invited = invitedRef.current;
+      w.__audioTick.paused = !!v?.paused;
+      // ⚠️ 判据**必须跟改之前一模一样**（audioOk，不是 tap 在不在）——
+      // 这一段是纯记录，任何「顺手改一下」都会让记录本身就不可信了
+      if (!v || !s || !s.isOpen || v.paused || !audioOk.current || !tap) {
+        w.__audioTick.why = !v ? 'noVideo' : !s ? 'noSession' : !s.isOpen ? 'sessionClosed'
+          : v.paused ? 'paused' : !audioOk.current ? 'audioOk=false' : '没有采集器';
+        return;
+      }
+      if (!invitedRef.current) { tap.flush(); w.__audioTick.why = '没邀请'; return; }
+      tap.resume();
+      const chunk = tap.takeChunk();
+      w.__audioTick.why = '在送';
+      w.__audioTick.sent = (w.__audioTick.sent || 0) + (chunk ? 1 : 0);
       if (chunk) {
         s.sendAudio(floatToPcmBase64(chunk));
       } else {
         // 一包都攒不出来 —— 说明采集端根本没在出数据，记下来别再猜
-        const w = window as any;
-        if (w.__liveMedia && !w.__liveMedia.audioWarned) {
-          w.__liveMedia.audioWarned = true;
-          w.__liveMedia.audioWhy = `200ms 了还攒不出 100ms 的包（pending=${audioRef.current.pending}）`;
+        const wm = window as any;
+        if (wm.__liveMedia && !wm.__liveMedia.audioWarned) {
+          wm.__liveMedia.audioWarned = true;
+          wm.__liveMedia.audioWhy = `200ms 了还攒不出 100ms 的包（pending=${tap.pending}）`;
         }
       }
     }, 200);

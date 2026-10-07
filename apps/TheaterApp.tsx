@@ -1201,6 +1201,16 @@ const TheaterApp: React.FC = () => {
   const [busyStall, setBusyStall] = useState(false);
   /** 正在下第几集、到百分之几（原生下载报的，粒度到集） */
   const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
+  /**
+   * 悬浮窗收没收起来（10-07 16:53 暮色要的关闭按钮）。
+   *
+   * ⚠️ 收起时**连播放器一起卸载**（不是只藏一层壳）：视频元素没了，
+   * 声音那条采集链也跟着没，省得后台还在出声/还在耗电。
+   * 代价是进度条什么的都不在了，所以聊天页顶部要留一个「打开播放器」的入口。
+   */
+  const [floatOpen, setFloatOpen] = useState(true);
+  /** 收起时记一笔：重新打开要不要接着播（收起前是暂停状态就别自己开始响） */
+  const [floatPaused, setFloatPaused] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
   const posRef = useRef({ pos: 0, dur: 0 });
@@ -2824,6 +2834,24 @@ const TheaterApp: React.FC = () => {
           }
         />
 
+        {/* 播放器收起来之后，这里换成「打开播放器」的一颗小胶囊。
+            位置跟它原本的状态条同一排 —— 收起前它在浮窗左上角，
+            收起后它回到聊天页顶部，视觉上有个交接。 */}
+        {!floatOpen ? (
+          <div className={`shrink-0 px-4 py-2.5 flex items-center gap-2 border-b ${p.line}`}>
+            <Tag tone="mac">播放器已收起</Tag>
+            <div className="flex-1" />
+            <button
+              onClick={() => setFloatOpen(true)}
+              className={`flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-bold active:scale-95 ${
+                p.night ? 'bg-[#334155] text-slate-200' : 'bg-slate-100 text-slate-500'
+              }`}
+            >
+              <Play size={11} weight="fill" />
+              打开播放器
+            </button>
+          </div>
+        ) : (
         <PlayerStage
           src={blobUrl}
           episode={currentEp}
@@ -2841,12 +2869,19 @@ const TheaterApp: React.FC = () => {
           // 「选集」从顶栏那个按钮搬到播放器上面那条（暮色 10-07 15:26：「选集放最右」）。
           // 顶栏那个还留着 —— 浮窗可能被拖到看不见的位置，顶栏是兜底。
           onOpenEpisodes={() => setDrawer(true)}
+          // 收起 = 暂停 + 隐藏（10-07 16:53）。不暂停的话它还在后台出声，
+          // 用户以为关掉了其实还在响，那比不关还糟。
+          onCloseFloat={() => {
+            setFloatOpen(false);
+            setFloatPaused(true);
+          }}
           onMediaError={onMediaError}
           onMediaReady={onMediaOk}
           onVideoEl={live.attachVideo}
           resumeAt={resumeAt}
           p={p}
         />
+        )}
 
         {/* 这一集到底存没存 —— 只做显示。
             暮色 10-05 明确「播放页的『把这一集存到手机』和这个功能连带的

@@ -40,7 +40,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import {
   Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, CornersIn, SkipForward,
-  ArrowCounterClockwise, Broom, FilmSlate,
+  ArrowCounterClockwise, Broom, FilmSlate, X,
 } from '@phosphor-icons/react';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
@@ -70,6 +70,8 @@ type Props = {
   onNext: () => void;
   /** 打开选集抽屉（暮色 10-07：「选集放最右」） */
   onOpenEpisodes?: () => void;
+  /** 收起浮窗（10-07 16:53：左上角加关闭按钮）。收起时视频会暂停 */
+  onCloseFloat?: () => void;
   /** 拖完进度条 */
   onSeek?: (t: number) => void;
   /** 媒体本身放不出来（比如手机本地文件地址被内核拒了），交给外层换一条路 */
@@ -127,24 +129,53 @@ function saveRatio(title: string | undefined, ratio: number): void {
   } catch { /* 存不下就用默认值，不影响播放 */ }
 }
 
-/** 三档大小 —— **按宽度**，高度让比例自己算（暮色 10-07：「比例不变，大小只调整宽度」） */
+/**
+ * 三档大小 —— **按宽度**，高度让比例自己算（暮色 10-07：「比例不变，大小只调整宽度」）
+ *
+ * ⚠️⚠️ **横版和竖版是两套数字**（暮色 10-07 16:53：「竖版尺寸没问题，
+ * 但是横版的尺寸太小了，最大的尺寸宽度要和屏幕宽度一样大」）。
+ *
+ * 原因：竖版剧比例 0.56，宽度 92% 的话高度是宽度的 1.78 倍，已经占掉大半个屏；
+ * 横版剧比例 1.78，同样的 92% 宽度只换来 0.56 倍的高度，**在屏幕上就是一条**。
+ * 图 1 里横版「最大」档只有屏幕八成宽，就是因为 48/70/92 这套数字是照竖版调的。
+ *
+ * 判据用**比例**（>= 1 就是横版），不是宽高比字符串 —— 元数据里
+ * `videoWidth/videoHeight` 一到手就有，够早。
+ */
 type SizeMode = 'small' | 'medium' | 'large';
-const SIZE_PCT: Record<SizeMode, number> = { small: 48, medium: 70, large: 92 };
+/** 竖版剧（比例 < 1） */
+const SIZE_PCT_PORTRAIT: Record<SizeMode, number> = { small: 48, medium: 70, large: 92 };
+/** 横版剧（比例 >= 1）—— 暮色 16:53 定的 60 / 80 / 100 */
+const SIZE_PCT_LANDSCAPE: Record<SizeMode, number> = { small: 60, medium: 80, large: 100 };
 const SIZE_LABEL: Record<SizeMode, string> = { small: '小', medium: '中', large: '大' };
 const NEXT_SIZE: Record<SizeMode, SizeMode> = { small: 'medium', medium: 'large', large: 'small' };
 
-/** 顶部留出状态栏 */
-const SAFE_TOP = 34;
+/** 顶部留一点，别让浮窗完全贴着状态栏（可以盖住，但留一截好抓） */
+const SAFE_TOP = 6;
 /**
- * 底部留出聊天输入框的高度。
+ * 底部为聊天输入框留的高度。
  *
- * 暮色 10-07 15:26 选的 B 方案：浮窗压住输入框时自动往上顶，
- * 存档时也错开 —— 拖一次歪了就得手动救一次，太烦。
+ * ⚠️ 10-07 16:53 改过一次：原来一直用 118px，暮色反馈「可拖动范围很小，
+ * 图二红线区域都是拖不过去的」。他原话是「遮住其他我可以自己拖动，
+ * 现在是遮住想挪也挪不了」。
+ *
+ * 所以现在是**只在「进来的时候」避让一次，拖动时不避让**（见 TheaterApp 的
+ * 首次定位 + `clamp` 的 `avoid` 参数）：
+ *   - 默认落点仍然不压输入框（大多数时候用户根本不用拖）
+ *   - 但想去哪都能去 —— 想盖住输入框、想贴到最底下，都随他
  */
 const INPUT_GUARD = 118;
 /** 边缘留一点，手指好抓 */
 const EDGE = 6;
-/** 比例还不知道时先按这个算（介于横竖之间，猜错的跳变最小） */
+/**
+ * 比例还不知道时，用这个高度反算宽度。
+ *
+ * 为什么不用「先按横版猜一个大宽度」：竖版剧第一次播会先变成一个又高又窄的
+ * 巨大条（宽 400 × 高 711），拿到真实比例再缩回去 —— 跳一次很难看。
+ * 改成**先把高度钉在 340px**，横竖两种比例算出来的宽度都在合理范围内，
+ * 跳变就只剩一点点。
+ */
+const GUESS_H = 340;
 const GUESS_RATIO = 1.2;
 /** 长按多久算「在拖」，不是点一下 */
 const LONG_PRESS_MS = 320;
@@ -157,7 +188,7 @@ const durOk = (x: number) => Number.isFinite(x) && x > 0;
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, onEnded, onTime,
   loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext,
-  onOpenEpisodes, onSeek, onMediaError, onMediaReady, onVideoEl, resumeAt, p,
+  onOpenEpisodes, onCloseFloat, onSeek, onMediaError, onMediaReady, onVideoEl, resumeAt, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   // 第 3 步：把元素交给外层抓帧。回调 ref 每次都返回 null 再返回 el，
@@ -231,42 +262,55 @@ const PlayerStage: React.FC<Props> = ({
   useEffect(() => { setRatio(readRatio(title)); }, [title]);
 
   // ── 几何 ──────────────────────────────────────────────
+  /**
+   * 位置分两种夹法（暮色 10-07 16:53）：
+   *   - `avoid=true`（进播放页 / 键盘弹起）：底部避开输入框，浮窗停得稳
+   *   - `avoid=false`（拖动中）：**整屏随便放**，想盖输入框、想贴最底下都随他
+   *
+   * 之前是两种情况都用 `INPUT_GUARD`，于是「可拖动范围」被砍掉一大块 ——
+   * 图 2 里红线圈出来的整条右侧和整片底部都拖不过去，而那儿很多时候
+   * **根本没有输入框**（没邀请角色时聊天区不渲染）。
+   */
   const geo = useMemo(() => {
     const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
     const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-    const r = ratio > 0.1 ? ratio : GUESS_RATIO;
-    const want = Math.round(vw * SIZE_PCT[size] / 100);
-    // 可用高度 = 屏高 - 状态栏 - 输入框那一条 - 边距。
-    // 竖屏大档在小屏手机上可能比可用高度还高 —— 那就**收窄**而不是截断：
-    // 截断会破坏比例（暮色：「可以有黑边，但要保证画面全部显示出来」），
-    // 收窄只是那一档在小屏上没那么大，比例一点不变。
-    const availH = Math.max(120, vh - SAFE_TOP - INPUT_GUARD - EDGE * 2);
-    const w = Math.max(140, Math.min(want, Math.round(availH * r)));
-    const h = Math.round(w / r);
-    return { vw, vh, w, h };
+    const known = ratio > 0.1;
+    const r = known ? ratio : GUESS_RATIO;
+    const pct = known && ratio >= 1 ? SIZE_PCT_LANDSCAPE : SIZE_PCT_PORTRAIT;
+    let w = Math.round(vw * pct[size] / 100);
+    let h = Math.round(w / r);
+    // 比例还不知道：先把高度钉住再反算宽度，避免竖版剧第一次播就蹦出一个巨大窄条
+    if (!known) {
+      h = GUESS_H;
+      w = Math.round(h * r);
+    }
+    // 竖屏手机上竖版大档可能比屏还高 —— 收窄，**不截断**（截断会破坏比例）
+    const cap = vh - EDGE * 2;
+    if (h > cap) { h = cap; w = Math.round(h * r); }
+    w = Math.max(150, Math.min(w, vw - EDGE * 2));
+    return { vw, vh, w, h, portrait: !(known && ratio >= 1) };
   }, [size, ratio]);
 
-  /**
-   * 把中心点夹回屏幕内（并且不压住输入框）。
-   *
-   * ⚠️ 高的时候 min > max（浮窗比可用高度还高），这时**贴顶**而不是算出一个
-   * 反过来的区间 —— `Math.min(Math.max(v, min), max)` 遇到 min > max 会静默给出 min，
-   * 看着对其实每次重渲染都在变。
-   */
-  const clampCenter = useCallback((cx: number, cy: number) => {
+  /** 把中心点夹回屏幕内。`avoid` 见上面的说明 */
+  const clampCenter = useCallback((cx: number, cy: number, avoid: boolean) => {
     const { vw, vh, w, h } = geo;
     const minCx = Math.min(w / 2 + EDGE, vw / 2);
     const maxCx = Math.max(minCx, vw - w / 2 - EDGE);
-    const minCy = Math.min(SAFE_TOP + h / 2 + EDGE, vh / 2);
-    const maxCy = Math.max(minCy, vh - INPUT_GUARD - h / 2 - EDGE);
+    const minCy = Math.min(SAFE_TOP + h / 2, vh / 2);
+    let maxCy = Math.max(minCy, vh - h / 2 - EDGE);
+    if (avoid) {
+      // 避让输入框：压不上它。但 h 比「屏高 - 输入框」还高时就别硬夹了
+      const withGuard = vh - INPUT_GUARD - h / 2 - EDGE;
+      if (withGuard > minCy) maxCy = withGuard;
+    }
     return {
       cx: Math.max(minCx, Math.min(maxCx, cx)),
       cy: Math.max(minCy, Math.min(maxCy, cy)),
     };
   }, [geo]);
 
-  // 比例第一次读出来 / 档位换了之后，把位置重新夹一次（尺寸变了可能越界）
-  useEffect(() => { setCenter((c) => clampCenter(c.cx, c.cy)); }, [clampCenter]);
+  // 比例第一次读出来 / 档位换了之后重新夹一次（尺寸变了可能越界）
+  useEffect(() => { setCenter((c) => clampCenter(c.cx, c.cy, true)); }, [clampCenter]);
 
   // 位置存档（防抖，别拖一下写一次）
   useEffect(() => {
@@ -291,7 +335,7 @@ const PlayerStage: React.FC<Props> = ({
     const re = () => {
       window.clearTimeout(t);
       // 键盘弹起是连着来好几帧的，防抖一下再算
-      t = window.setTimeout(() => setCenter((c) => clampCenter(c.cx, c.cy)), 120);
+      t = window.setTimeout(() => setCenter((c) => clampCenter(c.cx, c.cy, true)), 120);
     };
     window.addEventListener('resize', re);
     window.addEventListener('orientationchange', re);
@@ -443,7 +487,7 @@ const PlayerStage: React.FC<Props> = ({
       if (lpTimer.current) { window.clearTimeout(lpTimer.current); lpTimer.current = null; }
       startDrag(e);
     }
-    setCenter(clampCenter(press.current.bx + dx, press.current.by + dy));
+    setCenter(clampCenter(press.current.bx + dx, press.current.by + dy, false));
   };
 
   const onPressEnd = (e: React.PointerEvent) => {
@@ -530,8 +574,7 @@ const PlayerStage: React.FC<Props> = ({
         onPointerDown={onPressStart}
         onPointerMove={onPressMove}
         onPointerUp={onPressEnd}
-        onPointerCancel={onPressEnd}
-        onTimeUpdate={(e) => {
+        onPointerCancel={onPressEnd}        onTimeUpdate={(e) => {
           const v = e.currentTarget;
           setPos(v.currentTime);
           if (durOk(v.duration)) setDur(v.duration);
@@ -558,6 +601,19 @@ const PlayerStage: React.FC<Props> = ({
           onEnded();
         }}
       />
+
+      {/* 关闭按钮（10-07 16:53）。放在左上角，**独立于两条工具条** ——
+          它是唯一「不按播放会怎么样」的按钮，工具条藏了也得能回来。
+          10-07 规则：取消/关闭也是胶囊，不光秃秃一个 ×。 */}
+      {!full && onCloseFloat && (
+        <button
+          onClick={onCloseFloat}
+          className="absolute z-40 left-1.5 top-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-black/45 text-white/90 active:scale-90"
+          title="收起播放器"
+        >
+          <X size={12} weight="bold" />
+        </button>
+      )}
 
       {/* 加载遮罩 / 出错卡片。小浮窗只有 190px 宽，所以这块刻意做得很紧凑，
           不然一张 px-7 py-5 的白卡能把整个小窗撑爆。 */}

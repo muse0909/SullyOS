@@ -39,6 +39,7 @@ import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER 
 // 暮色 2026-08-27 同步原作者：聊天细节微调 CSS 生成器（外观 App「聊天细节」生成，用户自定义 CSS 排其后可覆盖）
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
 import MessageItem from '../components/chat/MessageItem';
+import TheaterRecordBlock from '../components/chat/TheaterRecordBlock';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import Modal from '../components/os/Modal';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
@@ -123,6 +124,37 @@ const Chat: React.FC = () => {
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
     const safeMessages = useMemo(() => sanitizeChatMessages(messages), [messages]);
+
+    /**
+     * 剧场记录（10-07 21:10 暮色要的）。
+     *
+     * 剧场的话存在**同一张表**里，但两头各切一刀：
+     *   - 组上下文（`utils/chatPrompts.ts`）不过滤 → 全塞进请求，剧场一复读就把上下文占满
+     *   - 显示（下面的 `displayMessages`）过滤掉 → 界面上一个字都看不见，也就删不掉
+     *
+     * 所以单独捞一份出来，在聊天流最上面收成一块（`TheaterRecordBlock`），
+     * 能单条改、能单条删、能整块删。**删掉的那部分上下文也一起没了**（读的是同一张表）。
+     *
+     * ⚠️ 这里要用 `getMessagesByCharId(..., true)`（全量、含已被记忆宫殿处理的）：
+     * 剧场的话每存一条就跑一次记忆宫殿，不带 true 的话那些早被处理过的压根捞不回来 ——
+     * 恰恰是他要清的那些。
+     */
+    const [theaterMsgs, setTheaterMsgs] = useState<Message[]>([]);
+    const loadTheaterMsgs = useCallback(async (charId?: string) => {
+        if (!charId) { setTheaterMsgs([]); return; }
+        try {
+            const all = await DB.getMessagesByCharId(charId, true);
+            setTheaterMsgs(
+                all.filter((m: any) => m.metadata?.source === 'theater')
+                    .sort((a: any, b: any) => a.timestamp - b.timestamp)
+            );
+        } catch (e) {
+            console.warn('🎬 捞剧场记录失败:', e);
+        }
+    }, []);
+    // ⚠️ 这一句**必须**放到下面 `char` 定义之后才能写：char 是 const，
+    //   在它定义之前引用就是 TDZ 崩溃（`Cannot access 'char' before initialization`）。
+    //   第一版就写在 state 旁边，typecheck 报了 TS2448 —— 项目里同款已经炸过三次。
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -227,6 +259,9 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+
+    // 剧场记录跟着角色换而重捞（state 和 loadTheaterMsgs 定义在上面，这里才敢碰 char）
+    useEffect(() => { loadTheaterMsgs(char?.id); }, [char?.id, loadTheaterMsgs]);
     charRef.current = char; // Keep ref in sync for async callbacks
     // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
@@ -2420,10 +2455,27 @@ if (keepN > 0) {
         await DB.deleteMessage(deletedId);
         discardVoiceForMessages([deletedId]);
         setMessages(prev => prev.filter(m => m.id !== deletedId));
+        // 剧场记录是单独捞的那份，聊天流那边删不到它（displayMessages 早就过滤掉了）
+        setTheaterMsgs(prev => prev.filter(m => m.id !== deletedId));
         setTotalMsgCount(prev => Math.max(0, prev - 1));
         setModalType('none');
         setSelectedMessage(null);
         addToast('消息已删除', 'success');
+    };
+
+    /** 剧场记录整块清掉。⚠️ 这才是真正解封上下文的动作 —— 上下文读的是同一张表 */
+    const handleDeleteAllTheater = async () => {
+        const ids = theaterMsgs.map(m => m.id).filter((x): x is number => typeof x === 'number');
+        if (!ids.length) { setTheaterMsgs([]); return; }
+        try {
+            await DB.deleteMessages(ids);
+        } catch (e) {
+            console.warn('🎬 删剧场记录失败:', e);
+        }
+        setTheaterMsgs([]);
+        setMessages(prev => prev.filter(m => !ids.includes(m.id)));
+        setTotalMsgCount(prev => Math.max(0, prev - ids.length));
+        addToast(`已删掉 ${ids.length} 条剧场记录，上下文也清干净了`, 'success');
     };
 
     const confirmEditMessage = async () => {
@@ -2437,6 +2489,8 @@ if (keepN > 0) {
         console.warn('DB 更新失败，仅更新内存:', e);
     }
     setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+    // 剧场那份是单独捞的，同步一下，不然改完把块收起来再打开还是旧的
+    setTheaterMsgs(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
     setModalType('none');
     setSelectedMessage(null);
     addToast('消息已修改', 'success');
@@ -2776,6 +2830,48 @@ if (keepN > 0) {
         [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+
+    /**
+     * 渲染一条消息 —— **主聊天和「剧场记录」块共用这一份**。
+     *
+     * ⚠️ 别在剧场那边再抄一遍 MessageItem 的 props：那份清单有二十几个字段
+     * （语音、翻译、多选、头像尺寸…），抄一份以后主聊天加字段就会漏掉剧场。
+     * 剧场记录（TheaterRecordBlock）只管折叠壳，长什么样一律走这个函数。
+     *
+     * 写普通函数而不是 useCallback：两个调用点都不把它当依赖用
+     *（剧场的 useMemo 只依赖 msgs），每次渲染重建个闭包没有代价。
+     */
+    const renderMsgItem = (m: Message, isFirst: boolean, isLast: boolean, k: React.Key) => (
+        <MessageItem
+            key={k}
+            msg={m}
+            isFirstInGroup={isFirst}
+            isLastInGroup={isLast}
+            activeTheme={activeTheme}
+            charAvatar={char.avatar}
+            charName={char.name}
+            userAvatar={userProfile.avatar}
+            onLongPress={handleMessageLongPress}
+            selectionMode={selectionMode}
+            isSelected={selectedMsgIds.has(m.id)}
+            onToggleSelect={toggleMessageSelection}
+            translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
+            isShowingTarget={showingTargetIds.has(m.id)}
+            onTranslateToggle={handleTranslateToggle}
+            voiceData={voiceDataMap[m.id]}
+            voiceLoading={voiceLoading.has(m.id)}
+            isVoicePlaying={playingMsgId === m.id}
+            onPlayVoice={() => handlePlayVoice(m.id)}
+            avatarShape={osTheme.chatAvatarShape}
+            avatarSize={osTheme.chatAvatarSize}
+            avatarMode={osTheme.chatAvatarMode}
+            bubbleVariant={osTheme.chatBubbleStyle}
+            messageSpacing={osTheme.chatMessageSpacing}
+            showTimestamp={osTheme.chatShowTimestamp}
+            onMcdSendCart={handleMcdSendCart}
+            onMcdCandidate={handleMcdCandidate}
+        />
+    );
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -3335,6 +3431,19 @@ if (keepN > 0) {
                     </div>
                 )}
 
+                {/* 剧场记录（10-07 21:10 暮色要的）。
+                    放在聊天流最上面而不是按时间插回原位 ——
+                    剧场是对话的旁支不是主线，而且这些消息被记忆宫殿处理过之后
+                    时间轴跟主聊天对不齐，硬插容易错位；放最上面一进聊天就能看见、就能清。
+                    displayMessages 里本来就过滤掉了 source === 'theater'，两边不会重复显示。 */}
+                {theaterMsgs.length > 0 && (
+                    <TheaterRecordBlock
+                        msgs={theaterMsgs}
+                        renderMessage={(m, f, l) => renderMsgItem(m, f, l, m.id)}
+                        onDeleteAll={handleDeleteAllTheater}
+                    />
+                )}
+
                 {displayMessages.map((m, i) => {
                     // 防御：sanitizeChatMessages 应已过滤 null，但渲染时再兜一道。
                     // 之前 m.role 在 MessageItem 里没守卫，遇到 null 直接白屏。
@@ -3399,37 +3508,7 @@ if (keepN > 0) {
                     };
                     const breaksWithPrevious = calcBreaks(m, prevMessage);
                     const breaksWithNext = calcBreaks(nextMessage, m);
-                    return (
-                        <MessageItem
-                            key={m.id || i}
-                            msg={m}
-                            isFirstInGroup={breaksWithPrevious}
-                            isLastInGroup={breaksWithNext}
-                            activeTheme={activeTheme}
-                            charAvatar={char.avatar}
-                            charName={char.name}
-                            userAvatar={userProfile.avatar}
-                            onLongPress={handleMessageLongPress}
-                            selectionMode={selectionMode}
-                            isSelected={selectedMsgIds.has(m.id)}
-                            onToggleSelect={toggleMessageSelection}
-                            translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
-                            isShowingTarget={showingTargetIds.has(m.id)}
-                            onTranslateToggle={handleTranslateToggle}
-                            voiceData={voiceDataMap[m.id]}
-                            voiceLoading={voiceLoading.has(m.id)}
-                            isVoicePlaying={playingMsgId === m.id}
-                            onPlayVoice={() => handlePlayVoice(m.id)}
-                            avatarShape={osTheme.chatAvatarShape}
-                            avatarSize={osTheme.chatAvatarSize}
-                            avatarMode={osTheme.chatAvatarMode}
-                            bubbleVariant={osTheme.chatBubbleStyle}
-                            messageSpacing={osTheme.chatMessageSpacing}
-                            showTimestamp={osTheme.chatShowTimestamp}
-                            onMcdSendCart={handleMcdSendCart}
-                            onMcdCandidate={handleMcdCandidate}
-                        />
-                    );
+                    return renderMsgItem(m, breaksWithPrevious, breaksWithNext, m.id || i);
                 })}
                 
                 {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (

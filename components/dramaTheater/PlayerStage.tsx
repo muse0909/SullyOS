@@ -42,6 +42,7 @@ import {
   Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, CornersIn, SkipForward,
   ArrowCounterClockwise, Broom, FilmSlate, X,
 } from '@phosphor-icons/react';
+import { readSavedPageZoom, clampPageZoom } from '../../utils/pageZoom';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
 export function fmtTime(s: number): string {
@@ -70,8 +71,12 @@ type Props = {
   onNext: () => void;
   /** 打开选集抽屉（暮色 10-07：「选集放最右」） */
   onOpenEpisodes?: () => void;
-  /** 收起浮窗（10-07 16:53：左上角加关闭按钮）。收起时视频会暂停 */
-  onCloseFloat?: () => void;
+  /** 关闭播放（10-07 17:xx 更正）。**不是**收起界面 —— 视频停掉、播放器关掉，
+   *  落点由外层决定（现在回到选集页，点下一集一次就能播）。
+   *  之前那版是「收起 = 暂停 + 藏起来，外层再自己加一个『打开播放器』按钮」，
+   *  暮色的原话：「那个关闭按钮不是要把播放器收起来，是关闭播放，
+   *  你不要自己灵机一动行吗？」—— 关闭和收起是两件事，额外发明的入口也一并撤了。 */
+  onClosePlay?: () => void;
   /** 拖完进度条 */
   onSeek?: (t: number) => void;
   /** 媒体本身放不出来（比如手机本地文件地址被内核拒了），交给外层换一条路 */
@@ -105,6 +110,8 @@ type Props = {
 const RATIO_KEY = 'theater_ratio';
 const SIZE_KEY = 'theater_float_size';
 const POS_KEY = 'theater_float_pos';
+/** 位置存档的格式版本。2 = 存比例；没有版本号的是老格式（存像素） */
+const POS_V = 2;
 
 function readRatio(title?: string): number {
   if (!title) return 0;
@@ -168,14 +175,14 @@ const INPUT_GUARD = 118;
 /** 边缘留一点，手指好抓 */
 const EDGE = 6;
 /**
- * 比例还不知道时，用这个高度反算宽度。
+ * 比例还不知道时，用屏高的这个比例反算宽度。
  *
  * 为什么不用「先按横版猜一个大宽度」：竖版剧第一次播会先变成一个又高又窄的
  * 巨大条（宽 400 × 高 711），拿到真实比例再缩回去 —— 跳一次很难看。
- * 改成**先把高度钉在 340px**，横竖两种比例算出来的宽度都在合理范围内，
- * 跳变就只剩一点点。
+ * 改成**先把高度钉在屏高的一半以内**（原来是写死的 340px），横竖两种比例算出来的
+ * 宽度都在合理范围内，跳变就只剩一点点；写成屏高比例也顺带跟上了页面缩放。
  */
-const GUESS_H = 340;
+const GUESS_H_RATIO = 0.42;
 const GUESS_RATIO = 1.2;
 /** 长按多久算「在拖」，不是点一下 */
 const LONG_PRESS_MS = 320;
@@ -185,10 +192,42 @@ const DRAG_SLOP = 8;
 /** 只有有限的时长才算数（在线流时长是 Infinity，判真会把 Infinity 存进 currentTime） */
 const durOk = (x: number) => Number.isFinite(x) && x > 0;
 
+/**
+ * 视口尺寸 —— **换算到「页面缩放之前」的坐标系**。
+ *
+ * ⚠️⚠️ 页面缩放（设置页那个滑条，`utils/pageZoom.ts`）是把 `style.zoom` 挂在 `<html>` 上的，
+ * 整页连 `position: fixed` 元素一起乘。所以这两个数不是一套坐标系：
+ *
+ *   - `window.innerWidth / innerHeight` 报的是**没缩放**的可视尺寸
+ *   - `left / top / width / height` 是**缩放前**的坐标，落到屏幕上还要再乘一遍 zoom
+ *
+ * 不换算就会出 10-07 那个现象（暮色页面缩放 85%）：
+ *   - 拖到最右边还空一条 —— 边界按 412 算，屏幕上实际是 412 × 0.85 = 350
+ *   - 「大」档也没屏幕宽 —— 92% 又被乘了 0.85，实际只有 78%
+ *   - 全屏反而正常 —— 全屏用的是 `left/right/top/bottom: 0`，按容器铺，不吃这套换算
+ *
+ * 所以先把可视尺寸**除以**缩放倍数，后面所有百分比都在缩放前的坐标系里算，
+ * 渲染出来正好等于「可视尺寸 × 百分比」。
+ */
+function viewport(): { vw: number; vh: number } {
+  if (typeof window === 'undefined') return { vw: 400, vh: 800 };
+  let z = 1;
+  try {
+    z = clampPageZoom(readSavedPageZoom()) / 100;
+  } catch {
+    z = 1;
+  }
+  if (!(z > 0.2 && z < 5)) z = 1;
+  return {
+    vw: Math.round(window.innerWidth / z),
+    vh: Math.round(window.innerHeight / z),
+  };
+}
+
 const PlayerStage: React.FC<Props> = ({
   src, episode, title, onEnded, onTime,
   loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext,
-  onOpenEpisodes, onCloseFloat, onSeek, onMediaError, onMediaReady, onVideoEl, resumeAt, p,
+  onOpenEpisodes, onClosePlay, onSeek, onMediaError, onMediaReady, onVideoEl, resumeAt, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   // 第 3 步：把元素交给外层抓帧。回调 ref 每次都返回 null 再返回 el，
@@ -233,15 +272,28 @@ const PlayerStage: React.FC<Props> = ({
    *
    * 因为大小切档时宽度会变 —— 存左上角的话，从「大」切到「小」会往左跳一大截；
    * 存中心点则四周对称地缩，放着不动才符合直觉（暮色 10-07 15:26 定的）。
+   *
+   * ⚠️ 存的是**占屏比例**（0~1），不是像素（10-07 17:xx 改的）。
+   *
+   * 像素的含义跟着页面缩放变：85% 时存下的 210，现在当成缩放前坐标解出来落在 178，
+   * 位置就整体偏了。既然这次为缩放把坐标系统一了，存档也跟着换成比例 ——
+   * 以后改缩放、换手机、横竖屏切换都还是同一个位置。
+   *
+   * 老存档（没版本号的像素）按**没缩放的物理可视尺寸**换算一次，那正好是它当初摆的地方，
+   * 换完第一次打开不跳。存回去就成了比例格式。
    */
   const [center, setCenter] = useState<{ cx: number; cy: number }>(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const { vw, vh } = viewport();
     try {
       const raw = localStorage.getItem(POS_KEY);
       if (raw) {
         const o = JSON.parse(raw);
-        if (typeof o?.cx === 'number' && typeof o?.cy === 'number') return { cx: o.cx, cy: o.cy };
+        if (typeof o?.cx === 'number' && typeof o?.cy === 'number') {
+          if (o.v === POS_V) return { cx: o.cx * vw, cy: o.cy * vh };
+          const pw = typeof window !== 'undefined' ? window.innerWidth || vw : vw;
+          const ph = typeof window !== 'undefined' ? window.innerHeight || vh : vh;
+          return { cx: (o.cx / pw) * vw, cy: (o.cy / ph) * vh };
+        }
       }
     } catch { /* 读不到就默认位置 */ }
     return { cx: vw / 2, cy: vh / 2 - 40 };
@@ -272,8 +324,8 @@ const PlayerStage: React.FC<Props> = ({
    * **根本没有输入框**（没邀请角色时聊天区不渲染）。
    */
   const geo = useMemo(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    // ⚠️ 必须用 viewport()（换算过页面缩放），直接用 window.innerWidth 会整体偏小
+    const { vw, vh } = viewport();
     const known = ratio > 0.1;
     const r = known ? ratio : GUESS_RATIO;
     const pct = known && ratio >= 1 ? SIZE_PCT_LANDSCAPE : SIZE_PCT_PORTRAIT;
@@ -281,7 +333,7 @@ const PlayerStage: React.FC<Props> = ({
     let h = Math.round(w / r);
     // 比例还不知道：先把高度钉住再反算宽度，避免竖版剧第一次播就蹦出一个巨大窄条
     if (!known) {
-      h = GUESS_H;
+      h = Math.round(vh * GUESS_H_RATIO);
       w = Math.round(h * r);
     }
     // 竖屏手机上竖版大档可能比屏还高 —— 收窄，**不截断**（截断会破坏比例）
@@ -312,10 +364,13 @@ const PlayerStage: React.FC<Props> = ({
   // 比例第一次读出来 / 档位换了之后重新夹一次（尺寸变了可能越界）
   useEffect(() => { setCenter((c) => clampCenter(c.cx, c.cy, true)); }, [clampCenter]);
 
-  // 位置存档（防抖，别拖一下写一次）
+  // 位置存档（防抖，别拖一下写一次）。存比例，见上面读存档那段注释
   useEffect(() => {
     const t = window.setTimeout(() => {
-      try { localStorage.setItem(POS_KEY, JSON.stringify(center)); } catch { /* 存不下就算了 */ }
+      const { vw, vh } = viewport();
+      try {
+        localStorage.setItem(POS_KEY, JSON.stringify({ v: POS_V, cx: center.cx / vw, cy: center.cy / vh }));
+      } catch { /* 存不下就算了 */ }
     }, 350);
     return () => window.clearTimeout(t);
   }, [center]);
@@ -471,9 +526,11 @@ const PlayerStage: React.FC<Props> = ({
   }, [center.cx, center.cy, cancelHide]);
 
   const onPressStart = (e: React.PointerEvent) => {
-    if (full) return;
     press.current = { x: e.clientX, y: e.clientY, bx: center.cx, by: center.cy, id: e.pointerId, dragging: false };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住就靠冒泡 */ }
+    // 全屏里**不启动拖动**（框是钉死满屏的，挪一下就出去了），但点画面照样要能唤出工具条 ——
+    // 之前这里直接 return，全屏里点哪儿都没反应，工具条一藏就再也回不来。
+    if (full) return;
     if (lpTimer.current) window.clearTimeout(lpTimer.current);
     lpTimer.current = window.setTimeout(() => startDrag(e), LONG_PRESS_MS);
   };
@@ -499,7 +556,7 @@ const PlayerStage: React.FC<Props> = ({
       scheduleHide();
       return;
     }
-    if (!full) toggleBar();
+    toggleBar();
   };
 
   /**
@@ -602,14 +659,14 @@ const PlayerStage: React.FC<Props> = ({
         }}
       />
 
-      {/* 关闭按钮（10-07 16:53）。放在左上角，**独立于两条工具条** ——
-          它是唯一「不按播放会怎么样」的按钮，工具条藏了也得能回来。
+      {/* 关闭播放（10-07 17:xx 更正）。放在左上角，**独立于两条工具条** ——
+          它是唯一「不按播放会怎么样」的按钮，工具条藏了也得能点得到。
           10-07 规则：取消/关闭也是胶囊，不光秃秃一个 ×。 */}
-      {!full && onCloseFloat && (
+      {!full && onClosePlay && (
         <button
-          onClick={onCloseFloat}
+          onClick={onClosePlay}
           className="absolute z-40 left-1.5 top-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-black/45 text-white/90 active:scale-90"
-          title="收起播放器"
+          title="关闭播放"
         >
           <X size={12} weight="bold" />
         </button>
@@ -812,9 +869,12 @@ const PlayerStage: React.FC<Props> = ({
               onClick={() => {
                 const next = !full;
                 setFull(next);
+                // 进/出全屏都是「显示一下，3 秒后自己藏」——
+                // 之前进全屏那一下把隐藏计时 cancel 掉就不管了，
+                // 于是全屏里进度条一直杵在下面不动（暮色 10-07：「全屏时进度条不隐藏了」）。
                 cancelHide();
                 setBarOn(true);
-                if (!next) scheduleHide();
+                scheduleHide();
               }}
               className={`shrink-0 w-7 h-7 flex items-center justify-center active:scale-90 ${full ? 'text-sky-300' : ''}`}
               title={full ? '退出全屏' : '全屏'}

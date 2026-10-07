@@ -1860,21 +1860,27 @@ const TheaterApp: React.FC = () => {
   const finishTheaterSession = useCallback(async () => {
     if (!char?.id) return;
     try {
-      const all = await DB.getMessagesByCharId(char.id, true);
-      const rows = all
-        .filter((m: any) => m.metadata?.source === 'theater')
+      const all = (await DB.getMessagesByCharId(char.id, true))
+        .slice()
         .sort((a: any, b: any) => a.timestamp - b.timestamp);
 
-      // 上一次「结束」之后的就是这一次（连着看几集也算一场）
-      let start = 0;
-      for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i]?.metadata?.theaterEnd) { start = i + 1; break; }
+      // 上一次「一起看完了」之后的剧场对话就是这一次（连着看几集也算一场）。
+      // ⚠️ 结束记录本身**不带** source（见下面的 saveMessage 注释），
+      //    所以不能只按 source==='theater' 过滤完再找分界 —— 那会把结束记录一起漏掉。
+      let lastEndIdx = -1;
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (all[i]?.metadata?.isTheaterMemory) { lastEndIdx = i; break; }
       }
-      const seg = rows.slice(start).filter((m: any) => m.role !== 'system' && (m.content || '').trim());
+      const seg = all
+        .slice(lastEndIdx + 1)
+        .filter((m: any) => m.metadata?.source === 'theater' && m.role !== 'system' && (m.content || '').trim());
       if (!seg.length) return; // 这场一句没说，别留空记录
 
-      // 剧名集数用最后一条的标记（「《xxx》第N集」）
-      const tag = seg[seg.length - 1]?.metadata?.theaterTag || '剧场';
+      // 剧名集数从最后一条的标记里拆（「《xxx》第N集」）
+      const tag = String(seg[seg.length - 1]?.metadata?.theaterTag || '');
+      const mm = tag.match(/^《(.+?)》第(\d+)集$/);
+      const title = mm?.[1] || tag || '剧场';
+      const ep = Number(mm?.[2]) || currentEp || 1;
 
       // 只挑它说过的、相邻不重复的，最多 5 句；每句太长掐掉
       const said: string[] = [];
@@ -1886,27 +1892,41 @@ const TheaterApp: React.FC = () => {
       }
 
       const lines = [
-        `[剧场结束]${tag}`,
+        `和${char.name}一起看完了《${title}》第${ep}集。`,
         '',
-        '你们刚才在剧场里聊了这些：',
+        '刚才在剧场里聊了这些：',
         ...said.slice(-5).map((t) => `「${t}」`),
         '',
         '现在回到主聊天了。',
       ].join('\n');
 
+      // ⚠️⚠️ **不要写 `source: 'theater'`** —— 那样主聊天根本看不见它。
+      // 照抄见面的剧情剧院（`utils/storyTheater.ts` 的 syncStoryToMainMemory）：
+      // 同样一张表、同样不带来源字段，只用 `isTheaterMemory` 标记，
+      // 主聊天靠这个标记渲染成折叠卡片（MessageItem 里那个分支）。
+      //
+      // 我第一版打了 `source: 'theater'`，结果被主聊天
+      // `.filter(m => m.metadata?.source !== 'theater')` 挡掉，
+      // 只好自己另做一个块来捞 —— 那块自己又冒出一堆毛病，还把「整块删」这个能力丢了。
       await DB.saveMessage({
         charId: char.id,
-        role: 'system',
+        role: 'assistant',
         type: 'text',
         content: lines,
-        metadata: { source: 'theater', theaterTag: tag, theaterEnd: true },
+        metadata: {
+          isTheaterMemory: true,
+          theaterTitle: title,
+          theaterEpisode: ep,
+          theaterEnd: true,
+          generatedAt: Date.now(),
+        },
       });
-      diag('写了剧场结束记录', { 条数: seg.length, 引用: said.length });
+      diag("写了剧场结束记录", { 条数: seg.length, 引用: said.length });
     } catch (e: any) {
       // 收尾失败不许挡着退出去 —— 用户要点返回，不能因为写记录失败卡住
       diag('写剧场结束记录失败', { 报错: String(e?.message || e) });
     }
-  }, [char?.id]);
+  }, [char?.id, char?.name, currentEp]);
 
   /** 离开剧场 app 回主聊天 —— 收尾 + 真的走 */
   const leaveTheater = useCallback(() => {

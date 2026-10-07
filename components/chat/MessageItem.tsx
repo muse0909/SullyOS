@@ -46,9 +46,11 @@ const ThoughtFold: React.FC<{ thought: string }> = ({ thought }) => {
 //   - 展开后显示角色第一人称回忆内容(200-500 字)
 const StoryTheaterMemoryCard: React.FC<{
     theaterTitle: string;
+    /** 卡片标题。给了就用它（剧场那张要写「第几集 一起看完了」），不给走老文案 */
+    cardTitle?: string;
     content: string;
     generatedAt?: number;
-}> = ({ theaterTitle, content, generatedAt }) => {
+}> = ({ theaterTitle, cardTitle, content, generatedAt }) => {
     const [expanded, setExpanded] = useState(false);
     if (!content) return null;
     const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
@@ -70,7 +72,7 @@ const StoryTheaterMemoryCard: React.FC<{
             >
                 <FilmReel size={13} weight="fill" style={{ color: '#a78bfa', flexShrink: 0 }} />
                 <span className="text-[11px] font-bold tracking-wider flex-1 text-left" style={{ color: '#8b7aaa' }}>
-                    {theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆'}
+                    {cardTitle || (theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆')}
                 </span>
                 {timeText && (
                     <span className="text-[9px]" style={{ color: 'rgba(139,122,170,0.55)' }}>
@@ -1710,6 +1712,30 @@ const MessageItem = React.memo(({
         return commonLayout(
             <StoryTheaterMemoryCard
                 theaterTitle={memoryMeta.theaterTitle || ''}
+                content={displayContent}
+                generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+            />
+        );
+    }
+
+    /**
+     * 剧场「一起看完了」卡片（10-07 23:10 暮色让照抄见面的剧情剧院）。
+     *
+     * 跟上面那张唯一的区别就是标题文案 —— 结构、外框、折叠全部复用，
+     * 因为它们本来就是同一件事：剧场结束后把这一场写进主聊天的一张回忆卡。
+     *
+     * ⚠️ 这条消息**不能带 `source: 'theater'`**：主聊天
+     * `.filter(m => m.metadata?.source !== 'theater')` 会把它挡掉，
+     * 写了就等于没写（10-07 晚上绕了两轮才明白，见 apps/TheaterApp.tsx finishTheaterSession）。
+     */
+    const isTheaterMemory = !isUser && (m as any).metadata?.isTheaterMemory === true;
+    if (isTheaterMemory && displayContent) {
+        const memoryMeta = (m as any).metadata || {};
+        const ep = Number(memoryMeta.theaterEpisode);
+        return commonLayout(
+            <StoryTheaterMemoryCard
+                theaterTitle={memoryMeta.theaterTitle || '剧场'}
+                cardTitle={`《${memoryMeta.theaterTitle || '剧场'}》${ep > 0 ? `第${ep}集` : ''} 一起看完了`}
                 content={displayContent}
                 generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
             />

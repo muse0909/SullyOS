@@ -368,6 +368,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-07 | 剧场记录在主聊天里收成一块（塞进上下文却在界面上看不见、没法删）+ 顺带踩了 `char` TDZ | [`changelogs/2026-10-07-theater-record-block-in-chat.md`](./changelogs/2026-10-07-theater-record-block-in-chat.md) |
 | 2026-10-07 | 剧场：拖到右边贴不了边（页面缩放两套坐标系）+ 关闭按钮改成「关闭播放」（撤掉自作主张的「打开播放器」）+ 全屏工具条会藏 | [`changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md`](./changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md) |
 | 2026-10-07 | 剧场：播放器改悬浮窗（竖版小/键盘白边/全屏按钮不管用是同一个病根）+ 顺手修切集后听不见声音 | [`changelogs/2026-10-07-theater-player-floating-window.md`](./changelogs/2026-10-07-theater-player-floating-window.md) |
 | 2026-10-07 | 剧场：没邀请就压根不接进来（补完昨天做的一半）+ 空回兜底写错导致「同一句话三遍」 | [`changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md`](./changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md) |

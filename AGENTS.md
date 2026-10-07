@@ -304,6 +304,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 - **不开梯子时空回/慢**（关梯子几百秒或空回，正常 30 秒）—— 2026-06-27 暂放，临时方案是用中转站 API
 - iOS 软键盘弹起时的 `100vh` 问题（Capacitor WebView 已知坑）—— 用 `Portal` + safe-area 适配
 - **`backdrop-filter` 会吃 `position: fixed`**（Chromium 完整实现 spec，Safari 实现行为不一致）—— 任何 fixed 弹窗的祖先链有 `backdrop-filter` / `transform` / `filter` / `perspective` 等任一属性时，弹窗应用 `createPortal` 挂到 `document.body`，否则 Android Chrome 上定位会乱，Safari 可能看着"正常"误导判断。详见 `changelogs/2026-06-28-buff-popup-portal-fix.md`
+- **页面缩放会让「自己算像素」的固定定位元素偏**（`utils/pageZoom.ts` 把 `style.zoom` 挂在 `<html>` 上，整页连 `fixed` 一起乘）—— `window.innerWidth/innerHeight` 报的是**没缩放**的尺寸，而 `left/top/width/height` 是**缩放前**的坐标，两边不是一套数。凡是**用 `0` / 百分比铺满**的不会偏（所以全屏一直是好的），**自己算像素**的必偏 `(1 - zoom)`。修法：先 `Math.round(window.innerWidth / 缩放倍数)` 换到缩放前的坐标系再算。正确姿势见 `components/dramaTheater/PlayerStage.tsx` 的模块级 `viewport()`。位置之类的存档也建议存**占屏比例**而不是像素，否则改一次缩放位置就跳。
 
 ### 6.3 调试
 - 暮色**不**本地跑 dev——所有调试都靠 Vercel 部署链接
@@ -367,6 +368,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-07 | 剧场：拖到右边贴不了边（页面缩放两套坐标系）+ 关闭按钮改成「关闭播放」（撤掉自作主张的「打开播放器」）+ 全屏工具条会藏 | [`changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md`](./changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md) |
 | 2026-10-07 | 剧场：播放器改悬浮窗（竖版小/键盘白边/全屏按钮不管用是同一个病根）+ 顺手修切集后听不见声音 | [`changelogs/2026-10-07-theater-player-floating-window.md`](./changelogs/2026-10-07-theater-player-floating-window.md) |
 | 2026-10-07 | 剧场：没邀请就压根不接进来（补完昨天做的一半）+ 空回兜底写错导致「同一句话三遍」 | [`changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md`](./changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md) |
 | 2026-10-07 | 剧场：答非所问 + 没人设像旁白（病根是画面说明每 1.2 秒当成一句用户发言）+ `see is not defined` 崩溃 + 空气泡 + 邀请按钮换位 + `typecheck:theater` 范围漏了 hooks | [`changelogs/2026-10-07-theater-frame-text-order-and-persona.md`](./changelogs/2026-10-07-theater-frame-text-order-and-persona.md) |

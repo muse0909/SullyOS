@@ -1,17 +1,46 @@
 /**
- * 剧场 · 播放器（自绘控制条）
+ * 剧场 · 播放器（**悬浮窗**，暮色 2026-10-07 15:26 定的）
  *
- * 为什么不用 <video controls>：
- *   暮色要「在音量图标旁边加一个下一集的按钮」。原生 controls 是安卓 WebView 自己画的，
- *   页面里没有任何 API 能往它内部插按钮。想放进去只能自己画一条。
- *   顺带那条视频下面多余的蓝色进度条也就一起没了（暮色 10-05 明确要删）。
+ * ## 为什么改成悬浮窗
  *
- * 顺带的好处：第 3 步要往画布上取视频帧喂给 live，自己画的条不影响取帧。
+ * 原来它是页面流里的一个块（`shrink-0 relative`），高度按
+ * 「宽度撑满 → 除以视频比例 → 最高不超过 42vh/64vh」算。这套算法有个致命的地方：
+ *
+ * **宽度不是自己定的，是被高度倒推出来的。**
+ * 竖屏剧比例 0.56，最高 354px 高 → 宽度只能是 354 × 0.56 ≈ 200px，
+ * 整个容器缩成 200px 宽居中放着，两侧露出来的是**页面白底**（10-07 真机截图）。
+ * 横屏剧比例 1.78，354 × 1.78 = 630 > 手机宽度，所以上限用不上，宽度照旧撑满 —— 所以
+ * 「横版好好的、竖版特别小」，同一个根因两种表现。
+ *
+ * 软键盘一弹，可视屏高变小 → 那个上限跟着变小 → 连**横版剧**都被压窄、两侧露白边。
+ * 同一个根因的第三种表现。
+ *
+ * 暮色的方案是：**播放器变成悬浮窗，背景是全屏聊天页。**
+ * 比例不变、大小只调宽度、位置随便拖。这套算法里没有「高度倒推宽度」，
+ * 上面三种表现一起消失。
+ *
+ * ## 骨架是照抄共读的（apps/CoReadFloatingWindow.tsx）
+ *
+ * 那边已经趟过两个坑：
+ *   1. 必须 `createPortal(…, document.body)` —— 手机外壳那层有 overflow-hidden
+ *      和 transform，fixed 元素在里面会被裁（AGENTS.md §6.2）。
+ *   2. 拖动用 pointer 事件 + `touchAction: 'none'`，不是 mouse/touch 事件。
+ *
+ * ## ⚠️ 全屏切换**必须复用同一个 DOM 节点**
+ *
+ * 全屏和浮窗是**同一个 div 的同一套 style**，只改值不换节点。
+ * 换成两个分支各渲染一套的话，`key={src}` 相同但父节点换了，video 还是会被重建 ———
+ * 而声音采集走的是 `createMediaElementSource(video)`，**同一个 video 元素只能接一次**，
+ * 接第二次直接抛异常。换节点 = 声音当场断掉，而且没有任何报错。
+ *
+ * 所以下面根 div 上没有任何条件渲染包着 video。
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, SkipForward, ArrowCounterClockwise, Broom,
+  Play, Pause, SpeakerHigh, SpeakerSlash, CornersOut, CornersIn, SkipForward,
+  ArrowCounterClockwise, Broom, FilmSlate,
 } from '@phosphor-icons/react';
 import type { Palette } from '../../utils/dramaTheater/theme';
 
@@ -25,10 +54,8 @@ export function fmtTime(s: number): string {
 type Props = {
   src: string;
   episode: number;
-  /** 剧名 —— 用来记这部剧的视频比例，好让加载页和播放页一样高 */
+  /** 剧名 —— 用来记这部剧的视频比例，好让第一次播也知道该多高 */
   title?: string;
-  cinema: boolean;
-  setCinema: (v: boolean) => void;
   onEnded: () => void;
   onTime: (position: number, duration: number) => void;
   loading: boolean;
@@ -41,6 +68,8 @@ type Props = {
   onClearAll?: () => void;
   hasNext: boolean;
   onNext: () => void;
+  /** 打开选集抽屉（暮色 10-07：「选集放最右」） */
+  onOpenEpisodes?: () => void;
   /** 拖完进度条 */
   onSeek?: (t: number) => void;
   /** 媒体本身放不出来（比如手机本地文件地址被内核拒了），交给外层换一条路 */
@@ -67,13 +96,13 @@ type Props = {
  *
  * 为什么记：横屏剧（16:9）和竖屏剧（9:16）自然高度差一倍多，而 `<video>`
  * 在元数据读出来之前**没有固有高度**（真正的原因不是 max-h，是这个）。
- * 不知道比例就没法在加载页把高度撑对，加载页和播放页必然不一样高 ——
- * 那正是暮色 10-05 说的「你看看图上两个高度差很多」。
+ * 不知道比例就没法在第一次播的时候给对高度。
  *
- * 同一部剧所有集比例是一样的，所以第一次播完记住之后，
- * 之后每次进播放页都能提前算准，加载页和播放页**一模一样高、零跳变**。
+ * 同一部剧所有集比例是一样的，所以第一次播完记住之后，之后都能提前算准。
  */
 const RATIO_KEY = 'theater_ratio';
+const SIZE_KEY = 'theater_float_size';
+const POS_KEY = 'theater_float_pos';
 
 function readRatio(title?: string): number {
   if (!title) return 0;
@@ -92,19 +121,43 @@ function saveRatio(title: string | undefined, ratio: number): void {
     const map = JSON.parse(localStorage.getItem(RATIO_KEY) || '{}');
     if (Math.abs(Number(map[title] || 0) - ratio) < 0.01) return;
     map[title] = Math.round(ratio * 1000) / 1000;
-    // 只留最近 30 部，别让这个 key 无限长
     const keys = Object.keys(map);
-    if (keys.length > 30) {
-      keys.slice(0, keys.length - 30).forEach((k) => delete map[k]);
-    }
+    if (keys.length > 30) keys.slice(0, keys.length - 30).forEach((k) => delete map[k]);
     localStorage.setItem(RATIO_KEY, JSON.stringify(map));
   } catch { /* 存不下就用默认值，不影响播放 */ }
 }
 
+/** 三档大小 —— **按宽度**，高度让比例自己算（暮色 10-07：「比例不变，大小只调整宽度」） */
+type SizeMode = 'small' | 'medium' | 'large';
+const SIZE_PCT: Record<SizeMode, number> = { small: 48, medium: 70, large: 92 };
+const SIZE_LABEL: Record<SizeMode, string> = { small: '小', medium: '中', large: '大' };
+const NEXT_SIZE: Record<SizeMode, SizeMode> = { small: 'medium', medium: 'large', large: 'small' };
+
+/** 顶部留出状态栏 */
+const SAFE_TOP = 34;
+/**
+ * 底部留出聊天输入框的高度。
+ *
+ * 暮色 10-07 15:26 选的 B 方案：浮窗压住输入框时自动往上顶，
+ * 存档时也错开 —— 拖一次歪了就得手动救一次，太烦。
+ */
+const INPUT_GUARD = 118;
+/** 边缘留一点，手指好抓 */
+const EDGE = 6;
+/** 比例还不知道时先按这个算（介于横竖之间，猜错的跳变最小） */
+const GUESS_RATIO = 1.2;
+/** 长按多久算「在拖」，不是点一下 */
+const LONG_PRESS_MS = 320;
+/** 挪动超过这么多像素也算在拖（不用等满时间，更跟手） */
+const DRAG_SLOP = 8;
+
+/** 只有有限的时长才算数（在线流时长是 Infinity，判真会把 Infinity 存进 currentTime） */
+const durOk = (x: number) => Number.isFinite(x) && x > 0;
+
 const PlayerStage: React.FC<Props> = ({
-  src, episode, title, cinema, setCinema, onEnded, onTime,
-  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext, onSeek,
-  onMediaError, onMediaReady, onVideoEl, resumeAt, p,
+  src, episode, title, onEnded, onTime,
+  loading, loadProgress, loadHint, error, onRetry, onClearAll, hasNext, onNext,
+  onOpenEpisodes, onSeek, onMediaError, onMediaReady, onVideoEl, resumeAt, p,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   // 第 3 步：把元素交给外层抓帧。回调 ref 每次都返回 null 再返回 el，
@@ -115,7 +168,7 @@ const PlayerStage: React.FC<Props> = ({
   }, [onVideoEl]);
   const barRef = useRef<HTMLDivElement>(null);
   const scrubbing = useRef(false);
-  /** 诊断：视频元素自身的事件（见 apps/TheaterApp.tsx 里的 diag 说明） */
+  /** 诊断：视频元素自身的事件 */
   const d = (s: string, extra?: Record<string, unknown>) => {
     try {
       const w = window as unknown as { __theaterDiag?: unknown[] };
@@ -130,9 +183,38 @@ const PlayerStage: React.FC<Props> = ({
   const [muted, setMuted] = useState(false);
   const [ended, setEnded] = useState(false);
   const [ratio, setRatio] = useState(() => readRatio(title));
-  // 播的时候控制条藏起来，点一下画面再出来（暮色 10-05：「播放的时候进度条要隐藏」）
   const [barOn, setBarOn] = useState(true);
+  const [full, setFull] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<number | null>(null);
+
+  // ── 大小档位（存本地，用户调过一次就记住）────────────────
+  const [size, setSize] = useState<SizeMode>(() => {
+    try {
+      const raw = localStorage.getItem(SIZE_KEY);
+      if (raw === 'small' || raw === 'medium' || raw === 'large') return raw;
+    } catch { /* 读不到就用默认 */ }
+    return 'medium';
+  });
+
+  /**
+   * 位置存的是**中心点**，不是左上角。
+   *
+   * 因为大小切档时宽度会变 —— 存左上角的话，从「大」切到「小」会往左跳一大截；
+   * 存中心点则四周对称地缩，放着不动才符合直觉（暮色 10-07 15:26 定的）。
+   */
+  const [center, setCenter] = useState<{ cx: number; cy: number }>(() => {
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (typeof o?.cx === 'number' && typeof o?.cy === 'number') return { cx: o.cx, cy: o.cy };
+      }
+    } catch { /* 读不到就默认位置 */ }
+    return { cx: vw / 2, cy: vh / 2 - 40 };
+  });
 
   // 换集就归零，不然上一集的进度会挂在新集上
   useEffect(() => {
@@ -141,19 +223,92 @@ const PlayerStage: React.FC<Props> = ({
     setScrub(null);
     setEnded(false);
     setBarOn(true);
+    // 换集退出全屏 —— 停在全屏里换集会让人以为没换
+    setFull(false);
   }, [src]);
 
   // 换剧就换回这部剧记着的比例
   useEffect(() => { setRatio(readRatio(title)); }, [title]);
 
+  // ── 几何 ──────────────────────────────────────────────
+  const geo = useMemo(() => {
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 400;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const r = ratio > 0.1 ? ratio : GUESS_RATIO;
+    const want = Math.round(vw * SIZE_PCT[size] / 100);
+    // 可用高度 = 屏高 - 状态栏 - 输入框那一条 - 边距。
+    // 竖屏大档在小屏手机上可能比可用高度还高 —— 那就**收窄**而不是截断：
+    // 截断会破坏比例（暮色：「可以有黑边，但要保证画面全部显示出来」），
+    // 收窄只是那一档在小屏上没那么大，比例一点不变。
+    const availH = Math.max(120, vh - SAFE_TOP - INPUT_GUARD - EDGE * 2);
+    const w = Math.max(140, Math.min(want, Math.round(availH * r)));
+    const h = Math.round(w / r);
+    return { vw, vh, w, h };
+  }, [size, ratio]);
+
+  /**
+   * 把中心点夹回屏幕内（并且不压住输入框）。
+   *
+   * ⚠️ 高的时候 min > max（浮窗比可用高度还高），这时**贴顶**而不是算出一个
+   * 反过来的区间 —— `Math.min(Math.max(v, min), max)` 遇到 min > max 会静默给出 min，
+   * 看着对其实每次重渲染都在变。
+   */
+  const clampCenter = useCallback((cx: number, cy: number) => {
+    const { vw, vh, w, h } = geo;
+    const minCx = Math.min(w / 2 + EDGE, vw / 2);
+    const maxCx = Math.max(minCx, vw - w / 2 - EDGE);
+    const minCy = Math.min(SAFE_TOP + h / 2 + EDGE, vh / 2);
+    const maxCy = Math.max(minCy, vh - INPUT_GUARD - h / 2 - EDGE);
+    return {
+      cx: Math.max(minCx, Math.min(maxCx, cx)),
+      cy: Math.max(minCy, Math.min(maxCy, cy)),
+    };
+  }, [geo]);
+
+  // 比例第一次读出来 / 档位换了之后，把位置重新夹一次（尺寸变了可能越界）
+  useEffect(() => { setCenter((c) => clampCenter(c.cx, c.cy)); }, [clampCenter]);
+
+  // 位置存档（防抖，别拖一下写一次）
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      try { localStorage.setItem(POS_KEY, JSON.stringify(center)); } catch { /* 存不下就算了 */ }
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [center]);
+
+  /**
+   * 屏幕尺寸变了（转屏、分屏、**软键盘弹起**）就重新夹一次位置。
+   *
+   * 安卓 WebView 弹键盘会触发 `resize`，可视高度一下少三四十个百分点。
+   * 不重新夹的话浮窗会停在旧位置，正好压在被顶上来的输入框底下 ——
+   * 而用户看不到「为什么突然挡着了」。
+   *
+   * ⚠️ 只改 `center`，**不碰 video 的 src/尺寸**。这里触发的是一次普通重渲染，
+   * video 元素靠 `key={src}` 保持同一个节点，不会被重建（声音也就不断）。
+   */
+  useEffect(() => {
+    let t = 0;
+    const re = () => {
+      window.clearTimeout(t);
+      // 键盘弹起是连着来好几帧的，防抖一下再算
+      t = window.setTimeout(() => setCenter((c) => clampCenter(c.cx, c.cy)), 120);
+    };
+    window.addEventListener('resize', re);
+    window.addEventListener('orientationchange', re);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', re);
+      window.removeEventListener('orientationchange', re);
+    };
+  }, [clampCenter]);
+
+  useEffect(() => {
+    try { localStorage.setItem(SIZE_KEY, size); } catch { /* 存不下就算了 */ }
+  }, [size]);
+
   /**
    * 「接着看」：这一集第一次能播的时候，跳到上次看到的位置。
-   *
    * 只做一次（`resumedFor` 记住是给哪个 src 做的），用户自己拖过之后不再插手。
-   * 换了集就重来（src 变 → effect 重跑 → `resumedFor` 不匹配 → 重新 seek）。
-   *
-   * 在线流时长未知（Infinity），跳不过去，所以只有手机/电脑里那两种能接着看 ——
-   * 这跟用户看到的现象一致：之前三种都从 0 开始。
    */
   const resumedFor = useRef('');
   useEffect(() => {
@@ -175,49 +330,39 @@ const PlayerStage: React.FC<Props> = ({
     return () => clearTimeout(t);
   }, [src, resumeAt]);
 
-  /**
-   * 只有**有限的**时长才算数。
-   *
-   * ⚠️ 在线流（边下边播，走 MediaSource）的 `video.duration` 是 `Infinity`，
-   * 而 `if (v.duration)` 对 `Infinity` 判的是**真** —— 于是「无限」被存进了 dur，
-   * 后面拖进度条 `pct * Infinity` 得出 `Infinity`（拖中间）或 `NaN`（拖最左），
-   * 赋给 `currentTime` 直接抛
-   * `TypeError: The provided double value is non-finite`（真机 10-06 18:25）。
-   *
-   * 判断时长合不合法一律走这个函数，别写 `if (dur)`。
-   */
-  const durOk = (x: number) => Number.isFinite(x) && x > 0;
-
-  /** 元数据到了 = 真实比例知道了，更新并记住（以后加载页就能提前算对） */
+  /** 元数据到了 = 真实比例知道了，更新并记住 */
   const onMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;
     if (durOk(v.duration)) setDur(v.duration);
     const r = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
-    d('元数据到了', { 宽: v.videoWidth, 高: v.videoHeight, 时长: v.duration });
+    d('元数据到了', { 宽: v.videoWidth, 高: v.videoHeight, 比例: r ? Math.round(r * 100) / 100 : 0 });
     if (r > 0.1 && r < 10) {
       setRatio(r);
       saveRatio(title, r);
     }
   };
 
-  /** 播起来 3 秒后把控制条收掉 */
-  const scheduleHide = () => {
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+  // ── 工具条显隐（上下两条一起显一起藏）──────────────────
+  const cancelHide = useCallback(() => {
+    if (hideTimer.current) { window.clearTimeout(hideTimer.current); hideTimer.current = null; }
+  }, []);
+  const scheduleHide = useCallback(() => {
+    cancelHide();
     hideTimer.current = window.setTimeout(() => setBarOn(false), 3000);
-  };
+  }, [cancelHide]);
+  const showBar = useCallback(() => { setBarOn(true); scheduleHide(); }, [scheduleHide]);
+  /** 点画面：只管显隐。⚠️ 不再兼播放/暂停 —— 播放暂停固定走控制条按钮 */
+  const toggleBar = useCallback(() => {
+    if (barOn) { cancelHide(); setBarOn(false); }
+    else showBar();
+  }, [barOn, cancelHide, showBar]);
   useEffect(() => () => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }, []);
 
   /**
    * 换到新的一集就自己开始播。
    *
-   * 之前这里只把进度归零、**一句让视频播起来的话都没有**，所以不管点「下一集」
-   * 还是自动连播接到下一集，画面都停在 0:00，得再手点一下播放键
-   * （暮色 10-05 真机反馈：「点下一集不会自动播放」）。
-   *
    * 不用 autoPlay 属性、改成 src 到位后显式 play()：autoPlay 在安卓 WebView 里
    * 常被拦（带声音的自动播需要用户手势），被拦了就静默停住，用户完全不知道为什么。
-   * 显式调 play() 的 promise 拒了也不慌 —— 播放按钮还在，用户点一下就行，
-   * 不会像现在这样「点了下一集却像没反应」。
    */
   useEffect(() => {
     if (!src) return;
@@ -228,7 +373,6 @@ const PlayerStage: React.FC<Props> = ({
       const el = videoRef.current;
       if (!el) return;
       el.play().catch((e: any) => {
-        // 拦下来了就让控制条显示成「没在播」，用户能看见、能点
         d('自动播被拦', { 原因: String(e?.message || e) });
         setPlaying(false);
       });
@@ -250,7 +394,6 @@ const PlayerStage: React.FC<Props> = ({
     if (r.width <= 0) return null;
     const pct = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
     const t = pct * dur;
-    // 最后一道路闸：这个值要赋给 currentTime，必须是有限的非负数
     return Number.isFinite(t) && t >= 0 ? t : null;
   };
 
@@ -258,38 +401,116 @@ const PlayerStage: React.FC<Props> = ({
   const canSeek = durOk(dur);
   const shown = scrub !== null ? scrub : pos;
   const pct = dur > 0 ? Math.min(100, Math.max(0, (shown / dur) * 100)) : 0;
+  const small = size === 'small' && !full;
 
-  // 高度：知道比例就按比例算（宽度撑满 → 高度 = 宽/比例，再受 42vh/64vh 封顶），
-  // 这样横屏剧不会被撑成 42vh 而上下留黑边，竖屏剧照旧顶到 42vh。
-  // 不知道比例（第一次播这部剧）就先给 42vh 占位，元数据到了再修正。
-  const maxH = cinema ? '64vh' : '42vh';
-  const stageStyle: React.CSSProperties = ratio
-    ? { aspectRatio: String(ratio), maxHeight: maxH, maxWidth: '100%', margin: '0 auto', isolation: 'isolate' }
-    : { height: maxH, isolation: 'isolate' };
+  // ── 长按拖动 ──────────────────────────────────────────
+  /**
+   * ⚠️ 点按 / 长按拖 / 显隐 三件事共用一根手指，判定必须写死在这一处。
+   *
+   *   按下        → 起一个 320ms 定时器
+   *   320ms 到     → 进入「在拖」（并震动一下，告诉用户抓到了）
+   *   提前挪动 >8px → 直接进「在拖」（不等满时间，更跟手）
+   *   抬起        → 在拖 = 结束拖；不在拖 = 点按（只管显隐工具条）
+   *
+   * 拖动期间**取消隐藏计时** —— 否则会拖到一半工具条没了。
+   */
+  const press = useRef({ x: 0, y: 0, bx: 0, by: 0, id: -1, dragging: false });
+  const lpTimer = useRef<number | null>(null);
+  const startDrag = useCallback((e: React.PointerEvent) => {
+    if (press.current.dragging) return;
+    press.current.dragging = true;
+    press.current.bx = center.cx;
+    press.current.by = center.cy;
+    cancelHide();
+    setDragging(true);
+    try { navigator.vibrate?.(12); } catch { /* 没这 API就算了 */ }
+  }, [center.cx, center.cy, cancelHide]);
+
+  const onPressStart = (e: React.PointerEvent) => {
+    if (full) return;
+    press.current = { x: e.clientX, y: e.clientY, bx: center.cx, by: center.cy, id: e.pointerId, dragging: false };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住就靠冒泡 */ }
+    if (lpTimer.current) window.clearTimeout(lpTimer.current);
+    lpTimer.current = window.setTimeout(() => startDrag(e), LONG_PRESS_MS);
+  };
+
+  const onPressMove = (e: React.PointerEvent) => {
+    if (full || e.pointerId !== press.current.id) return;
+    const dx = e.clientX - press.current.x;
+    const dy = e.clientY - press.current.y;
+    if (!press.current.dragging) {
+      if (Math.hypot(dx, dy) < DRAG_SLOP) return;
+      if (lpTimer.current) { window.clearTimeout(lpTimer.current); lpTimer.current = null; }
+      startDrag(e);
+    }
+    setCenter(clampCenter(press.current.bx + dx, press.current.by + dy));
+  };
+
+  const onPressEnd = (e: React.PointerEvent) => {
+    if (lpTimer.current) { window.clearTimeout(lpTimer.current); lpTimer.current = null; }
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    if (press.current.dragging) {
+      press.current.dragging = false;
+      setDragging(false);
+      scheduleHide();
+      return;
+    }
+    if (!full) toggleBar();
+  };
 
   /**
-   * 播放区内部**只能有一个视频**，控制条永远压在它上面 ——
+   * 播放区内部**只能有一个视频**，两条工具条永远压在它上面 ——
    * 所以这里写死三层，谁也别想盖住进度条（暮色 10-06：「所有的进度条都显示在最上面一层」）：
    *
-   *   z-0   video     画面
+   *   z-0   video            画面
    *   z-20  遮罩/出错卡片
-   *   z-30  控制条（进度条在这条里）
+   *   z-30  两条工具条
    *
    * 容器上那个 `isolation: isolate` 是**必须的**：它开出一个新的层叠上下文，
-   * 播放区里面的 z 值就不再跟外面比。否则外层任何一个 `transform` / `filter` /
-   * `backdrop-filter` 都能把整块播放区压到别的东西底下，表现就是「进度条被挡住」，
-   * 而且横版竖版表现还不一样（谁被压取决于谁先建了自己的层叠上下文）。
+   * 播放区里面的 z 值就不再跟外面比。否则外面任何一个 `transform` / `filter` /
+   * `backdrop-filter` 都能把整块播放区压到别的东西底下。
+   *
+   * ⚠️ Portal 之后这一层隔离依然要留着 —— 挂到 body 上了，但它现在会跟聊天区、
+   * 输入框这些 z 值较低的兄弟比，没有隔离就会出 10-06 那个「进度条被挡住」的老问题。
    */
-  return (
-    <div className="shrink-0 relative bg-black flex justify-center" style={stageStyle}>
+  const boxStyle: React.CSSProperties = full
+    ? { position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, width: '100%', height: '100%', isolation: 'isolate' }
+    : {
+        position: 'fixed',
+        left: center.cx - geo.w / 2,
+        top: center.cy - geo.h / 2,
+        width: geo.w,
+        height: geo.h,
+        isolation: 'isolate',
+        // 拖动的时候不能有过渡，否则会「粘」在手指后面
+        transition: dragging ? 'none' : 'left .18s ease, top .18s ease, width .18s ease, height .18s ease',
+      };
+
+  /**
+   * 两条工具条的公共外观。
+   *
+   * ⚠️ padding 由**每个分支自己写**，不在这里写死 —— 之前这里带了 `pt-2 pb-8`，
+   * 分支又要改成 `pt-1 pb-6`，两个 Tailwind 类谁后生效说不准（生成的 CSS 顺序
+   * 不是按 className 字符串顺序来的），表现就是「小窗的条子边距莫名其妙」。
+   * 两边都写完整，冲突就没了。
+   *
+   * 全屏时顶部那条要多让一截给状态栏（`pt-9`），不然按钮压在状态栏下面点不到。
+   */
+  const barCls = (side: 'top' | 'bottom', pad: string) =>
+    `z-30 absolute inset-x-0 ${side === 'top' ? 'top-0 bg-gradient-to-b' : 'bottom-0 bg-gradient-to-t'} from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${pad} ${
+      barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
+    }`;
+
+  const body = (
+    <div
+      style={boxStyle}
+      className={`z-[120] bg-black flex justify-center overflow-hidden select-none ${
+        full ? '' : 'rounded-2xl shadow-2xl ring-1 ring-white/10'
+      }`}
+    >
       <video
         /**
          * `key={src}` —— **换片就重建这个元素**，这是「切剧时旧画面继续播」的解法。
-         *
-         * 为什么光把 src 置空不够：React 只是把 `src` 属性从 A 的地址改成 `''`，
-         * 同一个元素还在，网络层和解码器都还挂着上一段流，屏幕上就是旧画面 + 旧声音。
-         * 而且 `src=""` 在 Chromium 里会把 currentSrc 落到**文档 URL** 上，
-         * 反而多发一次没意义的请求。
          *
          * 换成 `key`：旧元素直接从 DOM 上摘掉（浏览器随即停掉它的取流和解码），
          * 新元素 `src={src || undefined}` 什么都不带，什么都不请求。干净。
@@ -299,16 +520,17 @@ const PlayerStage: React.FC<Props> = ({
         src={src || undefined}
         playsInline
         // 麦麦 2026-10-05：**不能**加 crossOrigin。
-        // 电脑上取的剧已经变成浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
-        // 第 3 步取帧直接能读；一加反而会去要跨域头，而这个地址没有跨域头，视频会直接播不了。
+        // 电脑上取的剧是浏览器本地的临时地址，跟页面同源，不加画布就是干净的，
+        // 第 3 步取帧直接能读；一加反而会去要跨域头，而这个地址没有跨域头，视频直接播不了。
         //
-        // object-contain 而不是 fill：容器已经按比例算好了高度，
-        // 但比例是「记住的那一部剧的比例」，万一是别的比例也不能拉伸变形。
+        // object-contain：容器按比例算好了高度，比例不对也**只留黑边不裁画面**
+        // （暮色 10-07：「全屏不要为了撑满屏幕裁掉画面，可以有黑边」）。
         className="relative z-0 w-full h-full bg-black object-contain"
-        onClick={() => {
-          if (!barOn) { setBarOn(true); scheduleHide(); return; }
-          toggle();
-        }}
+        style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+        onPointerDown={onPressStart}
+        onPointerMove={onPressMove}
+        onPointerUp={onPressEnd}
+        onPointerCancel={onPressEnd}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
           setPos(v.currentTime);
@@ -321,7 +543,7 @@ const PlayerStage: React.FC<Props> = ({
         onWaiting={() => d('缓冲中')}
         onStalled={() => d('卡住了', { 已缓冲段: videoRef.current?.buffered.length })}
         onPlay={() => { d('开始播放'); setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); }}
-        onPause={() => { d('暂停', { 播到: videoRef.current?.currentTime }); setPlaying(false); setBarOn(true); }}
+        onPause={() => { d('暂停', { 播到: videoRef.current?.currentTime }); setPlaying(false); cancelHide(); setBarOn(true); }}
         onError={() => {
           const v = videoRef.current;
           d('视频报错', { 码: v?.error?.code, 说明: v?.error?.message, src: String(v?.src || '').slice(0, 40) });
@@ -330,48 +552,45 @@ const PlayerStage: React.FC<Props> = ({
         onEnded={() => {
           setPlaying(false);
           setEnded(true);
+          cancelHide();
           setBarOn(true);
           onTime(dur || pos, dur || pos);
           onEnded();
         }}
       />
 
-      {/* 从电脑取视频要下完才能播，几十兆大概一两秒，给个说法免得以为卡死。
-          暮色 10-05 说原来那个「白字 + 一根细进度条」太难看 —— 黑底上一根 4px 的
-          细线看着像坏掉的界面。换成浮在黑底上的一张浅色圆角卡片，跟项目里
-          弹窗/浮层的观感一致。 */}
+      {/* 加载遮罩 / 出错卡片。小浮窗只有 190px 宽，所以这块刻意做得很紧凑，
+          不然一张 px-7 py-5 的白卡能把整个小窗撑爆。 */}
       {loading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl">
-            <div className="w-9 h-9 rounded-full border-[3px] border-slate-200 border-t-sky-300 animate-spin" />
-            <div className="text-[13px] font-bold text-slate-700">{loadHint || '正在从电脑取这一集'}</div>
-            <div className="w-28 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-2">
+          <div className="flex flex-col items-center gap-2 rounded-2xl bg-white/92 px-3 py-2.5 shadow-xl max-w-[94%]">
+            <div className="w-6 h-6 rounded-full border-[2.5px] border-slate-200 border-t-sky-300 animate-spin" />
+            <div className="text-[10px] font-bold text-slate-700 text-center leading-snug">{loadHint || '正在从电脑取这一集'}</div>
+            <div className="w-20 h-1 rounded-full bg-slate-100 overflow-hidden">
               <div className="h-full rounded-full bg-sky-300 transition-all" style={{ width: `${Math.max(8, Math.round(loadProgress * 100))}%` }} />
             </div>
-            <div className="text-[11px] text-slate-400 tabular-nums">{Math.round(loadProgress * 100)}%</div>
           </div>
         </div>
       )}
 
       {error && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center px-6">
-          <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/92 px-7 py-5 shadow-xl max-w-[85%]">
-            <div className="text-[13px] font-bold text-slate-700 text-center leading-relaxed">{error}</div>
-            <div className="flex items-center gap-2">
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-2">
+          <div className="flex flex-col items-center gap-2 rounded-2xl bg-white/92 px-3 py-2.5 shadow-xl max-w-[94%]">
+            <div className="text-[10px] font-bold text-slate-700 text-center leading-snug">{error}</div>
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={onRetry}
-                className="rounded-full bg-sky-100 px-5 py-1.5 text-[12px] font-bold text-sky-700 active:scale-95 flex items-center gap-1.5"
+                className="rounded-full bg-sky-100 px-3 py-1 text-[10px] font-bold text-sky-700 active:scale-95 flex items-center gap-1"
               >
-                <ArrowCounterClockwise size={13} weight="bold" />
+                <ArrowCounterClockwise size={11} weight="bold" />
                 重试
               </button>
-              {/* 播放位满的时候，把「一次清空」摆出来，别让人干等 */}
               {onClearAll && (
                 <button
                   onClick={onClearAll}
-                  className="rounded-full bg-rose-100 px-5 py-1.5 text-[12px] font-bold text-rose-600 active:scale-95 flex items-center gap-1.5"
+                  className="rounded-full bg-rose-100 px-3 py-1 text-[10px] font-bold text-rose-600 active:scale-95 flex items-center gap-1"
                 >
-                  <Broom size={13} weight="bold" />
+                  <Broom size={11} weight="bold" />
                   清空播放位
                 </button>
               )}
@@ -380,121 +599,181 @@ const PlayerStage: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 控制条：暮色 10-05 —— 下一集放在音量左边
-          切集正在取的时候整条不画：那会儿 blobUrl 里还是上一集，
-          画出来会是「上一集的时间 + 这一集的集号」，自己骗自己。
-          10-05 追加：正在播的时候整条藏起来（3 秒后），点画面才出来。
-          10-06 追加：**出错的时候也不画** —— 错误卡片是 `absolute inset-0`
-          铺满整个播放区的，控制条叠在上面就成了「卡片盖住半个进度条、
-          最右边全屏按钮被挡」（真机 19:15 截图）。出错了就只有错误卡片，
-          用户要的是「重试」那一个动作，不需要同时给他一条拖不动的进度条。 */}
-      {!loading && !error && (
-      <div
-        className={`z-30 absolute inset-x-0 bottom-0 px-3 pt-10 pb-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent transition-opacity duration-200 ${
-          barOn ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-      >
-        {/* 进度条：触摸区做高一点，手指粗也拖得动。
-            在线边下边播时长是「无限」→ 不知道往哪儿拖，所以不给拖，
-            也不画滑块（画了拖不动，用户只会以为坏了）。
-            判断走 canSeek/durOk，不要写 `if (dur)` —— 对 Infinity 判真。*/}
-        <div
-          ref={barRef}
-          className={`h-6 flex items-center touch-none ${canSeek ? '' : 'pointer-events-none'}`}
-          onPointerDown={(e) => {
-            if (!canSeek) return;
-            scrubbing.current = true;
-            try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-            setScrub(seekTo(e.clientX));
-          }}
-          onPointerMove={(e) => {
-            if (!scrubbing.current) return;
-            setScrub(seekTo(e.clientX));
-          }}
-          onPointerUp={(e) => {
-            if (!scrubbing.current) return;
-            scrubbing.current = false;
-            const t = seekTo(e.clientX);
-            setScrub(null);
-            const v = videoRef.current;
-            // t 可能是 null（时长未知 / 拖到无效位置），也可能非有限 —— 两种都不能赋
-            if (v && t !== null && Number.isFinite(t) && t >= 0) {
-              try {
-                v.currentTime = t;
-                onSeek?.(t);
-              } catch {
-                // 有些内核会在这里抛（seek 越界之类），拖不动就算了，别让整页崩
-                d('定位失败', { 想跳到: t });
-              }
-            }
-          }}
-          onPointerCancel={() => { scrubbing.current = false; setScrub(null); }}
-        >
-          <div className="relative h-1 w-full rounded-full bg-white/25">
-            {canSeek && (
-              <div className="absolute inset-y-0 left-0 rounded-full bg-white/75" style={{ width: `${pct}%` }} />
+      {/* 上面那条：**导航**（暮色 10-07 15:26）
+          剧名 / 下一集 / 大小 / 选集。「选集放最右，大小挨着选集」——
+          这俩都是「换个姿势看」，逻辑上是一组的。
+          和下面那条一起显一起藏。 */}
+      {!loading && !error && !small && (
+        <div className={barCls('top', full ? 'pt-9 pb-8' : 'pt-2 pb-8')}>
+          <div className="flex items-center gap-1.5 px-2 text-white">
+            <span className="flex-1 min-w-0 truncate text-[10px] font-bold text-white/85 drop-shadow">
+              {title ? `《${title}》` : ''} 第 {episode} 集
+            </span>
+
+            {hasNext && (
+              <button
+                onClick={onNext}
+                className="shrink-0 flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-bold active:scale-90"
+              >
+                <SkipForward size={11} weight="fill" />
+                下一集
+              </button>
             )}
-            {canSeek && (
-              <div
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow"
-                style={{ left: `${pct}%` }}
-              />
+            {hasNext && small && (
+              <button
+                onClick={onNext}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-white/20 active:scale-90"
+                title="下一集"
+              >
+                <SkipForward size={11} weight="fill" />
+              </button>
+            )}
+            {!hasNext && ended && (
+              <span className="shrink-0 text-[10px] text-white/45">没有下一集了</span>
+            )}
+
+            <button
+              onClick={() => setSize((cur) => NEXT_SIZE[cur])}
+              className="shrink-0 flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-bold active:scale-90"
+              title={`大小：${SIZE_LABEL[size]}（点切换 小/中/大）`}
+            >
+              <CornersIn size={11} weight="bold" />
+              {SIZE_LABEL[size]}
+            </button>
+
+            {onOpenEpisodes && (
+              <button
+                onClick={onOpenEpisodes}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-white/20 active:scale-90"
+                title="选集"
+              >
+                <FilmSlate size={12} />
+              </button>
             )}
           </div>
         </div>
+      )}
 
-        <div className="flex items-center gap-3 text-white">
-          <button onClick={toggle} className="shrink-0 w-7 h-7 flex items-center justify-center active:scale-90">
-            {playing ? <Pause size={18} weight="fill" /> : <Play size={18} weight="fill" />}
-          </button>
-
-          <span className="shrink-0 text-[11px] tabular-nums text-white/85">
-            {canSeek ? `${fmtTime(shown)} / ${fmtTime(dur)}` : `${fmtTime(shown)} / 边下边播`}
-          </span>
-
-          <span className="shrink-0 text-[10px] text-white/40">第 {episode} 集</span>
-
-          <div className="flex-1" />
-
-          {/* 下一集 —— 暮色要的位置：音量图标旁边 */}
+      {/* 小窗：上面那条塞不下，压成一行极简（下一集 / 大小 / 选集）。 */}
+      {!loading && !error && small && (
+        <div className={`${barCls('top', 'px-1.5 pt-1 pb-6')} flex items-center gap-1 justify-end`}>
           {hasNext && (
-            <button
-              onClick={onNext}
-              className="shrink-0 flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold active:scale-90"
-            >
-              <SkipForward size={12} weight="fill" />
-              下一集
+            <button onClick={onNext} className="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-white/20 active:scale-90" title="下一集">
+              <SkipForward size={10} weight="fill" />
             </button>
           )}
-          {!hasNext && ended && (
-            <span className="shrink-0 text-[10px] text-white/45">没有下一集了</span>
+          <button
+            onClick={() => setSize((cur) => NEXT_SIZE[cur])}
+            className="shrink-0 rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-bold active:scale-90"
+            title={`大小：${SIZE_LABEL[size]}`}
+          >
+            {SIZE_LABEL[size]}
+          </button>
+          {onOpenEpisodes && (
+            <button onClick={onOpenEpisodes} className="w-5 h-5 shrink-0 flex items-center justify-center rounded-full bg-white/20 active:scale-90" title="选集">
+              <FilmSlate size={10} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 下面那条：**播放**（暮色 10-05：下一集挪走了，这里只剩播放相关的）
+          小窗只有 190px 宽，挤不下进度条和文字 —— 只留播放 / 音量 / 全屏。 */}
+      {!loading && !error && (
+        <div className={barCls('bottom', 'px-3 pt-10 pb-2')}>
+          {!small && (
+            <div
+              ref={barRef}
+              className={`h-6 flex items-center touch-none ${canSeek ? '' : 'pointer-events-none'}`}
+              onPointerDown={(e) => {
+                if (!canSeek) return;
+                scrubbing.current = true;
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+                setScrub(seekTo(e.clientX));
+              }}
+              onPointerMove={(e) => {
+                if (!scrubbing.current) return;
+                setScrub(seekTo(e.clientX));
+              }}
+              onPointerUp={(e) => {
+                if (!scrubbing.current) return;
+                scrubbing.current = false;
+                const t = seekTo(e.clientX);
+                setScrub(null);
+                const v = videoRef.current;
+                if (v && t !== null && Number.isFinite(t) && t >= 0) {
+                  try {
+                    v.currentTime = t;
+                    onSeek?.(t);
+                  } catch {
+                    d('定位失败', { 想跳到: t });
+                  }
+                }
+              }}
+              onPointerCancel={() => { scrubbing.current = false; setScrub(null); }}
+            >
+              <div className="relative h-1 w-full rounded-full bg-white/25">
+                {canSeek && (
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-white/75" style={{ width: `${pct}%` }} />
+                )}
+                {canSeek && (
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow"
+                    style={{ left: `${pct}%` }}
+                  />
+                )}
+              </div>
+            </div>
           )}
 
-          <button
-            onClick={() => {
-              const v = videoRef.current;
-              const next = !muted;
-              setMuted(next);
-              if (v) v.muted = next;
-            }}
-            className="shrink-0 w-7 h-7 flex items-center justify-center active:scale-90"
-            title={muted ? '取消静音' : '静音'}
-          >
-            {muted ? <SpeakerSlash size={17} /> : <SpeakerHigh size={17} />}
-          </button>
+          <div className={`flex items-center gap-2 text-white ${small ? 'justify-center px-1 py-0.5' : ''}`}>
+            <button onClick={toggle} className="shrink-0 w-7 h-7 flex items-center justify-center active:scale-90">
+              {playing ? <Pause size={18} weight="fill" /> : <Play size={18} weight="fill" />}
+            </button>
 
-          <button
-            onClick={() => setCinema(!cinema)}
-            className={`shrink-0 w-7 h-7 flex items-center justify-center active:scale-90 ${cinema ? 'text-sky-300' : ''}`}
-            title="影院模式"
-          >
-            <CornersOut size={17} />
-          </button>
+            {!small && (
+              <span className="shrink-0 text-[11px] tabular-nums text-white/85">
+                {canSeek ? `${fmtTime(shown)} / ${fmtTime(dur)}` : `${fmtTime(shown)} / 边下边播`}
+              </span>
+            )}
+
+            <div className="flex-1" />
+
+            <button
+              onClick={() => {
+                const v = videoRef.current;
+                const next = !muted;
+                setMuted(next);
+                if (v) v.muted = next;
+              }}
+              className="shrink-0 w-7 h-7 flex items-center justify-center active:scale-90"
+              title={muted ? '取消静音' : '静音'}
+            >
+              {muted ? <SpeakerSlash size={17} /> : <SpeakerHigh size={17} />}
+            </button>
+
+            <button
+              onClick={() => {
+                const next = !full;
+                setFull(next);
+                cancelHide();
+                setBarOn(true);
+                if (!next) scheduleHide();
+              }}
+              className={`shrink-0 w-7 h-7 flex items-center justify-center active:scale-90 ${full ? 'text-sky-300' : ''}`}
+              title={full ? '退出全屏' : '全屏'}
+            >
+              {full ? <CornersIn size={17} /> : <CornersOut size={17} />}
+            </button>
+          </div>
         </div>
-      </div>
       )}
     </div>
   );
+
+  // ⚠️ 必须 Portal 到 body —— 手机外壳那层有 overflow-hidden + transform，
+  // fixed 元素在里面会被裁（AGENTS.md §6.2，Appearance 的全屏预览踩过同一个）。
+  return createPortal(body, document.body);
 };
 
 export default PlayerStage;

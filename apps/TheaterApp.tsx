@@ -1201,7 +1201,6 @@ const TheaterApp: React.FC = () => {
   const [busyStall, setBusyStall] = useState(false);
   /** 正在下第几集、到百分之几（原生下载报的，粒度到集） */
   const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
-  const [cinema, setCinema] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
   const posRef = useRef({ pos: 0, dur: 0 });
@@ -1765,7 +1764,6 @@ const TheaterApp: React.FC = () => {
 
     setPicked(d);
     setDrawer(false);
-    setCinema(false);
     setCurrentEp(n);
     setEpTotal(guessTotal(d));
     setPage('player');
@@ -2830,8 +2828,6 @@ const TheaterApp: React.FC = () => {
           src={blobUrl}
           episode={currentEp}
           title={picked.title}
-          cinema={cinema}
-          setCinema={setCinema}
           onEnded={onEnded}
           onTime={(pos, dur) => { posRef.current = { pos, dur }; if (dur) setCurDuration(dur); recordWatch(); }}
           loading={dlLoading}
@@ -2842,6 +2838,9 @@ const TheaterApp: React.FC = () => {
           onClearAll={busyStall ? clearStallsAndRetry : undefined}
           hasNext={nextSt !== 'none'}
           onNext={() => playEpisode(currentEp + 1)}
+          // 「选集」从顶栏那个按钮搬到播放器上面那条（暮色 10-07 15:26：「选集放最右」）。
+          // 顶栏那个还留着 —— 浮窗可能被拖到看不见的位置，顶栏是兜底。
+          onOpenEpisodes={() => setDrawer(true)}
           onMediaError={onMediaError}
           onMediaReady={onMediaOk}
           onVideoEl={live.attachVideo}

@@ -43,9 +43,26 @@ export class AudioTap {
   /** 已经接过的元素 —— 同一个 video 只能 createMediaElementSource 一次，第二次直接抛 */
   private attached = false;
 
-  /** 接上视频元素。返回 false = 接不上（这时画面那条路还在，不影响） */
+  /**
+   * 接上视频元素。返回 false = 接不上（这时画面那条路还在，不影响）
+   *
+   * ⚠️⚠️ **元素换了要整条链重建**（10-07 顺手修的既有 bug）。
+   *
+   * 原来是 `if (this.attached) return true;` —— 一旦接上就永远说「接好了」。
+   * 但**切集会让 video 元素整个重建**（PlayerStage 里 `key={src}`，
+   * 为了让旧画面别继续播）。于是新一集的视频元素**从来没被接过**，
+   * `attached` 却还是真 —— 采到的是已经销毁的旧元素的数据，
+   * 表现是**切集之后角色就听不见声音了**，而且没有任何报错。
+   *
+   * ⚠️ 千万别把这里写成「先 detach 再无条件 attach 同一个元素」：
+   * `createMediaElementSource` 对**同一个元素**只能调一次，第二次直接抛。
+   * 文件头「坑 3」记的就是这个。**换元素是安全的**（一个元素一个 SourceNode），
+   * 不安全的是重复接同一个。所以判据是「是不是同一个元素」，不是「有没有接过」。
+   */
   attach(el: HTMLMediaElement): boolean {
-    if (this.attached) return true;
+    if (this.attached && this.el === el) return true;
+    // 换了新元素 —— 旧的整条链先彻底拆掉（不拆的话旧 ctx 一直在跑，白耗电）
+    if (this.attached) this.teardown();
     const Ctor: any =
       (window as any).AudioContext || (window as any).webkitAudioContext;
     if (!Ctor) return false;
@@ -67,8 +84,25 @@ export class AudioTap {
       return true;
     } catch (e) {
       // 跨源污染 / 已被接过 —— 认了，画面那条路继续走
+      this.teardown();
       return false;
     }
+  }
+
+  /** 把整条采集链拆干净，回到「没接过」的状态 */
+  private teardown() {
+    try { this.proc?.disconnect(); } catch {}
+    // ⚠️ 可选链**不能**写在赋值左边（TS2779），得先取出来判空
+    try { const p: any = this.proc; if (p) p.onaudioprocess = null; } catch {}
+    try { this.source?.disconnect(); } catch {}
+    try { this.ctx?.close(); } catch {}
+    this.proc = null;
+    this.source = null;
+    this.ctx = null;
+    this.el = null;
+    this.attached = false;
+    // 队列里攒的是**上一集**的声音，别带进新一集
+    this.outBuf = new Float32Array(0);
   }
 
   /** 浏览器要求音频上下文在用户手势后才能跑 */

@@ -126,6 +126,35 @@ const Pill: React.FC<{
 type DramaRef = { id: string; title: string; coverUrl?: string; origin: 'mac' | 'upload'; episodeHint?: number };
 
 /**
+ * 「你一个人在看」—— 没邀请时的整块占位。
+ *
+ * ⚠️ **刻意什么都不做**：不放聊天框、不放输入框、不放连接状态。
+ * 暮色 10-07 03:29 定的：「不邀请就是我自己看，不是他在一边傻等着」。
+ * 所以这会儿**根本没建连接**（见 useTheaterLive 里 `!invited` 那段），
+ * 没有「重连中」「连上了吗」之类的东西要报 —— 没连的东西不用报状态。
+ *
+ * 邀请按钮在上面那一排（跟自动连播并排），所以这里只做引导，不重复放按钮。
+ *
+ * ⚠️ 必须**模块级**。写在组件函数体里的话，每次渲染都是新的组件类型
+ * → React 认定类型变了 → 整棵子树先卸载再挂载（AGENTS.md §4.3）。
+ */
+const SoloWatching: React.FC<{ p: Palette; charName?: string }> = ({ p, charName }) => (
+  <div className="shrink-0 px-4 py-8">
+    <div className="mx-auto max-w-[280px] text-center">
+      <FilmSlate size={24} className={`mx-auto ${p.faint}`} />
+      <p className={`mt-2.5 text-[12px] font-bold ${p.sub}`}>
+        你一个人在看
+      </p>
+      <p className={`mt-1 text-[10px] leading-relaxed ${p.faint}`}>
+        {charName ? `${charName}没被邀请，这会儿不在` : '他没被邀请，这会儿不在'}
+        <br />
+        想让他一起看，点上面那个「邀请他一起看」
+      </p>
+    </div>
+  </div>
+);
+
+/**
  * 上传确认窗：选完文件先问剧名再存。
  *
  * 抽成独立组件是为了能挂在**多个页面分支**下面 —— 之前它内联写在设置页的
@@ -2865,8 +2894,16 @@ const TheaterApp: React.FC = () => {
           </button>
         </div>
 
-        {/* 聊天区 + 输入框（第 2 步：接 live） */}
-        <TheaterChat p={p} live={live} charName={char?.name} disabled={!char} />
+        {/* 聊天区 + 输入框（第 2 步：接 live）
+            ⚠️⚠️ **没邀请就整块不渲染**（暮色 10-07 03:29 定的）。
+            「不邀请 = 压根不把他接进来」——既然人没接进来，
+            就不该有一个能对着说话的框，也不该有连接状态条。
+            邀请按钮在上面那排（跟自动连播并排），点一下就进来了。 */}
+        {live.invited ? (
+          <TheaterChat p={p} live={live} charName={char?.name} disabled={!char} />
+        ) : (
+          <SoloWatching p={p} charName={char?.name} />
+        )}
 
         <EpisodeDrawer
           open={drawer}

@@ -118,6 +118,16 @@ export function useTheaterLive(opts: {
   const pendingStream = useRef('');
   const streamTimer = useRef(0);
   /**
+   * 这一轮**收到过字**的时间戳。0 = 一个字都没收到。
+   *
+   * ⚠️ 千万别用 `streamingId` 来判「模型有没有回答过」——
+   * `onTurnComplete` 一收到就会把它清空，于是「已经答完了」会被误判成
+   * 「空回」，紧跟着弹一句「没收到回复」（10-07 03:29 现场，答案就在屏幕上）。
+   */
+  const answeredAt = useRef(0);
+  /** 发出去那一刻连接是不是断着的。断着 = 消息压根没送到，值得自动补发 */
+  const sentWhileClosed = useRef(false);
+  /**
    * 当前这条实时会话是按哪套配置开的（角色 + 模型 + 地址 + 有没有密钥）。
    *
    * ⚠️ 用来挡住「effect 反复重跑 → 每次重灌历史 → 模型重复回一堆」
@@ -462,6 +472,11 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
       },
       onText: (delta, full) => {
         /**
+         * ⚠️ 一收到字就记时间戳。空回兜底的判据靠它（见 send 里的注释）。
+         * 这个必须**第一个**做 —— 后面的代码有提前 return 的路径。
+         */
+        answeredAt.current = Date.now();
+        /**
          * ⚠️ 流式**必须节流**（暮色 00:20「好卡，点也不动」）。
          *
          * 原来模型每吐一小段就直接 setMsgs 一次 —— 一秒能来几十次，
@@ -564,14 +579,32 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
   bootRef.current = boot;
 
   useEffect(() => {
-    if (!active) {
-      // 离开播放页：这是唯一该关连接的地方
+    // ⚠️⚠️ **没邀请 = 压根不把他接进来**（暮色 10-07 03:29 定的）
+    //
+    // 我昨天只做了一半：把「不邀请时不喂画面声音」做了，**连接照建、话照说**。
+    // 现场就是暮色截的那张图 —— 没邀请，角色照样回了一堆
+    // 「我现在什么都看不见」，同样的话还说了三遍。
+    //
+    // 他要的是这个逻辑：
+    //   点进去自己看 → **不接 API**。没人在线，没人说话，不重连，不烧流量。
+    //   邀请他一起看 → 才把他接进来，才开始送画面和声音。
+    //
+    // 「连着但不给画面」跟「压根没接进来」是两回事 ——
+    // 前者那个角色是被拉进来陪你坐着的，只不过被蒙着眼（所以他会说
+    // 「你为什么不邀请我」这种别扭的话，还一直重连）；
+    // 后者才是「我自己安静追剧」。
+    if (!active || !invited) {
+      // 离开播放页 / 收回邀请：关连接、清现场
       if (streamTimer.current) {
         window.clearTimeout(streamTimer.current);
         streamTimer.current = 0;
       }
       pendingStream.current = '';
+      streamingId.current = '';
       bootedKey.current = '';
+      // 攒着的背景说明也倒掉 —— 邀请收回之后那些帧已经跟他无关了
+      audioRef.current?.flush();
+      grabberRef.current?.reset();
       sessRef.current?.close();
       sessRef.current = null;
       setState('idle');
@@ -582,7 +615,10 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
     if (sessRef.current && bootedKey.current === cfgKey) return;
     bootedKey.current = cfgKey;
     bootRef.current();
-  }, [active, cfgKey]);
+    // ⚠️ `invited` 要**显式**进依赖，不能只靠 cfgKey 那一层。
+    // 依赖数组里只写 cfgKey 的话，编译器不知道这里读了 invited；
+    // 以后谁把 cfgKey 改了格式，这里就静默失效了 —— 那种坑最难查。
+  }, [active, invited, cfgKey]);
 
   // 只在真正卸载时收尾。空依赖 = 只在卸载跑一次，不会每轮都执行。
   useEffect(() => () => {
@@ -688,6 +724,16 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
   // 入库是写本地数据库，慢的话会卡住输入框里的「发出去」。
   const send = useCallback((text: string) => {
     if (!char || !text.trim()) return;
+    // ⚠️⚠️ 没邀请就不该有话可说（暮色 10-07 03:29：「压根就不把他接进来」）。
+    //
+    // 这一行**不是多余的**。原来 `LiveSession.send()` 在没连上时会
+    // 把这句话 **push 进 pendingInput 然后自己 start()** ——
+    // 也就是说「不邀请」这个状态下发一条消息，**反而会把连接建起来**，
+    // 上一行加的 `!invited` 守卫就白写了。
+    //
+    // 不邀请时聊天区本来就不渲染（见 TheaterApp），这里是第二道闸：
+    // 万一以后哪个入口漏了，也不会偷偷把人接进来。
+    if (!invitedRef.current) return;
     const s = scene();
     const tag = `《${s.title || '剧场'}》第${s.episode || 1}集`;
     tagRef.current = tag;
@@ -719,23 +765,45 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
     }).catch((e: any) => addTrace(`用户消息入库失败：${e?.message || e}`));
 
     // ④ 发出去
-    sessRef.current?.send(text);
+    //
+    // ⚠️⚠️ **两个定时器的判据不能用 `streamingId`**（10-07 03:29 现场：同样的话说了三遍）。
+    //
+    // 原来的两个错：
+    //   1. `onTurnComplete` 一收到就 `streamingId.current = ''`。
+    //      于是「模型已经答完了、只是正好答得快」的情况下，12 秒那个检查照样判定成
+    //      「空回」，紧跟着弹一句「没收到回复，点这里再试一次」——
+    //      **答案明明就在屏幕上**。截图里就是这个样子。
+    //   2. 重发是**把同一句再送一遍**。这在模型那边是**新的一轮对话**，
+    //      于是它对着同一句再答一次。跟重连一叠，就成了三遍。
+    //
+    // 现在分开记两件事：
+    //   - `answeredAt`：**这一轮收到过字**。它只增不减，所以「已经答完了」不会被误判。
+    //   - `sentWhileClosed`：发的时候连接本来就是断的 → 消息**根本没发出去**，
+    //     这种才值得自动重发（重发的是「没送出去的东西」，不是「模型选择不回答」）。
+    const sess = sessRef.current;
+    const wasClosed = !sess || !sess.isOpen;
+    sentWhileClosed.current = wasClosed;
+    answeredAt.current = 0;
+    sess?.send(text);
 
-    // ⑤ 空回兜底（暮色 02:52 定的）。
-    //
-    // 模型这一轮如果什么都没说（被打断 / 刚重连上 / 服务端只回了个
-    // turnComplete），界面上就只剩用户那条消息，光看像「他没理我」。
-    // 这里等一会儿：还没出字就**自动重发一次**，再没有才显示一行提示。
-    //
-    // ⚠️ 重发的是**同一句**，不是新的话 —— 重发会多一条 user 记录进表，
-    // 但空气泡/失联比多一条历史糟糕得多。
+    // ⑤ 空回兜底
+    //    - 连接本来就断着 → 8 秒后自动补发一次（消息可能压根没到）
+    //    - 连接是好的   → **不重发**，12 秒后只显示提示，让他自己点
+    //      （模型收到了却没回答，再送一遍只会得到第二份重复的回答）
     window.setTimeout(() => {
-      if (streamingId.current) return;
-      // 重试一次
+      if (answeredAt.current) return;
+      if (!sentWhileClosed.current) return;
+      // ⚠️ 只补发没送出去的那句，且只补一次
+      sentWhileClosed.current = false;
       sessRef.current?.send(text);
-      window.setTimeout(() => {
-        if (streamingId.current) return;
-        setMsgs((old) => [
+    }, 8000);
+
+    window.setTimeout(() => {
+      if (answeredAt.current) return;
+      setMsgs((old) => {
+        // 已经有人在界面上了就别再补这句（连点两次发送会各起一个定时器）
+        if (old.some((m) => m.failed)) return old;
+        return [
           ...old,
           {
             id: `e${Date.now()}`,
@@ -744,9 +812,9 @@ ${see ? `1. **你现在看得见画面，也听得见声音。** 画面和台词
             tag: tagRef.current,
             failed: true,
           },
-        ]);
-      }, 12000);
-    }, 8000);
+        ];
+      });
+    }, 12000);
   }, [char, scene, addTrace]);
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */

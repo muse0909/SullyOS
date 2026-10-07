@@ -367,6 +367,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-07 | 剧场：播放器改悬浮窗（竖版小/键盘白边/全屏按钮不管用是同一个病根）+ 顺手修切集后听不见声音 | [`changelogs/2026-10-07-theater-player-floating-window.md`](./changelogs/2026-10-07-theater-player-floating-window.md) |
 | 2026-10-07 | 剧场：没邀请就压根不接进来（补完昨天做的一半）+ 空回兜底写错导致「同一句话三遍」 | [`changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md`](./changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md) |
 | 2026-10-07 | 剧场：答非所问 + 没人设像旁白（病根是画面说明每 1.2 秒当成一句用户发言）+ `see is not defined` 崩溃 + 空气泡 + 邀请按钮换位 + `typecheck:theater` 范围漏了 hooks | [`changelogs/2026-10-07-theater-frame-text-order-and-persona.md`](./changelogs/2026-10-07-theater-frame-text-order-and-persona.md) |
 | 2026-10-06 | 切剧继续播上一部（关在线会话≠关播放器）+ 追剧「接着看」报没这一集（同一 bug 第二个入口）+ 电脑没缓存的剧也能下载到手机 + `playable` 标志在说谎（磁盘上根本没有） | [`changelogs/2026-10-06-theater-switch-teardown-and-download-online.md`](./changelogs/2026-10-06-theater-switch-teardown-and-download-online.md) |

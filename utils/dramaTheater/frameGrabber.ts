@@ -99,9 +99,12 @@ export class FrameGrabber {
 
     let out: Frame;
     try {
-      const data = this.canvas!.toDataURL('image/jpeg', JPEG_Q).split(',')[1] || '';
-      if (!data) return null;
-      // 判重：把当前帧缩成 GRID×GRID 的灰度，跟上一帧比
+      // ⚠️⚠️ 顺序不能换：**先取干净的灰度快照判重，再画时间戳，最后导出**。
+      //
+      // 时间戳是烧进图里的（`stamp`），而判重用的就是这张画布的灰度。
+      // 反过来做的话，每帧左上都多一行不同的秒数 → 灰度永远不一样 →
+      // `diff` 永远大于阈值 → 「没变化就不送」那道闸**整个失效**，
+      // 每 1.2 秒都硬送一张，token 悄悄翻好几倍，而你以为只改了个标注。
       const gray = this.snapshotGray(w, h);
       let diff = 1;
       if (this.prevGray && !force) {
@@ -112,11 +115,53 @@ export class FrameGrabber {
       }
       this.prevGray = gray;
       this.prevAt = video.currentTime;
+
+      // 标上「这会儿在播第几分几秒」
+      this.stamp(video.currentTime, w);
+
+      const data = this.canvas!.toDataURL('image/jpeg', JPEG_Q).split(',')[1] || '';
+      if (!data) return null;
       out = { data, at: video.currentTime, diff, width: w, height: h };
     } catch {
       return null;
     }
     return out;
+  }
+
+  /**
+   * 在画面左上角烧一行「第 3:20」——**只画在送给模型的那张图上，不影响用户看到的画面**
+   * （用户看的是 `<video>` 本身，跟这里没关系）。
+   *
+   * ## 为什么要烧进图里，而不是跟图一起发一句文字
+   *
+   * 时间标记以前是**攒着**的，只在用户开口时拼在他话前面（`liveSession.bgNote`）。
+   * 后果：模型平时收到的是**一堆不知道发生在什么时候的图片**，十几张乱序堆着
+   * 根本串不起来 —— 它连「这是第几分钟」都不知道，只能说「我不知道演了什么」
+   * （暮色 10-08 15:54 现场）。
+   *
+   * ## 为什么不用 `realtimeInput.parts` 之类的多段结构
+   *
+   * 写错的字段服务端**不报错，静默忽略**（见 `sendFrame` 的注释）。
+   * 那种「改了没反应」的失败最难查，不如用最土的办法：画在图上，零协议风险。
+   */
+  private stamp(at: number, w: number) {
+    const ctx = this.ctx;
+    if (!ctx || at <= 0) return;
+    const mm = Math.floor(at / 60);
+    const ss = Math.floor(at % 60);
+    const label = `第 ${mm}:${String(ss).padStart(2, '0')}`;
+    const fs = Math.max(11, Math.round(w / 36));
+    try {
+      ctx.save();
+      ctx.font = `bold ${fs}px sans-serif`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, tw + fs * 0.7, Math.round(fs * 1.5));
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'top';
+      ctx.fillText(label, Math.round(fs * 0.35), Math.round(fs * 0.22));
+      ctx.restore();
+    } catch { /* 画不上就算了，不影响画面本身 */ }
   }
 
   /** 把画面缩成 GRID×GRID 的灰度数组（用来判重，不参与发送） */

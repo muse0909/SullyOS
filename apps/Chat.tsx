@@ -2439,8 +2439,11 @@ if (keepN > 0) {
         console.warn('DB 更新失败，仅更新内存:', e);
     }
     setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
-    // 剧场那份是单独捞的，同步一下，不然改完把块收起来再打开还是旧的
-    setTheaterMsgs(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+    // ⚠️⚠️ 这里原来还有一行 `setTheaterMsgs(...)`，10-08 撤剧场记录块时**状态一起删了**，
+    // 这一行漏掉了 —— 它一执行就抛「setTheaterMsgs is not a function」，
+    // 于是下面两行（关弹窗 + 弹 toast）**根本没轮到执行**。
+    // 现象正是暮色 22:03 报的：「保存按钮没反馈，一直都是灰的，但是能保存」
+    // —— 内容改了（上面那行已经跑完）、弹窗不关、也没有提示。
     setModalType('none');
     setSelectedMessage(null);
     addToast('消息已修改', 'success');

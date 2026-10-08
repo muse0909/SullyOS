@@ -88,12 +88,26 @@ const StoryTheaterMemoryCard: React.FC<{
         }
     };
     const closeVectorModal = () => { setVectorized([]); setDraft([]); setVecIds([]); };
+    /**
+     * 保存。
+     *
+     * ⚠️ **保存完立刻关掉弹窗**（暮色 21:33：「点保存修改弹窗要自动关闭」）。
+     * 留着不开 = 他不知道到底存没存上，会反复点。
+     *
+     * ⚠️ 保存**失败**时**不许关** —— 关了就看不到错在哪，
+     *   而且草稿没了，一改就白改（错误信息在 toast 里，弹窗留着能立刻重试）。
+     */
+    const [saveFailed, setSaveFailed] = useState(false);
     const saveVectorEdit = async () => {
         if (!onSaveVectorized || saving) return;
         setSaving(true);
+        setSaveFailed(false);
         try {
             await onSaveVectorized(vecIds, vectorized, draft);
             setVectorized(draft);
+            closeVectorModal();
+        } catch {
+            setSaveFailed(true);
         } finally {
             setSaving(false);
         }
@@ -186,22 +200,16 @@ const StoryTheaterMemoryCard: React.FC<{
                     isOpen
                     title="存进记忆宫殿的"
                     onClose={closeVectorModal}
+                    showCloseButton
                     footer={(
-                        <div className="flex gap-3 w-full">
-                            <button
-                                onClick={closeVectorModal}
-                                className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
-                            >
-                                关闭
-                            </button>
-                            <button
-                                onClick={saveVectorEdit}
-                                disabled={saving}
-                                className="flex-1 py-3 bg-sky-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
-                            >
-                                {saving ? '保存中…' : '保存修改'}
-                            </button>
-                        </div>
+                        <button
+                            onClick={saveVectorEdit}
+                            disabled={saving}
+                            className="w-full py-3 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-60"
+                            style={{ background: saving ? '#94a3b8' : '#0ea5e9', color: '#fff' }}
+                        >
+                            {saving ? '保存中…' : '保存修改'}
+                        </button>
                     )}
                 >
                     {/* ⚠️ 这里是**可编辑**的（暮色 21:16「要和记忆宫殿的一样，能编辑的那种」）。
@@ -231,6 +239,11 @@ const StoryTheaterMemoryCard: React.FC<{
                                 />
                             </div>
                         ))}
+                        {saveFailed && (
+                            <p className="mt-2 text-[11px] font-bold" style={{ color: '#dc2626' }}>
+                                没存上（看下面的提示）。你改的内容还在，直接再点一次「保存修改」。
+                            </p>
+                        )}
                         <p className="mt-1 text-[11px]" style={{ color: 'rgba(139,122,170,0.7)' }}>
                             保存后会重算这条记忆的向量，以后聊到相关的事它才召得回来。
                         </p>
@@ -1969,8 +1982,9 @@ const MessageItem = React.memo(({
                 changed++;
             }
         } catch (e: any) {
+            // ⚠️ 这里**要往外抛**：弹窗靠它判断「没存上」，存不上就不关（草稿还在）
             addToast?.(`保存出错：${e?.message || e}`, 'error');
-            return;
+            throw e;
         }
         addToast?.(changed > 0 ? `已保存 ${changed} 条，记忆宫殿里也更新了` : '没有改动', changed > 0 ? 'success' : 'info');
     }, [memoryPalaceConfig, addToast]);

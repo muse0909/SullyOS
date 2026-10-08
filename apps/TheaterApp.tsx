@@ -896,27 +896,30 @@ const TheaterChat: React.FC<{
         )}
 
         {live.msgs.map((m) => {
-          /* ── 时间戳（暮色 21:16 要的）──────────────────────────────
+          /* ── 时间戳（暮色 21:16 提、21:33 更正位置）────────────────
            *
-           * 位置：**贴着气泡的外侧、跟气泡底部齐平**。
-           *   - 角色的话在左边 → 时间在气泡**右边**（空的恰好在这儿）
-           *   - 他的话在右边   → 时间在气泡**左边**
+           * ⚠️ **位置改过一次**。21:16 我做成了「气泡左右两侧、底部齐平」，
+           *    21:33 暮色更正：「角色是放在气泡**左上角**，用户的放在气泡**右上角**」。
+           *    所以时间在气泡**上方**，跟着气泡那头对齐：
+           *      - 角色的话在左边 → 时间在气泡**上方左侧**
+           *      - 他说的话在右边   → 时间在气泡**上方右侧**
            *
-           * 只到「时:分」（「21:08」）。剧场是连着看的，跨天才会需要日期，
-           * 那种情况在下面补。
+           * 只到「时:分」。剧场是连着看的，隔天才需要日期。
            */
           const d = new Date(m.ts || Date.now());
           const timeText = m.ts
             ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
             : '';
+          const isUser = m.role === 'user';
           return (
-          <div key={m.id} className={`flex items-end gap-1.5 mb-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {/* 角色的话：时间在左边 */}
-            {m.role !== 'user' && timeText && (
-              <span className={`shrink-0 text-[9px] leading-4 ${p.faint}`}>{timeText}</span>
+          <div key={m.id} className={`mb-2.5 ${isUser ? 'text-right' : 'text-left'}`}>
+            {timeText && (
+              <div className={`px-1 mb-0.5 text-[9px] leading-none ${p.faint} ${isUser ? 'text-right' : 'text-left'}`}>
+                {timeText}
+              </div>
             )}
-            <div className={`max-w-[78%] px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
-              m.role === 'user'
+            <div className={`inline-block max-w-[78%] px-3 py-2 text-left text-[13px] leading-relaxed whitespace-pre-wrap ${
+              isUser
                 ? (p.night ? 'bg-sky-900/60 text-slate-100 rounded-[1.1rem] rounded-br-md' : 'bg-sky-100 text-slate-700 rounded-[1.1rem] rounded-br-md')
                 : (p.night ? 'bg-[#1e293b] text-slate-200 rounded-[1.1rem] rounded-bl-md' : 'bg-white text-slate-700 rounded-[1.1rem] rounded-bl-md shadow-sm')
             }`}>
@@ -928,10 +931,6 @@ const TheaterChat: React.FC<{
                   剧场不播语音，留着就是一串方括号字符露在气泡里。 */}
               {stripVoiceTag(m.text) || (m.streaming ? <span className="opacity-40">…</span> : null)}
             </div>
-            {/* 他说的话：时间在右边 */}
-            {m.role === 'user' && timeText && (
-              <span className={`shrink-0 text-[9px] leading-4 ${p.faint}`}>{timeText}</span>
-            )}
           </div>
           );
         })}

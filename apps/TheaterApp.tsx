@@ -1135,6 +1135,37 @@ const TheaterApp: React.FC = () => {
   const [currentEp, setCurrentEp] = useState(1);
 
   /**
+   * **「现在在看哪部哪一集」—— 实时那边的唯一真相**（10-08 22:30）
+   *
+   * ## 原来错在哪
+   *
+   * 传给 `useTheaterLive` 的是个内联箭头：
+   * `scene: () => ({ title: picked?.title || '', episode: currentEp, at: 0 })`
+   *
+   * 它每次 render 都是**新函数**，而且闭包里锁的是**当次 render 的** `picked`。
+   * 而 `useTheaterLive` 里 boot 出去的 `onText` / `saveModel` 这些回调
+   * 是**建会话那会儿就交出去的**，之后不会再换 ——
+   * 也就是说它们手里的 `scene` 是**开机那一刻的剧**。
+   * 暮色换剧之后，它们问 `scene()` 拿到的还是上一部。
+   *
+   * （原来没炸出来，是因为标记只写在 `send()` 里的 ref 上，ref 是活的。
+   * 现在标记改成现算 `scene()` 了，这个坑就必须一起补 —— 否则把
+   * 「换剧后模型自己说的话」判成上一部剧，反而更糟。）
+   *
+   * ## 现在
+   *
+   * 每次 render 把最新值同步进 ref，`scene` 是**空依赖的稳定引用**。
+   * 于是谁在什么时机问，拿到的都是当下这一部。
+   *
+   * ⚠️ 写在 render 里而不是 effect 里：effect 要等 commit 之后才跑，
+   *    而 boot 是在 effect 里跑的，两者顺序一旦变化就会读到上一帧的值。
+   *    这里赋的是**幂等的派生值**，render 里同步是安全的。
+   */
+  const sceneRef = useRef({ title: '', episode: 1, at: 0 });
+  sceneRef.current = { title: picked?.title || '', episode: currentEp, at: 0 };
+  const scene = useCallback(() => sceneRef.current, []);
+
+  /**
    * 第 2 步：接实时模型。
    *
    * ⚠️ 必须在组件顶层无条件调用 —— 放进 `if (page === 'player')` 里是违反
@@ -1153,7 +1184,7 @@ const TheaterApp: React.FC = () => {
     apiConfig,
     updateCharacter,
     addToast,
-    scene: () => ({ title: picked?.title || '', episode: currentEp, at: 0 }),
+    scene,
     active: page === 'player',
   });
   const [curDuration, setCurDuration] = useState(0);
@@ -1855,9 +1886,20 @@ const TheaterApp: React.FC = () => {
    *    切集是同一轮，清了它这一轮说过的话就断了，剧情接不上。
    */
   const wasPlayer = useRef(false);
+  /**
+   * **这一轮是从哪一刻开始的**（10-08 22:30）
+   *
+   * 收尾时要靠它把「这一轮的话」和「之前遗留在库里的话」分开。
+   * 跟 `wasPlayer` 同一个时机记：只有从别的页面进播放页那一下才算新一轮，
+   * 切下一集不算（切集是同一轮）。
+   */
+  const sessionStartedAt = useRef(0);
   useEffect(() => {
     const inPlayer = page === 'player';
-    if (inPlayer && !wasPlayer.current) live.startFresh();
+    if (inPlayer && !wasPlayer.current) {
+      sessionStartedAt.current = Date.now();
+      live.startFresh();
+    }
     wasPlayer.current = inPlayer;
   }, [page]); // live 故意不进依赖：它每次 render 都是新对象
 
@@ -1909,28 +1951,81 @@ const TheaterApp: React.FC = () => {
       for (let i = all.length - 1; i >= 0; i--) {
         if (all[i]?.metadata?.isTheaterMemory) { lastEndIdx = i; break; }
       }
+
+      /**
+       * ⚠️⚠️⚠️ **「这一轮」到底指哪几条**（10-08 22:30 暮色截图实锤，这是本项目剧场最深的坑）
+       *
+       * ## 他的现场
+       *
+       * 卡片标题写着《花茶人偶…第 1 集》，开头也是「一起看完了《花茶人偶…》」，
+       * 但下面**整段对话全是《剑宗小师妹》的旧内容**（小师妹、食堂、敬酒、穿越、毛绒兔子）。
+       *
+       * ## 原来错在哪
+       *
+       * 「这一轮」是**按位置**定义的：*库里最后一张卡片之后的全部剧场消息*。
+       * 这只在**每一场都成功写出了卡片**的前提下才成立。一旦中间有一场没写成，
+       * 后面每一场都会把**之前所有积压的旧话一起吞进去** ——
+       * 卡片越写越长、越串越远。
+       *
+       * 标题之所以看着是对的（花茶人偶），是因为标题取的是
+       * **最后一条消息**的剧名标记 —— 那一轮确实是在看花茶人偶。
+       * 标题对、正文错 —— 这就是「按位置认场子」这个 bug 的招牌。
+       *
+       * 我昨天推的 `8a83c728`（一句没说也写卡片）**治不了这个**：
+       * 它只保证卡片不断档，可一旦断过，积压的旧话已经进去了。
+       * 而且这一轮如果角色全程没说话，它照样会把旧话当成这一轮的话写进去。
+       *
+       * ## 现在：改成按「身份」认，不按「位置」认
+       *
+       * 三道闸一起上，任何一道单独都能挡住这次的现象：
+       *   ① 位置：最后一张卡片之后（原来的判据，留着当粗筛）
+       *   ② 时间：`sessionStartedAt` 之后 —— 同一部剧连看两场也不会混
+       *   ③ 剧名：标记里的剧名 == 当前在播的剧 —— **换剧绝不串场**
+       *
+       * ③ 是这次真正救命的一道：它不依赖「上一场有没有写卡片」。
+       * 哪怕中间断了一整串，跨剧的话也永远进不了这一张卡。
+       *
+       * ⚠️ 标记解析不出来的（老数据没有 theaterTag）**不丢**，交给 ② 兜。
+       */
+      const nowTitle = String(sceneRef.current.title || '');
+      const fromAt = Number(sessionStartedAt.current) || 0;
+
       const seg = all
         .slice(lastEndIdx + 1)
-        .filter((m: any) => m.metadata?.source === 'theater' && m.role !== 'system' && (m.content || '').trim());
+        .filter((m: any) => m.metadata?.source === 'theater' && m.role !== 'system' && (m.content || '').trim())
+        .filter((m: any) => !fromAt || Number(m.timestamp) >= fromAt)
+        .filter((m: any) => {
+          if (!nowTitle) return true;
+          const g = String(m.metadata?.theaterTag || '').match(/^《(.+?)》第\d+集$/);
+          return !g || g[1] === nowTitle;
+        });
+
       /**
        * ⚠️⚠️ **一句没说也要写卡片**（暮色 22:07）
        *
        * 原来这里是 `if (!seg.length) return;` —— 这一场一句没说就**什么都不写**。
-       * 后果：最新那张卡片还是**上一部剧**的，看上去像是「刚才看的那场」。
-       *
-       * 暮色当时的现场：他刚看完《花茶人偶》，最新卡片里却是《剑宗小师妹》的对话，
-       * 「3分钟前的卡片里的内容还是之前剑宗小师妹的对话，但是上一次看的是花茶人偶」。
-       * （那一场角色正好一声不吭 —— 不说话、不主动开口，两个症状叠在一起，
-       *   `seg` 是空的，于是连卡片都没有。）
+       * 后果：最新那张卡片还是上一场的，看上去像是「刚才看的那场」。
        *
        * **只要退出剧场就写一张**，哪怕内容是「这次没怎么聊」。
        * 这样「最新一张卡 = 最新这一场」永远成立，不用靠猜。
+       *
+       * ⚠️ 22:23 暮色又报了同一个症状（「上面写的是花茶人偶，
+       *    但聊天记录是以前剑宗小师妹的」），**跟这里已经不是同一个原因了**。
+       *    真正的原因是「这一轮」按位置认，见上面三道闸的注释。
+       *    这里只管「写不写」，不管「写谁」—— 两件事分开记，别再混为一谈。
        */
-      // 剧名集数从最后一条的标记里拆（「《xxx》第N集」）；一句没说就从当前播放状态拿
+      // 剧名集数从最后一条的标记里拆（「《xxx》第N集」）
       const tag = String(seg[seg.length - 1]?.metadata?.theaterTag || '');
       const mm = tag.match(/^《(.+?)》第(\d+)集$/);
-      const title = mm?.[1] || picked?.title || '剧场';
-      const ep = Number(mm?.[2]) || currentEp || 1;
+      /**
+       * ⚠️ **剧名以「现在在播的」为准**（10-08 22:30）。
+       *
+       * 原来反过来：先信最后一条消息的标记，实在没有才用 `picked`。
+       * 一旦积压的旧话混进来，最后一条可能压根不是这一轮的 ——
+       * 标题就跟正文对不上号了。`sceneRef` 是活的，不会有闭包过期。
+       */
+      const title = nowTitle || mm?.[1] || '剧场';
+      const ep = Number(mm?.[2]) || sceneRef.current.episode || 1;
 
       /**
        * ⚠️⚠️ 这一轮**到底看了哪几集**（暮色 21:16 现场）
@@ -2022,7 +2117,8 @@ const TheaterApp: React.FC = () => {
       // 收尾失败不许挡着退出去 —— 用户要点返回，不能因为写记录失败卡住
       diag('写剧场结束记录失败', { 报错: String(e?.message || e) });
     }
-  }, [char?.id, char?.name, currentEp, userProfile?.name]);
+  // 剧名/集号走 `sceneRef`（活的），这里已经不再读 currentEp，所以也不用进依赖。
+  }, [char?.id, char?.name, userProfile?.name]);
 
   /** 离开剧场 app 回主聊天 —— 收尾 + 真的走 */
   const leaveTheater = useCallback(() => {

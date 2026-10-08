@@ -113,6 +113,40 @@ export function useTheaterLive(opts: {
   const tagRef = useRef('');
   /** 正在流式输出的那条消息 id */
   const streamingId = useRef('');
+
+  /**
+   * **「这条消息属于哪部剧」的唯一出处**（10-08 22:30 暮色截图实锤）
+   *
+   * ## 原来错在哪
+   *
+   * 标记只写在 `send()` 里：`tagRef.current = tag`。也就是说
+   * **「你在这一轮说过话」才会更新剧名**。
+   *
+   * 于是换剧之后，只要角色是**自己先开口**（10-08 才加的主动说剧情），
+   * 它说的每一句都还挂着**上一部剧**的标签 —— 入库带着错的剧名，
+   * 主聊天那个 `剧场 《xxx》` 小标签也是错的，
+   * 灌给主聊天模型的上下文 `[剧场 《上一部》]` 同样是错的。
+   *
+   * `tagRef` 在 `startFresh()` 里也没清（已补上），但那只是治标：
+   * 只要新剧里用户一直没说话，模型主动说的话照样是旧标签。
+   *
+   * ## 现在
+   *
+   * 每次要用标记都**现算**：问 `scene()`「现在在看哪部哪一集」，
+   * 顺手写回 `tagRef` 供别处兜底。
+   *
+   * ⚠️ `scene` 必须在剧场那边是**稳定引用 + 永远读得到最新值**的
+   *（那边已经改成走 ref 了）—— 因为下面 `onText` / `saveModel` 这些
+   * 闭包是 boot 时就交出去的，拿的是**建会话那会儿的 scene**。
+   * 原来的 `tagRef` 之所以能用，正是因为它是 ref，绕开了这个坑。
+   */
+  const currentTag = useCallback(() => {
+    const s = scene();
+    const tag = `《${s.title || '剧场'}》第${s.episode || 1}集`;
+    tagRef.current = tag;
+    return tag;
+  }, [scene]);
+
   /**
    * 流式节流（暮色 00:20「好卡，点也不动」）。
    *
@@ -251,6 +285,11 @@ export function useTheaterLive(opts: {
     lastNudge.current = 0;
     lastSpokeAt.current = 0;
     lastUserSendAt.current = 0;
+    // ⚠️ 上一部剧的标记不能带进这一轮（10-08 22:30）。
+    //    不清的话：换剧后**用户还没开口**、角色自己先说话时，
+    //    那些话会被打上上一部剧的标签（虽然 currentTag() 已经现算了，
+    //    但这里留着清掉，免得别处再读到这个 ref 时拿到脏值）。
+    tagRef.current = '';
     grabberRef.current?.reset();
     audioRef.current?.flush();
   }, []);
@@ -545,7 +584,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
             if (!streamingId.current) {
               const mid = `m${Date.now()}`;
               streamingId.current = mid;
-              return [...old, { id: mid, role: 'assistant', text, ts: Date.now(), streaming: true, tag: tagRef.current }];
+              return [...old, { id: mid, role: 'assistant', text, ts: Date.now(), streaming: true, tag: currentTag() }];
             }
             const i = old.findIndex((m) => m.id === streamingId.current);
             if (i < 0) return old;
@@ -576,6 +615,9 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     });
     sessRef.current = s;
     await s.start();
+    // ⚠️ `scene` 故意不在依赖里（它每次 render 都是新对象，会让 boot 反复重跑）。
+    //    currentTag 包了它，所以也不加 —— 剧场那边已把 scene 改成**稳定引用**，
+    //    currentTag 也就恒定不变，这里闭包拿到的跟最新值一致。
   }, [char, apiKey, liveModel, liveBaseUrl, userProfile, buildSystemPrompt, addToast, onReady, addTrace]);
 
   /**
@@ -854,9 +896,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     // 不邀请时聊天区本来就不渲染（见 TheaterApp），这里是第二道闸：
     // 万一以后哪个入口漏了，也不会偷偷把人接进来。
     if (!invitedRef.current) return;
-    const s = scene();
-    const tag = `《${s.title || '剧场'}》第${s.episode || 1}集`;
-    tagRef.current = tag;
+    const tag = currentTag();
 
     // ① 先让用户看到这条消息
     setMsgs((old) => [...old, { id: `u${Date.now()}`, role: 'user', text, tag, ts: Date.now() }]);
@@ -934,13 +974,13 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
             role: 'assistant' as const,
             text: '没收到回复，点这里再试一次',
             ts: Date.now(),
-            tag: tagRef.current,
+            tag: currentTag(),
             failed: true,
           },
         ];
       });
     }, 12000);
-  }, [char, scene, addTrace]);
+  }, [char, currentTag, addTrace]);
 
   /** 模型这一轮说完了 → 入库 + 记忆后处理 */
   // 入库仍然不阻塞（后面的字），记忆宫殿照常 await。
@@ -951,10 +991,13 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
       role: 'assistant',
       type: 'text',
       content: full,
-      metadata: { source: 'theater', theaterTag: tagRef.current },
+      // ⚠️ 现算标记，不读 tagRef（10-08 22:30）。
+      //    这段闭包是 boot 时交出去的，tagRef 只在「用户发过话」时更新过 ——
+      //    换剧之后角色自己开口说的话会被打上上一部剧的剧名。
+      metadata: { source: 'theater', theaterTag: currentTag() },
     }).catch((e: any) => addTrace(`模型消息入库失败：${e?.message || e}`));
     runMemoryPost(char);
-  }, [char, runMemoryPost, addTrace]);
+  }, [char, runMemoryPost, addTrace, currentTag]);
 
 
   /** 手动「再试一次」。⚠️ 必须先清配置键 —— 不清的话会被上面的守卫当重复给挡掉 */

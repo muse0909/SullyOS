@@ -1912,12 +1912,24 @@ const TheaterApp: React.FC = () => {
       const seg = all
         .slice(lastEndIdx + 1)
         .filter((m: any) => m.metadata?.source === 'theater' && m.role !== 'system' && (m.content || '').trim());
-      if (!seg.length) return; // 这场一句没说，别留空记录
-
-      // 剧名集数从最后一条的标记里拆（「《xxx》第N集」）
+      /**
+       * ⚠️⚠️ **一句没说也要写卡片**（暮色 22:07）
+       *
+       * 原来这里是 `if (!seg.length) return;` —— 这一场一句没说就**什么都不写**。
+       * 后果：最新那张卡片还是**上一部剧**的，看上去像是「刚才看的那场」。
+       *
+       * 暮色当时的现场：他刚看完《花茶人偶》，最新卡片里却是《剑宗小师妹》的对话，
+       * 「3分钟前的卡片里的内容还是之前剑宗小师妹的对话，但是上一次看的是花茶人偶」。
+       * （那一场角色正好一声不吭 —— 不说话、不主动开口，两个症状叠在一起，
+       *   `seg` 是空的，于是连卡片都没有。）
+       *
+       * **只要退出剧场就写一张**，哪怕内容是「这次没怎么聊」。
+       * 这样「最新一张卡 = 最新这一场」永远成立，不用靠猜。
+       */
+      // 剧名集数从最后一条的标记里拆（「《xxx》第N集」）；一句没说就从当前播放状态拿
       const tag = String(seg[seg.length - 1]?.metadata?.theaterTag || '');
       const mm = tag.match(/^《(.+?)》第(\d+)集$/);
-      const title = mm?.[1] || tag || '剧场';
+      const title = mm?.[1] || picked?.title || '剧场';
       const ep = Number(mm?.[2]) || currentEp || 1;
 
       /**
@@ -1976,8 +1988,7 @@ const TheaterApp: React.FC = () => {
       const lines = [
         `${userProfile?.name || '你'}和${char.name}一起看完了《${title}》${epText}。`,
         '',
-        `这一轮在剧场里聊了这些：`,
-        ...(log.length ? log : ['（这一轮没聊几句）']),
+        ...(log.length ? ['这一轮在剧场里聊了这些：', ...log] : ['（这一轮在剧场里没怎么说话）']),
         '',
         '现在回到主聊天了。',
       ].join('\n');

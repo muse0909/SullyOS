@@ -368,6 +368,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-08 | 剧场卡片串场：「这一轮」是按位置认的（标题对正文错）→ 改成按剧名+时间认，顺带治了换剧后模型说的话打错标签 | [`changelogs/2026-10-08-theater-card-content-mixes-another-drama.md`](./changelogs/2026-10-08-theater-card-content-mixes-another-drama.md) |
 | 2026-10-08 | 主动开口换了触发方式（老的 activityStart 实测无效）+ 集末问句重复四遍的根因在播放器 `ended` + 剧场记录卡加「向量化」 | [`changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md`](./changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md) |
 | 2026-10-08 | 剧场四步：跟着画面说一句 / 集末问观后感 / 集号标图上 / 每一轮从零开始（顺带切掉复读滚雪球的根） | [`changelogs/2026-10-08-theater-watch-together-four-steps.md`](./changelogs/2026-10-08-theater-watch-together-four-steps.md) |
 | 2026-10-07 | 剧场：退出时写一条「一起看结束了」（治重进又刷一条）+ 剧情串不起来的真相（三档做法没动手） | [`changelogs/2026-10-07-theater-end-marker-and-plot-memory.md`](./changelogs/2026-10-07-theater-end-marker-and-plot-memory.md) |

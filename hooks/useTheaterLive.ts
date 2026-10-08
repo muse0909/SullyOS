@@ -149,6 +149,12 @@ export function useTheaterLive(opts: {
   const grabberRef = useRef<FrameGrabber | null>(null);
   /** 上一次「看一眼」是什么时候（给 NUDGE_MIN_MS 限流用） */
   const lastNudge = useRef(0);
+  /** 它最后一次吐字是什么时候。催它之前要看这个：刚说完就该让它歇会儿 */
+  const lastSpokeAt = useRef(0);
+  /** 他最后一次发话是什么时候。催它之前也要看这个（见抽帧循环里的说明） */
+  const lastUserSendAt = useRef(0);
+  /** 集末那句「有什么想说的」上一次是什么时候（防一集问好几次） */
+  const lastWrapupAt = useRef(0);
   const audioRef = useRef<AudioTap | null>(null);
   /** 接上声音没有（接不上就只喂画面，不影响别的） */
   const audioOk = useRef(false);
@@ -156,13 +162,26 @@ export function useTheaterLive(opts: {
   /** 多久问一次画面。1.2 秒是「切镜头基本抓得住、静止段几乎不耗」的折中 */
   const FRAME_EVERY = 1200;
   /**
-   * 「看一眼」最快多久催一次（10-08 18:30）。
+   * 「你自己接一句」最快多久催一次。
    *
-   * 画面判重已经滤掉大部分静止帧，但剧情连续推进时还是可能几秒一张。
-   * 8 秒一道：一集一两分钟 = 十来句，够它把剧情一句一句串起来，又不至于刷屏。
-   * 想更密/更稀只改这一个数。
+   * ## 为什么从 8 秒改成 20 秒（10-08 19:17）
+   *
+   * 8 秒是**按老的触发方式定的**：那次发的是 `activityStart/activityEnd`，
+   * 模型压根不理，等于这个数形同虚设。换成确定能回话的 `clientContent` 之后，
+   * 每催一次就是**实打实一句模型的话**——8 秒一集能出十几句，聊天框直接被刷爆。
+   *
+   * 现在这一句是「陪他一起看」时随口搭的那一嘴，不是解说，
+   * 20 秒一句刚好是「一集说三四次」的密度。想更密/更稀只改这一个数。
    */
-  const NUDGE_MIN_MS = 8000;
+  const NUDGE_MIN_MS = 20000;
+  /**
+   * 它刚说完话之后要歇多久才催下一次。
+   *
+   * 只判 `isSpeaking` 不够：它答完那句的时候 `speaking` 立刻就空了，
+   * 但那句往往还有 2~3 秒才说完。这 6 秒是接着那句的，
+   * 这时候再塞一句进去，等于把它自己刚讲的那句截断重来。
+   */
+  const NUDGE_COOLDOWN_MS = 6000;
 
   /**
    * 播放器把视频元素交过来。**画面和声音都从这里接**。
@@ -231,6 +250,11 @@ export function useTheaterLive(opts: {
     streamingId.current = '';
     pendingStream.current = '';
     lastNudge.current = 0;
+    lastSpokeAt.current = 0;
+    lastUserSendAt.current = 0;
+    // 新的一轮 —— 上一轮问过集末那句话，这个记录要一起倒掉，
+    // 不然新一轮的第一集会被当成「刚问过」直接被防重挡掉（什么都不问）。
+    lastWrapupAt.current = 0;
     grabberRef.current?.reset();
     audioRef.current?.flush();
   }, []);
@@ -501,6 +525,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
          * 这个必须**第一个**做 —— 后面的代码有提前 return 的路径。
          */
         answeredAt.current = Date.now();
+        lastSpokeAt.current = Date.now();
         /**
          * ⚠️ 流式**必须节流**（暮色 00:20「好卡，点也不动」）。
          *
@@ -743,27 +768,41 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
       framesFedRef.current++;
 
       /**
-       * 送完这一帧，**跟着给它一个「看一眼」的信号**（10-08 18:30 暮色定的）。
+       * 送完这一帧，**跟着硬问它一句「你自己接一句」**（10-08 19:17 暮色定的）。
        *
-       * ## 为什么需要这个信号
+       * ## 为什么必须由代码来问
        *
-       * 提示词里已经写了「画面往前走了就接一句」，但光有提示词它不会自己开口 ——
-       * 实时模型是对「一次输入」回话的，光往里持续灌媒体，它只在用户真正说话时回。
-       * 而这一轮要的就是「他没说话，它也要说」。
+       * 实时模型是对「一次输入」回话的，光往里持续灌画面，它只在人真正说话时才回
+       * —— 这就是暮色报的「没有主动说剧情，只有问了才说」。
+       * 原先发的 `activityStart/activityEnd`（协议里本来就有的「一段输入开始/结束」）
+       * 实测**一点用都没有**：发出去毫无反应，又不报错。
+       * 现在退回 `clientContent` 硬问 —— 主聊天每一句都是这么走的，它一定回。
+       * 代价是它**没法真的闭嘴**，所以「什么值得说」这件事改在代码里判。
        *
-       * ## 频率（三道闸）
+       * ## 五道闸（从松到紧）
        *
-       *   1. `grab()` 里「画面跟前一张差不多就不送」（本来就有的判重）
-       *   2. `NUDGE_MIN_MS` —— 再压一道，最快这么久才催一次
-       *   3. 它正在说话时不催 —— 打断过一次，后面就不连贯了
+       *   1. `grab()` 里「画面跟前一张差不多就不送」—— **这一道才是「闭嘴」**
+       *      （静止的对白镜头连问都不会问）
+       *   2. `NUDGE_MIN_MS` 20 秒 —— 最多 20 秒一句，一集三四句
+       *   3. `NUDGE_COOLDOWN_MS` 6 秒 —— 它刚说完那 6 秒内不催，别把刚讲的截断
+       *   4. `isSpeaking` —— 正在说话不催（`nudgeScene` 内部还会再兜一层）
+       *   5. **他刚发话 8 秒内不催** —— 他问了一句正等回答，这时插一句
+       *      「画面往前走了一步」，两轮问答叠着发出去，模型会以为要一起回答
        *
-       * ## 催了它也可以不吭声
+       * ## 它答完会自己决定说什么
        *
-       * 提示词里写死了「画面跟前一张差不多就什么都别说」，所以那几十次不值得说的
-       * 它自己闭嘴。这正是我们要的。
+       * 提示词里写着「像坐在旁边看，别解说、别总结」，所以回的是
+       * 「刚那个小师妹是不是哭了」这种搭话，不是解说词。
        */
       const now = Date.now();
-      if (!s.isSpeaking && now - lastNudge.current >= NUDGE_MIN_MS) {
+      const spokeAgo = now - lastSpokeAt.current;
+      const userAgo = now - lastUserSendAt.current;
+      if (
+        !s.isSpeaking
+        && spokeAgo >= NUDGE_COOLDOWN_MS
+        && userAgo >= 8000
+        && now - lastNudge.current >= NUDGE_MIN_MS
+      ) {
         lastNudge.current = now;
         s.nudgeScene();
       }
@@ -868,6 +907,10 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     const wasClosed = !sess || !sess.isOpen;
     sentWhileClosed.current = wasClosed;
     answeredAt.current = 0;
+    // 记一下他刚发话 —— 抽帧循环在催「自己接一句」之前要看这个：
+    // 他刚问了一句正等着回答，这时再插一句「画面往前走了一步」，
+    // 两轮问答叠在一起，它会以为要一起回答。
+    lastUserSendAt.current = Date.now();
     sess?.send(text);
 
     // ⑤ 空回兜底
@@ -934,16 +977,33 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
    * ## 频率
    *
    * 只在一集真的播完时问一次。一集一两分钟 = 一场十几次，不刷屏。
+   *
+   * ## ⚠️ 防重：暮色报「同一句话冒了四遍」（10-08 19:17）
+   *
+   * 根因不在这里，在 `TheaterApp.onEnded` —— 播完那一瞬间**会连着触发好几次**
+   *（下一集还没解码出来，`currentTime` 仍停在结尾，`ended` 又来一遍；
+   *  自动连播再叠一次）。每触发一次就排一个 3 秒的定时器，
+   * 于是四句话排着队发出去，模型对着同一句答四遍。
+   *
+   * 这里加的是**兜底那道**：15 秒内问第二次直接不管。
+   * 两道闸一起上 —— 外面那道按「哪一集」判，这道按「多久以内」判，
+   * 任何一边单独失效都还有另一边挡着。
    */
   const askWrapup = useCallback(async () => {
     const s = sessRef.current;
     if (!s || !s.isOpen) return;
+    const now = Date.now();
+    if (lastWrapupAt.current && now - lastWrapupAt.current < 15000) {
+      addTrace('集末那句 15 秒内已经问过了，不重复问');
+      return;
+    }
+    lastWrapupAt.current = now;
     // 它正在说的话还没说完就问 = 打断。等它说完，最多等 6 秒。
     for (let i = 0; i < 20 && s.isSpeaking; i += 1) {
       await new Promise((r) => setTimeout(r, 300));
     }
     send('（这集看完了，你刚陪着一起看的。有没有什么想说的？）');
-  }, [send]);
+  }, [send, addTrace]);
 
   /** 手动「再试一次」。⚠️ 必须先清配置键 —— 不清的话会被上面的守卫当重复给挡掉 */
   const retry = useCallback(() => {

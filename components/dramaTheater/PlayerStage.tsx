@@ -257,6 +257,23 @@ const PlayerStage: React.FC<Props> = ({
   const [full, setFull] = useState(false);
   const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<number | null>(null);
+  /**
+   * 这一次播放**已经报过结束了吗**（10-08 19:17）。
+   *
+   * ## 为什么需要它
+   *
+   * `ended` 在实测里**不是一集只来一次**，它会连着来三四遍：
+   * 下一集还没解码出来时 `<video>` 还杵在上一集的结尾，
+   * 在线流（MediaSource）播完缓冲尾巴还会再补一发，
+   * 换 src 时旧 src 的结尾也会补一发。
+   *
+   * 而 `onEnded` 干两件事：**排集末那句话的定时器** + **自动连播**。
+   * 来四遍就是同一句问四遍（模型答四遍）、`playEpisode` 也调四遍。
+   *
+   * 所以在**源头**挡掉：一次播放只认第一次 `ended`。
+   * 换新剧集时（`onLoadedMetadata`）清掉，下一集照样能报结束。
+   */
+  const endedFired = useRef(false);
 
   // ── 大小档位（存本地，用户调过一次就记住）────────────────
   const [size, setSize] = useState<SizeMode>(() => {
@@ -432,6 +449,11 @@ const PlayerStage: React.FC<Props> = ({
   /** 元数据到了 = 真实比例知道了，更新并记住 */
   const onMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const v = e.currentTarget;
+    // ⚠️ 新一集的元数据到了 → 这是**新的一次播放**，
+    // 上一集那次「已经报过结束」的记录要清掉，否则这一集播完不会触发收尾。
+    // （不清的话，「一集只报一次结束」这道闸会一直把后面每一集都挡掉。）
+    endedFired.current = false;
+    setEnded(false);
     if (durOk(v.duration)) setDur(v.duration);
     const r = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 0;
     d('元数据到了', { 宽: v.videoWidth, 高: v.videoHeight, 比例: r ? Math.round(r * 100) / 100 : 0 });
@@ -642,7 +664,7 @@ const PlayerStage: React.FC<Props> = ({
         onPlaying={() => d('正在播放', { 播到: videoRef.current?.currentTime })}
         onWaiting={() => d('缓冲中')}
         onStalled={() => d('卡住了', { 已缓冲段: videoRef.current?.buffered.length })}
-        onPlay={() => { d('开始播放'); setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); }}
+        onPlay={() => { d('开始播放'); setPlaying(true); setEnded(false); setBarOn(true); scheduleHide(); onMediaReady?.(); endedFired.current = false; }}
         onPause={() => { d('暂停', { 播到: videoRef.current?.currentTime }); setPlaying(false); cancelHide(); setBarOn(true); }}
         onError={() => {
           const v = videoRef.current;
@@ -650,6 +672,9 @@ const PlayerStage: React.FC<Props> = ({
           onMediaError?.();
         }}
         onEnded={() => {
+          // 一次播放只认第一次 ended（见 endedFired 的注释）
+          if (endedFired.current) return;
+          endedFired.current = true;
           setPlaying(false);
           setEnded(true);
           cancelHide();

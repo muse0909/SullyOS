@@ -506,37 +506,64 @@ export class LiveSession {
   }
 
   /**
-   * 「看一眼刚才那张画面」——催它跟着剧情接一句（10-08 18:30 暮色定的）。
+   * 「你自己接一句」——**他没说话，它也要说**（10-08 19:17 暮色报「只有问了才说」）。
    *
-   * ## 为什么走 `realtimeInput` 而不是 `clientContent`
+   * ## ⚠️ 这里换过一次触发方式，原来那条路实测走不通
    *
-   * `clientContent`（`pushUserTurn`）是**一轮对话**：会把 `speaking` 清掉、
-   * 等于打断它正在说的话，而且历史上会多出成对的「他问了 / 他答了」。
-   * 我们要的是「你刚收到一张画面，自己看着办」——那属于**持续输入**，
-   * 该跟画面走同一条通道。
+   * 原来发的是 `realtimeInput.activityStart` / `activityEnd`
+   * （实时协议里标记「一段输入开始/结束」的字段，本来就是给这个用的）。
+   * 真机结果：**发出去没有任何反应**，模型一句都不接。
    *
-   * ## 为什么发 activityStart / activityEnd
+   * 为什么查不出来：协议里**写错的字段服务端是静默忽略、不报错**的
+   *（`sendFrame` 那条注释里已经吃过一次亏）。所以现象是「催了没用」，
+   * 没有任何报错线索——它既可能压根没收到，也可能收到了但自己选择不说话。
    *
-   * 这两个字段是实时协议里标记「一段输入的开始/结束」的。模型据此判断
-   * 「这是一次交互，我该不该回」。没有它们的话，光灌媒体它是不会主动开口的 ——
-   * 实测（之前一直没主动说话就是这个原因）。
+   * ## 现在的做法：退回 `clientContent` 硬问一句
    *
-   * ⚠️ 服务端不认识的字段是**静默忽略、不报错**的。
-   *    所以真机现象是「催了没用，它还是不说话」，而不会报任何错。
-   *    万一这条路走不通，退路就是退化成「每次催都硬发一句 clientContent 问它」
-   *    ——那样它一定回，但代价是每催一次多一对对话、而且会打断。
+   * 这是**唯一确定能让它回话**的通道 —— 主聊天的每一句都是这么走的，
+   * 它回了 `turnComplete` 就一定有下文。代价有两个，都在下面处理掉了：
+   *
+   *   1. **它一定回，没法真的闭嘴**。`clientContent` 就是一轮问答，
+   *      发出去就必须有回答。所以「画面没变化就闭嘴」这件事
+   *      **不能交给模型判断，改在代码里判**（见 `useTheaterLive` 的抽帧循环：
+   *      画面跟前一张差不多时压根不送、也就不会走到这里）。
+   *   2. **会打断它正在说的话**。所以这里**不在打断时发**（`pushUserTurn` 才会打断）。
+   *
+   * ## 为什么不用 `pushUserTurn`
+   *
+   * 两个原因，都是会留痕的：
+   *   - `pushUserTurn` 会**打断**它正在说的话，还会清掉 `speaking`；
+   *   - 它会写 `lastUserTurnAt` —— 那个字段是「刚刚有人说过话」的时间戳，
+   *     用来识别「它自己憋不住开口」（见 `flushText` 里的 SPONT 记录）。
+   *     催一次写一次，这个诊断就**永远是 -1**，等于把现场记录废了。
    *
    * 画面本身**不在这里发**：那 1.2 秒一张的连续输入由 `sendFrame` 单独送
-   * （画面是「正在发生的事」，不跟这里的一轮交互混在一起）。
+   * （画面是「正在发生的事」，不跟这里的一轮问答混在一起）。
+   * `bgNote`（播到第几分钟）拼在最前面 —— 它知道现在看到的是哪一段，
+   * 接的那句话才对得上剧情。
    */
   nudgeScene(): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    // 它正在说话就别催（外层也判了，这里再兜一层 —— 中间隔了几百毫秒）
+    if (this.speaking) return false;
     try {
-      this.ws.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
-      this.ws.send(JSON.stringify({ realtimeInput: { activityEnd: {} } }));
+      const parts: Array<{ text: string }> = [];
+      if (this.bgNote) parts.push({ text: this.bgNote });
+      parts.push({
+        text: '（画面往前走了一步，你刚看到的就是最新的。像坐在他旁边一起看那样，随口接一句就行，不用长。）',
+      });
+      this.ws.send(JSON.stringify({
+        clientContent: {
+          turns: [{ role: 'user', parts }],
+          turnComplete: true,
+        },
+      }));
+      // ⚠️ 这里**故意不动** `bgNote`：留着好让暮色下一次真说话时
+      // 还能带上「播到第几分钟」。它每次 `sendFrame` 都被覆盖，不会越积越长。
       const w = window as any;
       if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
       w.__liveMedia.nudges = (w.__liveMedia.nudges || 0) + 1;
+      w.__liveMedia.lastNudgeAt = Date.now();
       return true;
     } catch (e: any) {
       this.trace(`催一句失败：${e?.message || e}`);

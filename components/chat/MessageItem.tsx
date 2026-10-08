@@ -1,13 +1,15 @@
 
 
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
 import { createPortal } from 'react-dom';
 import { useOS } from '../../context/OSContext';
 import { Heart as HeartIcon, CaretDown, FilmReel } from '@phosphor-icons/react';
+// 剧场记录卡片底下的「向量化」按钮走这条路（10-08 19:17）
+import { vectorizeTheaterRecord } from '../../utils/dramaTheater/vectorizeRecord';
 
 
 // --- 主动消息思维链折叠显示 ---
@@ -50,7 +52,10 @@ const StoryTheaterMemoryCard: React.FC<{
     cardTitle?: string;
     content: string;
     generatedAt?: number;
-}> = ({ theaterTitle, cardTitle, content, generatedAt }) => {
+    /** 剧场那张给「向量化」按钮用；见面剧情剧院那张不给（暮色只要剧场这张有） */
+    onVectorize?: () => void;
+    vectorizing?: boolean;
+}> = ({ theaterTitle, cardTitle, content, generatedAt, onVectorize, vectorizing }) => {
     const [expanded, setExpanded] = useState(false);
     if (!content) return null;
     const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
@@ -102,6 +107,31 @@ const StoryTheaterMemoryCard: React.FC<{
                     }}
                 >
                     {content}
+                </div>
+            )}
+            {/* ── 向量化（10-08 19:17 暮色要的）────────────────────────────
+             *  「卡片我想在最底下增加一个向量化的按钮。
+             *   把卡片里的内容发给模型总结成向量化记忆。」
+             *
+             *  放在**卡片外面、展开区下面** —— 卡片折叠着也点得到，
+             *  不用「必须先展开才看得见按钮」多走一步。
+             *
+             *  胶囊、居中、浅紫（跟卡片外框同色系，暮色审美：不要方角、不要纯文字按钮）。
+             */}
+            {onVectorize && (
+                <div className="px-3 pb-2.5 pt-1.5 border-t flex justify-center animate-fade-in"
+                    style={{ borderColor: 'rgba(167,139,250,0.18)' }}>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); onVectorize(); }}
+                        disabled={vectorizing}
+                        className="px-4 py-1.5 rounded-full text-[11px] font-bold active:scale-95 transition-all disabled:opacity-60"
+                        style={{
+                            background: 'rgba(167,139,250,0.14)',
+                            color: '#8b7aaa',
+                        }}
+                    >
+                        {vectorizing ? '正在总结…' : '向量化'}
+                    </button>
                 </div>
             )}
         </div>
@@ -360,7 +390,19 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     // 暮色 2026-07-31：情侣空间邀请卡片"接受/拒绝"按钮调 OSContext 全局方法
     //   之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
-    const { coupleSpaceAccept, coupleSpaceDecline, characters, userProfile } = useOS();
+    /**
+     * `apiConfig` / `memoryPalaceConfig` / `addToast` 是剧场记录卡片底下
+     * 那个「向量化」按钮要用的（10-08 19:17）。
+     *
+     * ⚠️ 解构字段必须**确认真的在 OSContext 里交出来**，漏一个就是
+     *    `undefined` 一路传下去，报错还找不到头（AGENTS.md §4.3 记的三次真机崩）。
+     *    三个都在 context 的导出清单里。
+     */
+    const {
+        coupleSpaceAccept, coupleSpaceDecline,
+        characters, userProfile,
+        apiConfig, memoryPalaceConfig, addToast,
+    } = useOS();
 
     // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
     // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
@@ -1693,6 +1735,68 @@ const MessageItem = React.memo(({
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
 
+    /**
+     * 剧场记录卡片底下「向量化」按钮的状态和处理（10-08 19:17 暮色要的）。
+     *
+     * ## ⚠️ 为什么必须写在**这里**，不能写在组件顶上
+     *
+     * 它要用 `displayContent`（卡片真正显示的那份正文）。
+     * 而 `displayContent` 在下面才算是 const —— 写在前面就是 TDZ，
+     * 一渲染就 `ReferenceError` 把整个聊天页炸白屏。
+     * 本项目同款事故已经炸过三次（AGENTS.md §4.3）。
+     *
+     * 位置规矩：**在所有提前 return 之前**。下面第 1740 行有个
+     * `if (!displayContent && !hasVoiceContent) return null`，钩子写在它后面
+     * 就会「消息条数一变，钩子数量跟着变」—— React 直接报错。
+     *
+     * ## 用哪套模型
+     *
+     * - **总结**：优先记忆宫殿的副模型（轻量、快、便宜），
+     *   没配就退回主聊天那套 —— 跟 `useTheaterLive.runMemoryPost` 一个口径。
+     * - **算向量**：只能用记忆宫殿的向量配置，没有第二个选择。
+     *
+     * 这个组件是 `React.memo` 包着的，所以 handler 用 `useCallback` 固定住，
+     * 别在渲染里顺手 new 一个（每次 render 新函数 → 卡片整棵重渲染）。
+     */
+    const [vectorizing, setVectorizing] = useState(false);
+    const handleVectorize = useCallback(async () => {
+        if (vectorizing) return;
+        const meta = (m as any)?.metadata || {};
+        const charId = (m as any)?.charId;
+        if (!charId) { addToast?.('这条记录找不到角色', 'error'); return; }
+        const c = (characters || []).find((x: any) => x.id === charId);
+        const light = memoryPalaceConfig?.lightLLM;
+        const llm = (light?.baseUrl && light?.apiKey && light?.model)
+            ? light
+            : { baseUrl: apiConfig?.baseUrl, apiKey: apiConfig?.apiKey, model: apiConfig?.model };
+        setVectorizing(true);
+        try {
+            const r = await vectorizeTheaterRecord({
+                charId,
+                charName: c?.name || 'TA',
+                userName: userProfile?.name || '暮色',
+                theaterTitle: meta.theaterTitle || '剧场',
+                content: displayContent,
+                llm: llm as any,
+                embedding: memoryPalaceConfig?.embedding as any,
+            });
+            if (r.ok) {
+                // 存 0 条 + 跳过 N 条 = 「跟已有的太像」——这是正常结果，
+                // 说成成功比说成失败好，否则暮色会以为点了没用。
+                addToast?.(
+                    r.stored > 0 ? `已记进记忆宫殿（${r.stored} 条）` : '跟已有的记忆太像，没有新增',
+                    r.stored > 0 ? 'success' : 'info',
+                );
+            } else {
+                addToast?.(r.error || '向量化失败', 'error');
+            }
+        } catch (e: any) {
+            addToast?.(`向量化失败：${e?.message || e}`, 'error');
+        } finally {
+            setVectorizing(false);
+        }
+    }, [vectorizing, m, characters, userProfile?.name, memoryPalaceConfig, apiConfig, addToast, displayContent]);
+
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
     const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
@@ -1738,6 +1842,8 @@ const MessageItem = React.memo(({
                 cardTitle={`《${memoryMeta.theaterTitle || '剧场'}》${ep > 0 ? `第${ep}集` : ''} 一起看完了`}
                 content={displayContent}
                 generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+                vectorizing={vectorizing}
+                onVectorize={handleVectorize}
             />
         );
     }

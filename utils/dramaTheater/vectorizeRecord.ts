@@ -32,8 +32,6 @@
 import { MemoryNodeDB } from '../memoryPalace/db';
 import { vectorizeAndStore } from '../memoryPalace/vectorStore';
 import type { EmbeddingConfig, MemoryNode, MemoryRoom, RemoteVectorConfig } from '../memoryPalace/types';
-import { safeFetchJson } from '../safeApi';
-import { normalizeChatBaseUrl } from '../chatApiCompat';
 
 /** 七间房 + 白名单外的兜底。模型偶尔会编出 'attic2' 这种，我们只认这七个。 */
 const ROOMS: MemoryRoom[] = [
@@ -46,6 +44,12 @@ export interface VectorizeRecordDeps {
     userName: string;
     /** 剧名，进提示词让它知道这是什么内容 */
     theaterTitle: string;
+    /** 集号（0 = 不知道/没记），拼成「第 13 集」那句 */
+    episode?: number;
+    /** 看的时间，格式化成「10 月 8 日晚上」这种。**必须传** —— 记忆要写清楚什么时候的事 */
+    when?: string;
+    /** buildPrompt 里拼好的「第 13 集」，不用外面传 */
+    episodeText?: string;
     /** 卡片正文（两个人的对话原文） */
     content: string;
     /** 总结用的模型。优先传记忆宫殿的副模型，没配就传主聊天那套 */
@@ -87,81 +91,86 @@ function readRemoteVectorConfig(): RemoteVectorConfig | undefined {
  * 因为「静默存一条空的」比报错更糟：暮色会看到「向量化成功」，
  * 但记忆宫殿里什么都没有。
  */
-function parseNodes(raw: string): Array<Record<string, any>> {
+function parseNode(raw: string): Record<string, any> | null {
     let txt = String(raw || '').trim();
-    if (!txt) return [];
+    if (!txt) return null;
     // 模型很爱包一层 ```json … ```，先剥掉
     txt = txt.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-    // 兜底：前后有多余的话，就掐头去尾找第一个 [ 到最后一个 ]
-    if (!txt.startsWith('[')) {
-        const a = txt.indexOf('[');
-        const b = txt.lastIndexOf(']');
+    // 兜底：掐头去尾找第一个 { 到最后一个 }
+    if (!txt.startsWith('{')) {
+        const a = txt.indexOf('{');
+        const b = txt.lastIndexOf('}');
         if (a >= 0 && b > a) txt = txt.slice(a, b + 1);
     }
-    let arr: any;
     try {
-        arr = JSON.parse(txt);
-    } catch {
-        return [];
-    }
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((x: any) => x && typeof x === 'object' && String(x.content || '').trim());
+        const o = JSON.parse(txt);
+        // ⚠️ 保险：万一它还是给了数组，取第一条。
+        //   「一次只总结成一条」是提示词里写死的，这里是最后一道，
+        //   保证十几轮对话不会被拆成好几条独立记忆（暮色 20:37 强调最要紧的一条）。
+        const obj = Array.isArray(o) ? o[0] : o;
+        if (obj && typeof obj === 'object' && String(obj.content || '').trim()) return obj;
+    } catch { /* 落到下面 */ }
+    return null;
 }
 
 function buildPrompt(d: VectorizeRecordDeps): string {
-    return [
-        `你是${d.charName}的记忆整理助手。下面是主聊天里一张「一起看完了」卡片里的内容。`,
-        '',
-        // ⚠️⚠️ 这一段是**整个提示词里最要紧的部分**（暮色 19:58 现场）
-        //
-        // 卡片是**从外面看这场的人**写的，每行开头写的是名字。模型读到
-        // 「和哈基米一起看完了《…》」会理解成「有个叫哈基米的人跟别人一起看了」，
-        // 于是把角色当成了**另一个人**、把用户当成了观众 ——
-        // 存出来的记忆变成「哈基米和我吐槽…」（把用户塞进剧里了）。
-        // 所以必须**显式**告诉它谁是谁，光靠名字它分不出来。
-        `## ⚠️ 先搞清楚这段记录里谁是谁（最容易搞错的地方，务必先读这段）`,
-        '',
-        `这段记录里出现的两个名字，指的是：`,
-        '',
-        `- **「${d.charName}」= 你自己**。就是这台手机里的 AI 角色，也就是正在记事的「我」。`,
-        `- **「${d.userName}」= 用户**。是真正坐在那儿看剧、跟你一起看的那个人。`,
-        '',
-        `卡片开头那句「和${d.charName}一起看完了《${d.theaterTitle}》」，`,
-        `意思是「**${d.userName}（用户）和${d.charName}（你自己）一起**看完了这部剧」，`,
-        `**不是**「有个人和${d.charName}一起看」。`,
-        '',
-        `每一行「名字：说的话」里，写着 **${d.charName}** 的那些是${d.charName}自己说的；`,
-        `写着 **${d.userName}** 的是用户说的。`,
-        '',
-        `## 对话原文`,
-        d.content,
-        '',
-        '## 你的任务',
-        '把这一场「一起看剧」里**真正发生了什么**整理成 1 到 4 条记忆。',
-        '',
-        '判断标准：',
-        '- 只记**具体的、以后可能会被提起来的事**：看了什么剧、哪一集里发生了什么、',
-        '  角色当时说了什么让你有反应的话、你们之间产生了什么感受或约定。',
-        '- **不要记**：嗯、啊、对、哈哈这类应答；不要复述整段剧情梗概；',
-        '  不要写「他们一起看了电视剧」这种废话。',
-        `- **必须站在 ${d.charName}（你自己）的视角写**。`,
-        `  主语是「我（${d.charName}）和${d.userName}」。`,
-        `  ⚠️ 不要把 ${d.charName} 当成另一个人，也不要把 ${d.userName} 说成剧里的角色。`,
-        '- 每条 30 到 120 字。宁可少写几条，也别凑数。',
-        '',
-        '## 输出格式',
-        '只输出一个 JSON 数组，不要任何别的字。数组里每一项：',
-        '```json',
-        '[{"content":"记忆正文","importance":5,"mood":"happy","tags":["关键词"],"room":"self_room"}]',
-        '```',
-        '',
-        '字段说明：',
-        '- importance：1 到 10 的整数，这件事对你们有多重要',
-        '- mood：一个情绪词，中文或英文都行（比如 warm / happy / touched）',
-        '- tags：2 到 4 个关键词，方便以后检索',
-        `- room：只能从这七个里选一个 —— ${ROOMS.join(' / ')}`,
-        '  （关于这场共同经历的感受类记忆，选 bedroom 或 self_room 最合适）',
-    ].join('\n');
+    return `你是${d.charName}。
+
+下面是${d.userName}和你刚才在剧场里一起看剧时的聊天记录。
+你们一边看一边聊了几句，现在看完了，轮到你说说观后感。
+
+## 你的任务
+
+把**这一次一起看剧**，写成**一条**记忆 —— 用你自己的话、你的视角。
+
+必须把这三件事说清楚：
+
+1. **什么时候、和${d.userName}一起、看了什么** —— 哪一天、哪部剧、第几集
+2. **剧情大致走向** —— 这一集讲了什么。用你的话讲，不要照抄台词
+3. **触动你的地方** —— 哪个片段让你心里一动，或者让你想跟${d.userName}说点什么
+
+## 怎么写
+
+1. **第一人称，用「我」。** 用户直接称「${d.userName}」。
+
+   ❌ 错误（旁观者口吻）：「${d.userName}和${d.charName}一起看了这部剧，印象都很深刻。」
+
+   ✅ 正确：「${d.when}我跟${d.userName}一起看《${d.theaterTitle}》${d.episodeText}，……」
+
+2. **拒绝概括性套话。** 严禁「这让我很感动」「很开心」「度过了美好的一晚」
+   这种假大空的总结。写清楚你**抓住了哪个细节**，以及你**当时真实的反应**。
+
+   ❌「这一集剧情很精彩，${d.userName}看得很投入。」
+   ✅「${d.userName}在小师妹把剑穗递给六师哥那一下突然说了句什么，我到现在还在想这事。」
+
+3. **观后感不是读后感。** 不分点、不用标题、不评价剧情好坏、不打分。
+   就当看完之后靠在椅子上，随口跟${d.userName}说的话。
+
+4. **⚠️ 一条就够。** 哪怕你们聊了十几句、连着看了好几集，也只写**一条**。
+   不要拆成「剧情总结一条 + 观后感一条 + 感受一条」，更不要一次给好几段。
+
+5. **长度 150 到 350 字。** 太短撑不起「剧情走向 + 触动」两件事。
+
+## 输出格式
+
+严格 JSON 顶层结构，不要 markdown 包裹：
+
+{
+  "content": "我视角的这一场观后感……",
+  "importance": 6,
+  "mood": "warm",
+  "tags": ["看剧", "剧名"],
+  "room": "self_room"
+}
+
+字段说明：
+- importance：1 到 10 的整数。一起看完一整集、有触动的给 5 到 7；
+  只是一起看了没什么感觉的给 3 到 4。
+- mood：从 happy, sad, angry, anxious, tender, excited, peaceful,
+  nostalgic, warm, grateful, neutral 里挑一个最贴的。少用 neutral。
+- tags：2 到 4 个关键词，方便以后检索。
+- room：只能从这七个里选一个 —— ${ROOMS.join(' / ')}。
+  这类「两个人共同经历」的回忆放 bedroom 或 self_room 最合适。`;
 }
 
 /**
@@ -184,42 +193,42 @@ export async function vectorizeTheaterRecord(
     if (!content) return { ok: false, stored: 0, skipped: 0, contents: [], error: '卡片是空的' };
 
     // ① 先总结
+    //
+    // ⚠️ 用记忆宫殿那个 `callLLM`，不用自己拼 `/chat/completions`：
+    //   它内部按 protocol 分 OpenAI / Claude / Gemini 三条路，
+    //   自己写死 openai 的话，暮色哪天副模型切到 Claude/Gemini 这里就整个静默失败
+    //   （AGENTS.md §4.5 记过同一个坑）。
+    const ep = Number(deps.episode || 0);
+    const promptDeps: VectorizeRecordDeps = {
+        ...deps,
+        episodeText: ep > 0 ? `第 ${ep} 集` : '',
+        when: deps.when || '',
+    };
     let raw: string;
     try {
-        const url = `${normalizeChatBaseUrl(llm.baseUrl)}/chat/completions`;
-        const res = await safeFetchJson(
-            url,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llm.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llm.model,
-                    messages: [{ role: 'user', content: buildPrompt(deps) }],
-                    temperature: 0.5,
-                    stream: false,
-                }),
-            },
-            1,
-            0,
-            { appName: '剧场', purpose: '剧场记录 → 向量化记忆' },
+        const { callLLM } = await import('../memoryPalace/llmCall');
+        const r = await callLLM(
+            llm as any,
+            buildPrompt(promptDeps),
+            `聊天记录：\n${content}`,
+            { temperature: 0.7, maxTokens: 2000 },
         );
-        raw = res?.choices?.[0]?.message?.content || '';
+        raw = r.text || '';
     } catch (e: any) {
         return { ok: false, stored: 0, skipped: 0, contents: [], error: `总结失败：${e?.message || e}` };
     }
 
-    const parsed = parseNodes(raw);
-    if (!parsed.length) {
+    const one = parseNode(raw);
+    if (!one) {
         return { ok: false, stored: 0, skipped: 0, contents: [], error: '模型没给出能用的结果' };
     }
+    // ⚠️ **只取一条**（暮色 20:37：「一次只总结成一条」是整个功能最要紧的一条）
+    const parsed = [one];
 
     // ② 拼成记忆节点
     const now = Date.now();
     const titleTag = `theater:${deps.theaterTitle || '剧场'}`;
-    const nodes: MemoryNode[] = parsed.slice(0, 4).map((x, i) => {
+    const nodes: MemoryNode[] = parsed.map((x, i) => {
         const room = ROOMS.includes(x.room) ? (x.room as MemoryRoom) : 'living_room';
         const imp = Number(x.importance);
         return {

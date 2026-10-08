@@ -186,6 +186,23 @@ const StoryTheaterMemoryCard: React.FC<{
     );
 };
 
+/**
+ * 把「一起看剧是什么时候」说清楚（暮色 20:37：「要写什么时间我们一起看了什么」）。
+ *
+ * 光有「刚刚 / 3 小时前」不够 —— 那是个相对量，隔几天再看就不准了，
+ * 而记忆是要长期召回的。给「10 月 8 日晚上 19:40」这种绝对时间。
+ */
+function formatWatchWhen(ts: any): string {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const d = new Date(n);
+    const p = (x: number) => String(x).padStart(2, '0');
+    // 按时段说，比精确到分更像人话
+    const h = d.getHours();
+    const slot = h < 6 ? '凌晨' : h < 11 ? '早上' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜';
+    return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日${slot} ${p(h)}:${p(d.getMinutes())}`;
+}
+
 // 暮色 9-21 第五轮:简单的相对时间格式化(给剧场记忆卡片用)
 function formatRelativeTime(ts: number): string {
     const diff = Date.now() - ts;
@@ -1828,6 +1845,10 @@ const MessageItem = React.memo(({
                 charName: c?.name || 'TA',
                 userName: userProfile?.name || '暮色',
                 theaterTitle: meta.theaterTitle || '剧场',
+                episode: Number(meta.theaterEpisode) || 0,
+                // ⚠️ 记忆里必须写清楚「什么时候」。提示词里那条例句直接引用了它，
+                //   空着的话那句就变成「我跟X一起看《…》，……」——缺个时间点。
+                when: formatWatchWhen(meta.generatedAt),
                 content: displayContent,
                 llm: llm as any,
                 embedding: memoryPalaceConfig?.embedding as any,

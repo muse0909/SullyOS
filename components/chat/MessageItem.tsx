@@ -10,6 +10,9 @@ import { useOS } from '../../context/OSContext';
 import { Heart as HeartIcon, CaretDown, FilmReel } from '@phosphor-icons/react';
 // 剧场记录卡片底下的「向量化」按钮走这条路（10-08 19:17）
 import { vectorizeTheaterRecord } from '../../utils/dramaTheater/vectorizeRecord';
+// 「存了什么内容」的弹窗 —— 走项目级 Modal（自带 createPortal，
+// 躲 backdrop-filter 父级；规格是暮色 2026-07-02 拍板那一套）
+import Modal from '../os/Modal';
 
 
 // --- 主动消息思维链折叠显示 ---
@@ -52,11 +55,23 @@ const StoryTheaterMemoryCard: React.FC<{
     cardTitle?: string;
     content: string;
     generatedAt?: number;
-    /** 剧场那张给「向量化」按钮用；见面剧情剧院那张不给（暮色只要剧场这张有） */
-    onVectorize?: () => void;
+    /** 剧场那张给「向量化」按钮用；见面剧情剧院那张不给（暮色只要剧场这张有）。
+     *  返回存进去的正文数组（弹窗要显示）；失败返回 null。 */
+    onVectorize?: () => Promise<string[] | null>;
     vectorizing?: boolean;
 }> = ({ theaterTitle, cardTitle, content, generatedAt, onVectorize, vectorizing }) => {
     const [expanded, setExpanded] = useState(false);
+    /** 刚存进去的内容 → 弹窗。空数组 = 不弹（平时完全不影响聊天页）。
+     *  ⚠️ 状态放在**卡片自己**这儿，不在 MessageItem 那边 ——
+     *     弹窗是卡片的一部分，交给外面管就得把 setter 一路传下来，纯属绕路。 */
+    const [vectorized, setVectorized] = useState<string[]>([]);
+    const runVectorize = async (e: React.MouseEvent) => {
+        e.stopPropagation(); e.preventDefault();
+        if (!onVectorize || vectorizing) return;
+        const list = await onVectorize();
+        // ⚠️ 有内容才弹。一条都没存进去（被去重跳掉了）就别弹空窗。
+        if (list && list.length) setVectorized(list);
+    };
     if (!content) return null;
     const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
     return (
@@ -109,20 +124,23 @@ const StoryTheaterMemoryCard: React.FC<{
                     {content}
                 </div>
             )}
-            {/* ── 向量化（10-08 19:17 暮色要的）────────────────────────────
-             *  「卡片我想在最底下增加一个向量化的按钮。
-             *   把卡片里的内容发给模型总结成向量化记忆。」
+            {/* ── 向量化（10-08 19:17 暮色要的，19:58 改位置）──────────────
+             *  「卡片我想在最底下增加一个向量化的按钮。把卡片里的内容发给模型
+             *   总结成向量化记忆。」→ 后来：「**希望放在折叠里**」。
              *
-             *  放在**卡片外面、展开区下面** —— 卡片折叠着也点得到，
-             *  不用「必须先展开才看得见按钮」多走一步。
+             *  ⚠️ 19:17 那一版放在**卡片外面、展开区下面**（折叠着也点得到）。
+             *    19:58 暮色明确要挪进**折叠区里面** —— 就放在正文下面，
+             *    折叠时看不见，展开才看见。这是有意改的，别再挪回去。
              *
              *  胶囊、居中、浅紫（跟卡片外框同色系，暮色审美：不要方角、不要纯文字按钮）。
              */}
-            {onVectorize && (
-                <div className="px-3 pb-2.5 pt-1.5 border-t flex justify-center animate-fade-in"
-                    style={{ borderColor: 'rgba(167,139,250,0.18)' }}>
+            {expanded && onVectorize && (
+                <div
+                    className="px-3 pb-2.5 pt-2 flex justify-center"
+                    style={{ background: 'rgba(255,255,255,0.2)', borderTop: '1px solid rgba(167,139,250,0.18)' }}
+                >
                     <button
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); onVectorize(); }}
+                        onClick={runVectorize}
                         disabled={vectorizing}
                         className="px-4 py-1.5 rounded-full text-[11px] font-bold active:scale-95 transition-all disabled:opacity-60"
                         style={{
@@ -133,6 +151,36 @@ const StoryTheaterMemoryCard: React.FC<{
                         {vectorizing ? '正在总结…' : '向量化'}
                     </button>
                 </div>
+            )}
+            {/* 存了什么内容 —— 弹窗给用户看（暮色 19:58：
+              「向量化的内容要弹窗显示出来，让我能知道存了什么内容」）。
+              没点过就不渲染，所以平时完全不影响聊天页。 */}
+            {vectorized.length > 0 && (
+                <Modal
+                    isOpen
+                    title="存进记忆宫殿的"
+                    onClose={() => setVectorized([])}
+                    footer={null}
+                >
+                    <div className="text-[12px] leading-relaxed" style={{ color: '#6a5a8a' }}>
+                        <p className="mb-3" style={{ color: '#8b7aaa' }}>
+                            一共 {vectorized.length} 条。下面就是模型总结成的内容：
+                        </p>
+                        {vectorized.map((c, i) => (
+                            <div
+                                key={i}
+                                className="rounded-2xl px-3 py-2.5 mb-2 last:mb-0"
+                                style={{ background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.16)' }}
+                            >
+                                <div className="text-[10px] font-bold mb-1" style={{ color: '#a78bfa' }}>第 {i + 1} 条</div>
+                                {c}
+                            </div>
+                        ))}
+                        <p className="mt-3 text-[11px]" style={{ color: 'rgba(139,122,170,0.7)' }}>
+                            去记忆宫殿里能看到它们，也能改能删。
+                        </p>
+                    </div>
+                </Modal>
             )}
         </div>
     );
@@ -1759,11 +1807,15 @@ const MessageItem = React.memo(({
      * 别在渲染里顺手 new 一个（每次 render 新函数 → 卡片整棵重渲染）。
      */
     const [vectorizing, setVectorizing] = useState(false);
-    const handleVectorize = useCallback(async () => {
-        if (vectorizing) return;
+    /**
+     * 干活 + 弹提示，**弹窗由卡片自己管**（状态在卡片那边，不往这儿传）。
+     * 返回存进去的正文数组给卡片拿去弹窗显示。
+     */
+    const handleVectorize = useCallback(async (): Promise<string[] | null> => {
+        if (vectorizing) return null;
         const meta = (m as any)?.metadata || {};
         const charId = (m as any)?.charId;
-        if (!charId) { addToast?.('这条记录找不到角色', 'error'); return; }
+        if (!charId) { addToast?.('这条记录找不到角色', 'error'); return null; }
         const c = (characters || []).find((x: any) => x.id === charId);
         const light = memoryPalaceConfig?.lightLLM;
         const llm = (light?.baseUrl && light?.apiKey && light?.model)
@@ -1787,11 +1839,15 @@ const MessageItem = React.memo(({
                     r.stored > 0 ? `已记进记忆宫殿（${r.stored} 条）` : '跟已有的记忆太像，没有新增',
                     r.stored > 0 ? 'success' : 'info',
                 );
-            } else {
-                addToast?.(r.error || '向量化失败', 'error');
+                // ⚠️ 有内容才让卡片弹窗 —— 「让我能知道存了什么内容」（19:58）。
+                //   一条都没存进去就别弹（弹个空窗更让人困惑）。
+                return r.contents;
             }
+            addToast?.(r.error || '向量化失败', 'error');
+            return null;
         } catch (e: any) {
             addToast?.(`向量化失败：${e?.message || e}`, 'error');
+            return null;
         } finally {
             setVectorizing(false);
         }

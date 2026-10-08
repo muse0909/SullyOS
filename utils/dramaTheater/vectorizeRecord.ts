@@ -60,6 +60,12 @@ export interface VectorizeRecordResult {
     stored: number;
     /** 跟已有记忆太像被跳掉的 */
     skipped: number;
+    /**
+     * 存进去的每一条正文 —— 用来**弹窗给用户看**（暮色 19:58：
+     * 「向量化的内容要弹窗显示出来，让我能知道存了什么内容」）。
+     * 失败时是空数组。
+     */
+    contents: string[];
     /** 总结出来的原文，失败时给个说法 */
     error?: string;
 }
@@ -104,9 +110,30 @@ function parseNodes(raw: string): Array<Record<string, any>> {
 
 function buildPrompt(d: VectorizeRecordDeps): string {
     return [
-        `你是${d.charName}的记忆整理助手。下面是${d.userName}和${d.charName}一起看电视剧《${d.theaterTitle}》时，剧场里发生的对话。`,
+        `你是${d.charName}的记忆整理助手。下面是主聊天里一张「一起看完了」卡片里的内容。`,
         '',
-        '## 对话原文',
+        // ⚠️⚠️ 这一段是**整个提示词里最要紧的部分**（暮色 19:58 现场）
+        //
+        // 卡片是**从外面看这场的人**写的，每行开头写的是名字。模型读到
+        // 「和哈基米一起看完了《…》」会理解成「有个叫哈基米的人跟别人一起看了」，
+        // 于是把角色当成了**另一个人**、把用户当成了观众 ——
+        // 存出来的记忆变成「哈基米和我吐槽…」（把用户塞进剧里了）。
+        // 所以必须**显式**告诉它谁是谁，光靠名字它分不出来。
+        `## ⚠️ 先搞清楚这段记录里谁是谁（最容易搞错的地方，务必先读这段）`,
+        '',
+        `这段记录里出现的两个名字，指的是：`,
+        '',
+        `- **「${d.charName}」= 你自己**。就是这台手机里的 AI 角色，也就是正在记事的「我」。`,
+        `- **「${d.userName}」= 用户**。是真正坐在那儿看剧、跟你一起看的那个人。`,
+        '',
+        `卡片开头那句「和${d.charName}一起看完了《${d.theaterTitle}》」，`,
+        `意思是「**${d.userName}（用户）和${d.charName}（你自己）一起**看完了这部剧」，`,
+        `**不是**「有个人和${d.charName}一起看」。`,
+        '',
+        `每一行「名字：说的话」里，写着 **${d.charName}** 的那些是${d.charName}自己说的；`,
+        `写着 **${d.userName}** 的是用户说的。`,
+        '',
+        `## 对话原文`,
         d.content,
         '',
         '## 你的任务',
@@ -117,7 +144,9 @@ function buildPrompt(d: VectorizeRecordDeps): string {
         '  角色当时说了什么让你有反应的话、你们之间产生了什么感受或约定。',
         '- **不要记**：嗯、啊、对、哈哈这类应答；不要复述整段剧情梗概；',
         '  不要写「他们一起看了电视剧」这种废话。',
-        '- 站在**${d.charName}本人的视角**写，这是「我记得的事」，不是第三方记录。',
+        `- **必须站在 ${d.charName}（你自己）的视角写**。`,
+        `  主语是「我（${d.charName}）和${d.userName}」。`,
+        `  ⚠️ 不要把 ${d.charName} 当成另一个人，也不要把 ${d.userName} 说成剧里的角色。`,
         '- 每条 30 到 120 字。宁可少写几条，也别凑数。',
         '',
         '## 输出格式',
@@ -146,13 +175,13 @@ export async function vectorizeTheaterRecord(
     const { charId, llm, embedding } = deps;
 
     if (!llm?.baseUrl || !llm?.apiKey || !llm?.model) {
-        return { ok: false, stored: 0, skipped: 0, error: '还没配置模型' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], error: '还没配置模型' };
     }
     if (!embedding?.baseUrl || !embedding?.apiKey) {
-        return { ok: false, stored: 0, skipped: 0, error: '记忆宫殿的向量配置还没填' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], error: '记忆宫殿的向量配置还没填' };
     }
     const content = String(deps.content || '').trim();
-    if (!content) return { ok: false, stored: 0, skipped: 0, error: '卡片是空的' };
+    if (!content) return { ok: false, stored: 0, skipped: 0, contents: [], error: '卡片是空的' };
 
     // ① 先总结
     let raw: string;
@@ -179,12 +208,12 @@ export async function vectorizeTheaterRecord(
         );
         raw = res?.choices?.[0]?.message?.content || '';
     } catch (e: any) {
-        return { ok: false, stored: 0, skipped: 0, error: `总结失败：${e?.message || e}` };
+        return { ok: false, stored: 0, skipped: 0, contents: [], error: `总结失败：${e?.message || e}` };
     }
 
     const parsed = parseNodes(raw);
     if (!parsed.length) {
-        return { ok: false, stored: 0, skipped: 0, error: '模型没给出能用的结果' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], error: '模型没给出能用的结果' };
     }
 
     // ② 拼成记忆节点
@@ -231,12 +260,19 @@ export async function vectorizeTheaterRecord(
     // ④ 算向量并标记 embedded=true（内部会再 save 一次）
     try {
         const r = await vectorizeAndStore(nodes, embedding, readRemoteVectorConfig());
-        return { ok: true, stored: r.stored, skipped: r.skipped };
+        return {
+            ok: true,
+            stored: r.stored,
+            skipped: r.skipped,
+            // 只把**真存进去**的交回去给弹窗显示（去重跳掉的不算）
+            contents: r.storedIds.map((id) => nodes.find((n) => n.id === id)?.content || '').filter(Boolean),
+        };
     } catch (e: any) {
         return {
             ok: false,
             stored: 0,
             skipped: 0,
+            contents: [],
             error: `记忆已经记下了，但算向量失败：${e?.message || e}`,
         };
     }

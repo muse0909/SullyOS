@@ -104,6 +104,15 @@ export class LiveSession {
   private handle = '';
   /** 这一轮模型正在说的话 */
   private speaking = '';
+  /**
+   * 最近一次**收到转写**的时刻。
+   *
+   * ⚠️ `speaking` 靠 `turnComplete` 清空，那个事件一丢它就永远非空，
+   *    于是「正在说话吗」永远为真 → 催句被闸死、插话被当打断 → 全盘沉默
+   *    （暮色 19:58 现场）。有这个时间戳才能判断它是不是**真的还在说**
+   *    ——见 `isSpeaking` 里的 20 秒自保。
+   */
+  private speakingAt = 0;
   /** 用户自己是不是正在连着打字 */
   private wantOpen = false;
   /** 已经重试过几轮了，别无限重连 */
@@ -133,6 +142,41 @@ export class LiveSession {
   /** 用户最后一次发话的时间，用来判断模型是不是「自己主动插嘴」 */
   private lastUserTurnAt = 0;
 
+  /**
+   * 现场：发出去了 vs 回话了 vs 被丢进队列（暮色 19:58 报「直接不回话了」）。
+   *
+   * ## 为什么必须分开记
+   *
+   * 界面上「我发了消息、它没回」这**一个现象**对应三种完全不同的病：
+   *
+   *   1. **压根没发出去** —— 连接是断的，`send()` 把话塞进 `pendingInput`，
+   *      等重连才补发。界面照样显示那条消息（`send()` 先建泡再发），
+   *      所以看起来「我说了，它不理我」。
+   *   2. **发出去了、服务端一个字都没回** —— 那就是模型/上下文/协议的问题。
+   *   3. **回了、但被转写合并逻辑吃掉了** —— 那是 `onMessage` 里那套
+   *      `startsWith` 拼接的锅。
+   *
+   * 这三种的修法完全不一样，光看界面永远分不出来。
+   * 之前一直靠猜，已经错过好几次（见 `__liveRaw` 那段注释）。
+   *
+   * 用法：手机调试口里读 `window.__liveTx`
+   * - `sends` 涨但 `replies` 不涨 → 第 2 种，服务端没理
+   * - `drops` 涨 → 第 1 种，连接是断的
+   * - `merged` 涨 → 第 3 种，转写合并把它吃了
+   */
+  private txDiag() {
+    const w = window as any;
+    if (!w.__liveTx) w.__liveTx = { sends: 0, replies: 0, drops: 0, merged: 0, last: [], nudges: 0 };
+    return w.__liveTx;
+  }
+
+  /** 记一条发送/接收现场（`kind` 让人一眼分清是哪条线） */
+  private txLog(kind: string, extra?: any) {
+    const d = this.txDiag();
+    d.last.push({ kind, ...extra });
+    if (d.last.length > 80) d.last.splice(0, d.last.length - 80);
+  }
+
   constructor(opts: LiveOpts) {
     this.opts = opts;
   }
@@ -147,6 +191,10 @@ export class LiveSession {
   send(text: string): void {
     if (!text.trim()) return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.state === 'failed') {
+      // ⚠️ **这句话压根没发出去**，界面却照样显示了它（`useTheaterLive.send` 先建泡）。
+      //    这是「我发了它不回」最容易骗人的一种，记一笔。
+      this.txDiag().drops++;
+      this.txLog('DROP-send', { why: this.ws ? `ws=${this.ws.readyState} state=${this.state}` : '没有连接', t: text.slice(0, 60) });
       this.pendingInput.push(text);
       if (!this.wantOpen) this.start();
       return;
@@ -339,6 +387,8 @@ export class LiveSession {
           w.__liveRaw.push({ k: 'tr', t: t.slice(0, 300), n: t.length });
           if (w.__liveRaw.length > 200) w.__liveRaw.splice(0, w.__liveRaw.length - 200);
 
+          // 每次真收到字都打时间戳 —— `isSpeaking` 的 20 秒自保靠它。
+          this.speakingAt = Date.now();
           if (t === this.speaking) {
             // 完全一样 —— 服务端重发，忽略
           } else if (t.startsWith(this.speaking)) {
@@ -351,6 +401,10 @@ export class LiveSession {
           } else {
             // 真接不上 —— 这才是要查的地方，不是「新一轮」就完事了。
             // 现场要能看到：接不上时是「同样的句子又来一遍」还是「真的换内容了」。
+            //
+            // ⚠️ `merged` 这个数就是「模型明明回了字、却被这段拼接逻辑吃掉了」的次数。
+            //    之前这个分支直接把新字往上拼，看起来像是模型自己说的话，其实可能是
+            //    两段内容被粘在一起 —— 界面上表现为「复读」或者「说话说不完整」。
             const w2 = window as any;
             if (!w2.__liveRaw) w2.__liveRaw = [];
             w2.__liveRaw.push({
@@ -360,6 +414,7 @@ export class LiveSession {
               t2: t.slice(0, 300),
               n2: t.length,
             });
+            this.txDiag().merged++;
             this.speaking += t;
             this.opts.onText?.(t, this.speaking);
           }
@@ -388,6 +443,14 @@ export class LiveSession {
   private finishTurn() {
     const full = this.speaking.trim();
     this.speaking = '';
+    // 现场：一轮结束了，到底有没有说话。
+    // 暮色 19:58 报「直接不回话了」—— 这个数是判定「服务端到底有没有理我们」的关键：
+    // 有 SEND 没有 REPLY，就是模型那边的问题；连 SEND 都没有，是连接的问题。
+    if (full) {
+      const d = this.txDiag();
+      d.replies++;
+      this.txLog('REPLY', { len: full.length, t: full.slice(0, 80) });
+    }
     // 现场：模型是不是在用户没问的时候自己开口了。
     // （声音进 realtimeInput 走的是服务端的活动检测，画面每 1.2 秒也进一次 ——
     //  这两样都可能把模型勾起来说话。出现了就记一笔，别再靠猜。）
@@ -502,6 +565,28 @@ export class LiveSession {
 
   /** 它正在说话吗（外层催之前要看一下，别把它自己的话打断） */
   get isSpeaking(): boolean {
+    /**
+     * ⚠️⚠️ 卡死自保（暮色 19:58「进去时出了一句没头没尾的，之后直接不回话了」）。
+     *
+     * `speaking` 靠 `turnComplete` 清空。**只要那个事件丢了**（流断了、
+     * 服务端把两轮合在一起、或者转写和完成事件的顺序反了），
+     * `speaking` 就会一直非空。
+     *
+     * 后果是**全盘卡死**，而且界面上什么都看不出来：
+     *   - `isSpeaking` 永远为真 → 催句那道闸永远不让过 → 它再也不主动开口
+     *   - `pushUserTurn` 每一次都以为自己在打断 → `speaking` 被清掉再重新灌，
+     *     刚来的字被丢掉，看起来就是「我发了它不理」
+     *
+     * 判据：**转写停超过 20 秒就当它说完了**。
+     * 模型生成再长的一段也不会有 20 秒一个字不来。
+     */
+    if (this.speaking && this.speakingAt && Date.now() - this.speakingAt > 20000) {
+      this.trace('转写停了 20 秒，当它说完了（防卡死）');
+      const d = this.txDiag();
+      d.staleClears = (d.staleClears || 0) + 1;
+      this.txLog('STALE-speaking-reset', { had: this.speaking.slice(0, 80) });
+      this.speaking = '';
+    }
     return !!this.speaking;
   }
 
@@ -560,6 +645,10 @@ export class LiveSession {
       }));
       // ⚠️ 这里**故意不动** `bgNote`：留着好让暮色下一次真说话时
       // 还能带上「播到第几分钟」。它每次 `sendFrame` 都被覆盖，不会越积越长。
+      const d = this.txDiag();
+      d.sends++;
+      d.nudges++;
+      this.txLog('SEND-nudge', { parts: parts.length, bgLen: this.bgNote.length });
       const w = window as any;
       if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
       w.__liveMedia.nudges = (w.__liveMedia.nudges || 0) + 1;
@@ -617,7 +706,11 @@ export class LiveSession {
    * 后面再怎么抽帧都不会插到它前面（`sendFrame` 只发图、不再发文字轮次）。
    */
   private pushUserTurn(text: string) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.pendingInput.push(text); return; }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.txDiag().drops++;
+      this.txLog('DROP-push', { t: text.slice(0, 60) });
+      this.pendingInput.push(text); return;
+    }
     // 用户插话 → 打断模型现在这段
     if (this.speaking) { this.speaking = ''; this.trace('用户插话，清掉未说完的'); }
     const bg = this.bgNote;
@@ -632,6 +725,10 @@ export class LiveSession {
         turnComplete: true,
       },
     }));
+    // 现场：这条真的发出去了吗（暮色 19:58「直接不回话了」）
+    const d = this.txDiag();
+    d.sends++;
+    this.txLog('SEND-user', { parts: parts.length, bgLen: bg.length, t: text.slice(0, 60) });
   }
 
   /**

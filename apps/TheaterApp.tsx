@@ -1204,19 +1204,6 @@ const TheaterApp: React.FC = () => {
   const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
-  /** 集末那句「有什么想说的」还没来得及发出去的定时器（切集/退出时清掉，别让它突然冒一句） */
-  const pendingWrapupRef = useRef(0);
-  /**
-   * 集末那句话**已经问过的那一集**（`剧名#集号`）。防重复的第二道闸。
-   *
-   * ⚠️ 第一道闸在 `PlayerStage`（`endedFired`：一次播放只认第一次 `ended`）——
-   *    那是治根，因为 `ended` 连着来四遍本身就是毛病。这道是兜底：
-   *    万一哪天 `ended` 又换了别的花样连着来，集号对不上就当没问过。
-   *
-   *    存的是**集号**不是次数，所以「同一集重播」不会被误挡
-   *    （重播会先走 `playEpisode` 换 src / 触发 `onLoadedMetadata`，见 PlayerStage）。
-   */
-  const wrapupKeyRef = useRef('');
   const posRef = useRef({ pos: 0, dur: 0 });
   const lastRecord = useRef(0);
 
@@ -1848,16 +1835,7 @@ const TheaterApp: React.FC = () => {
   const wasPlayer = useRef(false);
   useEffect(() => {
     const inPlayer = page === 'player';
-    if (inPlayer && !wasPlayer.current) {
-      live.startFresh();
-      // 新的一轮 —— 集末那句的防重记录一起倒掉，
-      // 不然「上一轮看过第 3 集」会把这一轮的第 3 集也挡掉（什么都不问）。
-      wrapupKeyRef.current = '';
-      if (pendingWrapupRef.current) {
-        window.clearTimeout(pendingWrapupRef.current);
-        pendingWrapupRef.current = 0;
-      }
-    }
+    if (inPlayer && !wasPlayer.current) live.startFresh();
     wasPlayer.current = inPlayer;
   }, [page]); // live 故意不进依赖：它每次 render 都是新对象
 
@@ -2003,14 +1981,6 @@ const TheaterApp: React.FC = () => {
     setPage('episodes');
   }, [recordWatch, finishTheaterSession]);
 
-  /** 清掉没来得及发的集末收尾定时器（切集/离开时用，别让它突然冒一句） */
-  useEffect(() => () => {
-    if (pendingWrapupRef.current) {
-      window.clearTimeout(pendingWrapupRef.current);
-      pendingWrapupRef.current = 0;
-    }
-  }, []);
-
   /**
    * 只要「不在播放页了」就把在线流收掉、播放位还回去。
    *
@@ -2040,46 +2010,22 @@ const TheaterApp: React.FC = () => {
   const onEnded = useCallback(() => {
     recordWatch(true);
     /**
-     * 集末那句「这集看完有什么想说的」（10-08 18:30 定的四步之②）。
+     * ## ⚠️ 原来这里问「这集看完有什么想说的」，已经**整个撤掉**（10-08 20:21）
      *
-     * ## ⚠️ 这一段防重是被暮色逼出来的：同一句话冒了四遍（10-08 19:17）
+     * 它是 18:30「四步」的第②步，出发点是「它整集没说过话，只能靠最后一句话问出来」。
+     * 现在第①步（跟着画面接一句）跑通了 —— 实测它一句一句跟着剧情说，
+     * 而且集末那句**问得很突兀**：画面正演着，突然冒一句「（这集看完了…）」，
+     * 那个括号一露出来，它就跳出来了，不像自己说的话。
      *
-     * `ended` **不是一个剧集只来一次**。实测它会连着来好几遍：
-     *   - 自动连播已经调了 `playEpisode(next)`，新剧集还没解码出画面，
-     *     `currentTime` 还杵在上一集的结尾 → 又触发一次；
-     *   - 在线流（MediaSource）播完时缓冲尾巴还会再补一发；
-     *   - 换 src 时旧 src 的 `ended` 也可能补一发。
+     * 暮色原话：「这几天看完了有没有什么想说的这句我觉得可以去掉了。
+     * 现在角色正常说剧情了。」
      *
-     * 每触发一次就排一个 3 秒的定时器，四次就是四句话排队发出去，
-     * 模型对着同一句答四遍 —— 屏幕上就是同一句问四遍、答四遍。
+     * 连带撤掉的：`useTheaterLive.askWrapup`、提示词第 4 条
+     *（「每集结束前，我会问你一句…」——已经不问了，留着会让它一直等那句话）。
      *
-     * ## 两道闸（加上播放器里那道，一共三道）
-     *
-     *   1. **`PlayerStage.endedFired`（治根，在源头）**：一次播放只认第一次 `ended`。
-     *      上面说的「连着来四遍」本身就是播放器的毛病，在这里掐掉。
-     *   2. **这里这道（按集号）**：这一集问过就不再问。
-     *      键是 `剧名#集号`，所以「同一集重播」不会被误挡。
-     *   3. **`useTheaterLive.askWrapup` 那道（兜底）**：15 秒内不问第二次。
-     *
-     * ⚠️ 三道都在，是因为第一道能不能一直挡住取决于浏览器还发不发 `ended`；
-     *    后两道是纯代码判据，不依赖浏览器行为。
+     * ⚠️ **`PlayerStage.endedFired` 留着** —— 那个不是给这句用的，
+     *    它治的是「`ended` 连着来四遍、`playEpisode` 被调四遍、自动连播乱掉」。
      */
-    if (live.invited) {
-      const key = `${picked?.title || ''}#${currentEp}`;
-      if (wrapupKeyRef.current !== key) {
-        wrapupKeyRef.current = key;
-        // 顺手把上一个没发出去的收掉，绝不留悬着的定时器
-        if (pendingWrapupRef.current) {
-          window.clearTimeout(pendingWrapupRef.current);
-          pendingWrapupRef.current = 0;
-        }
-        // 下一集马上要播，所以给它 3 秒先把话说完
-        pendingWrapupRef.current = window.setTimeout(() => {
-          pendingWrapupRef.current = 0;
-          live.askWrapup();
-        }, 3000);
-      }
-    }
     if (!autoNext) return;
     const next = currentEp + 1;
     // 下一集「在不在」按能不能播来判：手机有 / 电脑有 / 电脑上能在线取都算能接着播。

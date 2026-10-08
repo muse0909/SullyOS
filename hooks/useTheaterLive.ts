@@ -64,7 +64,6 @@ export type UseTheaterLive = {
   /** 新一轮开始：清空聊天框（从别的页面进播放页时调，切集不要调） */
   startFresh: () => void;
   /** 集末问一句「这有什么想说的」，不显示不入库 */
-  askWrapup: () => Promise<void>;
   /** 已经喂了多少帧（设置页显示用） */
   framesFed: number;
   /** 有没有邀请角色一起看（10-07 02:42 暮色定的） */
@@ -153,8 +152,6 @@ export function useTheaterLive(opts: {
   const lastSpokeAt = useRef(0);
   /** 他最后一次发话是什么时候。催它之前也要看这个（见抽帧循环里的说明） */
   const lastUserSendAt = useRef(0);
-  /** 集末那句「有什么想说的」上一次是什么时候（防一集问好几次） */
-  const lastWrapupAt = useRef(0);
   const audioRef = useRef<AudioTap | null>(null);
   /** 接上声音没有（接不上就只喂画面，不影响别的） */
   const audioOk = useRef(false);
@@ -252,9 +249,6 @@ export function useTheaterLive(opts: {
     lastNudge.current = 0;
     lastSpokeAt.current = 0;
     lastUserSendAt.current = 0;
-    // 新的一轮 —— 上一轮问过集末那句话，这个记录要一起倒掉，
-    // 不然新一轮的第一集会被当成「刚问过」直接被防重挡掉（什么都不问）。
-    lastWrapupAt.current = 0;
     grabberRef.current?.reset();
     audioRef.current?.flush();
   }, []);
@@ -381,8 +375,9 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
    但**别因为「中间可能漏了一点」就一律回「不知道」**。
    你已经看到的那几十张是实打实的，讲清楚比一句「我不知道」有用得多。
 
-4. **每集结束前，我会问你一句「这集看完有什么想说的」。** 那时候你就把这一集
-   用两三句话讲一下 —— 当成看完一集之后的随口感想就行，别写成读后感。
+4. **集末不会有人问你「有什么想说的」（10-08 20:21 撤掉了）。**
+   所以别等那句话、也别在每集最后突然来一段总结或读后感 ——
+   你就是边看边随口搭话，想到什么说什么，没有收尾环节。
 
 5. **他不叫你别插嘴，但上面第 2 条那种「跟着画面接一句」不算插嘴。**
    区别是：第 2 条你说的是**你看到的剧**，不是**对他这个人说的话**。
@@ -959,52 +954,6 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
   }, [char, runMemoryPost, addTrace]);
 
 
-  // ⚠️ 必须放在 `send` 之后：它是 const，定义之前引用就是 TDZ 崩溃
-  //   （本项目同款已经炸过三次 —— 07-31 / 08-01 / 10-07）
-  /**
-   * 「这集看完有什么想说的」——集末收尾（10-08 18:30）
-   *
-   * ## 为什么走 `send()`，不另造一条隐藏通道
-   *
-   * 因为**这句连同它的回答就是要给你看的**。暮色要的是「类似观后感的总结」，
-   * 那这段话留在剧场聊天里，退出时跟这一轮的对话一起打包发到主聊天。
-   *
-   * ## 为什么它就是「记住」的载体
-   *
-   * 模型不记得自己没说过的话。这一轮它跟着画面一句一句记了剧情，
-   * 集末再让它自己复述一遍 —— **这段话就是它对这一集的全部记忆**。
-   *
-   * ## 频率
-   *
-   * 只在一集真的播完时问一次。一集一两分钟 = 一场十几次，不刷屏。
-   *
-   * ## ⚠️ 防重：暮色报「同一句话冒了四遍」（10-08 19:17）
-   *
-   * 根因不在这里，在 `TheaterApp.onEnded` —— 播完那一瞬间**会连着触发好几次**
-   *（下一集还没解码出来，`currentTime` 仍停在结尾，`ended` 又来一遍；
-   *  自动连播再叠一次）。每触发一次就排一个 3 秒的定时器，
-   * 于是四句话排着队发出去，模型对着同一句答四遍。
-   *
-   * 这里加的是**兜底那道**：15 秒内问第二次直接不管。
-   * 两道闸一起上 —— 外面那道按「哪一集」判，这道按「多久以内」判，
-   * 任何一边单独失效都还有另一边挡着。
-   */
-  const askWrapup = useCallback(async () => {
-    const s = sessRef.current;
-    if (!s || !s.isOpen) return;
-    const now = Date.now();
-    if (lastWrapupAt.current && now - lastWrapupAt.current < 15000) {
-      addTrace('集末那句 15 秒内已经问过了，不重复问');
-      return;
-    }
-    lastWrapupAt.current = now;
-    // 它正在说的话还没说完就问 = 打断。等它说完，最多等 6 秒。
-    for (let i = 0; i < 20 && s.isSpeaking; i += 1) {
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    send('（这集看完了，你刚陪着一起看的。有没有什么想说的？）');
-  }, [send, addTrace]);
-
   /** 手动「再试一次」。⚠️ 必须先清配置键 —— 不清的话会被上面的守卫当重复给挡掉 */
   const retry = useCallback(() => {
     bootedKey.current = '';
@@ -1014,9 +963,9 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
   return useMemo(
     () => ({
       msgs, state, note, send, retry, trace,
-      attachVideo, resetFrames, startFresh, askWrapup, framesFed,
+      attachVideo, resetFrames, startFresh, framesFed,
       invited, setInvited,
     }),
-    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, startFresh, askWrapup, framesFed, invited, setInvited],
+    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, startFresh, framesFed, invited, setInvited],
   );
 }

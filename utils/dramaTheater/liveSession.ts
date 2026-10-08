@@ -95,6 +95,17 @@ type GoAway = { timeLeft?: number };
 const CONNECT_TIMEOUT = 15000;
 /** 多久没收到任何东西就认为链路死了（心跳兜底） */
 const SILENCE_LIMIT = 90000;
+/**
+ * 单轮回复的字数上限（10-08 20:21 暮色现场「刚加进去时一大段重复的」）。
+ *
+ * 那天一条回复是 **1160 字**，内容是同一句 33 字的话重复了 35 遍 ——
+ * 转写是增量流，服务端重发了一段时被当成新内容又拼了一遍（见 onMessage 里
+ * 「转写是增量流」那段注释）。拼接逻辑已经改成按增量流判了，
+ * 这道是**兜底**：万一还有漏网的形态，单条也不许滚成一千多字。
+ *
+ * 一次「随口搭一嘴」的回复最多一两百字，500 已经很宽松了。
+ */
+const MAX_TURN_CHARS = 500;
 
 export class LiveSession {
   private ws: WebSocket | null = null;
@@ -113,6 +124,8 @@ export class LiveSession {
    *    ——见 `isSpeaking` 里的 20 秒自保。
    */
   private speakingAt = 0;
+  /** 被判定成「服务端重发」而扔掉的段数（现场用） */
+  private dupChunks = 0;
   /** 用户自己是不是正在连着打字 */
   private wantOpen = false;
   /** 已经重试过几轮了，别无限重连 */
@@ -379,9 +392,7 @@ export class LiveSession {
       if (sc) {
         if (sc.outputTranscription?.text) {
           const t = String(sc.outputTranscription.text);
-          // 🔍 **原始记录**。上面那些 startsWith / 拼接全是照着一个假设写的
-          // （「转写一轮之内累积」），从没在真机上验证过。先把服务端到底发了
-          // 什么记下来，假设对不对一看就知道。
+          // 原始记录：服务端到底发了什么，一眼就能看出规律
           const w = window as any;
           if (!w.__liveRaw) w.__liveRaw = [];
           w.__liveRaw.push({ k: 'tr', t: t.slice(0, 300), n: t.length });
@@ -389,34 +400,76 @@ export class LiveSession {
 
           // 每次真收到字都打时间戳 —— `isSpeaking` 的 20 秒自保靠它。
           this.speakingAt = Date.now();
+
+          /**
+           * 🔴🔴🔴 **转写是「增量流」，不是「一轮累积的整段」**（10-08 20:21 真机读出来的铁证）
+           *
+           * 真机 `window.__liveRaw` 原文：
+           * ```
+           * tr 10 「小师妹说得太对了，建」
+           * tr  7 「宗门可真是个技」
+           * tr  6 「术活，不仅要」
+           * tr  6 「有钱，还得会」
+           * ...
+           * ```
+           * 每次就带 **5~13 个字**，一句 30 字的话要分四五段发。
+           *
+           * ## 原来的代码为什么炸了
+           *
+           * 那套 `startsWith` / 拼接是照着「一轮累积整段」这个**假设**写的，
+           * 假设一错，它就只剩下「几乎每段都落到最后一个 else → 往上拼」这一条路歪打正着。
+           * 只要服务端**重发刚发过的那一段**（自我修正、缓冲重试都会），
+           * 那段就被再拼一遍：
+           * ```
+           * speaking = 「…那句话」
+           * 服务端又来一条一模一样的「…那句话」
+           * → 不是完全相等（因为 speaking 更长）→ 走 else → 又拼一遍
+           * ```
+           * 暮色 20:21 现场：「刚加进去时一大段重复的」——
+           * 那一条回复是 **1160 字**，内容是同一句 33 字的话**重复了 35 遍**。
+           * 后面正常，是因为那之后服务端没再重发。
+           *
+           * ## 现在的三条判据（按增量流写）
+           *
+           * 1. `speaking` 的**结尾**已经等于 `t` → 服务端重发刚那段 → **直接扔掉**
+           * 2. `t` 是 `speaking` 的前缀且更长 → 服务端发的是「累积到现在的整段」→ 按长的替换
+           * 3. 其余 → 正常的新一段 → 拼上去
+           *
+           * ⚠️ 第 1 条会**丢字**：模型真说了叠词（「我我我」）时中间那几段会被当重发扔掉。
+           *    这是**故意的** —— 丢一个叠字 vs 复读 1160 字，赔哪个都认。
+           */
           if (t === this.speaking) {
             // 完全一样 —— 服务端重发，忽略
-          } else if (t.startsWith(this.speaking)) {
+          } else if (this.speaking.endsWith(t)) {
+            // 🔴 **服务端重发了刚收到的那一段**（自我修正 / 缓冲重试）
+            //    这里原来会落到下面的 else 再拼一遍 → 复读就是这么来的。
+            //    现在直接扔。
+            this.dupChunks++;
+            (window as any).__liveRaw?.push({ k: 'DUP', got: t.slice(0, 80) });
+          } else if (t.startsWith(this.speaking) && t.length > this.speaking.length) {
+            // 服务端发的是「累积到此刻的整段」—— 按更长的那份替换，只把新增的字喂出去
             const delta = t.slice(this.speaking.length);
             this.speaking = t;
             if (delta) this.opts.onText?.(delta, t);
-          } else if (this.speaking.startsWith(t)) {
-            // 服务端把尾巴收了（转写会自我修正），以长的为准
-            this.speaking = t;
           } else {
-            // 真接不上 —— 这才是要查的地方，不是「新一轮」就完事了。
-            // 现场要能看到：接不上时是「同样的句子又来一遍」还是「真的换内容了」。
-            //
-            // ⚠️ `merged` 这个数就是「模型明明回了字、却被这段拼接逻辑吃掉了」的次数。
-            //    之前这个分支直接把新字往上拼，看起来像是模型自己说的话，其实可能是
-            //    两段内容被粘在一起 —— 界面上表现为「复读」或者「说话说不完整」。
-            const w2 = window as any;
-            if (!w2.__liveRaw) w2.__liveRaw = [];
-            w2.__liveRaw.push({
-              k: 'MISS',
-              had: this.speaking.slice(-120),
-              got: t.slice(0, 120),
-              t2: t.slice(0, 300),
-              n2: t.length,
-            });
-            this.txDiag().merged++;
+            // 正常：新的增量段，拼上去
             this.speaking += t;
             this.opts.onText?.(t, this.speaking);
+          }
+
+          /**
+           * 🛡 兜底：单轮超过这个长度就一定是炸了（复读滚雪球）。
+           *
+           * 一句「随口搭一嘴」的话最多一两百字。超过 `MAX_TURN_CHARS`
+           * 说明上面的判据还漏了某种重发形态 —— **宁可截断，也不能让一条回复滚成 1160 字**
+           * （那是 10-07 复读滚雪球的同一个病，只是换了个入口）。
+           */
+          if (this.speaking.length > MAX_TURN_CHARS) {
+            this.trace(`单轮超过 ${MAX_TURN_CHARS} 字（复读），截断`);
+            const w2 = window as any;
+            if (!w2.__liveRaw) w2.__liveRaw = [];
+            w2.__liveRaw.push({ k: 'TOOLONG', n: this.speaking.length, t: this.speaking.slice(0, 200) });
+            this.speaking = this.speaking.slice(0, MAX_TURN_CHARS);
           }
         }
         if (sc.interrupted) {

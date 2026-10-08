@@ -200,9 +200,15 @@ export class LiveSession {
     await this.open(false);
   }
 
-  /** 说话。断了的话先攒着，重连成功后自动补发 */
-  send(text: string): void {
+  /**
+   * 说话。断了的话先攒着，重连成功后自动补发
+   *
+   * `kind` 只是给手机调试口那条现场记录用的标签，方便把**开场那句**从
+   * 暮色自己发的话里分出来（两者在 `SEND-user` 里长得一样）。不给就是 `SEND-user`。
+   */
+  send(text: string, kind?: string): void {
     if (!text.trim()) return;
+    if (kind) this.txLog(kind, { t: text.slice(0, 60) });
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.state === 'failed') {
       // ⚠️ **这句话压根没发出去**，界面却照样显示了它（`useTheaterLive.send` 先建泡）。
       //    这是「我发了它不回」最容易骗人的一种，记一笔。

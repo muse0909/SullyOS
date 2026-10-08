@@ -46,10 +46,20 @@ export interface VectorizeRecordDeps {
     theaterTitle: string;
     /** 集号（0 = 不知道/没记），拼成「第 13 集」那句 */
     episode?: number;
+    /**
+     * 这一轮**实际看的集号列表**（暮色 21:16）。
+     *
+     * ⚠️ 必须传，而且必须**原样念给模型**。
+     *   剧有 666 集，暮色才看到 23 集 —— 卡片里只有「第 23 集」，
+     *   模型就把「看到第 23 集」脑补成「看完了最后几集」，纯胡说。
+     */
+    episodes?: number[];
     /** 看的时间，格式化成「10 月 8 日晚上」这种。**必须传** —— 记忆要写清楚什么时候的事 */
     when?: string;
     /** buildPrompt 里拼好的「第 13 集」，不用外面传 */
     episodeText?: string;
+    /** buildPrompt 里拼好的集号清单「12、13、14」，不用外面传 */
+    epListText?: string;
     /** 卡片正文（两个人的对话原文） */
     content: string;
     /** 总结用的模型。优先传记忆宫殿的副模型，没配就传主聊天那套 */
@@ -70,6 +80,12 @@ export interface VectorizeRecordResult {
      * 失败时是空数组。
      */
     contents: string[];
+    /**
+     * 每条对应的**记忆节点 id**，跟 `contents` 一一对应。
+     * 弹窗编辑完要靠它把改后的正文写回原记忆并重跑向量
+     * （暮色 21:16「弹窗要能编辑」）。失败时是空数组。
+     */
+    ids: string[];
     /** 总结出来的原文，失败时给个说法 */
     error?: string;
 }
@@ -125,10 +141,33 @@ function buildPrompt(d: VectorizeRecordDeps): string {
 
 必须把这三件事说清楚：
 
-1. **什么时候、和${d.userName}一起、看了什么** —— 哪一天、哪部剧、第几集
+1. **什么时候、和${d.userName}一起、看了什么** —— 哪一天、哪部剧、${d.episodeText}
 2. **剧情大致走向** —— 这一集讲了什么。用你的话讲，别写成剧情简介。
    有哪句台词让你心里一动，**可以直接引**，引一两句最戳的就行。
 3. **触动你的地方** —— 哪个片段让你心里一动，或者让你想跟${d.userName}说点什么
+
+## ⚠️ 两条硬规矩，不许商量
+
+**一、集号只有这些，不许多不许少：${d.epListText || '（记录里没标，你就不许提集号）'}**
+
+那部剧一共有几百集，**你们只看了上面这几个**。
+所以：
+
+❌「我们看完了最后几集」「看到了大结局」「追到了这里」—— 你们**根本没看到结局**
+❌ 任何不在上面清单里的集号
+✅ 「${d.episodeText}里……」
+
+只有清单里那几个集号里的事才写。清单之外的事，就算你猜得到，也**当作不知道**。
+
+**二、这是写给以后看的记忆记录，不是现在跟${d.userName}聊天。**
+
+那一条会在很久以后被你自己想起来，写的时候**面向的是「那时的我」，
+不是「眼前的${d.userName}」**。所以：
+
+❌ 结尾抛问题给${d.userName}：「你说咱们以后会不会也……？」「要是你也在就好了……」
+   —— 这是聊天。记忆记录里**不许对${d.userName}说话、不许用问句结尾**。
+❌ 写「我想到这里就跟${d.userName}说」这种交代。
+✅ 写「想到六师哥那样的人，我心里其实是有点羡慕的。」—— 说给以后的我听。
 
 ## 怎么写
 
@@ -185,13 +224,13 @@ export async function vectorizeTheaterRecord(
     const { charId, llm, embedding } = deps;
 
     if (!llm?.baseUrl || !llm?.apiKey || !llm?.model) {
-        return { ok: false, stored: 0, skipped: 0, contents: [], error: '还没配置模型' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], ids: [], error: '还没配置模型' };
     }
     if (!embedding?.baseUrl || !embedding?.apiKey) {
-        return { ok: false, stored: 0, skipped: 0, contents: [], error: '记忆宫殿的向量配置还没填' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], ids: [], error: '记忆宫殿的向量配置还没填' };
     }
     const content = String(deps.content || '').trim();
-    if (!content) return { ok: false, stored: 0, skipped: 0, contents: [], error: '卡片是空的' };
+    if (!content) return { ok: false, stored: 0, skipped: 0, contents: [], ids: [], error: '卡片是空的' };
 
     // ① 先总结
     //
@@ -199,10 +238,20 @@ export async function vectorizeTheaterRecord(
     //   它内部按 protocol 分 OpenAI / Claude / Gemini 三条路，
     //   自己写死 openai 的话，暮色哪天副模型切到 Claude/Gemini 这里就整个静默失败
     //   （AGENTS.md §4.5 记过同一个坑）。
+    const eps = (deps.episodes || []).filter((n) => Number.isFinite(n) && n > 0);
     const ep = Number(deps.episode || 0);
     const promptDeps: VectorizeRecordDeps = {
         ...deps,
-        episodeText: ep > 0 ? `第 ${ep} 集` : '',
+        // 「第 12 集」/「第 12 到第 14 集」/「第 12、13、14 集」—— 断开看就逐个列
+        episodeText: eps.length === 1
+            ? `第 ${eps[0]} 集`
+            : eps.length > 1
+                ? (eps[eps.length - 1] - eps[0] === eps.length - 1
+                    ? `第 ${eps[0]} 到第 ${eps[eps.length - 1]} 集`
+                    : `第 ${eps.join('、')} 集`)
+                : (ep > 0 ? `第 ${ep} 集` : ''),
+        /** 给模型看的**硬事实**：只有这几个集号，别的一概不许编 */
+        epListText: eps.length ? eps.join('、') : '',
         when: deps.when || '',
     };
     let raw: string;
@@ -216,12 +265,12 @@ export async function vectorizeTheaterRecord(
         );
         raw = r.text || '';
     } catch (e: any) {
-        return { ok: false, stored: 0, skipped: 0, contents: [], error: `总结失败：${e?.message || e}` };
+        return { ok: false, stored: 0, skipped: 0, contents: [], ids: [], error: `总结失败：${e?.message || e}` };
     }
 
     const one = parseNode(raw);
     if (!one) {
-        return { ok: false, stored: 0, skipped: 0, contents: [], error: '模型没给出能用的结果' };
+        return { ok: false, stored: 0, skipped: 0, contents: [], ids: [], error: '模型没给出能用的结果' };
     }
     // ⚠️ **只取一条**（暮色 20:37：「一次只总结成一条」是整个功能最要紧的一条）
     const parsed = [one];
@@ -275,7 +324,9 @@ export async function vectorizeTheaterRecord(
             stored: r.stored,
             skipped: r.skipped,
             // 只把**真存进去**的交回去给弹窗显示（去重跳掉的不算）
-            contents: r.storedIds.map((id) => nodes.find((n) => n.id === id)?.content || '').filter(Boolean),
+            // ⚠️ 一一对应，弹窗编辑时靠 ids 找回来原记忆（别用 filter，那会错位）
+            ids: r.storedIds.slice(),
+            contents: r.storedIds.map((id) => nodes.find((n) => n.id === id)?.content || ''),
         };
     } catch (e: any) {
         return {
@@ -283,6 +334,7 @@ export async function vectorizeTheaterRecord(
             stored: 0,
             skipped: 0,
             contents: [],
+            ids: [],
             error: `记忆已经记下了，但算向量失败：${e?.message || e}`,
         };
     }

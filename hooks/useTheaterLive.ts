@@ -37,6 +37,8 @@ export type TheaterMsg = {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  /** 发出/开始流式的时刻。剧场聊天在气泡旁边显示时间戳（暮色 21:16 要的） */
+  ts: number;
   /** 正在流式输出中 */
   streaming?: boolean;
   /** 哪一步剧、哪一集 —— 主聊天里就靠这个把剧里的话认出来 */
@@ -543,7 +545,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
             if (!streamingId.current) {
               const mid = `m${Date.now()}`;
               streamingId.current = mid;
-              return [...old, { id: mid, role: 'assistant', text, streaming: true, tag: tagRef.current }];
+              return [...old, { id: mid, role: 'assistant', text, ts: Date.now(), streaming: true, tag: tagRef.current }];
             }
             const i = old.findIndex((m) => m.id === streamingId.current);
             if (i < 0) return old;
@@ -857,7 +859,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     tagRef.current = tag;
 
     // ① 先让用户看到这条消息
-    setMsgs((old) => [...old, { id: `u${Date.now()}`, role: 'user', text, tag }]);
+    setMsgs((old) => [...old, { id: `u${Date.now()}`, role: 'user', text, tag, ts: Date.now() }]);
 
     // ② ⚠️ **不预插空泡了**（暮色 02:52 报「空气泡」）。
     //
@@ -931,6 +933,7 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
             id: `e${Date.now()}`,
             role: 'assistant' as const,
             text: '没收到回复，点这里再试一次',
+            ts: Date.now(),
             tag: tagRef.current,
             failed: true,
           },

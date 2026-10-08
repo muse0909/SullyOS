@@ -57,20 +57,46 @@ const StoryTheaterMemoryCard: React.FC<{
     generatedAt?: number;
     /** 剧场那张给「向量化」按钮用；见面剧情剧院那张不给（暮色只要剧场这张有）。
      *  返回存进去的正文数组（弹窗要显示）；失败返回 null。 */
-    onVectorize?: () => Promise<string[] | null>;
+    onVectorize?: () => Promise<{ contents: string[]; ids: string[] } | null>;
     vectorizing?: boolean;
-}> = ({ theaterTitle, cardTitle, content, generatedAt, onVectorize, vectorizing }) => {
+    /**
+     * 编辑后保存：把改过的正文写回记忆宫殿，并重跑向量
+     * （照抄 `Chat.tsx` 的 `handleReviewEdit` —— 改了内容，向量必须跟着重算，
+     *  否则以后召不回来：向量算的是**旧内容**）。
+     */
+    onSaveVectorized?: (ids: string[], before: string[], after: string[]) => Promise<void>;
+}> = ({ theaterTitle, cardTitle, content, generatedAt, onVectorize, vectorizing, onSaveVectorized }) => {
     const [expanded, setExpanded] = useState(false);
     /** 刚存进去的内容 → 弹窗。空数组 = 不弹（平时完全不影响聊天页）。
      *  ⚠️ 状态放在**卡片自己**这儿，不在 MessageItem 那边 ——
      *     弹窗是卡片的一部分，交给外面管就得把 setter 一路传下来，纯属绕路。 */
+    /** 刚存进去的：**可编辑**的记忆内容（暮色 21:16「要和记忆宫殿一样，能编辑的那种」） */
     const [vectorized, setVectorized] = useState<string[]>([]);
+    const [draft, setDraft] = useState<string[]>([]);
+    /** 跟 draft 一一对应的记忆节点 id —— 保存时靠它写回原记忆 */
+    const [vecIds, setVecIds] = useState<string[]>([]);
+    const [saving, setSaving] = useState(false);
     const runVectorize = async (e: React.MouseEvent) => {
         e.stopPropagation(); e.preventDefault();
         if (!onVectorize || vectorizing) return;
-        const list = await onVectorize();
+        const r = await onVectorize();
         // ⚠️ 有内容才弹。一条都没存进去（被去重跳掉了）就别弹空窗。
-        if (list && list.length) setVectorized(list);
+        if (r && r.contents.length) {
+            setVectorized(r.contents);
+            setDraft(r.contents);
+            setVecIds(r.ids || []);
+        }
+    };
+    const closeVectorModal = () => { setVectorized([]); setDraft([]); setVecIds([]); };
+    const saveVectorEdit = async () => {
+        if (!onSaveVectorized || saving) return;
+        setSaving(true);
+        try {
+            await onSaveVectorized(vecIds, vectorized, draft);
+            setVectorized(draft);
+        } finally {
+            setSaving(false);
+        }
     };
     if (!content) return null;
     const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
@@ -159,25 +185,54 @@ const StoryTheaterMemoryCard: React.FC<{
                 <Modal
                     isOpen
                     title="存进记忆宫殿的"
-                    onClose={() => setVectorized([])}
-                    footer={null}
+                    onClose={closeVectorModal}
+                    footer={(
+                        <div className="flex gap-3 w-full">
+                            <button
+                                onClick={closeVectorModal}
+                                className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                            >
+                                关闭
+                            </button>
+                            <button
+                                onClick={saveVectorEdit}
+                                disabled={saving}
+                                className="flex-1 py-3 bg-sky-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
+                            >
+                                {saving ? '保存中…' : '保存修改'}
+                            </button>
+                        </div>
+                    )}
                 >
+                    {/* ⚠️ 这里是**可编辑**的（暮色 21:16「要和记忆宫殿的一样，能编辑的那种」）。
+                     *  存法照抄 `Chat.tsx` 的 `handleReviewEdit`：改完正文必须**重跑向量**，
+                     *  不然记忆宫殿里那条的向量算的还是旧内容，以后召不回来。 */}
                     <div className="text-[12px] leading-relaxed" style={{ color: '#6a5a8a' }}>
                         <p className="mb-3" style={{ color: '#8b7aaa' }}>
-                            一共 {vectorized.length} 条。下面就是模型总结成的内容：
+                            一共 {vectorized.length} 条。可以直接改，改完点「保存修改」。
                         </p>
                         {vectorized.map((c, i) => (
-                            <div
-                                key={i}
-                                className="rounded-2xl px-3 py-2.5 mb-2 last:mb-0"
-                                style={{ background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.16)' }}
-                            >
+                            <div key={i} className="mb-3 last:mb-0">
                                 <div className="text-[10px] font-bold mb-1" style={{ color: '#a78bfa' }}>第 {i + 1} 条</div>
-                                {c}
+                                <textarea
+                                    value={draft[i] ?? ''}
+                                    onChange={(e) => {
+                                        const next = draft.slice();
+                                        next[i] = e.target.value;
+                                        setDraft(next);
+                                    }}
+                                    rows={7}
+                                    className="w-full rounded-2xl px-3 py-2 text-[12px] leading-relaxed outline-none resize-y focus:border-sky-300 transition-colors"
+                                    style={{
+                                        background: 'rgba(167,139,250,0.06)',
+                                        border: '1px solid rgba(167,139,250,0.2)',
+                                        color: '#4a3f63',
+                                    }}
+                                />
                             </div>
                         ))}
-                        <p className="mt-3 text-[11px]" style={{ color: 'rgba(139,122,170,0.7)' }}>
-                            去记忆宫殿里能看到它们，也能改能删。
+                        <p className="mt-1 text-[11px]" style={{ color: 'rgba(139,122,170,0.7)' }}>
+                            保存后会重算这条记忆的向量，以后聊到相关的事它才召得回来。
                         </p>
                     </div>
                 </Modal>
@@ -1828,7 +1883,7 @@ const MessageItem = React.memo(({
      * 干活 + 弹提示，**弹窗由卡片自己管**（状态在卡片那边，不往这儿传）。
      * 返回存进去的正文数组给卡片拿去弹窗显示。
      */
-    const handleVectorize = useCallback(async (): Promise<string[] | null> => {
+    const handleVectorize = useCallback(async (): Promise<{ contents: string[]; ids: string[] } | null> => {
         if (vectorizing) return null;
         const meta = (m as any)?.metadata || {};
         const charId = (m as any)?.charId;
@@ -1846,6 +1901,9 @@ const MessageItem = React.memo(({
                 userName: userProfile?.name || '暮色',
                 theaterTitle: meta.theaterTitle || '剧场',
                 episode: Number(meta.theaterEpisode) || 0,
+                // ⚠️ 这一轮实际看的集号（暮色 21:16）。少了它，模型会把
+                //   「看到第 23 集」脑补成「看完了最后几集」—— 666 集的剧。
+                episodes: Array.isArray(meta.theaterEpisodes) ? meta.theaterEpisodes.map(Number) : [],
                 // ⚠️ 记忆里必须写清楚「什么时候」。提示词里那条例句直接引用了它，
                 //   空着的话那句就变成「我跟X一起看《…》，……」——缺个时间点。
                 when: formatWatchWhen(meta.generatedAt),
@@ -1862,7 +1920,7 @@ const MessageItem = React.memo(({
                 );
                 // ⚠️ 有内容才让卡片弹窗 —— 「让我能知道存了什么内容」（19:58）。
                 //   一条都没存进去就别弹（弹个空窗更让人困惑）。
-                return r.contents;
+                return { contents: r.contents, ids: r.ids || [] };
             }
             addToast?.(r.error || '向量化失败', 'error');
             return null;
@@ -1873,6 +1931,49 @@ const MessageItem = React.memo(({
             setVectorizing(false);
         }
     }, [vectorizing, m, characters, userProfile?.name, memoryPalaceConfig, apiConfig, addToast, displayContent]);
+
+    /**
+     * 弹窗里改完保存 —— **照抄 `Chat.tsx` 的 `handleReviewEdit` 那一套**
+     * （暮色 21:16：「向量化这弹窗要和记忆宫殿的一样，能编辑的那种」）。
+     *
+     * ## ⚠️ 改了正文**必须重跑向量**
+     *
+     * 向量是拿**正文**算的。改了字不重算，记忆宫殿里存的就是
+     * 「新文字 + 旧向量」—— 以后聊天问起相关的事，相似度对不上，**召不回来**。
+     * 界面看着改了，其实等于没改。
+     *
+     * `skipDedup: true`：它跟自己比相似度当然 100%，会被当重复跳过。
+     */
+    const handleSaveVectorized = useCallback(async (
+        ids: string[], before: string[], after: string[],
+    ) => {
+        if (!ids?.length) { addToast?.('没有可保存的内容', 'info'); return; }
+        const { MemoryNodeDB, vectorizeAndStore } = await import('../../utils/memoryPalace');
+        const mpEmb = memoryPalaceConfig?.embedding;
+        let changed = 0;
+        try {
+            for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                const txt = (after[i] || '').trim();
+                if (!id || !txt || txt === (before[i] || '').trim()) continue;
+                const node = await MemoryNodeDB.getById(id);
+                if (!node) continue;
+                node.content = txt;
+                node.lastAccessedAt = Date.now();
+                node.embedded = false;
+                await MemoryNodeDB.save(node);
+                if (mpEmb?.baseUrl && mpEmb?.apiKey) {
+                    const r = await vectorizeAndStore([node], mpEmb, undefined, { skipDedup: true });
+                    if (r.stored > 0) { node.embedded = true; await MemoryNodeDB.save(node); }
+                }
+                changed++;
+            }
+        } catch (e: any) {
+            addToast?.(`保存出错：${e?.message || e}`, 'error');
+            return;
+        }
+        addToast?.(changed > 0 ? `已保存 ${changed} 条，记忆宫殿里也更新了` : '没有改动', changed > 0 ? 'success' : 'info');
+    }, [memoryPalaceConfig, addToast]);
 
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
     const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
@@ -1921,6 +2022,7 @@ const MessageItem = React.memo(({
                 generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
                 vectorizing={vectorizing}
                 onVectorize={handleVectorize}
+                onSaveVectorized={handleSaveVectorized}
             />
         );
     }

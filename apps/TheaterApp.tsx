@@ -895,8 +895,26 @@ const TheaterChat: React.FC<{
           </div>
         )}
 
-        {live.msgs.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} mb-2`}>
+        {live.msgs.map((m) => {
+          /* ── 时间戳（暮色 21:16 要的）──────────────────────────────
+           *
+           * 位置：**贴着气泡的外侧、跟气泡底部齐平**。
+           *   - 角色的话在左边 → 时间在气泡**右边**（空的恰好在这儿）
+           *   - 他的话在右边   → 时间在气泡**左边**
+           *
+           * 只到「时:分」（「21:08」）。剧场是连着看的，跨天才会需要日期，
+           * 那种情况在下面补。
+           */
+          const d = new Date(m.ts || Date.now());
+          const timeText = m.ts
+            ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+            : '';
+          return (
+          <div key={m.id} className={`flex items-end gap-1.5 mb-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {/* 角色的话：时间在左边 */}
+            {m.role !== 'user' && timeText && (
+              <span className={`shrink-0 text-[9px] leading-4 ${p.faint}`}>{timeText}</span>
+            )}
             <div className={`max-w-[78%] px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
               m.role === 'user'
                 ? (p.night ? 'bg-sky-900/60 text-slate-100 rounded-[1.1rem] rounded-br-md' : 'bg-sky-100 text-slate-700 rounded-[1.1rem] rounded-br-md')
@@ -910,8 +928,13 @@ const TheaterChat: React.FC<{
                   剧场不播语音，留着就是一串方括号字符露在气泡里。 */}
               {stripVoiceTag(m.text) || (m.streaming ? <span className="opacity-40">…</span> : null)}
             </div>
+            {/* 他说的话：时间在右边 */}
+            {m.role === 'user' && timeText && (
+              <span className={`shrink-0 text-[9px] leading-4 ${p.faint}`}>{timeText}</span>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* 输入框 */}
@@ -1898,6 +1921,26 @@ const TheaterApp: React.FC = () => {
       const title = mm?.[1] || tag || '剧场';
       const ep = Number(mm?.[2]) || currentEp || 1;
 
+      /**
+       * ⚠️⚠️ 这一轮**到底看了哪几集**（暮色 21:16 现场）
+       *
+       * 原来只取 `ep`（**最后一集**）写进卡片。暮色看到的是：
+       * 剧一共 666 集，他才看到 23 集，卡片里只有「第 23 集」，
+       * 总结那边就自己脑补成「看完了最后几集」——**纯胡说**。
+       *
+       * 所以这里把这一轮每条消息的 `theaterTag` 里的集号全收出来，
+       * 去重排序，写进 `theaterEpisodes`。提示词直接念这几个集号给它，
+       * 它就没有发挥空间了。
+       */
+      const epSet = new Set<number>();
+      for (const m of seg) {
+        const t = String(m?.metadata?.theaterTag || '');
+        const g = t.match(/第(\d+)集$/);
+        if (g) { const n = Number(g[1]); if (n > 0) epSet.add(n); }
+      }
+      const episodes = Array.from(epSet).sort((a, b) => a - b);
+      if (!episodes.length) episodes.push(ep);
+
       // ── 这一轮的全部对话，一句都不丢（10-08 18:30 暮色要的）──
       //
       // 原来只挑角色说过的 5 句（他反馈「只有角色发的，并不是两个人的对话话记录」）。
@@ -1917,8 +1960,22 @@ const TheaterApp: React.FC = () => {
         log.push(line);
       }
 
+      /**
+       * ⚠️ 开头这句**必须写清楚看了哪几集**（暮色 21:16）。
+       *
+       * 原来只写「和 X 一起看完了《剧名》」—— 没有集号，666 集的剧在模型眼里
+       * 就成了「看完整部」，于是总结里写出「看完了最后几集」这种胡说
+       * （暮色才看到 23 集）。
+       *
+       * 这句既是给人看的，也是喂给总结那段模型的事实依据 ——
+       * 提示词里会原样念给它，它就没有发挥空间了。
+       */
+      const epText = episodes.length === 1
+        ? `第 ${episodes[0]} 集`
+        : `第 ${episodes[0]} 到第 ${episodes[episodes.length - 1]} 集（这一轮）`;
+
       const lines = [
-        `和${char.name}一起看完了《${title}》。`,
+        `${userProfile?.name || '你'}和${char.name}一起看完了《${title}》${epText}。`,
         '',
         `这一轮在剧场里聊了这些：`,
         ...(log.length ? log : ['（这一轮没聊几句）']),
@@ -1943,6 +2000,9 @@ const TheaterApp: React.FC = () => {
           isTheaterMemory: true,
           theaterTitle: title,
           theaterEpisode: ep,
+          // ⚠️ 这一轮**实际看的集号列表**（暮色 21:16）。
+          //   提示词会原样念给它，防止它把「看到 23 集」写成「看完了最后几集」。
+          theaterEpisodes: episodes,
           theaterEnd: true,
           generatedAt: Date.now(),
         },

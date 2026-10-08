@@ -61,6 +61,10 @@ export type UseTheaterLive = {
   attachVideo: (el: HTMLVideoElement | null) => void;
   /** 换集 / 重新播放时叫一声：下一帧强制送，别接着上一集的进度说 */
   resetFrames: () => void;
+  /** 新一轮开始：清空聊天框（从别的页面进播放页时调，切集不要调） */
+  startFresh: () => void;
+  /** 集末问一句「这有什么想说的」，不显示不入库 */
+  askWrapup: () => Promise<void>;
   /** 已经喂了多少帧（设置页显示用） */
   framesFed: number;
   /** 有没有邀请角色一起看（10-07 02:42 暮色定的） */
@@ -143,12 +147,22 @@ export function useTheaterLive(opts: {
    */
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const grabberRef = useRef<FrameGrabber | null>(null);
+  /** 上一次「看一眼」是什么时候（给 NUDGE_MIN_MS 限流用） */
+  const lastNudge = useRef(0);
   const audioRef = useRef<AudioTap | null>(null);
   /** 接上声音没有（接不上就只喂画面，不影响别的） */
   const audioOk = useRef(false);
   const framesFedRef = useRef(0);
   /** 多久问一次画面。1.2 秒是「切镜头基本抓得住、静止段几乎不耗」的折中 */
   const FRAME_EVERY = 1200;
+  /**
+   * 「看一眼」最快多久催一次（10-08 18:30）。
+   *
+   * 画面判重已经滤掉大部分静止帧，但剧情连续推进时还是可能几秒一张。
+   * 8 秒一道：一集一两分钟 = 十来句，够它把剧情一句一句串起来，又不至于刷屏。
+   * 想更密/更稀只改这一个数。
+   */
+  const NUDGE_MIN_MS = 8000;
 
   /**
    * 播放器把视频元素交过来。**画面和声音都从这里接**。
@@ -197,6 +211,30 @@ export function useTheaterLive(opts: {
     // 换集了 —— 上一集攒的声音留着会串进下一集
     audioRef.current?.flush();
   }, []);
+
+  /**
+   * **新一轮开始**（10-08 18:30 暮色定的）
+   *
+   * 「每一次从剧场退出来回主屏，这一轮一起看就结束了。
+   *   重新进剧场打开视频时聊天框是空的，角色要知道这是新的一轮。」
+   *
+   * 所以这里做两件事：把聊天框清空 + 把这一轮剩下的临时状态倒干净。
+   * **不清库** —— 这一轮的对话退出时会打包发到主聊天，没丢；
+   * 剧场只是不再回看它（`boot` 里已经不读库了）。
+   *
+   * ⚠️ 谁调：**从别的页面进播放页的那一下**，不是每次 `playEpisode` ——
+   *    切下一集是同一轮，不能清。清完它这一轮说过的话就断了。
+   */
+  const startFresh = useCallback(() => {
+    flushStreamNow();
+    setMsgs([]);
+    streamingId.current = '';
+    pendingStream.current = '';
+    lastNudge.current = 0;
+    grabberRef.current?.reset();
+    audioRef.current?.flush();
+  }, []);
+
 
   const framesFed = useMemo(() => framesFedRef.current, []);
   /** 节流攒着的最后一段，立刻刷出来（收尾/被打断时调用，不然会丢字） */
@@ -285,30 +323,46 @@ export function useTheaterLive(opts: {
 
 - 剧名：《${sc.title || '（不知道叫什么）'}》，现在在第 ${sc.episode || 1} 集
 
+**这是一轮全新的。** 你们上一轮一起看的那场已经结束了，用户已经回到主聊天那边，
+现在重新进来、重新开始看。之前那场说过的话你**不记得**，也不用假装记得 ——
+这一轮从头看起，你脑子里的东西就是这一轮播出来的画面、声音，还有你这一轮说过的话。
+
 **几条硬的，务必照做：**
 
 ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进来。**
 
-   每张画面左上角都标着「第 3:20」这样的时间——那是这会儿剧里播到哪儿。
+   每张画面左上角都标着「第2集 第3:20」这样的时间——集数加时间，
+   那是这会儿剧里播到哪儿。**切集了图上的集数就会变**，你看到就知道了。
    画面上的字幕你直接读，剧里的台词你直接听。
    **把这些当成正在发生的事**，不是隔很久才来一次的背景资料。
 
-   他问你「刚才是谁」「她刚说了什么」「演到哪了」，就按你**已经看到、听到的**说：
+2. **画面往前走了，就接一句。** 这是「一起看」最要紧的一条。
+   画面里出现了新的人物、新的动作、剧情明显往前推了一步——
+   就**用一句你自己的话**接上去，像真的坐在旁边看的人那样。
+
+   · 好的样子：画面从她挑剑穗切到二师兄那把 →
+     你接「轮到给二师兄挑了，他那把是冰属性的吧」
+   · 不好的样子：「第3分20秒，画面显示一名男性角色」——**那是解说员，不是你**
+
+   **画面跟前一张差不多，就什么都别说。** 闭嘴。
+   别为了凑数把「画面没变化」讲一遍，那很吵。
+
+   你这一轮说过的话就是你记住的东西 —— 说出来才记得住，
+   闷在心里下一轮就全没了（你也确实记不住）。
+
+3. **他问「刚才是谁」「她刚说了什么」「演到哪了」，就按你**已经看到、听到的**说。**
    看到了什么就说看到了什么，听到了什么就说听到了什么，字幕上写着什么就说什么。
 
    底线还是那一条：**画面和声音里没有的，不要替它编**（别顺着他说去编剧情）。
-   但**别因为「中间可能漏了一点」就一律回「不知道」** ——
-   你看到了一整段戏，把看到的讲清楚，比一句「我不知道」有用得多。
-   你是真的在跟他一起看，不是坐在旁边的解说员。
+   但**别因为「中间可能漏了一点」就一律回「不知道」**。
+   你已经看到的那几十张是实打实的，讲清楚比一句「我不知道」有用得多。
 
-2. **画面会隔一阵送一张，中间可能跳过去一小段。** 跳过去的那点就是不知道，
-   但**别把它扩大成「我什么都不知道」** —— 你已经看到的那几十张是实打实的。
-   他要问的是「刚才演了什么」，你照实讲你看到的，别一上来就说「不知道」。
+4. **每集结束前，我会问你一句「这集看完有什么想说的」。** 那时候你就把这一集
+   用两三句话讲一下 —— 当成看完一集之后的随口感想就行，别写成读后感。
 
-3. **你在安静看剧的时候不要插嘴。** 用户没叫你就不开口、不主动播报剧情。
-   哪怕你看到了什么，也憋着 —— 他在追剧，不是在等你点评。
-   但**他问了就认真答**，别敷衍。画面是**背景**，不是话题；背景不会问你问题，
-   所以他不问就不答 —— 一问，就得给出实打实的内容。`
+5. **他不叫你别插嘴，但上面第 2 条那种「跟着画面接一句」不算插嘴。**
+   区别是：第 2 条你说的是**你看到的剧**，不是**对他这个人说的话**。
+   别突然跟他聊感情、别评价他这个人 —— 你现在是在看剧，不是在聊天。`
 : `1. **你现在看不见画面，也听不见声音。** 用户这次是**自己一个人看**，没有邀请你一起。
 
    他问你「演到哪了」「刚才是谁」，你就说不知道 —— 你真的什么都不知道。
@@ -350,58 +404,22 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     sessRef.current?.close();
     sessRef.current = null;
 
-    // 1. 剧场自己的聊天记录（只看到剧场里聊的）
+    // 1. **不再读上一轮的剧场记录**（10-08 18:30 暮色定的）
     //
-    // ⚠️ **只能往后追加，不能整体覆盖**（10-07 现场）。
-    // 入库是后台跑的（暮色 23:06 定的「先显示再后台存」），
-    // 所以内存里的新消息有一小段时间还没进库。整体覆盖的话，
-    // 重连触发 boot() 重跑那一刻就把这些还没入库的消息抹掉了 ——
-    // 现象是「我发的字闪一下就没了，过一阵又冒出来」。
-    try {
-      const all = await DB.getMessagesByCharId(char.id, true);
-      const rows = all
-        .filter((m: any) => m.metadata?.source === 'theater')
-        .sort((a: any, b: any) => a.timestamp - b.timestamp)
-        .slice(-40);
-      // ⚠️ 库里也可能已经躺着重复行（重连反复灌历史那几轮留下的）。
-      // 连续**相邻**同角色同内容才算重复 —— 隔了几轮又说同一句
-      // 是真在重复说话，不该被误删。
-      const mine: TheaterMsg[] = [];
-      for (const m of rows) {
-        const text = m.content || '';
-        const last = mine[mine.length - 1];
-        if (last && last.role === m.role && last.text === text) continue;
-        mine.push({
-          // ⚠️ 库里 id 是数字，这边统一存字符串 —— `TheaterMsg.id` 声明的是 string。
-          // 以前直接塞数字，typecheck 会报 TS2322（真机跑没事，但这条报错
-          // 会把真正新冒出来的错一起淹掉）。
-          id: String(m.id),
-          role: m.role as 'user' | 'assistant',
-          text,
-          tag: (m.metadata as any)?.theaterTag as string || '',
-        });
-      }
-      setMsgs((old) => {
-        // ⚠️⚠️ 光按 id 去重**不够**（暮色 00:48 现场：同一条消息显示两遍）。
-        //
-        // 内存里的消息 id 是 `m${Date.now()}` 这种临时 id，入库之后数据库
-        // 会给它一个**完全不同的 id**。下一次 boot() 重跑时，按 id 比对
-        // 认不出这两条是同一条 —— 于是把库里那条又追加了一遍，
-        // 同一条内容就在列表里出现两次。
-        //
-        // 现象对得上：闪退重进就没了（两边都从库来，只有一条），
-        // 页面上却是两条（一条内存里的、一条刚从库里补进来的）。
-        //
-        // 所以还得按「角色 + 内容」判重 —— 观众能分辨的重复只有这两种。
-        const seenIds = new Set(old.map((m) => m.id));
-        const seenText = new Set(old.map((m) => `${m.role}|${m.text}`));
-        const missing = mine.filter((m) => !seenIds.has(m.id) && !seenText.has(`${m.role}|${m.text}`));
-        if (!missing.length) return old;
-        return [...old, ...missing];
-      });
-    } catch (e: any) {
-      addTrace(`读剧场历史失败：${e?.message || e}`);
-    }
+    // 原来每次 boot 都从库里取最近 40 条 `source==='theater'` 灌进会话。
+    // 暮色要的是「每一轮一起看就是一轮，退出回主屏就结束了」：
+    //   - 重新进剧场，**聊天框是空的**
+    //   - 角色要明确知道**这是新的一轮**
+    //
+    // 不灌还有一个连带好处：**复读滚雪球的根被切掉了**。
+    // 之前那个「同一段话说三遍」的循环，就是它照着自己上一轮复读的样子再写一遍，
+    // 而复读的样子全在被重灌的历史里。没有历史可模仿，它只能顺着当下说话。
+    //
+    // 这一轮的对话并没有丢 —— 退出剧场时 `finishTheaterSession` 会**全部**打包
+    // 发到主聊天（那张折叠卡片里）。剧场只是不再回看它。
+    //
+    // ⚠️ 记忆宫殿那边照旧要读全部消息（下面第 2 步）——那是给**主聊天**注入记忆用的，
+    //    跟剧场本轮的上下文是两回事，别一起删了。
 
     if (!apiKey) {
       setState('failed');
@@ -717,10 +735,38 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
       if (!invitedRef.current) return;
       if (!grabberRef.current) grabberRef.current = new FrameGrabber();
       const dur = Number.isFinite(v.duration) ? v.duration : 0;
-      const f = grabberRef.current!.grab(v);
+      const sc = scene();
+      const f = grabberRef.current!.grab(v, false, `第${sc.episode || 1}集`);
       // 没变化 → 不送（省下的不是流量，是不让它对着静止画面反复琢磨）
       if (!f) return;
-      if (s.sendFrame(f.data, f.at, dur)) framesFedRef.current++;
+      if (!s.sendFrame(f.data, f.at, dur)) return;
+      framesFedRef.current++;
+
+      /**
+       * 送完这一帧，**跟着给它一个「看一眼」的信号**（10-08 18:30 暮色定的）。
+       *
+       * ## 为什么需要这个信号
+       *
+       * 提示词里已经写了「画面往前走了就接一句」，但光有提示词它不会自己开口 ——
+       * 实时模型是对「一次输入」回话的，光往里持续灌媒体，它只在用户真正说话时回。
+       * 而这一轮要的就是「他没说话，它也要说」。
+       *
+       * ## 频率（三道闸）
+       *
+       *   1. `grab()` 里「画面跟前一张差不多就不送」（本来就有的判重）
+       *   2. `NUDGE_MIN_MS` —— 再压一道，最快这么久才催一次
+       *   3. 它正在说话时不催 —— 打断过一次，后面就不连贯了
+       *
+       * ## 催了它也可以不吭声
+       *
+       * 提示词里写死了「画面跟前一张差不多就什么都别说」，所以那几十次不值得说的
+       * 它自己闭嘴。这正是我们要的。
+       */
+      const now = Date.now();
+      if (!s.isSpeaking && now - lastNudge.current >= NUDGE_MIN_MS) {
+        lastNudge.current = now;
+        s.nudgeScene();
+      }
     }, FRAME_EVERY);
     return () => window.clearInterval(iv);
   }, [active]);
@@ -869,6 +915,36 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
     runMemoryPost(char);
   }, [char, runMemoryPost, addTrace]);
 
+
+  // ⚠️ 必须放在 `send` 之后：它是 const，定义之前引用就是 TDZ 崩溃
+  //   （本项目同款已经炸过三次 —— 07-31 / 08-01 / 10-07）
+  /**
+   * 「这集看完有什么想说的」——集末收尾（10-08 18:30）
+   *
+   * ## 为什么走 `send()`，不另造一条隐藏通道
+   *
+   * 因为**这句连同它的回答就是要给你看的**。暮色要的是「类似观后感的总结」，
+   * 那这段话留在剧场聊天里，退出时跟这一轮的对话一起打包发到主聊天。
+   *
+   * ## 为什么它就是「记住」的载体
+   *
+   * 模型不记得自己没说过的话。这一轮它跟着画面一句一句记了剧情，
+   * 集末再让它自己复述一遍 —— **这段话就是它对这一集的全部记忆**。
+   *
+   * ## 频率
+   *
+   * 只在一集真的播完时问一次。一集一两分钟 = 一场十几次，不刷屏。
+   */
+  const askWrapup = useCallback(async () => {
+    const s = sessRef.current;
+    if (!s || !s.isOpen) return;
+    // 它正在说的话还没说完就问 = 打断。等它说完，最多等 6 秒。
+    for (let i = 0; i < 20 && s.isSpeaking; i += 1) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    send('（这集看完了，你刚陪着一起看的。有没有什么想说的？）');
+  }, [send]);
+
   /** 手动「再试一次」。⚠️ 必须先清配置键 —— 不清的话会被上面的守卫当重复给挡掉 */
   const retry = useCallback(() => {
     bootedKey.current = '';
@@ -878,9 +954,9 @@ ${see ? `1. **你现在正在跟他一起看剧。画面和声音一直在送进
   return useMemo(
     () => ({
       msgs, state, note, send, retry, trace,
-      attachVideo, resetFrames, framesFed,
+      attachVideo, resetFrames, startFresh, askWrapup, framesFed,
       invited, setInvited,
     }),
-    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, framesFed, invited, setInvited],
+    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, startFresh, askWrapup, framesFed, invited, setInvited],
   );
 }

@@ -1204,6 +1204,8 @@ const TheaterApp: React.FC = () => {
   const [saveEpProgress, setSaveEpProgress] = useState<{ ep: number; pct: number } | null>(null);
   const [drawer, setDrawer] = useState(false);
   const mediaFallback = useRef(false);
+  /** 集末那句「有什么想说的」还没来得及发出去的定时器（切集/退出时清掉，别让它突然冒一句） */
+  const pendingWrapupRef = useRef(0);
   const posRef = useRef({ pos: 0, dur: 0 });
   const lastRecord = useRef(0);
 
@@ -1824,7 +1826,23 @@ const TheaterApp: React.FC = () => {
    *（AGENTS.md §4.3 那条「漏用一个还没定义的名字」的同类事故）。
    */
   /**
-   * **「一起看结束了」**（10-07 21:59 暮色要的）
+   * **「新一轮开始」**（10-08 18:30 暮色定的）
+   *
+   * 「每一次从剧场退出来回主屏，这一轮一起看就结束了。
+   *   重新进剧场打开视频时聊天框是空的，角色要知道这是新的一轮。」
+   *
+   * ⚠️ 只在**从别的页面进播放页的那一下**调，切下一集不调 ——
+   *    切集是同一轮，清了它这一轮说过的话就断了，剧情接不上。
+   */
+  const wasPlayer = useRef(false);
+  useEffect(() => {
+    const inPlayer = page === 'player';
+    if (inPlayer && !wasPlayer.current) live.startFresh();
+    wasPlayer.current = inPlayer;
+  }, [page]); // live 故意不进依赖：它每次 render 都是新对象
+
+  /**
+   * **「一起看结束了」**（10-07 21:59 暮色要的，10-08 18:30 改成「这一轮的全部对话」）
    *
    * ## 他说的现象
    *
@@ -1882,20 +1900,30 @@ const TheaterApp: React.FC = () => {
       const title = mm?.[1] || tag || '剧场';
       const ep = Number(mm?.[2]) || currentEp || 1;
 
-      // 只挑它说过的、相邻不重复的，最多 5 句；每句太长掐掉
-      const said: string[] = [];
+      // ── 这一轮的全部对话，一句都不丢（10-08 18:30 暮色要的）──
+      //
+      // 原来只挑角色说过的 5 句（他反馈「只有角色发的，并不是两个人的对话话记录」）。
+      // 现在两个人的都带上：它接剧情的那些话 + 它集末那句观后感 + 你在剧场里说的。
+      // 这份完整记录才是「一起看过什么」的凭据 —— 换集清空上下文之后，
+      // 主聊天那边能长期留住的只有这一条。
+      const roleName = (r: string) => (r === 'user' ? (userProfile?.name || '你') : (char.name || 'TA'));
+      const log: string[] = [];
+      let lastLine = '';
       for (const m of seg) {
-        if (m.role !== 'assistant') continue;
-        const t = String(m.content || '').replace(/\s+/g, ' ').trim();
-        if (!t || said[said.length - 1] === t) continue;
-        said.push(t.length > 42 ? `${t.slice(0, 42)}…` : t);
+        const raw = String(m.content || '').trim();
+        if (!raw) continue;
+        const line = `${roleName(m.role)}：${raw}`;
+        // 相邻一模一样的是复读，只留一条（其余的留在库里，不丢）
+        if (line === lastLine) continue;
+        lastLine = line;
+        log.push(line);
       }
 
       const lines = [
-        `和${char.name}一起看完了《${title}》第${ep}集。`,
+        `和${char.name}一起看完了《${title}》。`,
         '',
-        '刚才在剧场里聊了这些：',
-        ...said.slice(-5).map((t) => `「${t}」`),
+        `这一轮在剧场里聊了这些：`,
+        ...(log.length ? log : ['（这一轮没聊几句）']),
         '',
         '现在回到主聊天了。',
       ].join('\n');
@@ -1921,12 +1949,12 @@ const TheaterApp: React.FC = () => {
           generatedAt: Date.now(),
         },
       });
-      diag("写了剧场结束记录", { 条数: seg.length, 引用: said.length });
+      diag("写了剧场结束记录", { 条数: seg.length, 行数: log.length });
     } catch (e: any) {
       // 收尾失败不许挡着退出去 —— 用户要点返回，不能因为写记录失败卡住
       diag('写剧场结束记录失败', { 报错: String(e?.message || e) });
     }
-  }, [char?.id, char?.name, currentEp]);
+  }, [char?.id, char?.name, currentEp, userProfile?.name]);
 
   /** 离开剧场 app 回主聊天 —— 收尾 + 真的走 */
   const leaveTheater = useCallback(() => {
@@ -1954,6 +1982,14 @@ const TheaterApp: React.FC = () => {
     finishTheaterSession();
     setPage('episodes');
   }, [recordWatch, finishTheaterSession]);
+
+  /** 清掉没来得及发的集末收尾定时器（切集/离开时用，别让它突然冒一句） */
+  useEffect(() => () => {
+    if (pendingWrapupRef.current) {
+      window.clearTimeout(pendingWrapupRef.current);
+      pendingWrapupRef.current = 0;
+    }
+  }, []);
 
   /**
    * 只要「不在播放页了」就把在线流收掉、播放位还回去。
@@ -1983,6 +2019,13 @@ const TheaterApp: React.FC = () => {
 
   const onEnded = useCallback(() => {
     recordWatch(true);
+    // 先让它把这一集收个尾（10-08 18:30 暮色定的四步之②）：
+    // 「这集看完有什么想说的」——它自己复述一遍，这段话就是它对这一集的记忆。
+    // 下一集马上要播，所以给它 3 秒先把话说完。
+    if (live.invited) {
+      const t = window.setTimeout(() => live.askWrapup(), 3000);
+      pendingWrapupRef.current = t;
+    }
     if (!autoNext) return;
     const next = currentEp + 1;
     // 下一集「在不在」按能不能播来判：手机有 / 电脑有 / 电脑上能在线取都算能接着播。
@@ -1992,7 +2035,7 @@ const TheaterApp: React.FC = () => {
     // 用和网格同一套判据（canPlayEpisode），别再各写各的
     if (!canPlayEpisode(d.title, next)) return;
     playEpisode(next);
-  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode]);
+  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode, live]);
 
   // ── 存到手机 ──
   // 单集保存的活儿原来在播放页（saveCurrent / saveOne），暮色 10-05 明确

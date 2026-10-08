@@ -77,7 +77,7 @@ export class FrameGrabber {
    * @param video   视频元素
    * @param force   true = 不判重，硬送（切集、用户点了播放这类时候用）
    */
-  grab(video: HTMLVideoElement, force = false): Frame | null {
+  grab(video: HTMLVideoElement, force = false, label?: string): Frame | null {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     // 还没解码出画面
@@ -116,8 +116,11 @@ export class FrameGrabber {
       this.prevGray = gray;
       this.prevAt = video.currentTime;
 
-      // 标上「这会儿在播第几分几秒」
-      this.stamp(video.currentTime, w);
+      // 标上「第2集 第3:20」——集号是必须的（10-08 现场）：
+      //   剧名和集数只在**建会话那一刻**发一次，切集不会重发，
+      //   于是模型到第三集了还拿着第一集的设定，问它「现在第几集」它答「第一季第一集」。
+      //   图上带着集号，它自己就看出来了，不用额外提醒。
+      this.stamp(video.currentTime, w, label);
 
       const data = this.canvas!.toDataURL('image/jpeg', JPEG_Q).split(',')[1] || '';
       if (!data) return null;
@@ -144,12 +147,12 @@ export class FrameGrabber {
    * 写错的字段服务端**不报错，静默忽略**（见 `sendFrame` 的注释）。
    * 那种「改了没反应」的失败最难查，不如用最土的办法：画在图上，零协议风险。
    */
-  private stamp(at: number, w: number) {
+  private stamp(at: number, w: number, prefix?: string) {
     const ctx = this.ctx;
     if (!ctx || at <= 0) return;
     const mm = Math.floor(at / 60);
     const ss = Math.floor(at % 60);
-    const label = `第 ${mm}:${String(ss).padStart(2, '0')}`;
+    const label = `${prefix ? `${prefix} ` : ''}第${mm}:${String(ss).padStart(2, '0')}`;
     const fs = Math.max(11, Math.round(w / 36));
     try {
       ctx.save();

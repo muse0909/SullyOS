@@ -500,6 +500,50 @@ export class LiveSession {
     this.bgNote = '';
   }
 
+  /** 它正在说话吗（外层催之前要看一下，别把它自己的话打断） */
+  get isSpeaking(): boolean {
+    return !!this.speaking;
+  }
+
+  /**
+   * 「看一眼刚才那张画面」——催它跟着剧情接一句（10-08 18:30 暮色定的）。
+   *
+   * ## 为什么走 `realtimeInput` 而不是 `clientContent`
+   *
+   * `clientContent`（`pushUserTurn`）是**一轮对话**：会把 `speaking` 清掉、
+   * 等于打断它正在说的话，而且历史上会多出成对的「他问了 / 他答了」。
+   * 我们要的是「你刚收到一张画面，自己看着办」——那属于**持续输入**，
+   * 该跟画面走同一条通道。
+   *
+   * ## 为什么发 activityStart / activityEnd
+   *
+   * 这两个字段是实时协议里标记「一段输入的开始/结束」的。模型据此判断
+   * 「这是一次交互，我该不该回」。没有它们的话，光灌媒体它是不会主动开口的 ——
+   * 实测（之前一直没主动说话就是这个原因）。
+   *
+   * ⚠️ 服务端不认识的字段是**静默忽略、不报错**的。
+   *    所以真机现象是「催了没用，它还是不说话」，而不会报任何错。
+   *    万一这条路走不通，退路就是退化成「每次催都硬发一句 clientContent 问它」
+   *    ——那样它一定回，但代价是每催一次多一对对话、而且会打断。
+   *
+   * 画面本身**不在这里发**：那 1.2 秒一张的连续输入由 `sendFrame` 单独送
+   * （画面是「正在发生的事」，不跟这里的一轮交互混在一起）。
+   */
+  nudgeScene(): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify({ realtimeInput: { activityStart: {} } }));
+      this.ws.send(JSON.stringify({ realtimeInput: { activityEnd: {} } }));
+      const w = window as any;
+      if (!w.__liveMedia) w.__liveMedia = { frames: 0, audio: 0 };
+      w.__liveMedia.nudges = (w.__liveMedia.nudges || 0) + 1;
+      return true;
+    } catch (e: any) {
+      this.trace(`催一句失败：${e?.message || e}`);
+      return false;
+    }
+  }
+
   /** 灌历史。turnComplete: true 才算灌完，但灌历史本身不会触发模型回话 */
   private flushHistory() {
     const h = this.opts.history || [];

@@ -17,6 +17,7 @@ import {
   Eye, EyeSlash,
   DeviceMobile, HardDrive, CloudSlash, CloudArrowDown, Moon, Sun, DeviceMobileCamera, Sparkle,
   CaretDown,
+  BookOpenText,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import Modal from '../components/os/Modal';
@@ -131,6 +132,54 @@ type PendingPlotSummary = {
   retries: number;
 };
 type PlotMap = Record<number, string>;
+
+/**
+ * **剧场聊天框里的「📖 第 N 集剧情摘要」折叠卡**（暮色 10-10 06:40 拍板）
+ *
+ * ## 为什么单独写一个，不复用主聊天那个 `StoryTheaterMemoryCard`
+ *
+ * 1. 主聊天那个是 `MessageItem.tsx` 里的**私有**组件（没导出）。
+ * 2. 它带着「向量化 / 编辑 / 重跑向量」一整套记忆宫殿联动 —— 剧场里的摘要
+ *    是**当场给人看**的，退出剧场才由 `finishTheaterSession` 真正写进主聊天
+ *    并接走向量化。这张卡只负责"边看边看"，不该有两套向量化入口。
+ *
+ * ## ⚠️ 必须放**模块级**
+ *
+ * 写在 `TheaterApp` 函数体里 = 每次渲染都造出新的函数对象 → React 认定组件
+ * 类型变了 → 整棵子树先卸载再挂载 → **折叠状态被清空**（点开就合上）。
+ * 项目里已经因为这个坑返工过两轮（AGENTS.md §4.3）。
+ */
+const PlotSummaryCard: React.FC<{
+  ep: number;
+  text: string;
+  night: boolean;
+}> = ({ ep, text, night }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`mb-2.5 ${night ? 'text-left' : 'text-left'}`}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex max-w-[78%] items-center gap-1.5 px-3 py-2 text-left text-[13px] font-bold rounded-[1.1rem] rounded-bl-md active:scale-[0.98] transition ${
+          night ? 'bg-[#1e293b] text-slate-200' : 'bg-white text-slate-700 shadow-sm'
+        }`}
+      >
+        <BookOpenText size={14} className="shrink-0 opacity-70" />
+        <span>📖 第{ep}集剧情摘要</span>
+        <CaretDown
+          size={12}
+          className={`shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className={`mt-1 inline-block max-w-[78%] px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap rounded-[1.1rem] rounded-bl-md ${
+          night ? 'bg-[#1e293b] text-slate-300' : 'bg-white text-slate-600 shadow-sm'
+        }`}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+};
 
 function readPendingPlot(): PendingPlotSummary | null {
   try {
@@ -858,7 +907,13 @@ const TheaterChat: React.FC<{
   live: UseTheaterLive;
   charName?: string;
   disabled?: boolean;
-}> = ({ p, live, charName, disabled }) => {
+  /**
+   * **边看边出的摘要卡**（暮色 10-10 06:40）—— 跟气泡按时间混排显示。
+   * 传进来而不是在这里自己拉，是因为**唯一**的数据源是 `TheaterApp` 里的
+   * `onPlotSummary`（它才是 `pendingPlotSummaryFor` 的落点），两处各存一份必然对不上。
+   */
+  plotCards?: { ep: number; text: string; at: number }[];
+}> = ({ p, live, charName, disabled, plotCards }) => {
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [kbH, setKbH] = useState(0);
@@ -886,7 +941,29 @@ const TheaterChat: React.FC<{
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickBottom.current) el.scrollTop = el.scrollHeight;
-  }, [live.msgs]);
+  }, [live.msgs, plotCards]);
+
+  /**
+   * **气泡 + 摘要卡合流**（暮色 10-10 06:40）—— 按产生时刻排一条时间线。
+   *
+   * ⚠️ 排序键的坑：气泡 `m.ts` 可能 undefined。`undefined - x` = NaN，
+   *    `Array.prototype.sort` 遇到 NaN 比较返回 false —— 实现不保证顺序，
+   *    结果就是卡片偶尔乱飞。所以这里显式兜底成 0。
+   */
+  const chatStream = useMemo(() => {
+    type Item =
+      | { kind: 'msg'; at: number; msg: (typeof live.msgs)[number] }
+      | { kind: 'card'; at: number; card: { ep: number; text: string; at: number } };
+    const items: Item[] = [
+      ...live.msgs.map((m) => ({ kind: 'msg' as const, at: m.ts || 0, msg: m })),
+      ...(plotCards || []).map((c) => ({ kind: 'card' as const, at: c.at || 0, card: c })),
+    ];
+    // 同一毫秒内保持原序（JS 的 sort 是稳定的，这里补一层显式序号更保险）
+    return items
+      .map((it, i) => ({ it, i }))
+      .sort((a, b) => (a.it.at - b.it.at) || (a.i - b.i))
+      .map((x) => x.it);
+  }, [live.msgs, plotCards]);
 
   /**
    * 安卓软键盘会把 `100vh` 算错（`AGENTS.md` §6.2 记着这个老坑）。
@@ -938,7 +1015,9 @@ const TheaterChat: React.FC<{
       )}
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 py-3">
-        {live.msgs.length === 0 && (
+        {/* ⚠️ 空状态看的是 **chatStream** 不是 live.msgs —— 10-10 起摘要卡也在这条流里，
+            一上来就有卡的话不该再显示「这里会放聊天的框」。 */}
+        {chatStream.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center">
             <FilmSlate size={28} className={p.faint} />
             <p className={`mt-2 text-[11px] ${p.faint}`}>
@@ -950,7 +1029,20 @@ const TheaterChat: React.FC<{
           </div>
         )}
 
-        {live.msgs.map((m) => {
+        {/* ⚡ 气泡流 + 摘要卡**按时间混排**（暮色 10-10 06:40）。
+            *
+            * 为什么不能把摘要卡统一堆在气泡下面：摘要是「某一集看完那一刻」产生的，
+            * 堆在底部就跟它对应的时刻脱节了 —— 比如第 24 集摘要卡排在两小时前
+            * 那些闲聊气泡的**下面**，读起来像"这些话之后才发生的事"。
+            * 气泡有 `ts`、卡片有 `at`，直接合流按时间排，位置天然对。
+            *
+            * ⚠️ 排序键用 `ts`（没有就退到 0）：气泡可能没有 ts，
+            *    undefined 参与比较会得到 NaN，Array.sort 的实现不保证结果 —— 卡片会乱飞。
+            */}
+        {chatStream.map((it) => it.kind === 'card' ? (
+          <PlotSummaryCard key={`card-${it.card.ep}`} ep={it.card.ep} text={it.card.text} night={p.night} />
+        ) : (() => {
+          const m = it.msg;
           /* ── 时间戳（暮色 21:16 提、21:33 更正位置）────────────────
            *
            * ⚠️ **位置改过一次**。21:16 我做成了「气泡左右两侧、底部齐平」，
@@ -988,7 +1080,7 @@ const TheaterChat: React.FC<{
             </div>
           </div>
           );
-        })}
+        })())}
       </div>
 
       {/* 输入框 */}
@@ -1254,6 +1346,22 @@ const TheaterApp: React.FC = () => {
    */
   const currentEpRef = useRef(1);
   /**
+   * **边看边出的摘要卡**（暮色 10-10 06:40 拍板）—— 摘要一生成立刻显示在
+   * **剧场聊天框**里，不用等退出剧场。
+   *
+   * ## 为什么必须有这个（06:40 真机诊断）
+   *
+   * 4013dfa 给 onText 加的守卫把摘要文字挡在气泡外，摘要只进了 `plotMapRef`；
+   * 而摘要卡**只**在 `finishTheaterSession`（退出剧场）时才写。中间这段是
+   * 「**收进去了但没出口**」—— 暮色现场看到的就是「啥都没有，只剩它解说剧情」。
+   *
+   * 22:08～23:13 看到的「摘要冒气泡」里，有一部分**本身就是摘要**（模型在写总结，
+   * 读起来跟报剧情一模一样）。所以关掉气泡不是修复，只是把「能看见」换成「看不见」。
+   *
+   * 这条列表就是那个出口：按集号升序追加，折叠卡形态，跟气泡流并排显示。
+   */
+  const [plotCards, setPlotCards] = useState<{ ep: number; text: string; at: number }[]>([]);
+  /**
    * **摘要收到回调**（暮色 10-09 21:18）—— LiveSession.finishTurn 在
    * `pendingPlotSummaryFor` 设着时，**唯一**的入口走这里；不进 onTurnComplete、
    * 不进 saveModel、不进聊天 DB。
@@ -1269,7 +1377,15 @@ const TheaterApp: React.FC = () => {
     pendingPlotRef.current = null;
     // 2) 写 plotMap —— 退出剧场时按集号升序写卡
     plotMapRef.current[ep] = text;
-    // 3) 删本地待处理（暮色 21:26 #3：核对四字段再删；不一致就留盘，下面靠 onReady/10min 兜底）
+    // 3) ⚡ 边看边出（暮色 10-10 06:40）：摘要立刻出现在剧场聊天框里。
+    //    按集号升序放 —— 网络乱序到达时后到的低集号会插到前面，不会倒序。
+    //    同一集重复来（重连补救）只更新正文，不重复插一张。
+    setPlotCards((prev) => {
+      const hit = prev.find((c) => c.ep === ep);
+      if (hit) return prev.map((c) => (c.ep === ep ? { ...c, text, at: Date.now() } : c));
+      return [...prev, { ep, text, at: Date.now() }].sort((a, b) => a.ep - b.ep);
+    });
+    // 4) 删本地待处理（暮色 21:26 #3：核对四字段再删；不一致就留盘，下面靠 onReady/10min 兜底）
     const p = readPendingPlot();
     const curTitle = String(sceneRef.current.title || '');
     if (p && p.charId === char?.id && p.dramaTitle === curTitle && p.episodeId === ep) {
@@ -2015,6 +2131,20 @@ const TheaterApp: React.FC = () => {
         diag('切集前发摘要请求', { 上一集: prevEp, 即将到: n });
         triggerPlotSummary(prevEp);
       }
+    } else if (drama || n <= currentEpRef.current) {
+      /**
+       * **换剧 / 跳着选集 → 上一场的摘要卡清空**（暮色 10-10 06:40）。
+       *
+       * `plotMapRef` 从建立到现在**从来没被重置过** —— 换个剧看，前一部的
+       * 摘要会跟着 `finishTheaterSession` 一起写进主聊天。边看边出之后这个
+       * 串场会**当场可见**（上一部的卡片直接摆在下一部的聊天框里），所以必须清。
+       *
+       * 判据跟上面那条互斥：上面走的是「自动连播切下一集」，这里走的是
+       * 「换剧 / 往回跳集」—— 后者没有"上一集刚看完"这回事。
+       */
+      plotMapRef.current = {};
+      setPlotCards([]);
+      diag('换剧/跳集，清掉上一场的摘要卡');
     }
 
     /**
@@ -3557,7 +3687,7 @@ const TheaterApp: React.FC = () => {
             就不该有一个能对着说话的框，也不该有连接状态条。
             邀请按钮在上面那排（跟自动连播并排），点一下就进来了。 */}
         {live.invited ? (
-          <TheaterChat p={p} live={live} charName={char?.name} disabled={!char} />
+          <TheaterChat p={p} live={live} charName={char?.name} disabled={!char} plotCards={plotCards} />
         ) : (
           <SoloWatching p={p} charName={char?.name} />
         )}

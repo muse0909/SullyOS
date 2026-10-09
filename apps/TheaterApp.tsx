@@ -2476,49 +2476,21 @@ const TheaterApp: React.FC = () => {
       diag("写了剧场结束记录", { 条数: seg.length, 行数: log.length });
 
       /**
-       * **每集剧情摘要卡**（暮色 10-09 21:18 起累积）
+       * ⚠️⚠️ **这里原来会往主聊天写「📖 第 N 集剧情摘要」卡，整个撤掉了**
+       * （暮色 10-10 06:58 拍板：「退出后摘要还会另外发一份到主聊天。把这个去掉，
+       * 摘要只留在剧场聊天里就行」）。
        *
-       * 在「一起看完了」对话卡之后，**按集号升序**逐张写「📖 第 N 集剧情摘要」。
-       * ⚠️ 不依赖摘要到达时间（10-09 22:15 拍板）：第 5 集摘要先到、第 4 集后到，
-       *    退出时也按 4→5 升序插，不会因为回话乱序颠倒。
+       * 为什么撤 —— 摘要在 06:40 改成「边看边出」之后就有了自己的位置：
+       * 生成完立刻以折叠卡显示在**剧场聊天框**里，当场就能看。
+       * 退出时再往主聊天补一份 = 同一段话在两个地方各出现一次，
+       * 主聊天那份还是「延迟了几十分钟的旧消息」，纯重复。
        *
-       * 未收到的摘要**不补卡**：要么 5s 超时还没回来（在 10min TTL 里还能补救），
-       * 要么已经 10min + 没断线 —— 都不写出卡，避免出现"标题带集号但内容是空的"。
+       * `plotMapRef` / `plotCards` 仍然照常维护（剧场内要靠它渲染卡片），
+       * 只是**不再往 DB 写**。主聊天那边保持只有「一起看完了」那张对话卡。
        *
-       * ⚠️⚠️ **不要带 `source: 'theater'`** —— 原因跟上方对话卡那条注释同。
-       *    `isTheaterMemory: true` + `kind: 'plot-summary'` 走 MessageItem 的
-       *    「📖 第 N 集剧情摘要」分支（10-09 22:15 新增）。
+       * ⚠️ 历史已写进去的那些摘要卡还在用户数据里 —— 这次只断掉**以后**的。
+       * 要清旧数据得单独做迁移，别在退场路径里顺手删（会连别的 app 的消息删掉）。
        */
-      const summaryEps = Object.keys(plotMapRef.current)
-        .map((k) => Number(k))
-        .filter((n) => Number.isFinite(n) && n > 0)
-        .sort((a, b) => a - b);
-      let summaryWritten = 0;
-      for (const epId of summaryEps) {
-        const summary = String(plotMapRef.current[epId] || '').trim();
-        if (!summary) continue;
-        try {
-          await DB.saveMessage({
-            charId: char.id,
-            role: 'assistant',
-            type: 'text',
-            content: summary,
-            metadata: {
-              isTheaterMemory: true,
-              kind: 'plot-summary',           // ⚠️ MessageItem 用这个切「📖 第 N 集剧情摘要」标题
-              theaterTitle: title,
-              theaterEpisode: epId,
-              generatedAt: Date.now(),
-              // ⚠️ 不带 source: 'theater'（同上）
-            },
-          });
-          summaryWritten++;
-        } catch (e: any) {
-          // 单条写失败不挡其它 —— 用户要点返回
-          diag('写摘要卡失败', { ep: epId, msg: String(e?.message || e) });
-        }
-      }
-      if (summaryWritten > 0) diag("写了剧情摘要卡", { 张数: summaryWritten });
 
       // 退场必清三件：本地盘 + 看门狗 + pending 标记 —— 写卡之后清，
       // 5s 超时那条没来得及回的也一并放弃（剧场已关，没"下一轮"了）。

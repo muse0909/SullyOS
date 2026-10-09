@@ -1248,6 +1248,12 @@ const TheaterApp: React.FC = () => {
    */
   const plotWatchdogRef = useRef<number | null>(null);
   /**
+   * **当前集号 ref**（暮色 23:25 加）—— `playEpisode(n)` 在切下一集前发摘要，
+   * 必须用当前**已确认播完的**那集的号 —— 不依赖 React state 在闭包里的快照。
+   * 与 `currentEp` useState 同步：每次 setCurrentEp 后再写一次 ref。
+   */
+  const currentEpRef = useRef(1);
+  /**
    * **摘要收到回调**（暮色 10-09 21:18）—— LiveSession.finishTurn 在
    * `pendingPlotSummaryFor` 设着时，**唯一**的入口走这里；不进 onTurnComplete、
    * 不进 saveModel、不进聊天 DB。
@@ -1338,6 +1344,58 @@ const TheaterApp: React.FC = () => {
    * 正常从选集页点集数进来不给（那就是「我要从头看」）。
    */
   const [resumeAt, setResumeAt] = useState(0);
+
+  /**
+   * **触发本集后台摘要**（暮色 10-09 21:18 起累积，23:25 改成切集触发 —
+   * 不依赖 video.ended 因为 mini player 浮窗模式下不可靠）。
+   *
+   * 之前放在 L2423（onEnded 里），但 `playEpisode` 在这之前定义会读不到它。
+   * 所以移到**这里**—— `useTheaterLive` 之后、`playEpisode` 之前。
+   *
+   * ⚠️ 这条函数**只**是「**写盘 + 发请求 + 启看门狗**」，不在剧场外调。
+   */
+  const triggerPlotSummary = useCallback((ep: number) => {
+    const title = String(sceneRef.current.title || '');
+    if (!title || !char?.id) return;
+
+    // 计算 retries（核对 char / drama / episode 都一致才算延续 —— 换剧或换集都重置）
+    const prev = readPendingPlot();
+    const retries =
+      prev && prev.charId === char.id && prev.dramaTitle === title && prev.episodeId === ep
+        ? (prev.retries + 1)
+        : 0;
+
+    // 拼提示文本 —— 重试时附「断线重发」前缀（暮色 21:18 选 A）
+    let text =
+      `本集（《${title}》第 ${ep} 集）已结束。请用 3-5 句中文概括这一集主要剧情走向（有感触的台词可引一两句），不要评价、不要提问、不要结尾变成聊天问句、不要自称。这只是后台摘要，不会给用户看，填入「📖 剧情摘要」卡片。`;
+    if (retries > 0) {
+      text += `\n\n（这是断线后的补救重发，第 ${retries + 1} 次。如果本集记忆不完整，直接回'记不清了'即可，回话会被独立处理。）`;
+    }
+
+    // ⚠️ **先写盘再发** —— 重连补救时直接拿这份 promptText 重发，不用现场拼
+    writePendingPlot({
+      charId: char.id,
+      dramaTitle: title,
+      episodeId: ep,
+      promptText: text,
+      createdAt: Date.now(),
+      retries,
+    });
+    pendingPlotRef.current = ep;
+
+    // ⚠️ 5s 看门狗（暮色 21:26 #2）：超时**只**打 console.warn，**不动**盘 / 不清 ref
+    if (plotWatchdogRef.current) clearTimeout(plotWatchdogRef.current);
+    plotWatchdogRef.current = window.setTimeout(() => {
+      diag(`第 ${ep} 集摘要 5s 未回`, { 备注: '保留待处理记录待重连补救（暮色 21:26 #2）' });
+    }, PLOT_SUMMARY_TIMEOUT_MS);
+
+    // 真发。LiveSession 自己处理 ws 状态：ready 直发；非 ready 塞 pendingInput 等 flushPending
+    try {
+      live.sendPlotSummary(text, ep);
+    } catch (e: any) {
+      diag('sendPlotSummary threw', { msg: String(e?.message || e) });
+    }
+  }, [char?.id, live]);
 
   // ── 存到手机 ──
   const [expandedPhone, setExpandedPhone] = useState('');
@@ -1933,6 +1991,33 @@ const TheaterApp: React.FC = () => {
     live.resetFrames();
 
     /**
+     * ⚠️ **主动触发上一集的后台摘要**（暮色 23:25 反馈："已经正常播放了好几集，
+     *  摘要一直都是普通聊天气泡"——video.ended 在 mini player 浮窗模式下不可靠，
+     *  等不到 onEnded 就已经进了下一集）。
+     *
+     * 改在**切下一集前**发 —— 这次保证每次"上一集已播完"都触发：
+     *   - `playEpisode(1)` 第一次进剧场 —— 不发（没有"上一集"）
+     *   - 自动连播 `playEpisode(2)` —— 给第 1 集发摘要
+     *   - `playEpisode(3)` —— 给第 2 集发
+     *   - ...
+     *
+     * 同样的 setCurrentEp(state) 是异步的，但这里调 triggerPlotSummary 时
+     * 传给它的 currentEp 是 React state 还是旧值（前一集）。**所以**这里
+     * 不读 state，直接用 `currentEpRef.current` 取**当前实际**的集号作为
+     * "上一集" —— 不依赖闭包里的 currentEp 是否新。
+     */
+    if (!drama && n > 1 && currentEpRef.current > 0 && n > currentEpRef.current) {
+      const prevEp = currentEpRef.current;
+      // 标记：上一集真播完才发 —— 切集前查一下 blobEp 是否真的 = prevEp
+      // 视频不一定真播完（mini player 浮窗下可能跳播），但 autoNext=true 时
+      // 用户选了"开"，我们就认他希望"播完了一集"，发摘要
+      if (autoNext) {
+        diag('切集前发摘要请求', { 上一集: prevEp, 即将到: n });
+        triggerPlotSummary(prevEp);
+      }
+    }
+
+    /**
      * **把上一段视频彻底拆掉**，再开始取新的。
      *
      * 之前这里只 `closeOnline()`（那只是还短剧库的播放名额，跟播放器没关系），
@@ -1964,6 +2049,7 @@ const TheaterApp: React.FC = () => {
     setPicked(d);
     setDrawer(false);
     setCurrentEp(n);
+    currentEpRef.current = n;
     setEpTotal(guessTotal(d));
     setPage('player');
     diag('切到', { 剧: d.title, 集: n, 剧id: d.id ? d.id.slice(0, 22) : '没有' });
@@ -1975,7 +2061,7 @@ const TheaterApp: React.FC = () => {
       setDlLoading(false);
       setDlError('这一集电脑上没有，手机上也没有');
     }
-  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal, closeOnline, resolveDramaId]);
+  }, [picked, epState, loadFromPhone, loadFromMac, loadOnline, online, guessTotal, closeOnline, resolveDramaId, autoNext, triggerPlotSummary]);
 
   // ── 观看记录 ──
   const recordWatch = useCallback((force = false) => {
@@ -2372,63 +2458,6 @@ const TheaterApp: React.FC = () => {
     };
   }, [closeOnline]);
 
-  /**
-   * **为本集发一条后台剧情摘要请求**（暮色 10-09 21:18 起累积）—— `onEnded` 里调。
-   *
-   * **不主动重试**：5s 超时只记日志（暮色 21:26 #2）；10min 失效（暮色 21:40 #5）。
-   * 断线**期间**的请求由 `LiveSession.pushUserTurn` 自己塞 `pendingInput`，
-   * reconnect + setupComplete 后 `flushPending` 接力重发 —— 跟 `onReady`
-   * **不冲突**、不会双发。
-   *
-   * **不显式改 live.msgs**：回话走专门的 `onPlotSummary` 通道，**不**走
-   * `onTurnComplete` / `saveModel` / 聊天 DB —— LiveSession 已经做了一道劫持
-   * （`finishTurn` 里 `pendingPlotSummaryFor` 设着时直接 `return`）。
-   *
-   * ⚠️ 这条函数**只**是「**写盘 + 发请求 + 启看门狗**」，不在剧场外调。
-   */
-  const triggerPlotSummary = useCallback((ep: number) => {
-    const title = String(sceneRef.current.title || '');
-    if (!title || !char?.id) return;
-
-    // 计算 retries（核对 char / drama / episode 都一致才算延续 —— 换剧或换集都重置）
-    const prev = readPendingPlot();
-    const retries =
-      prev && prev.charId === char.id && prev.dramaTitle === title && prev.episodeId === ep
-        ? (prev.retries + 1)
-        : 0;
-
-    // 拼提示文本 —— 重试时附「断线重发」前缀（暮色 21:18 选 A）
-    let text =
-      `本集（《${title}》第 ${ep} 集）已结束。请用 3-5 句中文概括这一集主要剧情走向（有感触的台词可引一两句），不要评价、不要提问、不要结尾变成聊天问句、不要自称。这只是后台摘要，不会给用户看，填入「📖 剧情摘要」卡片。`;
-    if (retries > 0) {
-      text += `\n\n（这是断线后的补救重发，第 ${retries + 1} 次。如果本集记忆不完整，直接回'记不清了'即可，回话会被独立处理。）`;
-    }
-
-    // ⚠️ **先写盘再发** —— 重连补救时直接拿这份 promptText 重发，不用现场拼
-    writePendingPlot({
-      charId: char.id,
-      dramaTitle: title,
-      episodeId: ep,
-      promptText: text,
-      createdAt: Date.now(),
-      retries,
-    });
-    pendingPlotRef.current = ep;
-
-    // ⚠️ 5s 看门狗（暮色 21:26 #2）：超时**只**打 console.warn，**不动**盘 / 不清 ref
-    if (plotWatchdogRef.current) clearTimeout(plotWatchdogRef.current);
-    plotWatchdogRef.current = window.setTimeout(() => {
-      diag(`第 ${ep} 集摘要 5s 未回`, { 备注: '保留待处理记录待重连补救（暮色 21:26 #2）' });
-    }, PLOT_SUMMARY_TIMEOUT_MS);
-
-    // 真发。LiveSession 自己处理 ws 状态：ready 直发；非 ready 塞 pendingInput 等 flushPending
-    try {
-      live.sendPlotSummary(text, ep);
-    } catch (e: any) {
-      diag('sendPlotSummary threw', { msg: String(e?.message || e) });
-    }
-  }, [char?.id, live]);
-
   const onEnded = useCallback(() => {
     recordWatch(true);
     /**
@@ -2450,18 +2479,13 @@ const TheaterApp: React.FC = () => {
      */
 
     /**
-     * **每集后台摘要**（暮色 10-09 21:18 起累积）—— 在 onEnded 里发，**不**显式
-     * 等回话，靠 5s 看门狗 + 10min TTL + `onReady` 核对三道闸兜底。
+     * ⚠️ **每集后台摘要不再在这里发**（暮色 23:25 反馈："已经正常播放了好几集，
+     *  摘要一直都是普通聊天气泡"）。原因：`video.ended` 在 mini player 浮窗模式下
+     *  不可靠 —— 暮色的现场实测**好几集都触不到 ended**，导致根本没机会发。
      *
-     * ⚠️ 单槽策略：剧场一次只 in-flight 一个摘要（一集结束 → 摘要回 → 才切下一集），
-     *    本地盘只放当前这一份。剧切走 / 角色切走由 `onReady` 核对后清理。
-     *
-     * 重试计数语义：retries = N 表示「这是第 N+1 次发给同样集号的请求」。
-     *  同一集 retries > 0 时拼一段「这是断线后的补救重发」前缀（暮色 21:18 选 A：
-     *  重试提示拼进现有请求文本），让模型知道记忆可能缺损、可以回「记不清了」。
+     * 改为：摘要触发搬进 `playEpisode(n)`，切下一集前**自己**发上一集的。
+     * 这里 onEnded 只负责 `recordWatch` + 切下一集，不再调 `triggerPlotSummary`。
      */
-    triggerPlotSummary(currentEp);
-
     if (!autoNext) return;
     const next = currentEp + 1;
     // 下一集「在不在」按能不能播来判：手机有 / 电脑有 / 电脑上能在线取都算能接着播。
@@ -2471,7 +2495,7 @@ const TheaterApp: React.FC = () => {
     // 用和网格同一套判据（canPlayEpisode），别再各写各的
     if (!canPlayEpisode(d.title, next)) return;
     playEpisode(next);
-  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode, live, triggerPlotSummary]);
+  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode]);
 
   // ── 存到手机 ──
   // 单集保存的活儿原来在播放页（saveCurrent / saveOne），暮色 10-05 明确

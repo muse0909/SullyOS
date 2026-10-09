@@ -495,11 +495,30 @@ export class LiveSession {
             // 服务端发的是「累积到此刻的整段」—— 按更长的那份替换，只把新增的字喂出去
             const delta = t.slice(this.speaking.length);
             this.speaking = t;
-            if (delta) this.opts.onText?.(delta, t);
+            /**
+             * ⚠️ **后台剧情摘要请求的回话不外发到 onText**（暮色 10-09 22:08 现场反馈）。
+             *
+             * 现象：`sendPlotSummary` 发出去后，服务端的「累积到此刻的整段」也会走
+             *   `outputTranscription` → `onText` → `useTheaterLive.setMsgs` → 流式气泡。
+             *   那时候模型就在气泡里写「第 N 集剧情讲的是…」—— 不是用户要的折叠卡。
+             *
+             * 修法：`pendingPlotSummaryFor !== null` 时**只**累计 `this.speaking`，
+             *   `onText` 不外发；等 `turnComplete` 来了，`finishTurn` 看到标志
+             *   → 整段交到 `onPlotSummary` → 走折叠卡分支（不进聊天气泡、不进 onTurnComplete、
+             *   不进 saveModel、不进 DB）。
+             *
+             * ⚠️ `__liveRaw`（window 现场记录）**还**写 —— 那不影响 UI，是排查现场。
+             */
+            if (this.pendingPlotSummaryFor === null && delta) {
+              this.opts.onText?.(delta, t);
+            }
           } else {
             // 正常：新的增量段，拼上去
             this.speaking += t;
-            this.opts.onText?.(t, this.speaking);
+            // ⚠️ 同上：摘要请求的回话不外发到 onText（暮色 10-09 22:08 现场反馈）。
+            if (this.pendingPlotSummaryFor === null) {
+              this.opts.onText?.(t, this.speaking);
+            }
           }
 
           /**

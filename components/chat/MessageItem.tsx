@@ -2028,6 +2028,30 @@ const MessageItem = React.memo(({
     if (isTheaterMemory && displayContent) {
         const memoryMeta = (m as any).metadata || {};
         const ep = Number(memoryMeta.theaterEpisode);
+        /**
+         * **每集剧情摘要卡**（暮色 10-09 22:15 加）—— `kind === 'plot-summary'` 走
+         * 「📖 第 N 集剧情摘要」标题分支，跟「一起看完了」那张对话卡**共用同一个
+         * StoryTheaterMemoryCard 组件**，所以可以继承现有向量化流程、折叠卡片、
+         * 视觉样式 —— 唯一的区别是 cardTitle 字段。
+         *
+         * ⚠️ **摘要回复不在聊天文本框里**（暮色 10-09 21:40 #1）：
+         *   - 它走的是 `metadata.isTheaterMemory` 这条 special 渲染分支
+         *   - 不会被当作普通气泡塞进 `live.msgs`（那个由 `onText` / `onTurnComplete` 管）
+         *   - 显示位置 = 主聊天剧场记录折叠块
+         */
+        if (memoryMeta.kind === 'plot-summary') {
+            return commonLayout(
+                <StoryTheaterMemoryCard
+                    theaterTitle={memoryMeta.theaterTitle || '剧场'}
+                    cardTitle={ep > 0 ? `📖 第${ep}集剧情摘要` : '📖 剧情摘要'}
+                    content={displayContent}
+                    generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+                    vectorizing={vectorizing}
+                    onVectorize={handleVectorize}
+                    onSaveVectorized={handleSaveVectorized}
+                />
+            );
+        }
         return commonLayout(
             <StoryTheaterMemoryCard
                 theaterTitle={memoryMeta.theaterTitle || '剧场'}

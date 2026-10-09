@@ -96,6 +96,61 @@ function diag(step: string, extra?: Record<string, unknown>): void {
   } catch { /* 诊断不能影响功能 */ }
 }
 
+// ── 后台剧情摘要（暮色 10-09 21:18 起累积，10-09 22:15 拍板） ──
+/**
+ * 「哪一集刚结束，请后台写一段剧情摘要」这条待处理记录，**单槽** ——
+ * 剧场一次只会 in-flight 一个（一集结束 → 摘要回来 → 才可能切下一集）。
+ * 用一个 localStorage key 存当前这一份，重连补救时按 charId/dramaTitle/episodeId
+ * 核对当前剧场再决定是否重发。
+ *
+ * 单槽的另一个理由：剧场最多有几个连接状态、几个跨剧的过程？
+ * 写本地盘的非主流程信息，保留**唯一**的最新一份最稳 —— 多 key / Map
+ * 容易留下过期孤儿，又不能在用户重连时全清完。
+ *
+ * 写入时机：onEnded 真发摘要请求**之前**写盘（必须先写再发，方便重连补救）。
+ * 删除时机：成功收到摘要（`onPlotSummary` 路由）**之后**核对四字段删；
+ * 10 分钟 TTL 到期时清理；剧场切走时核对不一致清理。
+ *
+ * 5 秒超时**不删**盘 —— 是暮色 10-09 21:26 #2 拍板：「5 秒只记等待结果，
+ * 不能提前删除仍在有效期内的待处理」。10 分钟才放弃补救（21:40 #5）。
+ */
+const PENDING_PLOT_KEY = 'theater_pending_plot_v1';
+/** 待处理摘要的有效期 —— 超过这个时间如果在下次重连时还没回就放弃。10 分钟
+ *  是按单集摘要最坏响应（实测 ≤ 20s）留出 30 倍余量。 */
+const PLOT_SUMMARY_TTL_MS = 10 * 60 * 1000;
+/** 5 秒等不到回话只记日志、不动盘 —— 暮色 10-09 21:26 #2 拍板。 */
+const PLOT_SUMMARY_TIMEOUT_MS = 5000;
+
+type PendingPlotSummary = {
+  charId: string;
+  dramaTitle: string;
+  episodeId: number;
+  /** 已经拼好的提示文本（含「断线重发」前缀和 retries 计数） —— 重发时直接复用。 */
+  promptText: string;
+  createdAt: number;
+  retries: number;
+};
+type PlotMap = Record<number, string>;
+
+function readPendingPlot(): PendingPlotSummary | null {
+  try {
+    const raw = localStorage.getItem(PENDING_PLOT_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== 'object') return null;
+    if (typeof p.charId !== 'string' || typeof p.dramaTitle !== 'string') return null;
+    if (typeof p.episodeId !== 'number' || typeof p.createdAt !== 'number') return null;
+    if (typeof p.promptText !== 'string' || typeof p.retries !== 'number') return null;
+    return p as PendingPlotSummary;
+  } catch { return null; }
+}
+function writePendingPlot(p: PendingPlotSummary): void {
+  try { localStorage.setItem(PENDING_PLOT_KEY, JSON.stringify(p)); } catch { /* 写盘失败不致命 */ }
+}
+function clearPendingPlot(): void {
+  try { localStorage.removeItem(PENDING_PLOT_KEY); } catch { /* 清不到不致命 */ }
+}
+
 // ── 小零件 ──
 
 const Tag: React.FC<{ tone: 'ok' | 'no' | 'new' | 'mac'; children: React.ReactNode }> = ({ tone, children }) => {
@@ -1165,6 +1220,91 @@ const TheaterApp: React.FC = () => {
   sceneRef.current = { title: picked?.title || '', episode: currentEp, at: 0 };
   const scene = useCallback(() => sceneRef.current, []);
 
+  // ── 后台剧情摘要（暮色 10-09 21:18 起累积，10-09 22:15 拍板） ──
+  /**
+   * **本轮已收到的各集剧情摘要** —— 退出剧场时按集号升序写「📖 第 N 集剧情摘要」卡。
+   *
+   * 用 ref 不用 state：退出时一次性读出，不参与直播 UI 渲染。
+   *
+   * ⚠️ 这是**正常轮次之外**的消息 —— 不进 `live.msgs`（那个进主聊天气泡），
+   * 进的是主聊天里的剧场记录块（`isTheaterMemory: true` + `kind: 'plot-summary'`），
+   * 渲染走 `MessageItem.StoryTheaterMemoryCard`（「📖 第 N 集剧情摘要」分支，
+   * 10-09 22:15 加的）。
+   */
+  const plotMapRef = useRef<PlotMap>({});
+  /**
+   * **当前在等的摘要集号**（5 秒看门狗 + pending 状态用）。
+   * 非 null 时 = 「这一集摘要请求在路上」。
+   * 收到就 null，5s 超时**不动**它（暮色 21:26 #2 拍板 —— 等 10 分钟才失效）。
+   */
+  const pendingPlotRef = useRef<number | null>(null);
+  /**
+   * **5 秒看门狗定时器** —— pending 期间启动，收到或退场时清。超时**只**打日志：
+   *
+   *   console.warn('[剧场] 第 X 集摘要 5s 未回，pending 保留待重连补救')
+   *
+   * 不动 localStorage、不动 plotMapRef、不动 pendingPlotRef —— **一切**靠后续
+   * `onPlotSummary` / `onReady` 的核对逻辑收敛。
+   */
+  const plotWatchdogRef = useRef<number | null>(null);
+  /**
+   * **摘要收到回调**（暮色 10-09 21:18）—— LiveSession.finishTurn 在
+   * `pendingPlotSummaryFor` 设着时，**唯一**的入口走这里；不进 onTurnComplete、
+   * 不进 saveModel、不进聊天 DB。
+   *
+   * 单一入口意味着：同一条摘要只会被路由一次，**不需要**在 caller 里再判重。
+   */
+  const onPlotSummary = useCallback((text: string, ep: number) => {
+    // 1) 清 5s 看门狗（收到 = 不再 "等"）
+    if (plotWatchdogRef.current) {
+      clearTimeout(plotWatchdogRef.current);
+      plotWatchdogRef.current = null;
+    }
+    pendingPlotRef.current = null;
+    // 2) 写 plotMap —— 退出剧场时按集号升序写卡
+    plotMapRef.current[ep] = text;
+    // 3) 删本地待处理（暮色 21:26 #3：核对四字段再删；不一致就留盘，下面靠 onReady/10min 兜底）
+    const p = readPendingPlot();
+    const curTitle = String(sceneRef.current.title || '');
+    if (p && p.charId === char?.id && p.dramaTitle === curTitle && p.episodeId === ep) {
+      clearPendingPlot();
+    }
+    diag('收到摘要', { ep, 字数: text.length });
+  }, [char?.id]);
+  /**
+   * **连接准备就绪回调**（暮色 10-09 21:26 #1）—— 包含**首次连上**和**断线重连后**
+   * 都触发的 setupComplete 路径。这里**只做事后审计和过期清理，不主动 send**：
+   *
+   * - **不主动 send** 是因为 `LiveSession.pushUserTurn` 自己已经在 ws 未就绪时
+   *   塞 `pendingInput` 排队，等 reconnect + setupComplete 后 `flushPending` 自动
+   *   接力重发。这条路径跟 onReady 的回调**不冲突** —— LiveSession 那一路是
+   *   "把消息送出去"，咱们这条路是 "清过期 / 防串剧"。
+   * - **核对 char/drama/episode**（暮色 21:26 #3）—— 不一致就当过期孤儿清掉。
+   * - **超 10 分钟**（暮色 21:40 #5）—— 放弃补救。
+   */
+  const onReady = useCallback(() => {
+    const p = readPendingPlot();
+    if (!p) return;
+    const curTitle = String(sceneRef.current.title || '');
+    if (p.charId !== char?.id || p.dramaTitle !== curTitle) {
+      // 串剧 / 换角色 → 不能重发，盘也没用了
+      clearPendingPlot();
+      if (plotWatchdogRef.current) { clearTimeout(plotWatchdogRef.current); plotWatchdogRef.current = null; }
+      pendingPlotRef.current = null;
+      diag('待处理摘要 核对不一致（串剧/换角色），清掉');
+      return;
+    }
+    if (Date.now() - p.createdAt > PLOT_SUMMARY_TTL_MS) {
+      // 超 10 分钟（暮色 21:40 #5），放弃补救 —— 5s 超时（暮色 21:26 #2）**不**动盘
+      clearPendingPlot();
+      if (plotWatchdogRef.current) { clearTimeout(plotWatchdogRef.current); plotWatchdogRef.current = null; }
+      pendingPlotRef.current = null;
+      diag('待处理摘要 超 10 分钟，放弃补救');
+      return;
+    }
+    // 通过核对 → LiveSession 自己冲 pendingInput 重发。**不**主动 send，避免重复。
+  }, [char?.id]);
+
   /**
    * 第 2 步：接实时模型。
    *
@@ -1186,6 +1326,11 @@ const TheaterApp: React.FC = () => {
     addToast,
     scene,
     active: page === 'player',
+    // 后台剧情摘要（暮色 10-09 21:18 起累积）：
+    // - onPlotSummary: LiveSession.finishTurn 在 pending 设着时路由到这里
+    // - onReady: setupComplete 时调，含**重连后**（暮色 21:26 #1），做核对 / 清理
+    onPlotSummary,
+    onReady,
   });
   const [curDuration, setCurDuration] = useState(0);
   /**
@@ -2113,6 +2258,60 @@ const TheaterApp: React.FC = () => {
         },
       });
       diag("写了剧场结束记录", { 条数: seg.length, 行数: log.length });
+
+      /**
+       * **每集剧情摘要卡**（暮色 10-09 21:18 起累积）
+       *
+       * 在「一起看完了」对话卡之后，**按集号升序**逐张写「📖 第 N 集剧情摘要」。
+       * ⚠️ 不依赖摘要到达时间（10-09 22:15 拍板）：第 5 集摘要先到、第 4 集后到，
+       *    退出时也按 4→5 升序插，不会因为回话乱序颠倒。
+       *
+       * 未收到的摘要**不补卡**：要么 5s 超时还没回来（在 10min TTL 里还能补救），
+       * 要么已经 10min + 没断线 —— 都不写出卡，避免出现"标题带集号但内容是空的"。
+       *
+       * ⚠️⚠️ **不要带 `source: 'theater'`** —— 原因跟上方对话卡那条注释同。
+       *    `isTheaterMemory: true` + `kind: 'plot-summary'` 走 MessageItem 的
+       *    「📖 第 N 集剧情摘要」分支（10-09 22:15 新增）。
+       */
+      const summaryEps = Object.keys(plotMapRef.current)
+        .map((k) => Number(k))
+        .filter((n) => Number.isFinite(n) && n > 0)
+        .sort((a, b) => a - b);
+      let summaryWritten = 0;
+      for (const epId of summaryEps) {
+        const summary = String(plotMapRef.current[epId] || '').trim();
+        if (!summary) continue;
+        try {
+          await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content: summary,
+            metadata: {
+              isTheaterMemory: true,
+              kind: 'plot-summary',           // ⚠️ MessageItem 用这个切「📖 第 N 集剧情摘要」标题
+              theaterTitle: title,
+              theaterEpisode: epId,
+              generatedAt: Date.now(),
+              // ⚠️ 不带 source: 'theater'（同上）
+            },
+          });
+          summaryWritten++;
+        } catch (e: any) {
+          // 单条写失败不挡其它 —— 用户要点返回
+          diag('写摘要卡失败', { ep: epId, msg: String(e?.message || e) });
+        }
+      }
+      if (summaryWritten > 0) diag("写了剧情摘要卡", { 张数: summaryWritten });
+
+      // 退场必清三件：本地盘 + 看门狗 + pending 标记 —— 写卡之后清，
+      // 5s 超时那条没来得及回的也一并放弃（剧场已关，没"下一轮"了）。
+      clearPendingPlot();
+      if (plotWatchdogRef.current) {
+        clearTimeout(plotWatchdogRef.current);
+        plotWatchdogRef.current = null;
+      }
+      pendingPlotRef.current = null;
     } catch (e: any) {
       // 收尾失败不许挡着退出去 —— 用户要点返回，不能因为写记录失败卡住
       diag('写剧场结束记录失败', { 报错: String(e?.message || e) });
@@ -2173,6 +2372,63 @@ const TheaterApp: React.FC = () => {
     };
   }, [closeOnline]);
 
+  /**
+   * **为本集发一条后台剧情摘要请求**（暮色 10-09 21:18 起累积）—— `onEnded` 里调。
+   *
+   * **不主动重试**：5s 超时只记日志（暮色 21:26 #2）；10min 失效（暮色 21:40 #5）。
+   * 断线**期间**的请求由 `LiveSession.pushUserTurn` 自己塞 `pendingInput`，
+   * reconnect + setupComplete 后 `flushPending` 接力重发 —— 跟 `onReady`
+   * **不冲突**、不会双发。
+   *
+   * **不显式改 live.msgs**：回话走专门的 `onPlotSummary` 通道，**不**走
+   * `onTurnComplete` / `saveModel` / 聊天 DB —— LiveSession 已经做了一道劫持
+   * （`finishTurn` 里 `pendingPlotSummaryFor` 设着时直接 `return`）。
+   *
+   * ⚠️ 这条函数**只**是「**写盘 + 发请求 + 启看门狗**」，不在剧场外调。
+   */
+  const triggerPlotSummary = useCallback((ep: number) => {
+    const title = String(sceneRef.current.title || '');
+    if (!title || !char?.id) return;
+
+    // 计算 retries（核对 char / drama / episode 都一致才算延续 —— 换剧或换集都重置）
+    const prev = readPendingPlot();
+    const retries =
+      prev && prev.charId === char.id && prev.dramaTitle === title && prev.episodeId === ep
+        ? (prev.retries + 1)
+        : 0;
+
+    // 拼提示文本 —— 重试时附「断线重发」前缀（暮色 21:18 选 A）
+    let text =
+      `本集（《${title}》第 ${ep} 集）已结束。请用 3-5 句中文概括这一集主要剧情走向（有感触的台词可引一两句），不要评价、不要提问、不要结尾变成聊天问句、不要自称。这只是后台摘要，不会给用户看，填入「📖 剧情摘要」卡片。`;
+    if (retries > 0) {
+      text += `\n\n（这是断线后的补救重发，第 ${retries + 1} 次。如果本集记忆不完整，直接回'记不清了'即可，回话会被独立处理。）`;
+    }
+
+    // ⚠️ **先写盘再发** —— 重连补救时直接拿这份 promptText 重发，不用现场拼
+    writePendingPlot({
+      charId: char.id,
+      dramaTitle: title,
+      episodeId: ep,
+      promptText: text,
+      createdAt: Date.now(),
+      retries,
+    });
+    pendingPlotRef.current = ep;
+
+    // ⚠️ 5s 看门狗（暮色 21:26 #2）：超时**只**打 console.warn，**不动**盘 / 不清 ref
+    if (plotWatchdogRef.current) clearTimeout(plotWatchdogRef.current);
+    plotWatchdogRef.current = window.setTimeout(() => {
+      diag(`第 ${ep} 集摘要 5s 未回`, { 备注: '保留待处理记录待重连补救（暮色 21:26 #2）' });
+    }, PLOT_SUMMARY_TIMEOUT_MS);
+
+    // 真发。LiveSession 自己处理 ws 状态：ready 直发；非 ready 塞 pendingInput 等 flushPending
+    try {
+      live.sendPlotSummary(text, ep);
+    } catch (e: any) {
+      diag('sendPlotSummary threw', { msg: String(e?.message || e) });
+    }
+  }, [char?.id, live]);
+
   const onEnded = useCallback(() => {
     recordWatch(true);
     /**
@@ -2192,6 +2448,20 @@ const TheaterApp: React.FC = () => {
      * ⚠️ **`PlayerStage.endedFired` 留着** —— 那个不是给这句用的，
      *    它治的是「`ended` 连着来四遍、`playEpisode` 被调四遍、自动连播乱掉」。
      */
+
+    /**
+     * **每集后台摘要**（暮色 10-09 21:18 起累积）—— 在 onEnded 里发，**不**显式
+     * 等回话，靠 5s 看门狗 + 10min TTL + `onReady` 核对三道闸兜底。
+     *
+     * ⚠️ 单槽策略：剧场一次只 in-flight 一个摘要（一集结束 → 摘要回 → 才切下一集），
+     *    本地盘只放当前这一份。剧切走 / 角色切走由 `onReady` 核对后清理。
+     *
+     * 重试计数语义：retries = N 表示「这是第 N+1 次发给同样集号的请求」。
+     *  同一集 retries > 0 时拼一段「这是断线后的补救重发」前缀（暮色 21:18 选 A：
+     *  重试提示拼进现有请求文本），让模型知道记忆可能缺损、可以回「记不清了」。
+     */
+    triggerPlotSummary(currentEp);
+
     if (!autoNext) return;
     const next = currentEp + 1;
     // 下一集「在不在」按能不能播来判：手机有 / 电脑有 / 电脑上能在线取都算能接着播。
@@ -2201,7 +2471,7 @@ const TheaterApp: React.FC = () => {
     // 用和网格同一套判据（canPlayEpisode），别再各写各的
     if (!canPlayEpisode(d.title, next)) return;
     playEpisode(next);
-  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode, live]);
+  }, [autoNext, currentEp, picked, playEpisode, recordWatch, canPlayEpisode, live, triggerPlotSummary]);
 
   // ── 存到手机 ──
   // 单集保存的活儿原来在播放页（saveCurrent / saveOne），暮色 10-05 明确

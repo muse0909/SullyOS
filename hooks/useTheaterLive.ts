@@ -65,7 +65,12 @@ export type UseTheaterLive = {
   resetFrames: () => void;
   /** 新一轮开始：清空聊天框（从别的页面进播放页时调，切集不要调） */
   startFresh: () => void;
-  /** 集末问一句「这有什么想说的」，不显示不入库 */
+  /**
+   * 后台「这一集剧情摘要」请求（暮色 10-09 21:18）。
+   * ⚠️ 必须先在「视频 ended 后、用户进下一集 / 退场前」的窗口里调。
+   * 后续 hangSaveModel / chat DB 不会跑，回话走专门 onPlotSummary 通道。
+   */
+  sendPlotSummary: (text: string, episodeId: number) => void;
   /** 已经喂了多少帧（设置页显示用） */
   framesFed: number;
   /** 有没有邀请角色一起看（10-07 02:42 暮色定的） */
@@ -98,10 +103,17 @@ export function useTheaterLive(opts: {
    */
   active: boolean;
   onReady?: () => void;
+  /**
+   * 后台剧情摘要回调（暮色 10-09 21:18）。
+   * 接到模型回话时调，**不**经 onTurnComplete 那条道。
+   * Caller 必须自己处理：按 episodeId 落到 in-memory map 即可，
+   * 最终在 finishTheaterSession 里按集数排序拼卡。
+   */
+  onPlotSummary?: (text: string, episodeId: number) => void;
 }): UseTheaterLive {
   const {
     char, userProfile, apiKey, liveModel, liveBaseUrl, memoryPalaceConfig, apiConfig,
-    updateCharacter, addToast, scene, active, onReady,
+    updateCharacter, addToast, scene, active, onReady, onPlotSummary,
   } = opts;
 
   const [msgs, setMsgs] = useState<TheaterMsg[]>([]);
@@ -541,6 +553,11 @@ export function useTheaterLive(opts: {
         setNote(n || '');
         if (st === 'ready') onReady?.();
       },
+      // 后台剧情摘要路由（暮色 10-09 21:18）—— finishTurn 在 pendingPlotSummaryFor 设着时
+      // 会跳过 onTurnComplete，直接走到这里。Caller 必须按 episodeId 落到 in-memory map。
+      onPlotSummary: onPlotSummary
+        ? (text, ep) => { try { onPlotSummary(text, ep); } catch (e: any) { addTrace(`onPlotSummary 报错：${e?.message || e}`); } }
+        : undefined,
       onText: (delta, full) => {
         /**
          * ⚠️ 一收到字就记时间戳。空回兜底的判据靠它（见 send 里的注释）。
@@ -645,7 +662,16 @@ export function useTheaterLive(opts: {
     // ⚠️ `scene` 故意不在依赖里（它每次 render 都是新对象，会让 boot 反复重跑）。
     //    currentTag 包了它，所以也不加 —— 剧场那边已把 scene 改成**稳定引用**，
     //    currentTag 也就恒定不变，这里闭包拿到的跟最新值一致。
-  }, [char, apiKey, liveModel, liveBaseUrl, userProfile, buildSystemPrompt, addToast, onReady, addTrace]);
+  }, [char, apiKey, liveModel, liveBaseUrl, userProfile, buildSystemPrompt, addToast, onReady, onPlotSummary, addTrace]);
+
+  /**
+   * 透传给 LiveSession.sendPlotSummary（暮色 10-09 21:18）。
+   * ⚠️ 不在这层 new 状态；持 pending / 重试 / localStorage 都由调用方管。
+   * ⚠️ 调用方负责把文本拼好（包括「断线重发请告知」「你是观众视角」「3-5 bullet」之类）。
+   */
+  const sendPlotSummary = useCallback((text: string, episodeId: number) => {
+    sessRef.current?.sendPlotSummary(text, episodeId);
+  }, []);
 
   /**
    * 🔥 会话生命周期。**这里以前是个每 0.7 秒转不停的死循环**（10-07 01:12 现场）。
@@ -1036,9 +1062,9 @@ export function useTheaterLive(opts: {
   return useMemo(
     () => ({
       msgs, state, note, send, retry, trace,
-      attachVideo, resetFrames, startFresh, framesFed,
+      attachVideo, resetFrames, startFresh, sendPlotSummary, framesFed,
       invited, setInvited,
     }),
-    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, startFresh, framesFed, invited, setInvited],
+    [msgs, state, note, send, retry, trace, attachVideo, resetFrames, startFresh, sendPlotSummary, framesFed, invited, setInvited],
   );
 }

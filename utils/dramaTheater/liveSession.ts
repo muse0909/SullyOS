@@ -82,6 +82,12 @@ export type LiveOpts = {
   onText?: (delta: string, full: string) => void;
   /** 一轮说完 */
   onTurnComplete?: (full: string) => void;
+  /**
+   * 后台剧情摘要的回复（暮色 10-09 21:18 协议）：
+   * 通过 sendPlotSummary 发的请求，回话路由到这里。**不进** onTurnComplete，也**不进** chat DB。
+   * 第二个参数是发送时绑定的 episodeId —— Caller 按这个字段落到剧场的 in-memory map，不依赖到达顺序。
+   */
+  onPlotSummary?: (text: string, episodeId: number) => void;
   /** 模型被打断（用户中途打字了） */
   onInterrupted?: () => void;
   onState?: (s: LiveState, note?: string) => void;
@@ -154,6 +160,13 @@ export class LiveSession {
   private bgNote = '';
   /** 用户最后一次发话的时间，用来判断模型是不是「自己主动插嘴」 */
   private lastUserTurnAt = 0;
+  /**
+   * 后台剧情摘要请求标记（暮色 10-09 21:18）。
+   * 非 null 时，**下一次** `finishTurn` 收到的完整回话就路由到 `opts.onPlotSummary(text, ep)`，不进 onTurnComplete / saveModel / DB。
+   * ⚠️ 必须跟 pushUserTurn 对称：sendPlotSummary 设它，finishTurn 立刻读并清，避免跟下一轮普通对话**对齐错位**。
+   * ⚠️ setState/fail 也得清 —— 否则下一轮普通对话会被劫持到摘要通道（fix 后：`send` failure 也会清）。
+   */
+  private pendingPlotSummaryFor: number | null = null;
 
   /**
    * 现场：发出去了 vs 回话了 vs 被丢进队列（暮色 19:58 报「直接不回话了」）。
@@ -218,6 +231,32 @@ export class LiveSession {
       if (!this.wantOpen) this.start();
       return;
     }
+    this.pushUserTurn(text);
+  }
+
+  /**
+   * 后台「这一集剧情摘要」请求（暮色 10-09 21:18）。
+   *
+   * 走 `clientContent + turnComplete:true` —— 模型**必须回**一句。
+   * **不**进聊天 DB（`saveModel` 那条路径有 `finishTurn` → `onTurnComplete` 守卫保护）。
+   * **不**会被音频播出来（服务端 `responseModalities: AUDIO + outputAudioTranscription`，
+   * 音频 inline data 在 `onMessage` 里直接扔掉）。
+   *
+   * `episodeId` 由 Caller 负责——这一标识只用来回调路由，**与对话顺序无关**：
+   * 摘要请求可以迟到，Caller 按 episodeId 落到 in-memory map 里，
+   * 最后 `finishTheaterSession` 按集数排序拼卡片顺序，与响应到达时间解耦。
+   *
+   * ⚠️ pending 标记**只对下一次** finishTurn 有效，**立刻**读并清。
+   *   万一 pushUserTurn 失败（连接断着），这里也清掉 pending —— 让 pending 不背债。
+   */
+  sendPlotSummary(text: string, episodeId: number): void {
+    if (!text.trim() || episodeId <= 0) return;
+    if (!this.opts.onPlotSummary) return;  // Caller 没接就把这当普通对话，避免劫持
+    // ⚠️ **必须先 setPending 再 pushUserTurn** —— pushUserTurn 一发就可能收到回话，
+    //    finishTurn 读这个 flag 决定路由到 onPlotSummary 而非 onTurnComplete。
+    this.pendingPlotSummaryFor = episodeId;
+    // 后续 pushUserTurn 自己处理 ws 状态：连接着就直发，掉了就排 pendingInput + start()。
+    // 排队那条最后由 flushPending 重发，到时的回话路由仍是 onPlotSummary（flag 未变）。
     this.pushUserTurn(text);
   }
 
@@ -509,6 +548,22 @@ export class LiveSession {
       const d = this.txDiag();
       d.replies++;
       this.txLog('REPLY', { len: full.length, t: full.slice(0, 80) });
+    }
+    /**
+     * 后台剧情摘要路由（暮色 10-09 21:18）。
+     * ⚠️ **比 SPONT 判定先走** ——
+     *   pushUserTurn 会刷新 lastUserTurnAt，本轮的 gapMs 必然 < 5000，
+     *   不先抢路由的话，正常的摘要回复也会被标成 SPONT（虽然有 `__liveRaw` 写一条，但分支走错）。
+     * ⚠️ **用完立刻清** —— pending 标志放在对象上，**不**存在跨轮携带的"摘要池"
+     *   （暮色 10-09 22:23 的串味教训）。下一轮回话走正常路，除非再有 sendPlotSummary。
+     */
+    if (this.pendingPlotSummaryFor !== null) {
+      const ep = this.pendingPlotSummaryFor;
+      this.pendingPlotSummaryFor = null;
+      if (full && this.opts.onPlotSummary) {
+        this.opts.onPlotSummary(full, ep);
+      }
+      return;
     }
     // 现场：模型是不是在用户没问的时候自己开口了。
     // （声音进 realtimeInput 走的是服务端的活动检测，画面每 1.2 秒也进一次 ——

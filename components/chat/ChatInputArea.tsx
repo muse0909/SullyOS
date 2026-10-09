@@ -466,17 +466,27 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {/* Actions Panel — 麦麦 2026-09-08：去掉左右翻页,改上下滚动一页显示全部 */}
                     {showPanel === 'actions' && (
                         <div className="overflow-y-auto no-scrollbar p-6">
+                          {/**
+                           * ⚠️ **按钮顺序 = 暮色 10-10 07:03 定的，从左上角往下数**：
+                           * 共读 → 剧场 → 戳一戳 → 相册 → 主动消息 → 主动消息2.0 → 重新生成
+                           * → 日程 → 记忆归档 → 图床 → 麦当劳 → HTML模式 → 转账
+                           *
+                           * `grid-cols-4` = 一行 4 个，13 个 = 3 行满 + 最后 1 个单独一行。
+                           * **调顺序只能改这里的物理顺序**，没有别的开关 ——
+                           * 别再加什么 sort 数组，条件渲染（比如归档中…）会跟它打架。
+                           */}
                           <div className="grid grid-cols-4 gap-6">
-                            <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
-                                    <Money className="w-6 h-6" weight="bold" />
+                            {/* 麦麦 2026-09-22：共读 — 暮色点这个进浮窗阅读器，一边看一边跟江澈聊（每章自动发一次章节内容） */}
+                            <button onClick={() => onPanelAction('co-read')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
+                                    <BookBookmark className="w-6 h-6" weight="bold" />
                                 </div>
-                                <span className="text-xs font-bold">转账</span>
+                                <span className="text-xs font-bold">共读</span>
                             </button>
 
-                            {/* 麦麦 2026-10-05：短剧剧场。暮色定的位置 —— 必须在「转账」和「戳一戳」中间。
-                                暮色原话「从谁的页面进去就加载谁的人设和记忆，妻妾陪你看」。
-                                （10-05 复核时发现这按钮原先放在戳一戳后面，注释和代码对不上，已挪正。）*/}
+                            {/* 麦麦 2026-10-05：短剧剧场。暮色原话「从谁的页面进去就加载谁的人设和记忆，妻妾陪你看」。
+                                （07:03 重新排版时位置又变了 —— 上一版钉在「转账」和「戳一戳」中间，
+                                  那条约束是 10-05 说的，现按 07:03 的新顺序排在第 2 位。）*/}
                             <button onClick={() => onPanelAction('theater')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-400 border-violet-100'}`}>
                                     <FilmSlate className="w-6 h-6" weight="bold" />
@@ -489,13 +499,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">戳一戳</span>
                             </button>
 
-                            <button onClick={() => onPanelAction('archive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-400 border-indigo-100'}`}>
-                                    <BookOpenText className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span>
-                            </button>
-
                             <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
                                     <Image className="w-6 h-6" weight="bold" />
@@ -503,22 +506,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">相册</span>
                             </button>
                             <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
-
-                            {/* 麦麦 2026-09-22：共读 — 暮色点这个进浮窗阅读器，一边看一边跟江澈聊（每章自动发一次章节内容） */}
-                            <button onClick={() => onPanelAction('co-read')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
-                                    <BookBookmark className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">共读</span>
-                            </button>
-
-                            {/* Regenerate Button */}
-                            <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
-                                    <ArrowsClockwise className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">重新生成</span>
-                            </button>
 
                             {/* Proactive Message Button */}
                             <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
@@ -537,6 +524,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">主动消息 2.0</span>
                             </button>
 
+                            {/* Regenerate Button */}
+                            <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
+                                    <ArrowsClockwise className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">重新生成</span>
+                            </button>
+
                             {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
 
                             {/* Schedule Button */}
@@ -545,6 +540,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <CalendarBlank className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">日程</span>
+                            </button>
+
+                            <button onClick={() => onPanelAction('archive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-400 border-indigo-100'}`}>
+                                    <BookOpenText className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span>
                             </button>
 
                             {/* 麦麦 2026-09-08：图床管理入口(暮色 9-8 14:50 要求"在聊天+号里") */}
@@ -589,6 +591,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   {htmlModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
                               </div>
                               <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
+                            </button>
+
+                            <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
+                                    <Money className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">转账</span>
                             </button>
                           </div>
                         </div>

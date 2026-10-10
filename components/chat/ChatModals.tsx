@@ -278,7 +278,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
         try {
             const result = await saveRemoteImage(selectedMessage.content);
             // 暮色 9-21 第五轮:保存图片直接写入相册,给用户 toast 提示
-            //   - native 平台:saveRemoteImage 走 Media.savePhoto(不再弹分享框)
+            //   - native 平台:saveRemoteImage 走自研 SaveImagePlugin(不再弹分享框,也只要权限不要相册读权限)
             //     - 成功 → toast \"已保存到相册\"
             //     - 失败 → toast 错误原因
             //   - web 平台:web-download / web-share 成功也提示一下,失败让用户看到重试选项
@@ -293,11 +293,15 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             } else {
                 if (result.reason === 'save_failed') {
                     // 暮色 9-21 第七轮:显示真实错误原因,方便排查
+                    // 麦麦 2026-10-11:存图换成自研 SaveImagePlugin 后,「没有可用相册」这个分支
+                    //   删掉了 —— 插件不再 getAlbums() 枚举相册,Android 10+ 直接走 MediaStore 写入
+                    //   Pictures/SullyOS,所以永远不可能出现"没有相册"。
+                    //   新增两个真实会遇到的：Android 9 及以下没给存储权限 / APK 太旧没带存图插件。
                     const detail = (result as any).detail || '';
-                    if (detail === 'no_album_available') {
-                        addToast('没有可用相册,请先在系统相册创建一个', 'error');
+                    if (detail.includes('save_plugin_missing')) {
+                        addToast('安装包太旧，没有存图功能，请安装最新版本', 'error');
                     } else if (detail.includes('permission') || detail.includes('denied')) {
-                        addToast(`相册权限被拒: ${detail}`, 'error');
+                        addToast(`存储权限被拒: ${detail}`, 'error');
                     } else {
                         addToast(`保存失败: ${detail || '未知错误'}`, 'error');
                     }

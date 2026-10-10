@@ -1239,6 +1239,9 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
         if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
             bp2Rules += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
         }
+        if (previousMsg && previousMsg.metadata?.source === 'theater') {
+            bp2Rules += `\n\n[系统提示: 你刚才陪用户在剧场里看了一集剧，现在回到主聊天。可以自然地提一句"刚才剧里那谁演得……"之类的观察；不要剧里每条都主动回到 IM，不要在电话里报告假剧情。]`;
+        }
 
         // Voice message prompt injection
         // ⚠️ 2026-07-17 4 断点方案：语音功能归 bp1Tools（属工具类，跟 Notion/朋友圈同类）
@@ -1383,6 +1386,20 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    /**
+                     * 剧场（10-06 第 2 步）。
+                     *
+                     * 剧场的话跟主聊天**存在同一张表**（暮色 21:12 定的：打标记就天然接上，
+                     * 不做「同步」这个动作），所以这里**必须**认出来。
+                     *
+                     * 不认会串味：剧里说「他刚转身走掉」，模型不知道这是剧里的事，
+                     * 会当成真实发生的事接下去 —— 角色扮演模型尤其吃这一套。
+                     * 带上剧名和集数，模型才知道这段是「看剧时聊的」。
+                     */
+                    if (source === 'theater') {
+                        const tag = (m.metadata as any)?.theaterTag;
+                        return tag ? `[剧场 ${tag}]` : '[剧场]';
+                    }
                     return '[聊天]';
                 })();
                 

@@ -258,8 +258,55 @@ export async function generateCharDiary(
     }
 
     const data = await safeResponseJson(response);
-    const text = data.choices?.[0]?.message?.content || '';
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content || '';
+
+    /**
+     * 🔴🔴🔴 **模型可能「什么也没写就结束」**（暮色 10-10 08:59 拍板）
+     *
+     * 真机抓到的两种现场（都是江澈，日记一片空白）：
+     *
+     * 1. 测试 app（gemini-3.1-flash-lite）：
+     *    `finish_reason: "content_filter: PROHIBITED_CONTENT"`，连 message 都没有
+     *    → `completion_tokens: 0`
+     * 2. 主 app（build抗截断-gemini-3.8-flash 中转）：
+     *    `finish_reason: "stop"`，**message 存在但 content 是空串**
+     *    → `completion_tokens: 0`
+     *
+     * 两种都会走到下面 `text` 为空 → 旧代码 `|| ''` 兜成空串 →
+     * `parseDiaryFromApi` 第三层把空串当正文 → **存一张空日记进库** →
+     * 照样弹「XX 写好了一篇日记」。暮色看到的「写好了 + 打开是空的」就是这么来的。
+     *
+     * ⚠️ 根因是**角色卡/世界书里的措辞触发模型安全策略**（不是上下文超限 ——
+     *    实测 prompt_tokens 只有 3311~4062，离上限远得很；也不是聊天记录缺失 ——
+     *    主 app 明明带上了当天聊天，照样空）。触发属正常，别去改人设。
+     *
+     * **这里只做该做的事：拦住空结果，别再假装成功。**
+     */
+    const finishReason = String(choice?.finish_reason || '');
+    const usage = data.usage || {};
+    if (!text.trim()) {
+        const why = finishReason || '(没给 finish_reason)';
+        console.error(
+            `[charDiary] ${char.name} 模型没写出正文，已放弃存库`,
+            { finishReason: why, usage, model: data.model || apiConfig.model }
+        );
+        throw new Error(`模型没写出内容（${why}）——已跳过，不会存空日记`);
+    }
+
     const parsed = parseDiaryFromApi(text);
+
+    /**
+     * 解析之后**再拦一道** —— JSON 里 content 字段存在但值是空的也算失败。
+     * 上面拦的是「模型返回空」，这里拦的是「模型返回了 JSON 但正文是空」。
+     */
+    if (!parsed.content || !parsed.content.trim()) {
+        console.error(
+            `[charDiary] ${char.name} 解析出正文为空，已放弃存库`,
+            { finishReason, title: parsed.title, mood: parsed.mood, rawHead: text.slice(0, 200) }
+        );
+        throw new Error('解析出来正文是空的——已跳过，不会存空日记');
+    }
 
     const entry: DiaryEntry = {
         id: `charDiary_${char.id}_${Date.now()}`,
@@ -275,12 +322,10 @@ export async function generateCharDiary(
 
     await DB.saveDiary(entry);
     // 暮色 2026-08-22：char-only 也归档到记忆宫殿（跟交换日记归档逻辑一致，但不弹按钮）
-    if (parsed.content && parsed.content.trim()) {
-        try {
-            await injectMemoryPalace(char, undefined, parsed.content);
-        } catch (e) {
-            console.warn('char-only 归档到记忆失败（不影响主流程）:', e);
-        }
+    try {
+        await injectMemoryPalace(char, undefined, parsed.content);
+    } catch (e) {
+        console.warn('char-only 归档到记忆失败（不影响主流程）:', e);
     }
     // 暮色 2026-08-23 v3：日记写完回调（给发现页红点用）
     deps.onCreated?.(entry);

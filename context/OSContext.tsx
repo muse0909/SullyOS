@@ -966,13 +966,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       const patchedFetch = async (...args: [RequestInfo | URL, RequestInit?]) => {
           const [resource, config] = args;
-          
+
           const urlStr = String(resource);
           const isChatApi = urlStr.includes('/chat/completions') || urlStr.includes('/models');
           const isImageApi = urlStr.includes('/images/generations');
           const isProxyApi = urlStr.includes('/api/proxy');
           const isUserFacingAiEndpoint = isChatApi || isImageApi || isProxyApi;
-          
+
+          /**
+           * 调用方主动声明「这次失败我自己兜得住，别弹给用户」。
+           *
+           * 存在的理由：剧场一次要 60 张海报，排队偶尔失败很正常，
+           * 而失败的后果就是那一张显示占位图标。把它记成系统错误弹红条，
+           * 用户看到的是「切换页面报错了」，但其实什么都没坏。
+           * 这类**可自愈的背景请求**不该走用户可见的报错通道。
+           */
+          const isSilent = !!(config as any)?.silentFetch;
+          if (isSilent) return originalFetch(...args);
+
           try {
               const response = await originalFetch(...args);
               

@@ -4,7 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB, CoReadBook } from '../utils/db';
 // 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
 import { phoneUsage } from '../utils/phoneUsage';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
 // 🛟 麦麦 2026-09-22：共读浮窗（暮色点 + 号里"共读"→ 选书 → 浮窗 + 自动发章节内容给江澈）
 import CoReadFloatingBookshelf from './CoReadFloatingBookshelf';
@@ -71,7 +71,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive, openApp } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -123,6 +123,7 @@ const Chat: React.FC = () => {
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
     const safeMessages = useMemo(() => sanitizeChatMessages(messages), [messages]);
+
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -227,6 +228,7 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+
     charRef.current = char; // Keep ref in sync for async callbacks
     // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
@@ -954,7 +956,7 @@ const Chat: React.FC = () => {
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = sanitizeChatMessages(allMsgs)
-                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
@@ -969,7 +971,7 @@ const Chat: React.FC = () => {
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
                 const chatScopeMsgs = sanitizeChatMessages(retryMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -1040,7 +1042,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
                 const filtered = sanitizeChatMessages(allMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
             });
@@ -1590,6 +1592,12 @@ const Chat: React.FC = () => {
                 // 🛟 麦麦 2026-09-22：暮色点 + 号里「共读」→ 打开迷你书架选择器
                 setShowPanel('none');
                 setShowCoReadPicker(true);
+                break;
+            case 'theater':
+                // 麦麦 2026-10-05：短剧剧场。暮色定的位置在转账和戳一戳之间。
+                // 从谁的聊天页进去，剧场就用谁的人设和记忆。
+                setShowPanel('none');
+                openApp(AppID.Theater);
                 break;
             case 'html-mode-settings': {
                 // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
@@ -2431,6 +2439,11 @@ if (keepN > 0) {
         console.warn('DB 更新失败，仅更新内存:', e);
     }
     setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+    // ⚠️⚠️ 这里原来还有一行 `setTheaterMsgs(...)`，10-08 撤剧场记录块时**状态一起删了**，
+    // 这一行漏掉了 —— 它一执行就抛「setTheaterMsgs is not a function」，
+    // 于是下面两行（关弹窗 + 弹 toast）**根本没轮到执行**。
+    // 现象正是暮色 22:03 报的：「保存按钮没反馈，一直都是灰的，但是能保存」
+    // —— 内容改了（上面那行已经跑完）、弹窗不关、也没有提示。
     setModalType('none');
     setSelectedMessage(null);
     addToast('消息已修改', 'success');
@@ -2758,14 +2771,20 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
+    //
+    // ⚠️ theater（剧场）跟 date/ccall 一样**只过滤视觉层，不动 prompt**。
+    // 剧场里聊的照样进 historySlice 发给 LLM（chatPrompts.ts 打 `[剧场 剧名第N集]`），
+    // 所以他记得看剧时说过什么，但聊天界面上不刷屏（暮色 23:54 定的）。
     const displayMessages = useMemo(() => sanitizeChatMessages(messages)
-        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
         [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+
+
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -3324,6 +3343,7 @@ if (keepN > 0) {
                         <button onClick={handleLoadMoreHistory} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
                     </div>
                 )}
+
 
                 {displayMessages.map((m, i) => {
                     // 防御：sanitizeChatMessages 应已过滤 null，但渲染时再兜一道。

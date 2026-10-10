@@ -1,7 +1,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Media } from '@capacitor-community/media';
+import { saveImageToGallery } from './saveImageToGallery';
 
 export const processImage = (file: File, options?: { maxWidth?: number, quality?: number, forceJpeg?: boolean, skipCompression?: boolean }): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -119,13 +119,15 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
 
     if (Capacitor.isNativePlatform()) {
         // 暮色 9-21 第五轮 + 第六轮:不再调 Share.share 弹分享框,直接写入相册
-        //   - 用 @capacitor-community/media 插件的 Media.savePhoto
-        //   - 先 fetch 拿到图片 → 写临时文件到 Cache
-        //   - **重要**:savePhoto 必须传 albumIdentifier(系统相册某个目录的绝对路径)
-        //     不传直接 reject "Album identifier required"。需要先 getAlbums() 拿列表
-        //   - 取第一个 album(通常是默认相机相册)的 identifier
-        //   - 保存成功 → toast \"已保存到相册\";失败 → toast 错误原因
-        //   - 整个替换掉 Share.share 调用
+        //   - fetch 拿到图片 → 写临时文件到 Cache → 交给原生 SaveImagePlugin 存进相册
+        //
+        // 麦麦 2026-10-11 换掉 @capacitor-community/media(原来是 Media.getAlbums + Media.savePhoto):
+        //   那个插件存张图会在 Android 13+ 上必然报
+        //   「Missing the following permissions: READ_MEDIA_VIDEO / READ_EXTERNAL_STORAGE /
+        //     WRITE_EXTERNAL_STORAGE」——它不分 Android 版本,把视频权限一起要了。
+        //   现在的 SaveImagePlugin 走 MediaStore,Android 10+ 零权限零弹窗。
+        //   也**不需要再先 getAlbums() 拿 identifier**:存自己下载的图根本不用读相册。
+        //   完整排查见 changelogs/2026-10-11-android-media-permission-fix.md
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`http_${res.status}`);
@@ -138,18 +140,12 @@ export async function saveRemoteImage(url: string, fileName?: string): Promise<S
             });
             const uri = await Filesystem.getUri({ directory: Directory.Cache, path: finalFileName });
 
-            // 暮色 9-21 第七轮关键修复:savePhoto 必须传 albumIdentifier
-            //   先 getAlbums() 拿到系统相册列表,取第一个(通常是默认相册 Pictures)
-            //   getAlbums 本身需要 READ 权限(Android 13+ READ_MEDIA_IMAGES)
-            //   没有权限时插件会自动 requestAllPermissions 弹窗,用户授权后才能拿到列表
-            const albumsResult = await Media.getAlbums();
-            const albums = (albumsResult as any).albums || [];
-            if (albums.length === 0) {
-                throw new Error('no_album_available');
-            }
-            const albumIdentifier = albums[0].identifier as string;
+            const saved = await saveImageToGallery({
+                uri: uri.uri,
+                fileName: finalFileName,
+            });
+            if (!saved.ok) throw new Error(saved.reason || 'save_failed');
 
-            await Media.savePhoto({ path: uri.uri, albumIdentifier });
             return { ok: true, mode: 'native-saved' };
         } catch (e: any) {
             // 暮色 9-21 第七轮改进:把真实错误原因传给 UI,不再统一显示"检查相册权限"

@@ -20,5 +20,6 @@
       "style": "dark",
       "resizeOnFullScreen": true
     }
-  }
+  },
+  "allowMixedContent": true
 }

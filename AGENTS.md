@@ -115,6 +115,68 @@ SullyOS-master/
 - 改共享组件前先 `grep` 一下所有引用点
 - 编辑后跑 `npm run build` 确认通过（**不**跑 dev）
 
+#### ⚠️ `npm run build` 拦不住作用域错误 —— 改完还要跑类型检查
+
+**`"build": "vite build"` 里没有 `tsc`。** esbuild 只转译、不做检查，
+所以「变量定义在函数里、外面却用了」这类错**一路能溜到真机上崩**。
+
+2026-10-06 实机就是这么崩的：选集页里 `const mine = ...` 写在当场执行的小函数里，
+进度条在函数外面也用了它 → `ReferenceError: mine is not defined` → 整个剧场页白屏。
+
+**规矩：改完代码跑这两个，缺一不可**
+
+```bash
+npm run build              # 转译能过（不检查作用域！）
+npm run typecheck:theater  # 只查剧场这几个文件（改剧场的必跑）
+npm run typecheck          # 全量 —— 这个项目历史包袱有几百条错，只当参考，别指望它是 0
+```
+
+`typecheck:theater` 只看 `apps/TheaterApp.tsx`、`components/dramaTheater/`、
+`utils/dramaTheater/`、`hooks/useTheaterLive.ts`，退出码 0 = 这几块是干净的。
+别的模块想这么查，照着改 `package.json` 里那条命令的 grep 路径即可。
+
+⚠️ **这条清单会过期，忘了更新比没有更危险**（2026-10-07 实锤）。
+`see is not defined` 一路走到手机上崩了，而**唯一能拦住它的是 typecheck**（TS2304）——
+build 拦不住（只转译），`typecheck:theater` 也拦不住，因为 `hooks/useTheaterLive.ts`
+**压根不在 grep 范围里**。给人「已经查过了」的错觉，比压根没这条命令更糟。
+
+所以：**改这份清单要对着「本次改动实际动了哪些文件」核一遍**，
+新加的剧场文件顺手加进 `package.json` 那条 grep。
+
+**两个检查各管一半，别指望一个顶俩（2026-10-06 实测）：**
+
+| 错 | build | typecheck |
+|---|---|---|
+| 漏解构 / 用到没定义的名字（`useOS()` 漏写 `apiConfig`） | ❌ 放过 | ✅ **拦**（TS2304） |
+| 组件写在函数体里（`const X: React.FC` 写在组件内） | ❌ 放过 | ❌ **也放过**（类型完全合法） |
+| 作用域错（值定义在小函数里，外面在用） | ❌ 放过 | ✅ 拦 |
+
+所以：**第二行那种只能靠 `grep` 自查**，别的靠 typecheck。
+`useOS()` 的解构漏字段是这个项目的高频事故（悬浮窗漏 `addApiPreset`、
+剧场漏 `jumpToMessage`、剧场漏 `apiConfig` —— 三次都是真机崩），
+**改完 `useOS()` 的解构，务必确认新加的字段在文件里真的被用到了。**
+
+**另一个要点**：别把「外面也要用」的值塞进 `{(() => { ... })()}` 那种当场执行的小函数里。
+要么提到 return 前跟其它值平级，要么就老老实实拆成具名变量。
+
+### ⚠️ 组件不许写在函数体里（2026-10-06 血泪）
+
+`grep -n "^  const X: React.FC" <文件>` —— **有输出就是写错地方了**。
+
+组件定义写在函数体里 = 每次渲染都造出新的函数对象 → React 认定组件类型变了
+→ 整棵子树先卸载再挂载 → 里面每一个 `<img>` 都被销毁重建。
+
+**`npm run build` 拦不住，`npm run typecheck` 也拦不住** —— 类型签名完全合法。
+表现只是「闪一下」「图加载慢」，极容易误判成网络 / 图片格式 / 缓存问题，
+然后一路修错地方（10-06 剧场海报修了两轮都白修就是这个）。
+
+要移到模块级的话，把依赖（主题色、地址之类）改成 props 传进来。
+
+**配套两条**：
+- `alt` 文字会被内核画进图片框（加载中 / 失败时）。别把用户能读的文案塞 alt，
+  尤其当它会闪的时候 —— 装饰图一律 `alt=""`。
+- 失败状态记「哪个地址失败」而不是「失败过没有」，否则换源时被上一张连坐。
+
 ### 4.4 全屏输入 / 编辑器
 - 新代码一律用 `FullScreenEditor`（v2）
 - `FullScreenInput`（v1）保留是因为旧代码还在引用，不要硬删，**只在新功能用 v2**
@@ -242,6 +304,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 - **不开梯子时空回/慢**（关梯子几百秒或空回，正常 30 秒）—— 2026-06-27 暂放，临时方案是用中转站 API
 - iOS 软键盘弹起时的 `100vh` 问题（Capacitor WebView 已知坑）—— 用 `Portal` + safe-area 适配
 - **`backdrop-filter` 会吃 `position: fixed`**（Chromium 完整实现 spec，Safari 实现行为不一致）—— 任何 fixed 弹窗的祖先链有 `backdrop-filter` / `transform` / `filter` / `perspective` 等任一属性时，弹窗应用 `createPortal` 挂到 `document.body`，否则 Android Chrome 上定位会乱，Safari 可能看着"正常"误导判断。详见 `changelogs/2026-06-28-buff-popup-portal-fix.md`
+- **页面缩放会让「自己算像素」的固定定位元素偏**（`utils/pageZoom.ts` 把 `style.zoom` 挂在 `<html>` 上，整页连 `fixed` 一起乘）—— `window.innerWidth/innerHeight` 报的是**没缩放**的尺寸，而 `left/top/width/height` 是**缩放前**的坐标，两边不是一套数。凡是**用 `0` / 百分比铺满**的不会偏（所以全屏一直是好的），**自己算像素**的必偏 `(1 - zoom)`。修法：先 `Math.round(window.innerWidth / 缩放倍数)` 换到缩放前的坐标系再算。正确姿势见 `components/dramaTheater/PlayerStage.tsx` 的模块级 `viewport()`。位置之类的存档也建议存**占屏比例**而不是像素，否则改一次缩放位置就跳。
 
 ### 6.3 调试
 - 暮色**不**本地跑 dev——所有调试都靠 Vercel 部署链接
@@ -305,6 +368,22 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-11 | 存图报「Missing the following permissions」— 换掉 Media 插件改走 MediaStore（Android 10+ 零权限）+ `maxSdkVersion` 会让权限被误报成缺失 | [`changelogs/2026-10-11-android-media-permission-fix.md`](./changelogs/2026-10-11-android-media-permission-fix.md) |
+| 2026-10-09 | 新一轮还带着上一轮的话（boot 只堵了一半道）+ 开场那句告诉它「上次看到第几集」 | [`changelogs/2026-10-09-theater-new-round-still-carries-last-round.md`](./changelogs/2026-10-09-theater-new-round-still-carries-last-round.md) |
+| 2026-10-08 | 剧场卡片串场：「这一轮」是按位置认的（标题对正文错）→ 改成按剧名+时间认，顺带治了换剧后模型说的话打错标签 | [`changelogs/2026-10-08-theater-card-content-mixes-another-drama.md`](./changelogs/2026-10-08-theater-card-content-mixes-another-drama.md) |
+| 2026-10-08 | 主动开口换了触发方式（老的 activityStart 实测无效）+ 集末问句重复四遍的根因在播放器 `ended` + 剧场记录卡加「向量化」 | [`changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md`](./changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md) |
+| 2026-10-08 | 剧场四步：跟着画面说一句 / 集末问观后感 / 集号标图上 / 每一轮从零开始（顺带切掉复读滚雪球的根） | [`changelogs/2026-10-08-theater-watch-together-four-steps.md`](./changelogs/2026-10-08-theater-watch-together-four-steps.md) |
+| 2026-10-07 | 剧场：退出时写一条「一起看结束了」（治重进又刷一条）+ 剧情串不起来的真相（三档做法没动手） | [`changelogs/2026-10-07-theater-end-marker-and-plot-memory.md`](./changelogs/2026-10-07-theater-end-marker-and-plot-memory.md) |
+| 2026-10-07 | 剧场记录在主聊天里收成一块（塞进上下文却在界面上看不见、没法删）+ 顺带踩了 `char` TDZ | [`changelogs/2026-10-07-theater-record-block-in-chat.md`](./changelogs/2026-10-07-theater-record-block-in-chat.md) |
+| 2026-10-07 | 剧场：拖到右边贴不了边（页面缩放两套坐标系）+ 关闭按钮改成「关闭播放」（撤掉自作主张的「打开播放器」）+ 全屏工具条会藏 | [`changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md`](./changelogs/2026-10-07-theater-zoom-close-and-fullscreen-bar.md) |
+| 2026-10-07 | 剧场：播放器改悬浮窗（竖版小/键盘白边/全屏按钮不管用是同一个病根）+ 顺手修切集后听不见声音 | [`changelogs/2026-10-07-theater-player-floating-window.md`](./changelogs/2026-10-07-theater-player-floating-window.md) |
+| 2026-10-07 | 剧场：没邀请就压根不接进来（补完昨天做的一半）+ 空回兜底写错导致「同一句话三遍」 | [`changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md`](./changelogs/2026-10-07-theater-invite-not-connected-and-duplicate-reply.md) |
+| 2026-10-07 | 剧场：答非所问 + 没人设像旁白（病根是画面说明每 1.2 秒当成一句用户发言）+ `see is not defined` 崩溃 + 空气泡 + 邀请按钮换位 + `typecheck:theater` 范围漏了 hooks | [`changelogs/2026-10-07-theater-frame-text-order-and-persona.md`](./changelogs/2026-10-07-theater-frame-text-order-and-persona.md) |
+| 2026-10-06 | 切剧继续播上一部（关在线会话≠关播放器）+ 追剧「接着看」报没这一集（同一 bug 第二个入口）+ 电脑没缓存的剧也能下载到手机 + `playable` 标志在说谎（磁盘上根本没有） | [`changelogs/2026-10-06-theater-switch-teardown-and-download-online.md`](./changelogs/2026-10-06-theater-switch-teardown-and-download-online.md) |
+| 2026-10-05 | 剧场：在线剧放不出来 —— 编码标记缺失 + 转发没暴露 X-Playback-MIME（真机实测画面在动） | [`changelogs/2026-10-05-theater-online-play-mime-fix.md`](./changelogs/2026-10-05-theater-online-play-mime-fix.md) |
+| 2026-10-05 | 剧场：下载 ENOENT 全挂（downloadFile 不建目录）+ 短剧库残留治理（1 分钟回收 / 一键清空） | [`changelogs/2026-10-05-theater-enoent-and-playback-stalls.md`](./changelogs/2026-10-05-theater-enoent-and-playback-stalls.md) |
+| 2026-10-05 | 剧场：下载闪退根因（原生传 74MB 字符串穿顶 256MB）+ 高度按比例 + 播时藏控制条 | [`changelogs/2026-10-05-theater-download-crash-and-ratio-height.md`](./changelogs/2026-10-05-theater-download-crash-and-ratio-height.md) |
+| 2026-10-05 | 剧场：本地视频播不了(file://被拒)/加载图换掉/区域高度固定 + 播在线剧自动让电脑下载 | [`changelogs/2026-10-05-theater-local-play-loading-and-autodownload.md`](./changelogs/2026-10-05-theater-local-play-loading-and-autodownload.md) |
 | 2026-10-04 | 纯聊天缓存时长开关（5m/1h/关闭，默认 5m，只纯聊天生效）+ 日志加 cacheApplied 字段方便实测 | [`changelogs/2026-10-04-pure-chat-cache-ttl.md`](./changelogs/2026-10-04-pure-chat-cache-ttl.md) |
 | 2026-10-04 | 认知消化开关连注入一起管（原来只管生成，旧词条照样每轮进请求体）+ 自我领悟列表可看可改可删 + 上限 10 条 FIFO | [`changelogs/2026-10-04-digestion-switch-and-self-insights-list.md`](./changelogs/2026-10-04-digestion-switch-and-self-insights-list.md) |
 | 2026-09-30 | 主动消息分轮改用 sessionId — 修「每个气泡都带头像」（messageId 粒度是一个气泡，不是一轮） | [`changelogs/2026-09-30-chat-round-session-id.md`](./changelogs/2026-09-30-chat-round-session-id.md) |
@@ -365,6 +444,9 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 | 2026-07-31 | 角色 API 重开抽屉时输入框不同步（按 protocol 重新同步 + 补 deps） | [`changelogs/2026-07-31-chatsettings-reopen-sync.md`](./changelogs/2026-07-31-chatsettings-reopen-sync.md) |
 | 2026-07-31 | useChatAI 角色 API 优先级判断扩展到 3 套 baseUrl（修 Gemini/Claude 角色 API 被全局顶掉） | [`changelogs/2026-07-31-perchar-api-3tab-eval.md`](./changelogs/2026-07-31-perchar-api-3tab-eval.md) |
 | 2026-07-28 | 聊天页转发卡片空消息过滤 | [`changelogs/2026-07-28-chat-forward-card-null-guard.md`](./changelogs/2026-07-28-chat-forward-card-null-guard.md) |
+| 2026-10-06 | 剧场：海报全不显示的真根因 —— 「修 429」那次顺手把封面换成局域网 http，显示那条路断了（同视频 1f838f27 同一个坑） | [`changelogs/2026-10-06-theater-cover-mixed-content-root-cause.md`](./changelogs/2026-10-06-theater-cover-mixed-content-root-cause.md) |
+| 2026-10-06 | 剧场：海报「完全不显示」——电脑侧全排除（36/36 张实测真图、混合内容开关确认生效），加诊断让页面自报 | [`changelogs/2026-10-06-theater-cover-not-showing-diag.md`](./changelogs/2026-10-06-theater-cover-not-showing-diag.md) |
+| 2026-10-06 | 剧场：海报「片名一闪一闪」真根因（组件写在函数体里）+ 控制条压到最上层 | [`changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md`](./changelogs/2026-10-06-theater-cover-flicker-and-control-bar-layer.md) |
 | 2026-07-28 | 聊天页空消息二次崩溃补挡 | [`changelogs/2026-07-28-chat-null-message-second-guard.md`](./changelogs/2026-07-28-chat-null-message-second-guard.md) |
 | 2026-07-28 | 聊天页空消息崩溃修复 | [`changelogs/2026-07-28-chat-null-role-guard.md`](./changelogs/2026-07-28-chat-null-role-guard.md) |
 | 2026-07-28 | API 浮窗 4 张配置卡片统一 | [`changelogs/2026-07-28-api-quickfloat-unify.md`](./changelogs/2026-07-28-api-quickfloat-unify.md) |

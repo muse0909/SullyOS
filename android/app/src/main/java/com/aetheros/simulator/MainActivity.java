@@ -50,6 +50,13 @@ public class MainActivity extends BridgeActivity {
         //   跟 UnifiedPushReceiver 配合，把 ntfy 推送的消息转给前端 Capacitor channel
         registerPlugin(AmsgUnifiedPushPlugin.class);
 
+        // 麦麦 2026-10-11：保存图片到相册 — 注册 SaveImagePlugin
+        //   替掉 @capacitor-community/media（那个插件存张图要 READ_MEDIA_VIDEO + 两个旧存储权限，
+        //   在 Android 13+ 上必然报 "Missing the following permissions"）。
+        //   Android 10+ 走 MediaStore 零权限；Android 9 及以下才申请 WRITE_EXTERNAL_STORAGE。
+        //   前端 utils/saveImageToGallery.ts 通过 registerPlugin("SullySaveImage") 找它。
+        registerPlugin(SaveImagePlugin.class);
+
         // 必须先 super.onCreate（它会初始化 bridge + WebView + 按 capacitor.config 加载 URL）
         super.onCreate(savedInstanceState);
 

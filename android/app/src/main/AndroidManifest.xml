@@ -121,17 +121,24 @@
          暮色 9-3 反馈明确要求"电池优化提示"——设置页会引导用户开启 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 暮色 9-21 第六轮：保存图片直接写入相册（@capacitor-community/media）
-         这两个权限是 MediaPlugin 的 Capacitor 插件要求，不声明的话：
-         - 系统相册权限分类里不会出现拾光机（用户看不到）
-         - 插件内部 getPermissionState 永远返回 DENIED
-         - requestAllPermissions 也找不到对应权限就直接拒绝
-         所以必须先在 manifest 声明,系统才会显示 + 允许运行时弹窗请求授权
-         分版本声明:
-         - READ_EXTERNAL_STORAGE + WRITE_EXTERNAL_STORAGE:Android <= 12(API <= 32)
-         - WRITE_EXTERNAL_STORAGE 在 Android 10+(API 29+)用 scoped storage,不需要
-         - READ_MEDIA_IMAGES:Android 13+(API >= 33)替代 READ_EXTERNAL_STORAGE -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- 麦麦 2026-10-11：保存图片到相册的权限（重新梳理）
+         换掉了 @capacitor-community/media，改用自研 SaveImagePlugin
+         （android/.../SaveImagePlugin.kt），原因见那个文件的注释。
+
+         **Android 10（API 29）及以上：一个权限都不需要。**
+         往相册里写「自己刚下载的图片」属于分区存储明确允许的操作，走 MediaStore +
+         RELATIVE_PATH 就行，一个授权弹窗都不会弹。原来的实现却要弹一堆权限，
+         里面还包括一个存图片根本用不上的 READ_MEDIA_VIDEO。
+
+         **Android 9（API 28）及以下：需要 WRITE_EXTERNAL_STORAGE。**
+         那时候还没有分区存储，往公共 Pictures 目录写文件必须拿它，所以保留，
+         但 maxSdkVersion 收紧到 28 —— 跟实际需要的系统范围对上，别再往上放。
+
+         为什么删掉 READ_EXTERNAL_STORAGE / READ_MEDIA_IMAGES：
+           我们**只往相册写自己下载的图，从不读用户的相册**，读权限一个都用不上。
+           而且 Capacitor 判定「清单有没有声明」用的是 PackageInfo.requestedPermissions，
+           Android 运行时会**把 maxSdkVersion 小于当前系统版本的权限条目过滤掉**，
+           所以原来写的 maxSdkVersion="32" 在 Android 13+ 上查不到 → 被误报成「缺失」。
+           这是 2026-10-11 那次报错的第二个根因。 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>

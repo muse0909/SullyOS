@@ -368,6 +368,7 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-11 | 存图报「Missing the following permissions」— 换掉 Media 插件改走 MediaStore（Android 10+ 零权限）+ `maxSdkVersion` 会让权限被误报成缺失 | [`changelogs/2026-10-11-android-media-permission-fix.md`](./changelogs/2026-10-11-android-media-permission-fix.md) |
 | 2026-10-09 | 新一轮还带着上一轮的话（boot 只堵了一半道）+ 开场那句告诉它「上次看到第几集」 | [`changelogs/2026-10-09-theater-new-round-still-carries-last-round.md`](./changelogs/2026-10-09-theater-new-round-still-carries-last-round.md) |
 | 2026-10-08 | 剧场卡片串场：「这一轮」是按位置认的（标题对正文错）→ 改成按剧名+时间认，顺带治了换剧后模型说的话打错标签 | [`changelogs/2026-10-08-theater-card-content-mixes-another-drama.md`](./changelogs/2026-10-08-theater-card-content-mixes-another-drama.md) |
 | 2026-10-08 | 主动开口换了触发方式（老的 activityStart 实测无效）+ 集末问句重复四遍的根因在播放器 `ended` + 剧场记录卡加「向量化」 | [`changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md`](./changelogs/2026-10-08-theater-proactive-speak-and-wrapup-dedupe.md) |

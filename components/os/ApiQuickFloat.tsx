@@ -6,6 +6,9 @@ import { AppID } from '../../types';
 import type { ApiPreset, CloudBackupFile } from '../../types';
 import GeminiKeyPoolModal from './GeminiKeyPoolModal';
 import { extractGeminiKeys } from '../../utils/geminiKeyPool';
+// 麦麦 2026-10-04：纯聊天模式的缓存时长设置（off / 5m / 1h，默认 5m）
+import { getChatCacheTtl, setChatCacheTtl } from '../../utils/chatCacheTtl';
+import type { ChatCacheTtl } from '../../utils/chatCacheTtl';
 
 const POS_KEY = 'sullyos_api_quickfloat_pos_v1';
 const BALL_SIZE = 40;
@@ -163,8 +166,56 @@ const ProtocolTabs: React.FC<{
   );
 };
 
-const PresetHeader: React.FC<{
-  label: string;
+/**
+ * 缓存时长三档选择（关闭 / 5 分钟 / 1 小时）
+ *
+ * 麦麦 2026-10-04 暮色定：加个开关，默认 5 分钟，再给一档 1 小时。
+ * 位置：主 AI 通道「API 设置」里，协议 tab 正下方（暮色指定）。
+ * 只有纯聊天模式用得上（完整模式那边 useChatAI 硬门挡着），所以挂在协议 tab 下面，
+ * 跟着主 AI 通道走最自然——缓存本来就是主 AI 通道的能力。
+ */
+const CacheTtlTabs: React.FC<{
+  value: ChatCacheTtl;
+  onChange: (value: ChatCacheTtl) => void;
+}> = ({ value, onChange }) => {
+  const options: { key: ChatCacheTtl; label: string; dot: string }[] = [
+    { key: '5m', label: '5分钟', dot: '#10b981' },
+    { key: '1h', label: '1小时', dot: '#6366f1' },
+    { key: 'off', label: '关闭', dot: '#94a3b8' },
+  ];
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 bg-white/70 p-1 rounded-full">
+        {options.map((opt) => {
+          const active = value === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange(opt.key)}
+              className={`flex-1 py-1.5 text-[11px] font-bold rounded-full transition-all flex items-center justify-center gap-1.5 ${active ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${active ? '' : 'bg-slate-300'}`}
+                style={active ? { background: opt.dot } : {}}
+              />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+        {value === 'off'
+          ? '不挂缓存标记。完整模式下这个设置本来就不生效。'
+          : value === '1h'
+            ? '缓存活 1 小时。你一条消息通常十几分钟，5 分钟大概率每轮都超时重写 —— 选这档更省。'
+            : '缓存活 5 分钟（默认）。超时后下一轮会全量重写。'}
+      </p>
+    </div>
+  );
+};
+
+const PresetHeader: React.FC<{  label: string;
   buttonClassName: string;
   onSave: () => void;
 }> = ({ label, buttonClassName, onSave }) => (
@@ -304,6 +355,16 @@ const ApiQuickFloat: React.FC = () => {
   const [showLightKey, setShowLightKey] = useState(false);
   const [lightStatusMsg, setLightStatusMsg] = useState('');
   const [lightTesting, setLightTesting] = useState(false);
+
+  // 麦麦 2026-10-04：缓存时长（off / 5m / 1h）。放 localStorage 不进 apiConfig ——
+  //   它不是 API 连接信息，是"这条通道要不要开缓存"，跟着角色走没道理；
+  //   也不进备份导出（跟密钥无关，换设备重新选一次就行）。
+  const [cacheTtl, setCacheTtl] = useState<ChatCacheTtl>(() => getChatCacheTtl());
+
+  const handleCacheTtlChange = (next: ChatCacheTtl) => {
+    setCacheTtl(next);
+    setChatCacheTtl(next);
+  };
 
   const [openSection, setOpenSection] = useState<QuickPresetKind | null>(null);
 
@@ -1202,6 +1263,10 @@ const ApiQuickFloat: React.FC = () => {
               >
                 <section className="bg-emerald-50/80 rounded-3xl p-4 shadow-sm border border-emerald-100/80 space-y-4">
                   <ProtocolTabs value={localProtocol} onChange={switchMainProtocol} />
+
+                  {/* 麦麦 2026-10-04：缓存时长。暮色指定放这儿（协议 tab 下面）。
+                      放主 AI 通道里是因为缓存本来就是这条通道的能力，浮窗其它地方都不相关。 */}
+                  <CacheTtlTabs value={cacheTtl} onChange={handleCacheTtlChange} />
 
                   <div>
                     <PresetHeader

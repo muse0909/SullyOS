@@ -41,6 +41,7 @@ import HandbookApp from '../apps/HandbookApp';
 import QQBridge from '../apps/QQBridge';
 import VRWorldApp from '../apps/VRWorldApp';
 import CoupleSpaceApp from '../apps/CoupleSpaceApp';  // 暮色 2026-07-31：用户-角色双人小窝
+import TheaterApp from '../apps/TheaterApp';  // 麦麦 2026-10-05：短剧剧场（入口在聊天页 + 号）
 import { SpecialMomentsApp } from './ValentineEvent';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { AppID } from '../types';
@@ -434,6 +435,7 @@ const PhoneShell: React.FC = () => {
       case AppID.QQBridge: return <QQBridge />;
       case AppID.VRWorld: return <VRWorldApp />;
       case AppID.CoupleSpace: return <CoupleSpaceApp />;  // 暮色 2026-07-31
+      case AppID.Theater: return <TheaterApp />;  // 麦麦 2026-10-05：短剧剧场
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;

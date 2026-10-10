@@ -16,10 +16,12 @@ import { ActiveMsgStore } from './activeMsgStore';
 import { DB } from './db';
 import { resolveCharTimeZone } from './timezone';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
+import { scanAndRecordDeferred } from './amsg2DeferredScan';
+import { retireFallbackForOccurrence } from './amsg2FallbackPair';
 import {
-  AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, canExpire, currentOccurrenceMs, describeExpirePolicy,
+  AMSG2_SCHEDULE_NOT_YET_NOTE, AMSG2_SCHEDULE_SECRECY_NOTE, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
-  shortTaskId,
+  noticeKindForTask, shortTaskId, visibleTasks,
 } from './amsg2Tasks';
 
 /**
@@ -118,8 +120,19 @@ const describeNoticeLine = (r: Amsg2ExpiredNoticeRecord, charTz: string | undefi
 };
 
 /**
- * 回执的两个段落（闸自动作废 / 用户手动取消）。给角色的交代完全不同（前者可以续期
- * 补上，后者是用户不要了），分成两段说；没有 kind 的老记录按自动作废处理。
+ * 回执里**要进角色上下文**的那些段（麦麦 2026-09-30）。
+ *
+ * 哪些进、哪些不进，规则是「角色能不能为它做点什么」：
+ *
+ *  - 到点推迟：进。用户刚跟它说过话所以这次没插嘴，而新规则要求"改在角色下一轮
+ *    上下文里顺口带出"——角色不知道有这件事，就没法带。必须告诉它。
+ *  - 没排上名额满：进。内容是真想说的、只是没轮上，额度恢复后值得补一次。
+ *  - 遇忙作废：**不进**。新规则里它是"直接取消、不告诉角色"。告诉它等于让它
+ *    在对话里复述"我刚才有条消息被系统取消了"，那是把系统内部动作漏给用户看。
+ *    这类只留面板（用户要知道它为什么没响），不进这段文案。
+ *  - 手动取消：进。用户主动取消的，角色该知道那些约定不再生效，否则它会继续拿
+ *    它们许诺。
+ *
  * 完整排程现状块和「回执单独成块」（即时对话云端路径）共用这一份文案。
  */
 const buildNoticeSections = (
@@ -127,22 +140,44 @@ const buildNoticeSections = (
   charTz: string | undefined,
 ): string[] => {
   const parts: string[] = [];
-  const autoExpired = expired.filter((r) => r.kind !== 'user-cancelled');
-  const userCancelled = expired.filter((r) => r.kind === 'user-cancelled');
+  const byKind = (kind: NonNullable<Amsg2ExpiredNoticeRecord['kind']>) =>
+    expired.filter((r) => (r.kind ?? 'expired') === kind);
 
-  if (autoExpired.length) {
-    parts.push('已作废（到点时对话正在进行，为避免撞车自动取消）：');
-    for (const r of autoExpired) {
+  // —— 到点推迟（新规则里「强制发送」被让开的那一次）——
+  const deferred = byKind('deferred');
+  if (deferred.length) {
+    parts.push('已推迟（到点时用户刚跟你说过话，所以这次没有插嘴）：');
+    for (const r of deferred) {
       parts.push(describeNoticeLine(r, charTz));
     }
     parts.push([
-      '作废条目的处理由你判断，三选一：',
-      '1. 就地消化：只在当前时间与话题都合适时自然带进对话——先想「现在提这个还合不合适」（早安任务拖到晚上就别再道早安），不要因为看到这份回执就强行转移当前话题。',
-      '2. 续期：还想之后专门说，用 renew_active_message 换个时间（循环任务续期只补当次，原来的节奏照旧）；内容或方向变了，改用 cancel_active_message + schedule_active_message 重新创建。',
-      '3. 放弃：已经没意义就只字不提。',
+      '这几条不是取消，是**这轮对话里换种方式说出来**——用户在跟你说话，硬插一条定时消息会撞车。',
+      '处理方式：先看当下的话题合不合适，合就顺着带一句（早安那条拖到晚上就别再道早安）；不合适就留到下一次，别为了「交代回执」生硬转移话题。',
+      '带出来之后就当这件事已经说过了，别在后面几轮里反复提。用户要是没接话，也不要追问为什么没回。',
     ].join('\n'));
   }
 
+  // —— 遇忙作废：刻意**不产段**（kind='expired' 在这里被静默滤掉）——
+  //   新规则（麦麦 2026-09-30 暮色定）里它是「直接取消、不告诉角色」。理由写在
+  //   buildNoticeSections 的注释里：告诉角色等于让它在对话里复述"我有条消息被系统
+  //   取消了"，那是把系统内部动作漏给用户看。它只留面板。
+
+  // —— 没排上名额满 ——
+  const quotaBlocked = byKind('quota-blocked');
+  if (quotaBlocked.length) {
+    parts.push('没发出去（今天的次数或连发条数用满了）：');
+    for (const r of quotaBlocked) {
+      parts.push(describeNoticeLine(r, charTz));
+    }
+    parts.push([
+      '这几条的内容是**真的想对用户说的**，只是额度用完没轮上——跟作废不一样，别当成对方不想听。',
+      '处理方式：额度恢复后（明天，或用户回了消息之后）挑最重要的一条用 renew_active_message 补一次；一次最多补一条，别一口气全倒出来。',
+      '也别因为额度满了就改主意去说别的：额度是「少说几句」，不是「换个话头」。',
+    ].join('\n'));
+  }
+
+  // —— 用户手动取消 ——
+  const userCancelled = byKind('user-cancelled');
   if (userCancelled.length) {
     parts.push('已被手动取消：');
     for (const r of userCancelled) {
@@ -153,6 +188,17 @@ const buildNoticeSections = (
 
   return parts;
 };
+
+/**
+ * 这些回执**会进角色的上下文**（buildNoticeSections 产得出段的那几类）。
+ *
+ * 跟文案共用同一份判据的口径：kind='expired'（遇忙作废）刻意不产段，所以带过包、
+ * 也就没被角色读出来，销账时不能算它。调用方拿它裁「包里带了哪几条」——
+ * 按台账原样记的话，到点销账会把压根没进包的那几条也销掉。
+ */
+export const noticesRenderedForRole = (
+  records: Amsg2ExpiredNoticeRecord[],
+): Amsg2ExpiredNoticeRecord[] => records.filter((r) => (r.kind ?? 'expired') !== 'expired');
 
 /**
  * 作废回执单独成块（即时对话云端路径用）。
@@ -167,10 +213,15 @@ export function buildAmsg2NoticesText(
   targetName?: string,
 ): string | null {
   if (!expired.length) return null;
+  // 段可能一段都产不出来（台账里只有遇忙作废那种"不告诉角色"的记录）。这时候
+  // 硬拼一个只剩标题的壳进 prompt 是浪费位置，还会让角色以为"有回执但内容空"，
+  // 所以按产出的段数决定：真没段就整块不出现。
+  const sections = buildNoticeSections(expired, charTz);
+  if (!sections.length) return null;
   const target = targetName?.trim() || '对方';
   return [
     '【你的主动消息排程·仅你可见】',
-    ...buildNoticeSections(expired, charTz),
+    ...sections,
     AMSG2_SCHEDULE_SECRECY_NOTE.replace('用户', target),
   ].join('\n');
 }
@@ -270,14 +321,26 @@ export async function collectAmsg2TaskContext(
   const tasks = config?.tasks ?? [];
   const now = Date.now();
 
-  // 逐任务检出作废（AI 任务且 expire 策略才判；force / fixed 不作废）。
+  // 逐任务检出「这次没发出去」（AI 任务且非固定模式；麦麦 2026-09-30 起强制发送也算，
+  // 它同样会被让开，只是不是叫"作废"）。固定模式恒无条件发，真没发出去是投递失败，
+  // 走 lastError 那条路，不在这套回执里。
   if (config?.enabled && tasks.length) {
     // 取够整个回看期的历史再判：证据（那条已送达的主动消息）落在窗外的话，
-    // 检出侧会把一条发过的触发当成作废，角色接着把同一件事再说一遍。
+    // 检出侧会把一条发过的触发当成没发出去，角色接着把同一件事再说一遍。
     const messages = await loadMessagesCoveringLookback(char.id, now - AMSG2_TASK_LOOKBACK_MS);
+
+    // 麦麦 2026-09-30：「强制发送」走**新判据**，不跟遇忙作废共用那个。
+    // 差别不是措辞而是结论：旧的循环任务看"到点前后对称窗"、一次性看"锚点之后有
+    // 任何消息"，而新规则只有"到点**前** 10 分钟"这一段。用旧判据会漏判最该让开的
+    // 那种（到点前 10 分钟用户刚说过话），还会把"用户隔了半天后来说话"这种压根
+    // 不该拦的拦掉。细节见 amsg2DeferredScan 的头注释。
+    await scanAndRecordDeferred(char, messages, now);
+
+    // 遇忙作废 / 名额满仍走旧检出（那条规则是"直接取消、不告诉角色"，判据没变）。
     const candidates = tasks
-      .filter(canExpire)
-      .flatMap((t) => detectExpiredOccurrences({
+      .map((t) => ({ t, kind: noticeKindForTask(t) }))
+      .filter((x): x is { t: ActiveMsg2TaskRecord; kind: NonNullable<typeof x.kind> } => x.kind === 'expired')
+      .flatMap(({ t, kind }) => detectExpiredOccurrences({
         taskUuid: t.taskUuid,
         policy: t.expirePolicy,
         recurrenceType: t.recurrenceType,
@@ -289,13 +352,15 @@ export async function collectAmsg2TaskContext(
         .map((c) => ({
           id: c.id, charId: char.id, occurrenceMs: c.occurrenceMs,
           mode: t.mode, promptHint: t.promptHint, recurrenceType: t.recurrenceType,
-          kind: 'expired', createdAt: now,
+          kind, createdAt: now,
         } satisfies Amsg2ExpiredNoticeRecord)));
     if (candidates.length) await ActiveMsgStore.upsertExpiredNotices(char.id, candidates);
   }
 
   const unnotified = (await ActiveMsgStore.getExpiredNotices(char.id)).filter((r) => !r.notifiedAt);
-  const pending = getPendingTasks(config, now);
+  // 兜底不给角色看（跟 buildFireTaskListBlock 同一把尺）：看得见它就够得着它，
+  // 角色能用自己的任务工具把这条后路取消掉，提醒就此丢失。理由见 visibleTasks。
+  const pending = visibleTasks(getPendingTasks(config, now));
   return {
     // 时间按角色的钟写：这一段是给角色看的，到点 worker 渲染的那份也是角色时区，
     // 两边对不上的话，纽约角色会在同一轮里读到差一个时差的两个「同一条任务」。
@@ -306,3 +371,270 @@ export async function collectAmsg2TaskContext(
     notices: unnotified,
   };
 }
+
+/**
+ * 销账 runtime 的依赖注入点（见 consumeAmsg2Notices 的同名参数）。
+ *
+ * 做成可注入而不是在这里直接 import，是为了：
+ *   1. 这个模块被 worker bundle 引用的话不拖进 IDB / 网络那一坨；
+ *   2. 单测能造一条"请求成功 → 回执消费 → 兜底被取消"的完整链路，不碰真云端。
+ */
+export interface Amsg2NoticeConsumeRuntime {
+  /** 真正的销账动作：标已消费 + 触发配对兜底取消。 */
+  settle: (char: CharacterProfile, consumedIds: string[]) => Promise<void>;
+}
+
+/**
+ * 麦麦 2026-09-30：**消费的定义** —— 回执进了一次成功的模型请求才算消费。
+ *
+ * 请求抛错 / 被用户取消 / 被中断，都**不算**：台账原样留着，下一轮重新带上。角色
+ * 因为一次网络抖动就永远不知道自己该说那句话，比重复说一遍糟得多。
+ *
+ * 消费之后才触发兜底取消（settleFallbackForConsumedNotices 走这条）——顺序不能反：
+ * 先销兜底再发现请求其实失败了，就再也补不回来。
+ */
+export const consumeAmsg2Notices = async (
+  char: CharacterProfile,
+  consumedIds: string[],
+  runtime: Amsg2NoticeConsumeRuntime,
+): Promise<void> => {
+  if (!consumedIds.length) return;
+  try {
+    await runtime.settle(char, consumedIds);
+  } catch (e) {
+    // 销账失败不连累这一轮聊天：消息已经发出去了，回执下轮再说一遍只是多带一次。
+    console.warn('[amsg2] 回执销账失败（下一轮会重新带上）', { charId: char.id, consumedIds, error: e });
+  }
+};
+
+// ─── 方向一：消费后立刻重传一份不带这条回执的包 ───
+//
+// 为什么必须有：fire_pack 是**同步那一刻**的快照，存云端、到点被 worker 读。普通聊天把
+// 回执带出来之后本地台账销了，云端那份还留着同一条 —— 到点时角色会把同一件事再说一遍。
+// （纯客户端唯一能做的就是这个。彻底干净的做法是到点 fire 成功后让 worker 回传一个
+// 「这批已消费」的信号，但 worker 不能改：自更新是整包覆盖，见方案一的理由。）
+//
+// 同步失败怎么办：**不再另起一套台账**。现成的冲刷机制（amsgStateSync.flushAmsgState）
+// 已经把这件事做全了，一处都不缺：
+//   - 失败 → requeue 把快照放回队列 + 30s/60s/120s 退避重排（MAX_RETRIES=3）；
+//   - 传成功了才清 localStorage 底账（AMSG2_PENDING_SYNC_LS_KEY），失败不清；
+//   - 退避打光还没传上去 → 快照留在 dirty 里，下次打脏 / 切后台 / 下次启动
+//     （resumeAmsgStateSync 从底账重建快照）都会再试。
+// 所以这里只做一件事：消费成功那一刻**主动打脏 + 立刻冲刷**，把「等下一轮聊天顺路
+// 带上」换成「现在就去」。要不要立刻冲刷是调用方的事（那边才拿得到 userProfile /
+// groups / realtimeConfig 拼快照），所以做成注入的 resync 回调。
+
+// ─── 方向二：包里带了哪些回执，到点上屏后销账 ───
+//
+// syncCharFirePacks 同步那一刻，包里带的是**当次未消费**的回执。记下是哪几条，
+// 到点那条主动消息真的上屏之后（activeMsgRuntime 的 settledFallbackAfterDelivery
+// 同一处）才把它们标成已消费——不标的话，下一轮普通聊天会拿同一条回执再说一遍。
+//
+// 不标的情况（生成失败 / 没上屏 / 被闸吞掉）都不算消费：那一轮角色压根没说出来，
+// 下轮该带的还得带。这也是为什么这个台账写在客户端而不是"同步成功就销"。
+
+const FIRED_NOTICES_KEY = 'amsg2_fired_notices';
+
+interface FiredNoticeRecord {
+  /** charId → 这一包里带过的回执 id。 */
+  byChar: Record<string, string[]>;
+  at: number;
+}
+
+const readFiredNotices = (): FiredNoticeRecord => {
+  try {
+    const raw = localStorage.getItem(FIRED_NOTICES_KEY);
+    if (!raw) return { byChar: {}, at: 0 };
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed.byChar === 'object' ? parsed : { byChar: {}, at: 0 };
+  } catch {
+    return { byChar: {}, at: 0 };
+  }
+};
+
+const writeFiredNotices = (v: FiredNoticeRecord): void => {
+  try {
+    if (!Object.keys(v.byChar).length) { localStorage.removeItem(FIRED_NOTICES_KEY); return; }
+    localStorage.setItem(FIRED_NOTICES_KEY, JSON.stringify(v));
+  } catch { /* 存不下：这一条漏销的后果是下轮多说一句 */ }
+};
+
+/** 同步 fire_pack 时记下这次带了哪些回执。 */
+export const recordNoticesShippedInPack = (charId: string, noticeIds: string[]): void => {
+  if (!noticeIds.length) return;
+  const cur = readFiredNotices();
+  // 同一角色多次同步取并集：包里带过就算"到点时可能还在里面"，
+  // 销账是整批销的，少记一条就等于那次到点会再说一遍。
+  const merged = Array.from(new Set([...(cur.byChar[charId] ?? []), ...noticeIds]));
+  writeFiredNotices({ byChar: { ...cur.byChar, [charId]: merged }, at: Date.now() });
+};
+
+/** 取走并清掉该角色这一批 id（只取一次，重复调用返回空）。 */
+export const takeShippedNoticeIds = (charId: string): string[] => {
+  const cur = readFiredNotices();
+  const ids = cur.byChar[charId] ?? [];
+  if (!ids.length) return [];
+  const { [charId]: _dropped, ...rest } = cur.byChar;
+  writeFiredNotices({ byChar: rest, at: Date.now() });
+  return ids;
+};
+
+/**
+ * 这一批「包里带过的」里，真正该销的是哪几条。
+ *
+ * 三道筛，各有各的理由：
+ *  - 台账里根本没这条 → 早被别的路销掉了（或压根没落账），销它是空转。
+ *  - 台账里已经 notifiedAt → 已经有人交代过角色了，再销一次没意义。
+ *  - kind='expired'（遇忙作废）→ 压根不产段、从没进过包，不该因为同包里有别的回执
+ *    就被算成"角色说过了"（见 noticesRenderedForRole）。这条是兜底：正常路径上
+ *    recordNoticesShippedInPack 记进来之前就已经滤掉了。
+ */
+export const pickConsumableShippedIds = (
+  shipped: string[],
+  ledger: Amsg2ExpiredNoticeRecord[],
+): string[] => {
+  const pending = new Set(ledger.filter((r) => !r.notifiedAt).map((r) => r.id));
+  return shipped.filter((id) => pending.has(id) && (ledger.find((r) => r.id === id)?.kind ?? 'expired') !== 'expired');
+};
+
+/** 从回执 id / occurrenceMs 找回配对的主任务。 */
+function findMainTaskForNotice(
+  tasks: ActiveMsg2TaskRecord[],
+  notice: Amsg2ExpiredNoticeRecord,
+): ActiveMsg2TaskRecord | null {
+  if (notice.recurrenceType === 'none') {
+    return tasks.find((t) => t.taskUuid === notice.id && !t.fallbackFor) ?? null;
+  }
+  // 循环的 id 带触发时刻，对不上就宁可不做（宁可兜底多留 30 分钟，也别销错那条）。
+  return tasks.find((t) => `${t.taskUuid}:${notice.occurrenceMs}` === notice.id && !t.fallbackFor) ?? null;
+}
+
+/** 销兜底要用的运行时能力（建任务 / 取消远端 / 写回本地清单）。 */
+interface FallbackSettleRuntime {
+  schedule: (input: { mainTask: ActiveMsg2TaskRecord; nextOccurrenceMs: number }) => Promise<ActiveMsg2TaskRecord | null>;
+  cancelRemote: (taskUuid: string) => Promise<void>;
+  persist: (mutate: (tasks: ActiveMsg2TaskRecord[]) => ActiveMsg2TaskRecord[]) => Promise<void>;
+  diag?: (extra: Record<string, unknown>) => void;
+}
+
+export interface FallbackSettleParams {
+  char: CharacterProfile;
+  /** 本轮注入并成功发出的那些回执 id。 */
+  consumedNoticeIds: string[];
+  runtime: FallbackSettleRuntime;
+  delayMs: number;
+  nowMs?: number;
+}
+
+/**
+ * 真正的那份销账 runtime：标记已消费 → 触发配对兜底取消 → 通知面板刷新。
+ *
+ * 顺序是刻意的（先记账再销兜底）：反过来的话，先把兜底销了才发现请求其实失败了，
+ * 那条后路就再也补不回来——而"重复说一遍"和"提醒彻底丢失"两害相权，后者重得多。
+ *
+ * 事件名用字面量而不是从 activeMsgRuntime import：那个模块 import 本模块的对面
+ * （settleFallbackAfterDelivery 用到 fallbackFor 判定），从这边再 import 回去成环。
+ * 用的是 OSContext 真正在监听的那个事件名。
+ */
+export const buildNoticeConsumeRuntime = (deps: {
+  schedule: (input: { mainTask: ActiveMsg2TaskRecord; nextOccurrenceMs: number }) => Promise<ActiveMsg2TaskRecord | null>;
+  cancelRemote: (taskUuid: string) => Promise<void>;
+  persist: (charId: string, mutate: (tasks: ActiveMsg2TaskRecord[]) => ActiveMsg2TaskRecord[]) => Promise<void>;
+  delayMs: number;
+  /**
+   * 方向一：消费成功之后**立刻**重传一份不带这几条回执的包（见本文件顶部「方向一」段）。
+   *
+   * 做成注入而不是在这里直接调冲刷：拼 fire_pack 快照要 userProfile / groups /
+   * realtimeConfig，只有调用方（useChatAI）手上有。传不传都行——不传就退回旧行为
+   * （等下一轮聊天打脏时顺路补上），代价是到点可能多说一遍。
+   */
+  resync?: (charId: string) => void;
+}): Amsg2NoticeConsumeRuntime => ({
+  settle: async (char, consumedIds) => {
+    // 1) 先标已消费。失败不往上抛 —— 这一步失败的后果只是下轮重复带一次回执，
+    //    而下面的销兜底照做会让"下轮又说一遍"这件事不再有后路兜着。
+    let markedOk = false;
+    try {
+      await ActiveMsgStore.markExpiredNoticesNotified(char.id, consumedIds);
+      markedOk = true;
+    } catch (e) {
+      console.warn('[amsg2] 回执标记已消费失败（下轮会重复带一次）', { charId: char.id, error: e });
+    }
+
+    // 1.5) 让云端那份不带这几条。**只有标成功才需要**——标记失败的话本地台账里这几条
+    //      还挂着，下一次同步照样会带进新包，现在重传是白跑一趟。
+    //      失败/重试全交给冲刷自己的机制（requeue + 退避 + 底账），这里不重试也不抛。
+    if (markedOk) {
+      try { deps.resync?.(char.id); } catch (e) {
+        console.warn('[amsg2] 回执重传的触发抛错了（云端那份可能还带着旧回执）', { charId: char.id, error: e });
+      }
+    }
+
+    // 2) 再销兜底：只有 kind='deferred' 的那些意味着"角色这轮把它说出来了"。
+    const fresh = (await DB.getAllCharacters()).find((c) => c.id === char.id);
+    if (fresh?.activeMsg2Config) {
+      await settleFallbackForConsumedNotices({
+        char: fresh,
+        consumedNoticeIds: consumedIds,
+        runtime: {
+          schedule: deps.schedule,
+          cancelRemote: deps.cancelRemote,
+          persist: (mutate) => deps.persist(char.id, mutate),
+          diag: (extra) => console.info('[amsg2] 兜底配对', extra),
+        },
+        delayMs: deps.delayMs,
+      });
+    }
+
+    // 3) 面板要看得见兜底被销掉了（以及循环任务的新兜底）。
+    try {
+      window.dispatchEvent(new CustomEvent('amsg2-character-tasks-changed', {
+        detail: { charId: char.id },
+      }));
+    } catch { /* SSR-safe */ }
+  },
+});
+
+/**
+ * 麦麦 2026-09-30 step 5：回执被角色消费掉了（「到点推迟」那条被带出来了）→
+ * 销掉对应的兜底。
+ *
+ * 为什么这是独立的一个触发点：推迟的消息**从来没进过聊天流**（云端跳过了，客户端
+ * 压根没收到推送），所以推送送达那条路不会经过它。唯一"角色说出来了"的证据就是
+ * 这次回执被注入并消费——注入的 prompt 消失（下次组请求不带它了）就是消费完成。
+ *
+ * 循环任务同样按下个周期重建，口径跟推送送达那条完全一致（共用 amsg2FallbackPair）。
+ *
+ * 幂等：回执台账按 id 记账，同一条被消费两次也只销一次兜底。
+ *
+ * 参数类型写成具名 interface 而不是内联对象：`}): Promise<T> => {` 这一行里的 `>`
+ * 会被解析成 JSX 结束符（内联写法在本项目里踩过，见其它函数的 `(params: {...})` 写法）。
+ */
+export async function settleFallbackForConsumedNotices(
+  params: FallbackSettleParams,
+): Promise<number> {
+  if (!params.consumedNoticeIds.length) return 0;
+  const nowMs = params.nowMs ?? Date.now();
+  const consumed = new Set(params.consumedNoticeIds);
+  const all = await ActiveMsgStore.getExpiredNotices(params.char.id);
+  // 只认「到点推迟」：只有它意味着"角色这轮把这件事说出来了"。遇忙作废是直接取消、
+  // 不告诉角色（见 buildNoticeSections），那条没被消费，别拿来销兜底。
+  const deferreds = all.filter((r) => consumed.has(r.id) && r.kind === 'deferred');
+  if (!deferreds.length) return 0;
+
+  const tasks = params.char.activeMsg2Config?.tasks ?? [];
+  let settled = 0;
+  for (const notice of deferreds) {
+    // 找配着这次触发的主任务。循环的 id 是 `${taskUuid}:${occurrenceMs}`，靠 occurrence
+    // 对回主任务；一次性的 id 直接就是 taskUuid。
+    const mainTask = findMainTaskForNotice(tasks, notice);
+    if (!mainTask) continue;
+    const result = await retireFallbackForOccurrence(
+      { char: params.char, ...params.runtime },
+      { mainTask, occurrenceMs: notice.occurrenceMs, delayMs: params.delayMs, nowMs },
+    );
+    settled += result.cancelled + result.rebuilt;
+  }
+  return settled;
+}
+

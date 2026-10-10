@@ -15,6 +15,7 @@
 import {
   ActiveMsg2CharacterConfig,
   ActiveMsg2ExpirePolicy,
+  Amsg2ExpiredNoticeRecord,
   ActiveMsg2Mode,
   ActiveMsg2Recurrence,
   ActiveMsg2TaskRecord,
@@ -49,13 +50,213 @@ export const isAmsg2EnabledForChar = (char: CharacterProfile): boolean =>
 export const shortTaskId = (taskUuid: string): string => taskUuid.slice(0, 8);
 
 /**
- * fixed 任务恒为 force：它没有 AI 生成环节，防穿帮闸的「作废」对它没有意义，
- * 而且 worker 的闸压根不会看到 fixed 任务。写任务记录的地方都过这里，别各写各的三元。
+ * 这条任务实际生效的触发规则。
+ *
+ * **2026-10-03 拆掉了原来那条「fixed 恒为 force」的钉死**。它为什么在那儿：以前固定
+ * 模式只有一个用途——到点原样发那句话，压根不给用户选策略，于是代码替用户钉死。
+ * 现在固定模式也归「触发规则」管了（三个都能配），这条钉死就成了**给用户偷偷改
+ * 掉选择**的那类 hack：面板上写着「自动取消」，落到任务记录里却是「转入下轮」。
+ *
+ * 拆掉它的连带好处：`isForcePolicy` / `isDeferToNextTurn` 那些「只认 force」的
+ * 下游判断（延后扫描、兜底配对、建兜底）**自动就对了**，不用逐处打补丁去抵消
+ * 上面这个钉死。原来 fixed 恒 force 的时候，配兜底的条件是「转入下轮 或 固定」，
+ * 现在 fixed 不再被偷偷算成 force，配兜底的自然就只剩「转入下轮」这一种。
+ *
+ * 留 `mode` 参数不删：调用点有 4 处都传了它，删了要连带改签名；`void mode` 是
+ * 明写"这参数现在用不上了"，不是忘了删。
  */
 export const resolveExpirePolicy = (
   mode: ActiveMsg2Mode,
   policy: ActiveMsg2ExpirePolicy | undefined,
-): ActiveMsg2ExpirePolicy => (mode === 'fixed' ? 'force' : (policy ?? 'expire'));
+): ActiveMsg2ExpirePolicy => {
+  void mode;
+  return policy ?? 'expire';
+};
+
+/**
+ * **发给云端那份**的形态：作废策略 + 模式 + 提示词。
+ *
+ * 麦麦 2026-09-30。为什么必须翻、翻的代价是什么：
+ *
+ * 背景是云端那道到点判定的真实长相：
+ *   - `shouldExpireFire` 第一行就是 `policy !== 'expire' → return false` —— 云端对
+ *     force 一次窗口都不判，到点必推。
+ *   - `taskNeedsLlm` 只让 `prompted` / `auto` 进 `onBeforeFire` —— fixed 连那道门的
+ *     边都摸不到。
+ * 也就是说「force + 到点前 10 分钟用户说过话 → 不推送，改在角色下一轮上下文带出」
+ * 这条新规则，云端对 force 和 fixed **都做不到**。只能靠客户端翻译，让云端去跳。
+ *
+ * 两种翻译：
+ *
+ * 1. **提示词/自动 + 强制发送** → 策略翻成「遇忙作废」。模式不动，云端进得了那道门，
+ *    策略是 expire 就会被那道 10 分钟窗判。代价只有"可能被跳过"这一条本来就要的。
+ *
+ * 2. **固定 + 强制发送** → **整个模式翻成「提示词」**。光翻策略没用：fixed 压根不进
+ *    onBeforeFire（`taskNeedsLlm` 写死），翻译它等于凭空塞一个没人读的字段。
+ *    连模式一起翻才进得了门。提示词写「把这句原话发给她：{content}」，把原文塞进
+ *    指令里让模型照着说。
+ *
+ * 代价（2）比（1）重，都摆在这里，不是权衡后的结论之外的隐藏成本：
+ *   - **多一次模型调用**，每个周期都多。固定模式本来是纯投递、零 token。
+ *     注意固定模式恒 force（resolveExpirePolicy 钉死，面板上永远显示「强制发送」），
+ *     所以「固定 + 遇忙作废」这个组合压根不存在 —— 每一条固定任务都会走这条翻译。
+ *   - **措辞可能有细微变化**：模型是"照着原文说"，不是逐字复读。
+ *   - **多一次网络往返**：提示词模式建任务前必须先上传 fire_pack（固定模式不用），
+ *     所以建一条钙片提醒从 1 次请求变成 2 次。
+ *   - **欠着即时对话回复时 fire_pack 不覆盖**（utils/activeMsgClient 的 owesChat 分支），
+ *     翻译后的任务到点读到的可能是旧包。极端情况（新角色、云端一份包都没有）会硬失败
+ *     ——但那条已经配了真 fixed 兜底，30 分钟后原话照送，这条是自愈的。
+ *
+ * 判定有没有被翻过，看 metadata 上的 `amsgForceDeferred` / `amsgFixedAsPrompted`。
+ */
+export const resolveCloudExpirePolicy = (
+  mode: ActiveMsg2Mode,
+  policy: ActiveMsg2ExpirePolicy | undefined,
+): {
+  cloudPolicy: ActiveMsg2ExpirePolicy;
+  /** 本地记录 / 面板显示用这个——始终是真策略。 */
+  forceAsExpire: boolean;
+  /** 固定模式被翻成提示词模式：云端 messageType 跟本地 mode 不一致了。 */
+  fixedAsPrompted: boolean;
+  /** 翻成提示词模式时，原文塞进指令的那段提示词。 */
+  cloudHint?: string;
+} => {
+  const effective = resolveExpirePolicy(mode, policy);
+  // 「强制触发」是三个里唯一**不翻译**的：云端看到 force 一次都不判、到点必推，
+  // 正好就是它要的行为，原样发过去就完事。
+  //
+  // 翻译这一步是为「自动取消 / 转入下轮」存在的——云端只认 expire 会判那 10 分钟，
+  // 这俩都得靠翻成 expire 才能让云端去判。所以条件是"是不是要云端去判"，
+  // 不是"是不是 force"。暮色 2026-10-03 批过这个改法：原来"只要 force 就翻"是个
+  // 一刀切的 hack，加了强制触发之后一刀切就切错了，得按用途分。
+  if (effective === 'always') {
+    return { cloudPolicy: 'force', forceAsExpire: false, fixedAsPrompted: false };
+  }
+  if (effective !== 'force') {
+    return { cloudPolicy: effective, forceAsExpire: false, fixedAsPrompted: false };
+  }
+  // 转入下轮：翻成 expire 让云端去判。固定模式还得连模式一起翻（下面注释有原因）。
+  if (mode === 'fixed') {
+    return {
+      cloudPolicy: 'expire',
+      forceAsExpire: true,
+      fixedAsPrompted: true,
+      cloudHint: FIXED_AS_PROMPTED_PREFIX,
+    };
+  }
+  return { cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: false };
+};
+
+/**
+ * 固定模式被翻成提示词模式时，提示词的前缀（麦麦 2026-09-30 暮色拍板）。
+ *
+ * 写「原话」而不是「原样发送」：模型没法逐字复读，说「原样发送」它会理解成
+ * "照着这个意思"，于是措辞飘得更远。说「把这句原话发给她」是在约束"内容不许变"，
+ * 允许它决定语气和连接词——这正是暮色接受的那点代价。
+ */
+export const FIXED_AS_PROMPTED_PREFIX = '把这句原话发给她：';
+
+
+/** 「强制发送」被让开后，兜底任务隔多久补那条消息（麦麦 2026-09-30 暮色定的 30 分钟）。 */
+export const AMSG_FALLBACK_DELAY_MS = 30 * 60_000;
+
+/**
+ * 兜底任务到点时原样发出的那句话。
+ *
+ * 兜底走 fixed 模式（不调模型），所以这句话必须在**建的时候**就定死。它要解决的是
+ * 「到点了，该说的那句」——不是让角色重新发挥一次。所以**必须带上原文**：
+ * 兜底是 30 分钟前那次被让开的消息的替补，替补里如果不写清在提醒什么，用户收到的
+ * 是一句无头无尾的「到点啦」，等于没提醒。
+ *
+ * 取值：
+ *  1. 固定模式：主任务自己的原文，一字不改（钙片提醒这种本来就没有发挥空间）
+ *  2. 提示词/自动：把方向或理由**原样**带进模板 —— 「到点啦：{原文}」
+ *  3. 上面两种都没有 → 默认句
+ *
+ * 刻意**不**在这里调模型：那会让"建一条任务"变成一次网络往返，卡界面、还多一个
+ * 失败面，而兜底要的恰恰是"确定的一句"，不是 AI 临场发挥。面板上这一句可以改。
+ */
+export const buildFallbackText = (
+  mode: ActiveMsg2Mode,
+  hintOrReason: string | undefined,
+  userMessage: string | undefined,
+): string => {
+  if (mode === 'fixed') {
+    return userMessage?.trim() || '';
+  }
+  const given = (hintOrReason || '').trim();
+  // 方向词也带（"别太油"照样原样拼进模板）。曾经在这里判"太短/是方向词就丢掉换默认句"，
+  // 那是错的：丢了原文，兜底推过去就成了一句看不出在提醒什么的话。
+  return given ? `到点啦：${given}` : '你之前定的那件事，到点啦。';
+};
+
+/**
+ * 这个任务的触发规则是不是「转入下轮」——**只有它配 30 分钟兜底**（暮色 2026-10-03 定）。
+ *
+ * 为什么只有它：三个策略里只有它承诺"这件事一定会说到"。到点前 10 分钟你正在说话，
+ * 这次先不插嘴、改在下一轮带出来；万一那一轮一直没提，30 分钟后还有一次机会。
+ * 另外两个不需要：
+ *   - 自动取消：本来说好到点前说过话就不发，压根没有"这次没说成"这回事；
+ *   - 强制触发：到点必发，压根不会被让开，兜什么底。
+ *
+ * 改名前叫 `isForcePolicy`。那个名字是这套设计里最容易看错的一处：**客户端的
+ * `force` 指「转入下轮」，云端的 `force` 指「强制触发」**，同名反义。所以改掉。
+ */
+export const isDeferToNextTurn = (
+  mode: ActiveMsg2Mode,
+  policy: ActiveMsg2ExpirePolicy | undefined,
+): boolean => resolveExpirePolicy(mode, policy) === 'force';
+
+/**
+ * 这条是不是「转入下轮」30 分钟后的兜底（麦麦 2026-09-30）。
+ *
+ * 兜底是系统替主任务补的后路：面板不列它、用户不该看见一条不认识的重复任务，
+ * 但它得真躺在本地清单里——第 5 步要靠它跟主任务配对取消。
+ *
+ * ⚠️ 只有「转入下轮」的主任务才配兜底（2026-10-03 暮色定）。这个函数判断的是
+ * 「**自己是不是兜底**」，不是「该给谁配兜底」——后者看 `isDeferToNextTurn`。
+ */
+export const isFallbackTask = (task: Pick<ActiveMsg2TaskRecord, 'fallbackFor'>): boolean =>
+  Boolean(task.fallbackFor);
+
+/** 面板 / 角色上下文里给人看的清单：滤掉兜底（它不是谁排的任务）。 */
+export const visibleTasks = (tasks: ActiveMsg2TaskRecord[]): ActiveMsg2TaskRecord[] =>
+  tasks.filter((t) => !isFallbackTask(t));
+
+/**
+ * 角色自排的任务里，哪一条允许被「新排的那条」顶掉（麦麦 2026-10-01 step 9）。
+ *
+ * ## 三个条件缺一不可
+ *
+ * - **自排**（source='character'）：用户自己排的任务谁都不许动。角色没有资格替用户
+ *   改主意。
+ * - **一次性**（recurrenceType='none'）：循环的是长期约定（"每天早上叫你"），悄悄换成
+ *   另一条等于单方面撕毁。只有一次性的承诺才谈得上"改口"。
+ * - **遇忙作废**（expire）：这条本来就不是保证——到点时你在聊天它就不插嘴。既然没
+ *   保证，顶掉它就不算食言。**强制发送**恰恰相反：它的全部意义就是"这句一定送到"，
+ *   角色能把它顶掉，这条保证就没有了。
+ *
+ * ## 为什么要有这条判据
+ *
+ * 以前角色想改口只能靠"用户发一条消息"——那条链路（cancelCharacterWakeups）已经
+ * 随 step 9 删掉了：判断只该在到点那一刻做一次，用户什么时候说话不该影响已排好的
+ * 事（更要命的是它把「强制发送」的任务也一起删了，那条本来就该到点送达）。
+ * 改口能力因此收进入口闸自己。
+ *
+ * ## fallbackFor 为什么也在判据里
+ *
+ * 兜底是系统替「强制发送」补的后路，而 `scheduleFallbackTask` 会把主任务的来源
+ * 抄过来 —— 主任务是角色自排时，这条兜底的 source **也是 'character'**。只看
+ * source 会把兜底一起顶掉，那正是 step 5 刚接好的配对（顶掉之后就没人给它让路了）。
+ */
+export const isReplaceableCharacterWakeup = (
+  task: Pick<ActiveMsg2TaskRecord, 'source' | 'status' | 'recurrenceType' | 'mode' | 'expirePolicy' | 'fallbackFor'>,
+): boolean =>
+  task.source === 'character'
+  && task.status === 'scheduled'
+  && task.recurrenceType === 'none'
+  && !isFallbackTask(task)
+  && resolveExpirePolicy(task.mode, task.expirePolicy) === 'expire';
 
 // ─── 任务的人读文案 ───
 // 角色的排程现状块、list_active_messages 的返回、设置面板的任务列表都显示同一批任务，
@@ -87,7 +288,65 @@ export const AMSG2_SCHEDULE_SECRECY_NOTE = '不要向用户复述或提及这份
 export const AMSG2_SCHEDULE_NOT_YET_NOTE = '排在未来的事到点自己会响，不用你现在提前替它开口——还没到那个时刻的就让它安静待着，别每轮都拿它起话头、追着问进展。对方自己提起，或者真到了那个点，才是说它的时候。';
 
 export const describeExpirePolicy = (policy: ActiveMsg2ExpirePolicy): string =>
-  policy === 'force' ? '强制发送' : '遇忙作废';
+  policy === 'always' ? '强制触发' : policy === 'force' ? '转入下轮' : '自动取消';
+
+/**
+ * 面板上「触发规则」那三行的文案（麦麦 2026-10-01 step 10；10-03 暮色改了三轮）。
+ *
+ * 提到这里而不是留在面板里，是为了让文案有**一个出处**：任务列表用 describeExpirePolicy
+ * 显示同一个词，选择器也得用同一对词；两处各写一份早晚会跑偏（这次就是
+ * 面板写「自动作废」、别处写「遇忙作废」，同一个东西两个名，用户会当成两种策略）。
+ *
+ * ## 名字换过三轮，每轮都是暮色看实物之后否的
+ *
+ * | 轮次 | expire | force | always |
+ * |---|---|---|---|
+ * | step 10 | 遇忙作废 | 强制发送 | （没有第三个） |
+ * | 10-03 上午 | 你在忙就算了 | 你在忙就晚点提 | — |
+ * | 10-03 傍晚 | 自动取消 | 转入下轮 | — |
+ * | 10-03 深夜（当前） | 自动取消 | 转入下轮 | **强制触发** |
+ *
+ * 上午那轮的原话是「『到点不说话』我不喜欢，读起来像是你不说话，有歧义」。
+ * 傍晚他直接给了那两个名字：「自动取消」讲的是**动作**（到点那次不发了），
+ * 「转入下轮」讲的是**去向**（不发的那次挪到下一轮说）。
+ * 深夜加的第三个，原话是「增加一个强制发送按钮…不受 10 分钟影响，到时间就强制触发。
+ * 适合闹钟型提醒」——他要的是"这件事必须准点发生"这个意思，名字就叫**强制触发**。
+ *
+ * ## 这一版改回「每个策略自带一段介绍」
+ *
+ * 傍晚那版照「重复方式」那一组做成了"上面一排按钮、下面一整段小字"，当晚他就否了，
+ * 发了张图改成**竖着三行、每行一个勾选框 + 加粗名字 + 自己那段介绍**。理由从图上看得
+ * 出来：三个策略的适用场景差得远（没事 / 不着急 / 卡时间），挤在一段里谁也分不清哪个
+ * 配哪个。三个各有各的处境，就得各有各的一句话。
+ *
+ * 底层标识符 expire / force 没动（老任务存的就是它们），新策略叫 always。
+ * 现在的规矩（见 utils/amsgFireSchedule 的 EXPIRE_POLICY_DESCRIPTION，角色读那份）：
+ *   - expire = 直接取消，**不告诉角色**，聊天里永远不会出现
+ *   - force  = 到点前十分钟你在说话就改在下一轮顺口带出；一直没带出来，30 分钟后兜底补一句
+ *   - always = 不看那十分钟，到点必发，不配兜底
+ */
+export const EXPIRE_POLICY_OPTIONS: ReadonlyArray<{
+  id: ActiveMsg2ExpirePolicy;
+  label: string;
+  desc: string;
+}> = [
+  {
+    id: 'expire',
+    label: '自动取消',
+    desc: '到点前 10 分钟用户说过话，这次取消，不通知角色。到点没互动正常调模型、触发。适合角色自己排任务用。',
+  },
+  {
+    id: 'force',
+    label: '转入下轮',
+    desc: '到点前 10 分钟用户说过话，这次不插嘴，改在你们下一轮聊天里顺口提一句。催喝水、催吃饭这种不着急的，用这个。到点没互动正常调模型、触发。',
+  },
+  {
+    id: 'always',
+    label: '强制触发',
+    desc: '不看那 10 分钟，到点一定发。订票这种卡时间的，用这个。',
+  },
+];
+
 
 /** 任务「要说什么」的一句话描述。fixed 有固定内容、prompted 有方向、auto 可带灵感。 */
 export const describeTaskMode = (
@@ -228,9 +487,28 @@ export const getPendingTasks = (
 ): ActiveMsg2TaskRecord[] =>
   (config?.tasks ?? []).filter((t) => isPendingTask(t, nowMs));
 
-/** 这个任务的触发有没有可能被防穿帮闸作废（fixed / force 永远照发）。 */
+/** 这个任务的触发有没有可能被防穿帮闸作废（只有「自动取消」会）。 */
 export const canExpire = (task: ActiveMsg2TaskRecord): boolean =>
-  task.status === 'scheduled' && task.mode !== 'fixed' && task.expirePolicy === 'expire';
+  task.status === 'scheduled' && task.expirePolicy === 'expire';
+
+/**
+ * 这条任务的触发「没发出去」时，角色该听到哪一种交代（麦麦 2026-09-30）。
+ *
+ * 为什么要单独一个判断：旧口径只认 `expired`，把「强制发送」和「固定」一起排除了。
+ * 但新规则下**强制发送同样会被让开**（到点前 10 分钟用户刚说过话 → 改在下一轮
+ * 顺口带出），它同样需要一条回执告诉角色"刚才那条没插嘴"，只是说法不一样：
+ * 遇忙作废是「时机不对，别提了」，到点推迟是「这轮里自然带出来」。
+ *
+ * 固定模式不产回执：它恒定无条件发，真没发出去那是投递失败，走 lastError 那条路，
+ * 不是"策略让它没发"。
+ */
+export const noticeKindForTask = (
+  task: ActiveMsg2TaskRecord,
+): Amsg2ExpiredNoticeRecord['kind'] | null => {
+  if (task.status !== 'scheduled') return null;
+  if (task.mode === 'fixed') return null;
+  return resolveExpirePolicy(task.mode, task.expirePolicy) === 'force' ? 'deferred' : 'expired';
+};
 
 /** 有没有还会响的 AI 任务（amsgStateSync 的同步门用：fixed 不需要 fire_pack）。 */
 export const hasActiveAiTask = (
@@ -255,7 +533,11 @@ export const buildFireTaskListBlock = (
   opts: { nowMs: number; tzId: string; excludeClientTaskId?: string },
 ): string => {
   const tz: AmsgTzRef = { tzId: opts.tzId };
-  const listed = tasks
+  // 兜底（麦麦 2026-09-30）不给角色看。两个理由，缺一不可：
+  //   1. 它是系统补的后路，角色从没排过——列出来等于凭空多一条它不认识的承诺；
+  //   2. 更要紧的是角色手里有任务管理工具，看得见就够得着，它能把给自己的后路取消掉，
+  //      兜底被取消 = 那条提醒彻底丢了，比没有兜底更糟。
+  const listed = visibleTasks(tasks)
     .filter((t) => isPendingTask(t, opts.nowMs))
     .filter((t) => !opts.excludeClientTaskId || t.clientTaskId !== opts.excludeClientTaskId);
   if (listed.length === 0) return '';
@@ -472,7 +754,7 @@ export interface RemoteTaskProjection {
  * 拿远端全量投影跟本地清单对一次账，两个方向都走。
  *
  * **远端有、本地没有 → 补回来。** 会漏账的都是角色在 fire 里给自己排的那些：认领是
- * 随 push 带回来的，那条 push 推失败、或者被防穿帮闸吞掉，认领就跟着没了。于是任务在
+ * 随 push 带回来的，那条 push 推失败，认领就跟着没了。于是任务在
  * D1 里照常到点触发，本地却列不出来、也取消不掉——用户唯一能清掉它的办法是关掉整个
  * 2.0 或者删角色。面板每次打开本来就拉一次全量投影，顺手接回来，零额外请求。
  *

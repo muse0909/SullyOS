@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { useCloudMemories } from '../hooks/useCloudSync';
 import { safeResponseJson } from '../utils/safeApi';
@@ -13,6 +13,8 @@ import {
     wipeAllMemoryPalace,
     findDuplicates, filterByAccess, DEDUP_THRESHOLDS, ACCESS_RANGES,
     vectorizeAndStore,
+    mergeSelfInsights,
+    SELF_INSIGHTS_LIMIT,
 } from '../utils/memoryPalace';
 import { dissolveEventBox, reviveAllArchivedInBox, scanGhostSummaries, deleteGhostSummary } from '../utils/memoryPalace/eventBox';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DedupThreshold, AccessRange, DuplicatePair } from '../utils/memoryPalace';
@@ -179,6 +181,14 @@ const Icon: React.FC<{ name: string; size?: number; style?: React.CSSProperties 
                     <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
                     <path d="M10 11v6M14 11v6" />
+                </svg>
+            );
+        // 麦麦 2026-10-04：自我领悟列表的编辑按钮要一个铅笔图标，之前没有
+        case 'pencil':
+            return (
+                <svg {...p}>
+                    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    <path d="m15 5 4 4" />
                 </svg>
             );
         case 'refresh':
@@ -1742,6 +1752,39 @@ export default function MemoryPalaceApp() {
         }
     };
 
+    // 麦麦 2026-10-04 暮色要求：自我领悟要能看、能删、能手改。
+    //   背景：之前这些词条只增不减，项目里完全没有查看/删除入口 ——
+    //   关掉认知消化开关也没用，因为旧词条照样每轮进请求体，用户根本没法清。
+    //   现在有了这个列表，开关才有实际意义（关掉 → 不再注入；打开 → 注入的就是下面这些）。
+    const [editingInsightIdx, setEditingInsightIdx] = useState<number | null>(null);
+    const [editingInsightText, setEditingInsightText] = useState('');
+
+    const selfInsights: string[] = useMemo(
+        () => ((char as any)?.selfInsights || []).filter((s: any) => typeof s === 'string' && s.trim()),
+        [char],
+    );
+
+    const handleSaveInsight = (idx: number) => {
+        const text = editingInsightText.trim();
+        setEditingInsightIdx(null);
+        setEditingInsightText('');
+        if (!char || !text) return;                           // 删空 = 当作放弃这次编辑
+        if (text === selfInsights[idx]) return;               // 没改就不写，避免无谓落盘
+        const next = [...selfInsights];
+        next[idx] = text;
+        updateCharacter(char.id, { selfInsights: next } as any);
+    };
+
+    const handleDeleteInsight = (idx: number) => {
+        if (!char) return;
+        const next = selfInsights.filter((_, i) => i !== idx);
+        updateCharacter(char.id, { selfInsights: next } as any);
+        if (editingInsightIdx === idx) {                     // 正在改的就是被删的那条 → 退出编辑态
+            setEditingInsightIdx(null);
+            setEditingInsightText('');
+        }
+    };
+
     const handleDigest = async () => {
         if (!char || digesting) return;
         const lightApi = memoryPalaceConfig.lightLLM;
@@ -1761,9 +1804,9 @@ export default function MemoryPalaceApp() {
                 setDigestResult('没有需要消化的内容');
             } else {
                 // 如果产生了新的自我领悟，持久化到角色档案
+                // 麦麦 2026-10-04：走 mergeSelfInsights（去重 + 上限 10 条 FIFO），跟自动消化同一套规则
                 if (result.selfInsights.length > 0) {
-                    const existing = (char as any).selfInsights || [];
-                    const updated = [...existing, ...result.selfInsights];
+                    const updated = mergeSelfInsights((char as any).selfInsights, result.selfInsights);
                     updateCharacter(char.id, { selfInsights: updated } as any);
                 }
 
@@ -3811,6 +3854,110 @@ create table if not exists memory_vectors (
     >
         {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
     </button>
+
+    {/* 自我领悟列表（可看 / 可改 / 可删）
+        麦麦 2026-10-04：暮色要求加的。措辞里要如实反映开关状态 ——
+        关着的时候这些内容并不会进请求体，这里只是让你还能看/改/删。 */}
+    <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed #bbf7d0' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span>自我领悟</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#6b7280' }}>
+                {selfInsights.length}/{SELF_INSIGHTS_LIMIT}
+            </span>
+        </div>
+        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10, lineHeight: 1.6 }}>
+            {selfInsights.length === 0
+                ? '还没有自我领悟。聊天每 50 轮自动消化一次，或点上面手动触发。'
+                : (char as any).digestionEnabled === false
+                    ? '认知消化已关闭，下面这些当前不会进入对话。'
+                    : '下面这些每轮都会进入对话，作为角色的常驻自我认知。'}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {selfInsights.map((text, idx) => {
+                const isEditing = editingInsightIdx === idx;
+                return (
+                    <div
+                        key={idx}
+                        style={{
+                            background: '#ffffff', border: '1px solid #dcfce7', borderRadius: 12,
+                            padding: '8px 10px', display: 'flex', alignItems: 'flex-start', gap: 8,
+                        }}
+                    >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            {isEditing ? (
+                                <textarea
+                                    value={editingInsightText}
+                                    onChange={(e) => setEditingInsightText(e.target.value)}
+                                    autoFocus
+                                    rows={3}
+                                    style={{
+                                        width: '100%', boxSizing: 'border-box', resize: 'vertical',
+                                        fontSize: 12, lineHeight: 1.6, color: '#166534',
+                                        border: '1px solid #86efac', borderRadius: 8, padding: 6,
+                                        background: '#f0fdf4', fontFamily: 'inherit',
+                                    }}
+                                />
+                            ) : (
+                                <div style={{ fontSize: 12, lineHeight: 1.6, color: '#374151', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                    {text}
+                                </div>
+                            )}
+                            {isEditing && (
+                                <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'center' }}>
+                                    <button
+                                        onClick={() => handleSaveInsight(idx)}
+                                        style={{
+                                            padding: '5px 14px', borderRadius: 999, border: 'none',
+                                            background: '#16a34a', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                                        }}
+                                    >
+                                        保存
+                                    </button>
+                                    <button
+                                        onClick={() => { setEditingInsightIdx(null); setEditingInsightText(''); }}
+                                        style={{
+                                            padding: '5px 14px', borderRadius: 999, border: '1px solid #86efac',
+                                            background: '#fff', color: '#166534', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                                        }}
+                                    >
+                                        取消
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        {!isEditing && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                                <button
+                                    onClick={() => { setEditingInsightIdx(idx); setEditingInsightText(text); }}
+                                    aria-label="编辑"
+                                    style={{
+                                        width: 26, height: 26, borderRadius: 999, border: '1px solid #86efac',
+                                        background: '#fff', color: '#166534', fontSize: 12, cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    }}
+                                >
+                                    <Icon name="pencil" size={12} />
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteInsight(idx)}
+                                    aria-label="删除"
+                                    style={{
+                                        width: 26, height: 26, borderRadius: 999, border: '1px solid #fecaca',
+                                        background: '#fff', color: '#dc2626', fontSize: 12, cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    }}
+                                >
+                                    <Icon name="trash" size={12} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    </div>
 </div>
 
 

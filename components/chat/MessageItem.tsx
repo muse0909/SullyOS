@@ -1,13 +1,18 @@
 
 
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import McdCard from './McdCard';
 import { createPortal } from 'react-dom';
 import { useOS } from '../../context/OSContext';
 import { Heart as HeartIcon, CaretDown, FilmReel } from '@phosphor-icons/react';
+// 剧场记录卡片底下的「向量化」按钮走这条路（10-08 19:17）
+import { vectorizeTheaterRecord } from '../../utils/dramaTheater/vectorizeRecord';
+// 「存了什么内容」的弹窗 —— 走项目级 Modal（自带 createPortal，
+// 躲 backdrop-filter 父级；规格是暮色 2026-07-02 拍板那一套）
+import Modal from '../os/Modal';
 
 
 // --- 主动消息思维链折叠显示 ---
@@ -46,10 +51,67 @@ const ThoughtFold: React.FC<{ thought: string }> = ({ thought }) => {
 //   - 展开后显示角色第一人称回忆内容(200-500 字)
 const StoryTheaterMemoryCard: React.FC<{
     theaterTitle: string;
+    /** 卡片标题。给了就用它（剧场那张要写「第几集 一起看完了」），不给走老文案 */
+    cardTitle?: string;
     content: string;
     generatedAt?: number;
-}> = ({ theaterTitle, content, generatedAt }) => {
+    /** 剧场那张给「向量化」按钮用；见面剧情剧院那张不给（暮色只要剧场这张有）。
+     *  返回存进去的正文数组（弹窗要显示）；失败返回 null。 */
+    onVectorize?: () => Promise<{ contents: string[]; ids: string[] } | null>;
+    vectorizing?: boolean;
+    /**
+     * 编辑后保存：把改过的正文写回记忆宫殿，并重跑向量
+     * （照抄 `Chat.tsx` 的 `handleReviewEdit` —— 改了内容，向量必须跟着重算，
+     *  否则以后召不回来：向量算的是**旧内容**）。
+     */
+    onSaveVectorized?: (ids: string[], before: string[], after: string[]) => Promise<void>;
+}> = ({ theaterTitle, cardTitle, content, generatedAt, onVectorize, vectorizing, onSaveVectorized }) => {
     const [expanded, setExpanded] = useState(false);
+    /** 刚存进去的内容 → 弹窗。空数组 = 不弹（平时完全不影响聊天页）。
+     *  ⚠️ 状态放在**卡片自己**这儿，不在 MessageItem 那边 ——
+     *     弹窗是卡片的一部分，交给外面管就得把 setter 一路传下来，纯属绕路。 */
+    /** 刚存进去的：**可编辑**的记忆内容（暮色 21:16「要和记忆宫殿一样，能编辑的那种」） */
+    const [vectorized, setVectorized] = useState<string[]>([]);
+    const [draft, setDraft] = useState<string[]>([]);
+    /** 跟 draft 一一对应的记忆节点 id —— 保存时靠它写回原记忆 */
+    const [vecIds, setVecIds] = useState<string[]>([]);
+    const [saving, setSaving] = useState(false);
+    const runVectorize = async (e: React.MouseEvent) => {
+        e.stopPropagation(); e.preventDefault();
+        if (!onVectorize || vectorizing) return;
+        const r = await onVectorize();
+        // ⚠️ 有内容才弹。一条都没存进去（被去重跳掉了）就别弹空窗。
+        if (r && r.contents.length) {
+            setVectorized(r.contents);
+            setDraft(r.contents);
+            setVecIds(r.ids || []);
+        }
+    };
+    const closeVectorModal = () => { setVectorized([]); setDraft([]); setVecIds([]); };
+    /**
+     * 保存。
+     *
+     * ⚠️ **保存完立刻关掉弹窗**（暮色 21:33：「点保存修改弹窗要自动关闭」）。
+     * 留着不开 = 他不知道到底存没存上，会反复点。
+     *
+     * ⚠️ 保存**失败**时**不许关** —— 关了就看不到错在哪，
+     *   而且草稿没了，一改就白改（错误信息在 toast 里，弹窗留着能立刻重试）。
+     */
+    const [saveFailed, setSaveFailed] = useState(false);
+    const saveVectorEdit = async () => {
+        if (!onSaveVectorized || saving) return;
+        setSaving(true);
+        setSaveFailed(false);
+        try {
+            await onSaveVectorized(vecIds, vectorized, draft);
+            setVectorized(draft);
+            closeVectorModal();
+        } catch {
+            setSaveFailed(true);
+        } finally {
+            setSaving(false);
+        }
+    };
     if (!content) return null;
     const timeText = generatedAt ? formatRelativeTime(generatedAt) : '';
     return (
@@ -70,7 +132,7 @@ const StoryTheaterMemoryCard: React.FC<{
             >
                 <FilmReel size={13} weight="fill" style={{ color: '#a78bfa', flexShrink: 0 }} />
                 <span className="text-[11px] font-bold tracking-wider flex-1 text-left" style={{ color: '#8b7aaa' }}>
-                    {theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆'}
+                    {cardTitle || (theaterTitle ? `「${theaterTitle}」的回忆` : '剧场回忆')}
                 </span>
                 {timeText && (
                     <span className="text-[9px]" style={{ color: 'rgba(139,122,170,0.55)' }}>
@@ -102,9 +164,112 @@ const StoryTheaterMemoryCard: React.FC<{
                     {content}
                 </div>
             )}
+            {/* ── 向量化（10-08 19:17 暮色要的，19:58 改位置）──────────────
+             *  「卡片我想在最底下增加一个向量化的按钮。把卡片里的内容发给模型
+             *   总结成向量化记忆。」→ 后来：「**希望放在折叠里**」。
+             *
+             *  ⚠️ 19:17 那一版放在**卡片外面、展开区下面**（折叠着也点得到）。
+             *    19:58 暮色明确要挪进**折叠区里面** —— 就放在正文下面，
+             *    折叠时看不见，展开才看见。这是有意改的，别再挪回去。
+             *
+             *  胶囊、居中、浅紫（跟卡片外框同色系，暮色审美：不要方角、不要纯文字按钮）。
+             */}
+            {expanded && onVectorize && (
+                <div
+                    className="px-3 pb-2.5 pt-2 flex justify-center"
+                    style={{ background: 'rgba(255,255,255,0.2)', borderTop: '1px solid rgba(167,139,250,0.18)' }}
+                >
+                    <button
+                        onClick={runVectorize}
+                        disabled={vectorizing}
+                        className="px-4 py-1.5 rounded-full text-[11px] font-bold active:scale-95 transition-all disabled:opacity-60"
+                        style={{
+                            background: 'rgba(167,139,250,0.14)',
+                            color: '#8b7aaa',
+                        }}
+                    >
+                        {vectorizing ? '正在总结…' : '向量化'}
+                    </button>
+                </div>
+            )}
+            {/* 存了什么内容 —— 弹窗给用户看（暮色 19:58：
+              「向量化的内容要弹窗显示出来，让我能知道存了什么内容」）。
+              没点过就不渲染，所以平时完全不影响聊天页。 */}
+            {vectorized.length > 0 && (
+                <Modal
+                    isOpen
+                    title="存进记忆宫殿的"
+                    onClose={closeVectorModal}
+                    showCloseButton
+                    footer={(
+                        <button
+                            onClick={saveVectorEdit}
+                            disabled={saving}
+                            className="w-full py-3 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-60"
+                            style={{ background: saving ? '#94a3b8' : '#0ea5e9', color: '#fff' }}
+                        >
+                            {saving ? '保存中…' : '保存修改'}
+                        </button>
+                    )}
+                >
+                    {/* ⚠️ 这里是**可编辑**的（暮色 21:16「要和记忆宫殿的一样，能编辑的那种」）。
+                     *  存法照抄 `Chat.tsx` 的 `handleReviewEdit`：改完正文必须**重跑向量**，
+                     *  不然记忆宫殿里那条的向量算的还是旧内容，以后召不回来。 */}
+                    <div className="text-[12px] leading-relaxed" style={{ color: '#6a5a8a' }}>
+                        <p className="mb-3" style={{ color: '#8b7aaa' }}>
+                            一共 {vectorized.length} 条。可以直接改，改完点「保存修改」。
+                        </p>
+                        {vectorized.map((c, i) => (
+                            <div key={i} className="mb-3 last:mb-0">
+                                <div className="text-[10px] font-bold mb-1" style={{ color: '#a78bfa' }}>第 {i + 1} 条</div>
+                                <textarea
+                                    value={draft[i] ?? ''}
+                                    onChange={(e) => {
+                                        const next = draft.slice();
+                                        next[i] = e.target.value;
+                                        setDraft(next);
+                                    }}
+                                    rows={7}
+                                    className="w-full rounded-2xl px-3 py-2 text-[12px] leading-relaxed outline-none resize-y focus:border-sky-300 transition-colors"
+                                    style={{
+                                        background: 'rgba(167,139,250,0.06)',
+                                        border: '1px solid rgba(167,139,250,0.2)',
+                                        color: '#4a3f63',
+                                    }}
+                                />
+                            </div>
+                        ))}
+                        {saveFailed && (
+                            <p className="mt-2 text-[11px] font-bold" style={{ color: '#dc2626' }}>
+                                没存上（看下面的提示）。你改的内容还在，直接再点一次「保存修改」。
+                            </p>
+                        )}
+                        <p className="mt-1 text-[11px]" style={{ color: 'rgba(139,122,170,0.7)' }}>
+                            保存后会重算这条记忆的向量，以后聊到相关的事它才召得回来。
+                        </p>
+                    </div>
+                </Modal>
+            )}
         </div>
     );
 };
+
+/**
+ * 把「一起看剧是什么时候」说清楚（暮色 20:37：「要写什么时间我们一起看了什么」）。
+ *
+ * 光有「刚刚 / 3 小时前」不够 —— 那是个相对量，隔几天再看就不准了，
+ * 而记忆是要长期召回的。给「10 月 8 日晚上 19:40」这种绝对时间。
+ */
+function formatWatchWhen(ts: any): string {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const d = new Date(n);
+    const p = (x: number) => String(x).padStart(2, '0');
+    // 按时段说，比精确到分更像人话
+    const h = d.getHours();
+    const slot = h < 6 ? '凌晨' : h < 11 ? '早上' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜';
+    return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日${slot} ${p(h)}:${p(d.getMinutes())}`;
+}
 
 // 暮色 9-21 第五轮:简单的相对时间格式化(给剧场记忆卡片用)
 function formatRelativeTime(ts: number): string {
@@ -358,7 +523,19 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     // 暮色 2026-07-31：情侣空间邀请卡片"接受/拒绝"按钮调 OSContext 全局方法
     //   之前 window 全局方案在 CoupleSpaceApp 没挂载时失败
-    const { coupleSpaceAccept, coupleSpaceDecline, characters, userProfile } = useOS();
+    /**
+     * `apiConfig` / `memoryPalaceConfig` / `addToast` 是剧场记录卡片底下
+     * 那个「向量化」按钮要用的（10-08 19:17）。
+     *
+     * ⚠️ 解构字段必须**确认真的在 OSContext 里交出来**，漏一个就是
+     *    `undefined` 一路传下去，报错还找不到头（AGENTS.md §4.3 记的三次真机崩）。
+     *    三个都在 context 的导出清单里。
+     */
+    const {
+        coupleSpaceAccept, coupleSpaceDecline,
+        characters, userProfile,
+        apiConfig, memoryPalaceConfig, addToast,
+    } = useOS();
 
     // 防御：上游 sanitizeChatMessages 应已过滤，但渲染时再兜一道。null/缺字段时按 user 兜底，
     // 避免 `m.role === 'user'` 抛 null.role 让整个聊天页白屏。
@@ -370,22 +547,11 @@ const MessageItem = React.memo(({
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isFirstInGroup;
-    // 暮色 2026-08-02 21:48：统一"按轮"画头像逻辑
-    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
-    //   之前 7-23/7-27 主动消息每条都画头像时间戳的"7-23 行为"——暮色不要
-    //
-    //   规则：
-    //   - 主动消息新数据（c613e54 之后）：m.metadata?.proactiveRoundStart === true 才画（轮首唯一）
-    //   - 主动消息老数据（c613e54 之前，没 proactiveRoundStart 标记）：按 isFirstInGroup 画（按 group 算首）
-    //   - 普通消息：按 shouldShowAvatar（every_message || isFirstInGroup）
-    const effectiveShowAvatar = (() => {
-        const meta: any = m.metadata || {};
-        const isProactive = meta.isProactive;
-        if (!isProactive) return shouldShowAvatar;
-        const isNewProactiveFormat = 'proactiveRoundStart' in meta;
-        if (isNewProactiveFormat) return !!meta.proactiveRoundStart;
-        return isFirstInGroup;  // 老数据：按 group 算首（不按 every_message）
-    })();
+    // 暮色 2026-09-29：轮次判定统一收在 Chat.tsx 的 calcBreaks（角色切换 / 戳一戳打断 /
+    //   2.0 推送编号变化），这里不再自己判一次。
+    //   之前 8-02 给主动消息单开了一套（metadata.proactiveRoundStart 轮首标记 + 老数据
+    //   fallback），导致两个变量分叉——外层槽位看 effectiveShowAvatar、内层图片看
+    //   shouldShowAvatar。今天两者重新等价，但留着分叉早晚还会出 bug，所以整个拆掉。
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
@@ -837,15 +1003,12 @@ const MessageItem = React.memo(({
                 )}
 
                 {/* Avatar - Absolute Positioned */}
-                {!isUser && effectiveShowAvatar && (
+                {!isUser && shouldShowAvatar && (
                         <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-start ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
-                        {/*
-                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
-                          - 用户头像下 + AI 头像下 都画
-                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
-                          - 7-23/7-27/6edc7fc (8-2) 几个版本的方向都反了 — 这次按暮色原话实现
-                        */}
+                        {/* 时间戳画在头像正下方（暮色 2026-08-02 定的位置，之前在消息下面），
+                            跟头像绑在同一个槽位里：外层跟着 shouldShowAvatar 走，
+                            轮次由 Chat.tsx 的 calcBreaks 统一算 —— 一轮一个头像 + 一个时间戳。 */}
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (
@@ -877,14 +1040,10 @@ const MessageItem = React.memo(({
                 </div>
 
                                 {/* User Avatar - Absolute Positioned */}
-                {isUser && effectiveShowAvatar && (
+                {isUser && shouldShowAvatar && (
                     <div className={`sully-chat-message-avatar-slot absolute top-0 z-0 flex flex-col items-end ${selectionMode ? 'right-14' : 'right-3'} transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
-                        {/*
-                          暮色 2026-08-06 拍板：每条消息都画时间戳（不分主动/正常，不按轮，不分 group）
-                          - 用户头像下 + AI 头像下 都画
-                          - 灰色（text-slate-600 + bg-slate-100/80），不要紫色
-                        */}
+                        {/* 同 AI 侧：时间戳绑在头像槽位里，跟一轮走 */}
                         {(() => {
                             if (showTimestamp === 'never') return null;
                             return (
@@ -1709,6 +1868,127 @@ const MessageItem = React.memo(({
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
 
+    /**
+     * 剧场记录卡片底下「向量化」按钮的状态和处理（10-08 19:17 暮色要的）。
+     *
+     * ## ⚠️ 为什么必须写在**这里**，不能写在组件顶上
+     *
+     * 它要用 `displayContent`（卡片真正显示的那份正文）。
+     * 而 `displayContent` 在下面才算是 const —— 写在前面就是 TDZ，
+     * 一渲染就 `ReferenceError` 把整个聊天页炸白屏。
+     * 本项目同款事故已经炸过三次（AGENTS.md §4.3）。
+     *
+     * 位置规矩：**在所有提前 return 之前**。下面第 1740 行有个
+     * `if (!displayContent && !hasVoiceContent) return null`，钩子写在它后面
+     * 就会「消息条数一变，钩子数量跟着变」—— React 直接报错。
+     *
+     * ## 用哪套模型
+     *
+     * - **总结**：优先记忆宫殿的副模型（轻量、快、便宜），
+     *   没配就退回主聊天那套 —— 跟 `useTheaterLive.runMemoryPost` 一个口径。
+     * - **算向量**：只能用记忆宫殿的向量配置，没有第二个选择。
+     *
+     * 这个组件是 `React.memo` 包着的，所以 handler 用 `useCallback` 固定住，
+     * 别在渲染里顺手 new 一个（每次 render 新函数 → 卡片整棵重渲染）。
+     */
+    const [vectorizing, setVectorizing] = useState(false);
+    /**
+     * 干活 + 弹提示，**弹窗由卡片自己管**（状态在卡片那边，不往这儿传）。
+     * 返回存进去的正文数组给卡片拿去弹窗显示。
+     */
+    const handleVectorize = useCallback(async (): Promise<{ contents: string[]; ids: string[] } | null> => {
+        if (vectorizing) return null;
+        const meta = (m as any)?.metadata || {};
+        const charId = (m as any)?.charId;
+        if (!charId) { addToast?.('这条记录找不到角色', 'error'); return null; }
+        const c = (characters || []).find((x: any) => x.id === charId);
+        const light = memoryPalaceConfig?.lightLLM;
+        const llm = (light?.baseUrl && light?.apiKey && light?.model)
+            ? light
+            : { baseUrl: apiConfig?.baseUrl, apiKey: apiConfig?.apiKey, model: apiConfig?.model };
+        setVectorizing(true);
+        try {
+            const r = await vectorizeTheaterRecord({
+                charId,
+                charName: c?.name || 'TA',
+                userName: userProfile?.name || '暮色',
+                theaterTitle: meta.theaterTitle || '剧场',
+                episode: Number(meta.theaterEpisode) || 0,
+                // ⚠️ 这一轮实际看的集号（暮色 21:16）。少了它，模型会把
+                //   「看到第 23 集」脑补成「看完了最后几集」—— 666 集的剧。
+                episodes: Array.isArray(meta.theaterEpisodes) ? meta.theaterEpisodes.map(Number) : [],
+                // ⚠️ 记忆里必须写清楚「什么时候」。提示词里那条例句直接引用了它，
+                //   空着的话那句就变成「我跟X一起看《…》，……」——缺个时间点。
+                when: formatWatchWhen(meta.generatedAt),
+                content: displayContent,
+                llm: llm as any,
+                embedding: memoryPalaceConfig?.embedding as any,
+            });
+            if (r.ok) {
+                // 存 0 条 + 跳过 N 条 = 「跟已有的太像」——这是正常结果，
+                // 说成成功比说成失败好，否则暮色会以为点了没用。
+                addToast?.(
+                    r.stored > 0 ? `已记进记忆宫殿（${r.stored} 条）` : '跟已有的记忆太像，没有新增',
+                    r.stored > 0 ? 'success' : 'info',
+                );
+                // ⚠️ 有内容才让卡片弹窗 —— 「让我能知道存了什么内容」（19:58）。
+                //   一条都没存进去就别弹（弹个空窗更让人困惑）。
+                return { contents: r.contents, ids: r.ids || [] };
+            }
+            addToast?.(r.error || '向量化失败', 'error');
+            return null;
+        } catch (e: any) {
+            addToast?.(`向量化失败：${e?.message || e}`, 'error');
+            return null;
+        } finally {
+            setVectorizing(false);
+        }
+    }, [vectorizing, m, characters, userProfile?.name, memoryPalaceConfig, apiConfig, addToast, displayContent]);
+
+    /**
+     * 弹窗里改完保存 —— **照抄 `Chat.tsx` 的 `handleReviewEdit` 那一套**
+     * （暮色 21:16：「向量化这弹窗要和记忆宫殿的一样，能编辑的那种」）。
+     *
+     * ## ⚠️ 改了正文**必须重跑向量**
+     *
+     * 向量是拿**正文**算的。改了字不重算，记忆宫殿里存的就是
+     * 「新文字 + 旧向量」—— 以后聊天问起相关的事，相似度对不上，**召不回来**。
+     * 界面看着改了，其实等于没改。
+     *
+     * `skipDedup: true`：它跟自己比相似度当然 100%，会被当重复跳过。
+     */
+    const handleSaveVectorized = useCallback(async (
+        ids: string[], before: string[], after: string[],
+    ) => {
+        if (!ids?.length) { addToast?.('没有可保存的内容', 'info'); return; }
+        const { MemoryNodeDB, vectorizeAndStore } = await import('../../utils/memoryPalace');
+        const mpEmb = memoryPalaceConfig?.embedding;
+        let changed = 0;
+        try {
+            for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                const txt = (after[i] || '').trim();
+                if (!id || !txt || txt === (before[i] || '').trim()) continue;
+                const node = await MemoryNodeDB.getById(id);
+                if (!node) continue;
+                node.content = txt;
+                node.lastAccessedAt = Date.now();
+                node.embedded = false;
+                await MemoryNodeDB.save(node);
+                if (mpEmb?.baseUrl && mpEmb?.apiKey) {
+                    const r = await vectorizeAndStore([node], mpEmb, undefined, { skipDedup: true });
+                    if (r.stored > 0) { node.embedded = true; await MemoryNodeDB.save(node); }
+                }
+                changed++;
+            }
+        } catch (e: any) {
+            // ⚠️ 这里**要往外抛**：弹窗靠它判断「没存上」，存不上就不关（草稿还在）
+            addToast?.(`保存出错：${e?.message || e}`, 'error');
+            throw e;
+        }
+        addToast?.(changed > 0 ? `已保存 ${changed} 条，记忆宫殿里也更新了` : '没有改动', changed > 0 ? 'success' : 'info');
+    }, [memoryPalaceConfig, addToast]);
+
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
     const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
@@ -1730,6 +2010,57 @@ const MessageItem = React.memo(({
                 theaterTitle={memoryMeta.theaterTitle || ''}
                 content={displayContent}
                 generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+            />
+        );
+    }
+
+    /**
+     * 剧场「一起看完了」卡片（10-07 23:10 暮色让照抄见面的剧情剧院）。
+     *
+     * 跟上面那张唯一的区别就是标题文案 —— 结构、外框、折叠全部复用，
+     * 因为它们本来就是同一件事：剧场结束后把这一场写进主聊天的一张回忆卡。
+     *
+     * ⚠️ 这条消息**不能带 `source: 'theater'`**：主聊天
+     * `.filter(m => m.metadata?.source !== 'theater')` 会把它挡掉，
+     * 写了就等于没写（10-07 晚上绕了两轮才明白，见 apps/TheaterApp.tsx finishTheaterSession）。
+     */
+    const isTheaterMemory = !isUser && (m as any).metadata?.isTheaterMemory === true;
+    if (isTheaterMemory && displayContent) {
+        const memoryMeta = (m as any).metadata || {};
+        const ep = Number(memoryMeta.theaterEpisode);
+        /**
+         * **每集剧情摘要卡**（暮色 10-09 22:15 加）—— `kind === 'plot-summary'` 走
+         * 「📖 第 N 集剧情摘要」标题分支，跟「一起看完了」那张对话卡**共用同一个
+         * StoryTheaterMemoryCard 组件**，所以可以继承现有向量化流程、折叠卡片、
+         * 视觉样式 —— 唯一的区别是 cardTitle 字段。
+         *
+         * ⚠️ **摘要回复不在聊天文本框里**（暮色 10-09 21:40 #1）：
+         *   - 它走的是 `metadata.isTheaterMemory` 这条 special 渲染分支
+         *   - 不会被当作普通气泡塞进 `live.msgs`（那个由 `onText` / `onTurnComplete` 管）
+         *   - 显示位置 = 主聊天剧场记录折叠块
+         */
+        if (memoryMeta.kind === 'plot-summary') {
+            return commonLayout(
+                <StoryTheaterMemoryCard
+                    theaterTitle={memoryMeta.theaterTitle || '剧场'}
+                    cardTitle={ep > 0 ? `📖 第${ep}集剧情摘要` : '📖 剧情摘要'}
+                    content={displayContent}
+                    generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+                    vectorizing={vectorizing}
+                    onVectorize={handleVectorize}
+                    onSaveVectorized={handleSaveVectorized}
+                />
+            );
+        }
+        return commonLayout(
+            <StoryTheaterMemoryCard
+                theaterTitle={memoryMeta.theaterTitle || '剧场'}
+                cardTitle={`《${memoryMeta.theaterTitle || '剧场'}》${ep > 0 ? `第${ep}集` : ''} 一起看完了`}
+                content={displayContent}
+                generatedAt={typeof memoryMeta.generatedAt === 'number' ? memoryMeta.generatedAt : undefined}
+                vectorizing={vectorizing}
+                onVectorize={handleVectorize}
+                onSaveVectorized={handleSaveVectorized}
             />
         );
     }
@@ -1771,6 +2102,24 @@ const MessageItem = React.memo(({
                 <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
                     <span className="font-bold opacity-90 truncate">{m.replyTo.name}</span>
                     <span className="truncate italic">"{m.replyTo.content.length > 10 ? m.replyTo.content.slice(0, 10) + '...' : m.replyTo.content}"</span>
+                </div>
+            )}
+
+            {/**
+             * 剧场来源标记（10-06 第 2 步）。
+             *
+             * 剧场的话跟主聊天存在**同一张表**（暮色 21:12 定的：打标记就天然接上，
+             * 不做「同步」这个动作）。好处是切过去就能看到，代价是**分不出哪句来自剧里**。
+             *
+             * 主聊天里没有这个标记的话，剧里那句「他刚转身走掉」会跟真人说的话混在一起，
+             * 你自己都认不出来是哪段戏里聊的。user 那边也标 —— 不然连「哪句是我在剧里
+             * 按的」都看不出来。
+             *
+             * 只在 theaterTag 存在时渲染，普通消息一点痕迹都不留。
+             */}
+            {(m.metadata as any)?.theaterTag && (
+                <div className="relative z-10 text-[9px] mb-1 opacity-45 select-none" style={{ color: styleConfig.textColor }}>
+                    剧场 {(m.metadata as any).theaterTag}
                 </div>
             )}
 

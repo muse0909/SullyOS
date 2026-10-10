@@ -21,9 +21,11 @@ import { amsgDiag } from './amsgDiag';
 import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
-  getPendingTasks, isAmsg2EnabledForChar, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
+  AMSG_FALLBACK_DELAY_MS,
+  buildFallbackText,
+  getPendingTasks, isAmsg2EnabledForChar, isDeferToNextTurn, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
-  resolveExpirePolicy, toDatetimeLocalValue,
+  resolveCloudExpirePolicy, resolveExpirePolicy, toDatetimeLocalValue, visibleTasks,
 } from './amsg2Tasks';
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
 import {
@@ -666,6 +668,61 @@ const readEmojiLibrary = async (): Promise<EmojiLibrary> => {
 };
 
 // export 只为单测（activeMsgClient.test.ts 钉 tzId 取值与模板不烤时间）。
+/**
+ * 麦麦 2026-09-30：取这个角色**未消费**的回执，渲成给到点生成看的那段文字。
+ *
+ * 返回 `[文字, 本次带了哪几条回执的 id]`。第二个值是方向二要用的：到点那条主动
+ * 消息真的上屏之后，靠它把台账销掉——不销的话下一轮普通聊天会拿同一条再说一遍。
+ *
+ * 动态 import 而非静态：amsg2TaskContext 那边会用到本文件导出的东西（兜底配对那条
+ * 路经由 activeMsgRuntime 间接引），静态引容易成环。函数体内引，模块求值期互不触碰。
+ *
+ * 失败返回 `['', []]`：回执晚一轮上云，最坏是这次到点看不到、下轮补上。同步本身
+ * 不能因为一段提示词拼不出来就失败——那会让这个角色连排程清单都上不了云。
+ */
+async function buildPendingNoticesBlock(char: CharacterProfile): Promise<[string, string[]]> {
+  try {
+    const {
+      buildAmsg2NoticesText, collectAmsg2TaskContext, noticesRenderedForRole,
+    } = await import('./amsg2TaskContext');
+    const result = await collectAmsg2TaskContext(char);
+    // collectAmsg2TaskContext 出来的 text 含「排程现状块 + 回执块」两半。到点这边
+    // 已经有 AMSG_SLOT_TASK_LIST 专门渲染排程清单（worker 现场按 pendingTasks 生成，
+    // 比这里的快照准），所以只取回执那半 —— 不然同一份清单在 prompt 里会出现两次，
+    // 且两份可能不一致（快照 vs 现场）。产不出段时它是 null，一律当空串。
+    const text = buildAmsg2NoticesText(result.notices, undefined) ?? '';
+    if (!text) return ['', []];
+    // 上云前的自检（麦麦 2026-09-30）：worker 那边填槽就一句
+    // `fillSlot = (text, slot, value) => text.split(slot).join(value)`，**只认 9 个
+    // 写死的槽位字面量**、而且是单趟替换（填进去的值不会被再展开）。所以这一段里
+    // 只要带 `{{`：
+    //   - 带的正好是那 9 个之一 → 到点会被**替换**成时间 / 场景 / 任务说明那一坨，
+    //     角色读到一句莫名其妙的话；
+    //   - 带的是别的 `{{ }}` → 没人填，原样当字面量发给模型，它可能照着念出来。
+    // 两种都不会崩，但都是把内部记号漏给模型看。今天这段文字全是固定文案拼的
+    // （用户写的提示词不进回执行，只有任务号和时间），碰不到 `{{`——所以这是保险：
+    // 真撞上了宁可这轮不带（下一轮普通聊天照样会带、照样会销账），也不把带字面量的
+    // 包传上去。
+    if (/\{\{|\}\}/.test(text)) {
+      console.warn(
+        '[ActiveMsg2] 回执块里带 {{ }} 字面量，这轮不带（到点会照填或原样漏给模型），下轮补上',
+        char.id,
+      );
+      return ['', []];
+    }
+    // 这里**不**记 shipped：销账机会要等调用方那边 putClientState 真成功才落
+    // （见 syncCharFirePacks）。建包这一步就记的话，包还没上云、到点时云端读的还是旧包，
+    // 这次回执压根没机会生成，销账机会却已经白用掉了。
+    // 返回的 id 只取**真进了这段文字**的那些：遇忙作废压根不产段（按新规则不告诉角色），
+    // 把它算成"包里带过"的话，到点销账会把一条从没给角色看过的回执也销掉。
+    const shipped = noticesRenderedForRole(result.notices).map((r) => r.id);
+    return [text, shipped];
+  } catch (e) {
+    console.warn('[ActiveMsg2] 取未消费回执失败（这次到点不带，下轮补上）', char.id, e);
+    return ['', []];
+  }
+}
+
 export const buildFirePack = async (
   char: CharacterProfile,
   userProfile: UserProfile,
@@ -681,6 +738,20 @@ export const buildFirePack = async (
      * 即时 fire 自己要读它们（sceneSong、锚点、任务清单块）。
      */
     templateStub?: boolean;
+    /**
+     * 麦麦 2026-09-30：未消费的回执块（到点推迟那种），直接拼在**钢印前面**。
+     *
+     * 为什么是拼进模板正文而不是新加一个 AMSG_SLOT_* 槽位：worker 那边的槽位是**硬编码**
+     * 的（线上 bundle 那一串 fillSlot），客户端加一个槽位它不会填，回执就原样留在 prompt
+     * 里带着 `{{AMSG_XXX}}` 字面量发给模型。线上代码每天自更新、改不住（麦麦 2026-09-30
+     * 记录），所以一切绕开方案都必须在客户端做。
+     *
+     * 位置：**钢印必须是最后一句**，回执排在它前面（暮色 2026-10-02 定）。
+     * 早先这里是反的（回执挂钢印后面），那样钢印就抢不到"开口前最后一眼"，主动消息
+     * 容易滑回均值腔。跟普通聊天那条路（insertAmsg2TaskContextBlock 把块插在
+     * volatileTail 之前，钢印焊在 volatileTail 末尾）现在形状一致了：[任务 + 回执] → [钢印]。
+     */
+    pendingNoticesBlock?: string;
   },
 ): Promise<AmsgFirePack> => {
   const templateStub = opts?.templateStub === true;
@@ -769,6 +840,11 @@ export const buildFirePack = async (
         undefined,
         undefined,
         undefined,
+        // 麦麦 2026-10-04：显式传 chatMode='full'。
+        //   原来这里直接跳过，options 落在 chatMode 那个位置上——`{forFirePack:true} === 'pure'`
+        //   判不等，所以碰巧一直走的是完整模式。碰巧不能当保证：谁在 options 里多写个字段
+        //   就可能翻面。fire_pack 是主动消息到点用的模板，要的正是完整上下文。
+        /* chatMode */ 'full',
         // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
         // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
         { forFirePack: true },
@@ -851,11 +927,25 @@ export const buildFirePack = async (
     '已经发生过 → 什么都不要输出。一个字都不要写，也不要解释自己为什么不说。这次就当没有这条任务。',
     '还没发生 → 照常说你要说的话。',
     '判据只有「这件事发生过没有」这一条。不要因为「怕打扰」「时机好像不太对」而沉默，那些不归你判。',
-    '',
+  ].concat(
+    // 未消费的回执（到点推迟那种）拼在**钢印前面**，钢印必须是最后一句。
+    //
+    // 为什么不新加一个 AMSG_SLOT_* 槽位：worker 那边的槽位是**硬编码**的（线上 bundle
+    // 那一串 fillSlot），客户端加一个它不会填，回执就原样带着 `{{AMSG_XXX}}` 字面量
+    // 发给模型。线上代码每天自更新、改不住，所以一切绕开方案都必须在客户端做。
+    //
+    // 为什么非得是钢印最后：那段靠 recency 抢模型开口前的最后一眼，一旦被压到下面，
+    // 它就抢不到了（见 insertAmsg2TaskContextBlock 的注释——普通聊天那条路当初就是
+    // 因为贴尾导致「说了今天要看书，之后每轮结尾都问看到哪了」）。两条路现在形状一致：
+    // [任务说明 + 回执] → [钢印]。
+    // 回执紧挨着排程那一段的"别在这条消息里把同一件事再排一遍"，两段连读才是一件
+    // 完整的事：刚才哪条没插上嘴，这轮可以顺口补。
+    opts?.pendingNoticesBlock?.trim() ? ['', opts.pendingNoticesBlock.trim(), ''] : [],
     // recency 末位人声锚：上面【角色系统设定】里已带「回到你自己」钢印，但被任务说明压在后面、
     // 失了 recency。这里在最后一句把它拎回来，让主动消息也从「你这个人」长出来，而不是滑回均值腔。
+    // ⚠ 它必须是整个模板的最后一行：任何东西拼在它后面都会跟它抢那一眼（暮色 2026-10-02 定）。
     `（开口前回到你自己：这条得是 ${char.name} 会发的那一条——语气、用词、节奏都只属于你。哪怕只是随口一句，也要是你。）`,
-  ].join('\n');
+  ).join('\n');
 
   return {
     // 版本号只有 amsgFirePack 那一份说了算：写死数字的话，升版时 worker 侧的 parseFirePack
@@ -1694,6 +1784,20 @@ const OUTBOX_MAX_PAGES = 20;
 /** 单次 ack 的条数上限（服务端 200，超了自己分批）。 */
 const OUTBOX_ACK_BATCH_SIZE = 200;
 
+/**
+ * 麦麦 2026-09-30：「强制发送」任务 30 分钟后那条兜底的建好结果。
+ *
+ * record 直接给调用方落账用——三个建任务入口（面板 / 角色工具 / schedule_next_wakeup）
+ * 各有各的落账写法，让它们复用这一份拼好的记录，别各拼一次。
+ */
+export interface Amsg2FallbackResult {
+  taskUuid: string;
+  clientTaskId: string;
+  /** 兜底的绝对触发时刻（UTC ISO），主任务 + 30 分钟。 */
+  firstSendAt: string;
+  record: ActiveMsg2TaskRecord;
+}
+
 export const ActiveMsgClient = {
   async registerNativePushToken(token: string): Promise<void> {
     if (!nativePushBuildEnabled()) throw new Error('当前构建未开启 Capacitor 原生推送');
@@ -2170,6 +2274,70 @@ export const ActiveMsgClient = {
   },
 
   /**
+   * 麦麦 2026-09-30：改一条兜底任务的内容。
+   *
+   * 为什么是「取消 + 重建」而不是改字段：固定模式那句 `userMessage` 是**建任务时**
+   * 就冻进加密 payload 的，云端那条路由没有改内容的接口（我查过 bundle，只有
+   * schedule / cancel / list）。所以改内容 = 取消旧的那条 + 按同样的时刻、循环、
+   * 归属重建一条新的。
+   *
+   * 时刻和循环必须原样带走：兜底的意义是"主任务 + 30 分钟那一刻补上"，
+   * 改个文案把它挪到别的时间，改的就不是这件事了。
+   *
+   * 返回新记录（旧 uuid 换新的，面板要拿它替换本地那条）。
+   * 取消失败时**不重建**：远端新旧并存会让同一个提醒在两个时刻各来一次。
+   */
+  async updateFallbackTaskText(params: {
+    char: CharacterProfile;
+    config: ActiveMsg2CharacterConfig;
+    fallback: ActiveMsg2TaskRecord;
+    newText: string;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    apiConfig: APIConfig;
+    enabledOverride?: boolean;
+  }): Promise<{ record: ActiveMsg2TaskRecord; firstSendAt: string }> {
+    const text = params.newText.trim();
+    if (!text) throw new Error('兜底内容不能为空。');
+
+    await this.cancelTask(params.fallback.taskUuid);
+
+    const created = await this.scheduleCharacterTask({
+      char: params.char,
+      config: params.config,
+      task: {
+        mode: 'fixed',
+        userMessage: text,
+        firstSendTime: params.fallback.firstSendTime,
+        recurrenceType: params.fallback.recurrenceType,
+        // 记录里的 source 是 user/character，云端 metadata 要的是 manual/character。
+        source: params.fallback.source === 'character' ? 'character' : 'manual',
+        // 归属和跳名额一起带走：新那条还是这条主任务的兜底，还是不吃名额。
+        fallbackFor: params.fallback.fallbackFor,
+        skipTaskQuota: true,
+      },
+      userProfile: params.userProfile,
+      groups: params.groups,
+      realtimeConfig: params.realtimeConfig,
+      apiConfig: params.apiConfig,
+      enabledOverride: params.enabledOverride,
+    });
+
+    return {
+      record: {
+        ...params.fallback,
+        taskUuid: created.uuid,
+        clientTaskId: created.clientTaskId,
+        firstSendTime: created.firstSendAt,
+        userMessage: text,
+        createdAt: Date.now(),
+      },
+      firstSendAt: created.firstSendAt,
+    };
+  },
+
+  /**
    * 查一条任务此刻的状态（即时对话「一直等」的判定器）。
    * 比 listAllTasks（全表分页 + 逐行解密）便宜得多，适合回前台时点名查一条。
    *
@@ -2374,6 +2542,22 @@ export const ActiveMsgClient = {
        * "你之前安排的理由是：[reason]" 那段提示词里。省略时自动从 promptHint 兜底。
        */
       reason?: string;
+      /**
+       * 麦麦 2026-09-30：这是「强制发送」任务 30 分钟后的**兜底**任务，值是主任务的
+       * clientTaskId。写进 metadata 后：
+       *   - 送达侧认得它 → 到点无条件推，不受「到点前 10 分钟有消息就顺口带出」那套影响
+       *     （兜底自己的职责就是补那条被让开的消息，再被让开就自相矛盾了）；
+       *   - 核对脚本按 amsgFallbackFor 打出归属关系。
+       */
+      fallbackFor?: string;
+      /**
+       * 兜底任务不占「同时最多 5 个」的名额（麦麦 2026-09-30 暮色拍板）。
+       *
+       * 名额是用户手排任务的预算，兜底是系统替强制发送补后路的；一个每天早安会让
+       * 用户的可用名额从 5 变 4，这笔账不该用户承担。也**不**写进 fire_pack 的
+       * 待触发清单——云端 fire 时那道「还能排几条」的闸读的就是那份清单。
+       */
+      skipTaskQuota?: boolean;
     };
     /** 编辑/续期时传旧任务 uuid：先取消它再新建（不传 = 纯新建）。 */
     replaceTaskUuid?: string;
@@ -2405,10 +2589,16 @@ export const ActiveMsgClient = {
     else await this.registerPushSubscription();
 
     // 数量封顶：待触发任务（不含被替换的那个）满 5 个就拒绝，让角色/用户先清。
-    const pendingOthers = getPendingTasks(config, Date.now())
-      .filter((t) => t.taskUuid !== replaceTaskUuid);
-    if (pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
-      throw new Error(`该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`);
+    // 兜底任务跳过这道（见 task.skipTaskQuota）——它是系统替强制发送补的后路，
+    // 不该吃掉用户手排任务的名额。
+    // 计数时也要把**别的**兜底排除：用户手排到第 5 条时，他自己那条的兜底还挂着，
+    // 算进去就变成"其实你只能排 4 条"——名额是用户手排任务的预算，兜底不参与。
+    if (!task.skipTaskQuota) {
+      const pendingOthers = visibleTasks(getPendingTasks(config, Date.now()))
+        .filter((t) => t.taskUuid !== replaceTaskUuid);
+      if (pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
+        throw new Error(`该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`);
+      }
     }
 
     // 角色的时间参照系：任务行、fire_pack、worker 渲染全用这一个，解析 send_at 也一样。
@@ -2458,6 +2648,9 @@ export const ActiveMsgClient = {
             clientTaskId: matched.clientTaskId ?? '',
             replacedCancelFailed: false,
             firstSendAt: firstSendTime,
+            // 复用命中意味着这条任务早就在云端躺着了，它的兜底（若有）当初也建好了。
+            // 这里不重复配一条，否则同一件提醒会有两个 30 分钟后的后路。
+            fallback: null,
           };
         }
       } catch (error) {
@@ -2465,12 +2658,48 @@ export const ActiveMsgClient = {
         console.warn('[ActiveMsg2] 任务级去重的远端查失败，按新建处理', error);
       }
     }
+    // 麦麦 2026-09-30：「强制发送」在**云端那侧**翻译成「遇忙作废」跑，
+    // 让云端那道的 10 分钟窗真正生效（它对 force 本来一次都不判）。规则与全部代价见
+    // amsg2Tasks.resolveCloudExpirePolicy 的注释。
+    //
+    // fixed 连策略一起翻成 prompted 模式——光翻策略没用，它压根不进 onBeforeFire。
+    // 翻译出来的提示词要把原文带上，否则模型无从知道要发什么。
+    const {
+      cloudPolicy: cloudExpirePolicy,
+      forceAsExpire: isForceAsExpire,
+      fixedAsPrompted: isFixedAsPrompted,
+      cloudHint: fixedAsPromptedPrefix,
+    } = resolveCloudExpirePolicy(task.mode, task.expirePolicy);
+    //
+    // 兜底任务（真 fixed、无条件推）**不翻**：它的职责就是"这次不许再让一次"，
+    // 翻它等于让后路也让路，那条提醒就此彻底没了。这一条同时把"翻译过的任务"
+    // 和"兜底"天然分开了：一个是 prompted+expire（会进 10 分钟窗），一个是 fixed。
+    const isFixedTranslated = isForceAsExpire && isFixedAsPrompted && !task.fallbackFor;
+    const cloudMode: ActiveMsg2Mode = isFixedTranslated ? 'prompted' : task.mode;
+    const cloudPromptHint = isFixedTranslated
+      ? `${fixedAsPromptedPrefix}${task.userMessage?.trim() || ''}`
+      : task.promptHint;
+    // 翻译成 prompted 的任务要调模型、要凭据、也要 fire_pack 到点现场填槽。
+    // 判据统一走云端真跑的那个模式，别再各处拿 task.mode 各判一遍——
+    // 上一版就是这里漏了，导致 fixed 翻译过去没传包，到点硬失败。
+    const needsFirePack = cloudMode !== 'fixed';
+
     // AI 模式的 prompt 只有一条来源：firePack 上传 client_state，worker 到点现场填槽。
     // 任务体里不再冻结一份渲染好的 prompt——读不到 fire_pack 就直接报错，没有第二条路，
     // 留着那份快照只是白占请求体（完整角色卡 + 世界书）。
-    const firePack = task.mode === 'fixed'
-      ? null
-      : await buildFirePack(char, userProfile, groups, realtimeConfig);
+    //
+    // 麦麦 2026-09-30：排程这条路**也会重写**云端那份包，所以它同样得带未消费的回执。
+    // 之前只让批量同步带，出现过一次「面板里排个任务，云端那份包里的回执就被抹掉了」——
+    // 包里没有、台账却说带过（到点销了个空），或者反过来台账空着（下一轮普通聊天把同一件
+    // 事再说一遍）。凡写 fire_pack 的路都得带，记账（方向二）也跟着一份。
+    // 只在真要传包时才去取：collectAmsg2TaskContext 带副作用（会扫一遍「到点推迟」并落
+    // 台账），fixed 任务压根不传包，不该为它触发一次扫描。
+    const [pendingNoticesBlock, shippedNoticeIds] = needsFirePack
+      ? await buildPendingNoticesBlock(char)
+      : ['', [] as string[]];
+    const firePack = needsFirePack
+      ? await buildFirePack(char, userProfile, groups, realtimeConfig, undefined, { pendingNoticesBlock })
+      : null;
     // 任务身份：客户端自造 clientTaskId——远端 uuid 要创建成功后才有，而 metadata
     // 必须在创建时就带上归属键；push 原样透传，送达归属全靠它。
     const clientTaskId = crypto.randomUUID();
@@ -2480,7 +2709,7 @@ export const ActiveMsgClient = {
       contactName: char.name,
       // 本地 base64 头像过不了 worker 的校验，不合格干脆不带这个字段（见 toRemoteAvatarUrl）。
       ...(remoteAvatarUrl ? { avatarUrl: remoteAvatarUrl } : {}),
-      messageType: task.mode,
+      messageType: cloudMode,
       messageSubtype: 'chat',
       firstSendTime,
       recurrenceType: task.recurrenceType,
@@ -2493,13 +2722,30 @@ export const ActiveMsgClient = {
         source: 'active_msg_2',
         // worker 满血链路的 onLLMOutput 拿不到任务顶层的 messageType，靠 metadata 透传
         // 还原 push.messageType（老任务没这字段时 worker 回退 'auto'，收侧只展示不路由）。
-        amsgMode: task.mode,
-        // 防穿帮闸字段：worker onBeforeFire 与客户端送达兜底都从这里读。
-        // fixed 恒为 force——它走不了 worker 闸（taskNeedsLlm=false），语义统一钉死。
+        // 这里报的是**云端真跑的那个**模式：fixed 被翻成 prompted 时就是 prompted，
+        // 报 fixed 会让送达侧按"纯投递"处理，而它实际是模型生成出来的。
+        amsgMode: cloudMode,
+        // 防穿帮闸字段：worker onBeforeFire 从这里读。
         // recurrenceType / occurrenceMs 不往这儿抄：库会把它们盖在每条 push 顶层，
         // 角色在 fire 里自排的任务也一样有，抄一份反而多一处会漏写的地方。
         amsgClientTaskId: clientTaskId,
-        amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
+        amsgExpirePolicy: cloudExpirePolicy,
+        // 麦麦 2026-09-30：「强制发送」翻译成「遇忙作废」发给云端 + 打这条标记。
+        //
+        // 背景：云端 shouldExpireFire 第一行就是 policy !== 'expire' → return false，
+        // 也就是说**云端对 force 一次窗都不判**，到点必推。我们要的新规则是
+        // 「force + 到点前 10 分钟用户说过话 → 不推送，改到角色下一轮上下文带出」，
+        // 那个判断云端做不了，只能由客户端把策略翻译成 expire 让它去跳。
+        //
+        // 翻译后云端照旧只留一条 last_skip（会被后写的覆盖），所以「被跳了要转回执」
+        // 这件事不能靠读它——靠本地任务记录里的真实策略 + 本地聊天记录自己判。
+        // 这条标记的作用只有一个：面板上把策略还原显示成「强制发送」，别让用户
+        // 看到自己选的「强制发送」在云端变成了「遇忙作废」。
+        ...(isForceAsExpire ? { amsgForceDeferred: true } : {}),
+        // 麦麦 2026-09-30：fixed 被翻成 prompted 模式那条独有。云端 messageType 跟
+        // 本地 mode 不一致的唯一情形，面板 / 核对脚本据此还原显示成「固定」。
+        // 兜底任务不打这条——它是真的 fixed，云端 messageType 就是 fixed。
+        ...(isFixedTranslated ? { amsgFixedAsPrompted: true } : {}),
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不带、不受连发上限管）。
         ...(task.selfScheduled ? { amsgSelfScheduled: true } : {}),
         // 麦麦 2026-09-16 plan step B：任务来源字段，worker 据此切 system hint。
@@ -2511,22 +2757,25 @@ export const ActiveMsgClient = {
         // 仅 source='character' 时有意义：worker 把这段拼进"你当时安排的理由是 [reason]"。
         // 留空时 from promptHint 兜底，再空就用任务 ID 占位。
         ...(task.reason ? { amsgReason: task.reason } : {}),
+        // 兜底归属（麦麦 2026-09-30）：送达侧凭它认「这条是后路、到点无条件推」。
+        ...(task.fallbackFor ? { amsgFallbackFor: task.fallbackFor } : {}),
       },
     };
 
     // 凭据这一轮走哪条路：能存表就只带引用，老 worker 照旧内联三件套。
     // 引用那条路要先把行传上去（下面的 credRow），传成功才建任务。
-    const useCredRefs = task.mode !== 'fixed' && await isLlmCredentialsReady();
+    // 按**云端真跑的模式**判，不是按本地 mode：fixed 翻成 prompted 后要调模型、要凭据。
+    const useCredRefs = cloudMode !== 'fixed' && await isLlmCredentialsReady();
     let credRow: LlmCredentialRow | null = null;
 
-    if (task.mode === 'fixed') {
+    if (cloudMode === 'fixed') {
       const userMessage = task.userMessage?.trim();
       if (!userMessage) throw new Error('固定消息模式需要填写消息内容。');
       payload.userMessage = userMessage;
     } else {
       const activeApi = resolveApiConfig(char, config, apiConfig);
       // 「本次任务」指令随任务 metadata 走，worker 到点拿它填 fire_pack 的指令槽。
-      payload.metadata.amsgTaskInstruction = buildTaskInstruction(task.mode, task.promptHint);
+      payload.metadata.amsgTaskInstruction = buildTaskInstruction(cloudMode, cloudPromptHint);
       // 服务端要求「completePrompt 或 messages」二选一，且 messages 必须非空、
       // content 必须非空字符串，所以这里给一条占位。到点真正发给 LLM 的 messages 由
       // worker 的 onBeforeFire 返回值覆盖（库用 { ...payload, messages } 调 LLM），
@@ -2575,6 +2824,19 @@ export const ActiveMsgClient = {
         ...(owesChat ? charEntries.filter((entry) => entry.key !== AMSG_FIRE_PACK_KEY) : charEntries),
         buildToolConfigEntry(realtimeConfig, now),
       ], '上传云端状态');
+      // 方向二：这份包真的上去了，才把「带过哪几条」记进待销账台账（到点上屏后才销）。
+      // owesChat 那一支把 fire_pack 整条抽掉了，包压根没上去，不能记。
+      if (shippedNoticeIds.length && !owesChat) {
+        try {
+          const { recordNoticesShippedInPack } = await import('./amsg2TaskContext');
+          recordNoticesShippedInPack(char.id, shippedNoticeIds);
+        } catch (e) {
+          console.warn(
+            `${ACTIVE_MSG_RUNTIME_HEADER} 回执销账台账记不上（这一批到点后不会销，下轮可能多说一遍）`,
+            e,
+          );
+        }
+      }
     }
 
     // 凭据行要先在云端存在：上游建任务前会挨个查引用，缺一个就 409 CREDENTIAL_NOT_FOUND。
@@ -2622,79 +2884,156 @@ export const ActiveMsgClient = {
       }
     }
 
+    // 麦麦 2026-09-30：主任务是「强制发送」→ 顺手配一条 30 分钟后的兜底。
+    //
+    // 递归防护：兜底自己是 fixed（恒 force），不拿 fallbackFor 挡住的话会无限自我复制。
+    // 顺带把 fixed 主任务也纳入（钙片这类提醒本来就该有兜底）。
+    //
+    // **await 而不是 fire-and-forget**：兜底是「系统替这条任务补的后路」，不是可有可无的
+    // 装饰。挂成后台 Promise 再靠调用方读字段，调用方在同一 tick 里读到的必然是 null，
+    // 本地账本就会漏记这条兜底 —— 而漏记的代价是第 5 步取消不掉它：主任务推送了、
+    // 兜底照样在 30 分钟后补一条，角色一句话说两遍。
+    // 兜底建失败由 scheduleFallbackTask 自己吞掉（只记诊断），所以 await 不会连累主任务。
+    const fallback = (isDeferToNextTurn(task.mode, task.expirePolicy) && !task.fallbackFor)
+      ? await this.scheduleFallbackTask({
+        char, config,
+        forClientTaskId: clientTaskId,
+        forSource: task.source === 'character' ? 'character' : 'user',
+        mainOccurrenceMs: Date.parse(firstSendTime),
+        mainMode: task.mode,
+        mainHintOrReason: task.reason || task.promptHint,
+        mainUserMessage: task.userMessage,
+        mainRecurrence: task.recurrenceType,
+        enabledOverride: charEnabled,
+        userProfile, groups, realtimeConfig, apiConfig,
+      })
+      : null;
+
     return {
       ...(response.data as { uuid: string; status: string; nextSendAt?: string }),
       clientTaskId,
       replacedCancelFailed,
       // 解析好的绝对时刻（UTC ISO）。任务记录存这一份，字段口径才只有一种。
       firstSendAt: firstSendTime,
+      // 「强制发送」任务 30 分钟后的兜底（已带好可直接落账的 record）。非强制发送 / 兜底
+      // 任务自身 / 压根建不出来时为 null。各调用方**必须**把它跟主任务一起写进本地账本。
+      fallback,
     };
   },
 
   /**
-   * 麦麦 2026-09-24：用户发消息 → 取消这个角色所有 source='character' 的未触发远端任务。
+   * 麦麦 2026-09-30：给「强制发送」任务配一条 30 分钟后的兜底。
    *
-   * 暮色 9-24 拍板链路：
-   *   1) 角色排了「10 分钟后找我」
-   *   2) 10 分钟内用户发新消息 → 这条未触发的任务取消（不再响）
-   *   3) 用户不回 → 到点照常触发
-   *   4) AI 下一轮自己再排的话，由 token 解析层走 schedule_next_wakeup 重建
+   * 背景（新规则）：强制发送 = 到点前 10 分钟用户说过话就不推送，改成在角色下一轮
+   * 上下文里顺口带出；但角色那一轮可能一直不触发（用户说完就走了）。这条兜底就是
+   * 那个「一直没触发」的最终保证——主任务被让开、也没人顺口提，30 分钟后原样补一条。
    *
-   * 跟原 cancelDynamicScheduleOnWorker 的差别：
-   *   - 老接口只调 1.x /cancel-dynamic-schedule，2.0 amsg 通道的任务根本碰不到——
-   *     这是暮色报「已经应该取消的任务，Worker/后台继续执行触发」的根因。
-   *   - 新接口走 2.0 的 cancelTask（删 D1 行 + 标 cancelled），跟面板取消同一条路径。
+   * 为什么兜底走 fixed：
+   *   - 固定模式压根不进云端那道到点判定（上游按 taskNeedsLlm 分流），所以云端
+   *     不会二次让路，30 分钟到了就一定发出去；
+   *   - 不调模型、不烧 token，而且角色到点上下文根本不存在 → 拿不到任务管理工具，
+   *     不会「我把提醒改到明天去」这种自我操作把提醒搞没（这条对**兜底**是刚需：
+   *     兜底被角色取消就等于提醒丢了）。
    *
-   * 范围：只取消 source='character' 的。手动排的（source='manual'）是用户在面板里
-   * 手排的，优先级最高，不应被「用户发消息」这种自动动作吞掉。
-   *
-   * 用本地 char.activeMsg2Config.tasks 判定来源：远端投影不带 source 字段（白名单
-   * 不透出 amsgSource / amsgSelfScheduled，listRemoteTasksForChar 注释里写明），
-   * 本地 tasks 是 source 唯一权威。即使本地落后于远端，调 cancelTask 远端回 404
-   * alreadyGone 也走幂等路径（cancelTask 内部已处理）。
-   *
-   * 失败静默：用户消息保存是主链路，这一步挂了不该让用户看到「取消失败」之类的提示，
-   * 留 console.warn 便于事后排查。
+   * 建失败不抛：主任务已经建成功了，兜底是加分项，为它把整次建任务搞失败不划算。
+   * 失败只留一条诊断，主任务照常走（最坏情况 = 没兜底，退回旧行为）。
    */
-  async cancelCharacterWakeups(char: CharacterProfile): Promise<{ cancelled: string[]; alreadyGone: string[]; failed: string[] }> {
-    const nowMs = Date.now();
-    const charTasks = char.activeMsg2Config?.tasks ?? [];
-    const targets = charTasks.filter((t) =>
-      t.source === 'character'
-      && t.status === 'scheduled'
-      && isPendingTask(t, nowMs),
-    );
-    if (targets.length === 0) {
-      return { cancelled: [], alreadyGone: [], failed: [] };
+  async scheduleFallbackTask(params: {
+    char: CharacterProfile;
+    config: ActiveMsg2CharacterConfig;
+    /** 主任务的 clientTaskId，写进兜底 metadata 做配对。 */
+    forClientTaskId: string;
+    /** 兜底记谁的名下：主任务谁排的，兜底就是谁的（取消链路 / 面板文案都读它）。 */
+    forSource: 'user' | 'character';
+    /** 主任务的真实触发时刻（UTC ISO），兜底 = 它 + 30 分钟。 */
+    mainOccurrenceMs: number;
+    /** 主任务要说什么（fixed 取原文，prompted/auto 取方向或理由）。 */
+    mainMode: ActiveMsg2Mode;
+    mainHintOrReason?: string;
+    mainUserMessage?: string;
+    /** 主任务是循环的话，兜底跟着循环（每天早安 → 每天 8 点半那条后路）。 */
+    mainRecurrence: ActiveMsg2Recurrence;
+    enabledOverride?: boolean;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    apiConfig: APIConfig;
+  }): Promise<Amsg2FallbackResult | null> {
+    const text = buildFallbackText(params.mainMode, params.mainHintOrReason, params.mainUserMessage);
+    if (!text) {
+      // fixed 主任务没写原文时不该建兜底——兜底是"原样补那句"，没有那句可补。
+      return null;
     }
 
-    const cancelled: string[] = [];
-    const alreadyGone: string[] = [];
-    const failed: string[] = [];
-    for (const t of targets) {
-      try {
-        const result = await this.cancelTask(t.taskUuid);
-        if (result.alreadyGone) {
-          alreadyGone.push(t.taskUuid);
-        } else {
-          cancelled.push(t.taskUuid);
-          // 麦麦 2026-09-24 18:05：诊断日志 — 用户发消息触发的取消
-          amsgDiag({
-            stage: 'wakeup-cancelled-by-user-message',
-            charId: char.id,
-            taskId: t.taskUuid,
-            source: 'character',
-            ok: true,
-            error: `用户发消息自动取消（fireAt=${new Date(t.firstSendTime).toISOString()}）`,
-          });
-        }
-      } catch (error) {
-        failed.push(t.taskUuid);
-        console.warn(`[ActiveMsg2] 取消角色 ${char.id} 的 character 唤醒任务失败`, t.taskUuid, error);
-      }
+    const fireAtMs = params.mainOccurrenceMs + AMSG_FALLBACK_DELAY_MS;
+    if (fireAtMs <= Date.now()) return null;
+
+    try {
+      const result = await this.scheduleCharacterTask({
+        char: params.char,
+        config: params.config,
+        task: {
+          mode: 'fixed',
+          userMessage: text,
+          // 固定模式恒 force（resolveExpirePolicy 钉死），云端到点必推。
+          firstSendTime: new Date(fireAtMs).toISOString(),
+          recurrenceType: params.mainRecurrence,
+          // 记录里的 source 记「谁排的」（user/character），云端 metadata 记的是
+          // 提示词分支（manual/character）——本地账本那一套以 user 为准。
+          source: params.forSource === 'character' ? 'character' : 'manual',
+          fallbackFor: params.forClientTaskId,
+          skipTaskQuota: true,
+        },
+        userProfile: params.userProfile,
+        groups: params.groups,
+        realtimeConfig: params.realtimeConfig,
+        apiConfig: params.apiConfig,
+        enabledOverride: params.enabledOverride,
+      });
+      amsgDiag({
+        stage: 'fallback-scheduled',
+        charId: params.char.id,
+        ok: true,
+        extra: {
+          forClientTaskId: params.forClientTaskId,
+          fallbackUuid: result.uuid,
+          fireAtMs,
+        },
+      });
+      // record 一并拼好返回：三个调用方各自有自己那套落账写法（面板 onSave、工具桥
+      // persistTasks、自排那条动态 import('./db')），让它们顺手 applyScheduledTask 一次，
+      // 而不是各写一份字段拼装——拼装口径一散，配对字段就会在某一条路上漏掉。
+      return {
+        taskUuid: result.uuid,
+        clientTaskId: result.clientTaskId,
+        firstSendAt: result.firstSendAt,
+        record: {
+          taskUuid: result.uuid,
+          clientTaskId: result.clientTaskId,
+          mode: 'fixed',
+          firstSendTime: result.firstSendAt,
+          recurrenceType: params.mainRecurrence,
+          userMessage: text,
+          expirePolicy: 'force',
+          source: params.forSource,
+          status: 'scheduled',
+          createdAt: Date.now(),
+          fallbackFor: params.forClientTaskId,
+        },
+      };
+    } catch (error) {
+      // 兜底建不出来不该连累主任务（主任务已经躺在云端了）。
+      amsgDiag({
+        stage: 'fallback-schedule-failed',
+        charId: params.char.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        extra: { forClientTaskId: params.forClientTaskId },
+      });
+      return null;
     }
-    return { cancelled, alreadyGone, failed };
   },
+
 
   /**
    * 这台 worker 上的代码认不认识「后台任务」。
@@ -3134,10 +3473,24 @@ export const ActiveMsgClient = {
     // getAll（表情记录带图片数据），拿回来的还是同一份。
     const emojiLibrary = await readEmojiLibrary();
     const entries = [];
+    // 麦麦 2026-09-30（方向二）：这批包里带了哪几条回执，等 putClientState 真成功才落
+    // 「待销账」台账（见本函数末尾）。中途建在循环里是因为 id 必须跟着角色走——谁带的
+    // 只能销给谁。
+    const shippedByChar = new Map<string, string[]>();
     // 逐个串行：并发跑会同时开 N 个 IDB 事务，正是 instant push 那次超时的连接风暴成因。
     for (const item of items) {
+      // 麦麦 2026-09-30：未消费的回执跟着 fire_pack 一起上云。
+      //
+      // 为什么同步时就要带，而不是等到点前才带：fire_pack 是**到点那一刻** worker
+      // 现场读的那份，用户到点前有没有发消息客户端这边才知道。云端那边主动查不了
+      // 本地回执台账（那是纯客户端存储），所以回执必须提前随包上去。
+      //
+      // 失败不连累这次同步：回执晚一轮上云，最坏是这次到点的生成看不到它、下一轮才带。
+      const [pendingNoticesBlock, shippedNoticeIds] = await buildPendingNoticesBlock(item.char);
+      if (shippedNoticeIds.length) shippedByChar.set(item.char.id, shippedNoticeIds);
       const firePack = await buildFirePack(
         item.char, item.userProfile, item.groups, item.realtimeConfig, emojiLibrary,
+        { pendingNoticesBlock },
       );
       // 大值由 amsg-server 2.6.0-next.4+ 在 worker 存储层透明分块，整条直传，
       // 内容一个字不裁；老 worker 拒超限条目 → 设置页 capabilities 探测亮牌。
@@ -3173,6 +3526,30 @@ export const ActiveMsgClient = {
         skipped.map((s) => `${s.namespace}/${s.key}`),
       );
       await alignStateClockWithRemote(client, [...new Set(skipped.map((s) => s.namespace))]);
+    }
+    // 麦麦 2026-09-30（方向二）：走到这里才算「云端真的收到了这些回执」，把 id 记进
+    // 待销账台账 —— 到点那条主动消息真上屏之后（activeMsgRuntime 那侧）才销。
+    //
+    // 被拒和被条件写拦下的**不算收到**：前者是这一条压根没写进去，后者是云端留着另一份
+    // 更新的（里面有没有这条回执我们说了不算）。这两种角色销不了账，回执留在台账里等
+    // 下一轮 sync 重新带 —— 晚一轮说，好过在没送达的那一轮里销掉、之后谁都不再说。
+    if (shippedByChar.size > 0) {
+      const notLanded = new Set([
+        ...(rejected || []).map((r) => `${r.namespace}/${r.key}`),
+        ...(skipped || []).map((s) => `${s.namespace}/${s.key}`),
+      ]);
+      try {
+        const { recordNoticesShippedInPack } = await import('./amsg2TaskContext');
+        for (const [charId, noticeIds] of shippedByChar) {
+          if (notLanded.has(`${amsgStateNamespace(charId)}/${AMSG_FIRE_PACK_KEY}`)) continue;
+          recordNoticesShippedInPack(charId, noticeIds);
+        }
+      } catch (e) {
+        console.warn(
+          `${ACTIVE_MSG_RUNTIME_HEADER} 回执销账台账记不上（这一批到点后不会销，下轮可能多说一遍）`,
+          e,
+        );
+      }
     }
     // 同步已经落定，顺路把这几个角色的存量空壳清一遍（每角色一次，失败只 warn）。
     await sweepSidechannelShells(client, items.map((item) => item.char.id));

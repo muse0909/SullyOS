@@ -74,6 +74,43 @@ export interface DigestResult {
     selfConfused: DigestEntry[];   // self_room 反刍产生的新困惑→阁楼
 }
 
+// ─── 自我领悟词条的合并规则（上限 + 去重）─────────────────────────────
+
+/**
+ * 自我领悟词条上限。
+ * 麦麦 2026-10-04 暮色拍板：10 条，满了新的顶掉最旧的（FIFO）。
+ * 为什么不设更高/不设无限：这些词条每轮都全量进请求体（context.ts 两处注入），
+ * 条数 = 每轮多付的钱；而消化本身是循环产出，长期留着 30 条和留着 10 条，
+ * 对角色的行为影响差别很小，token 差别却是 3 倍。
+ * 为什么不用「按重要度留 10 条」：消化返回的是纯文本数组，没有分数可用，
+ * 要打分就得再调一次模型，成本远大于省下的那点 token。FIFO 够用且行为可预测。
+ */
+export const SELF_INSIGHTS_LIMIT = 10;
+
+/**
+ * 把消化新产出的自我领悟并进已有词条。
+ *
+ * 三件事：去重（同一句话不重复占位）→ 追加 → 超过上限从最旧的开始丢。
+ * 去重是精确匹配去空格后的整句。为什么会重复：消化每 50 轮跑一次，
+ * 角色可能反复悟到同一件事；不去重的话 10 条的额度会被同义反复吃光。
+ */
+export function mergeSelfInsights(existing: string[] | undefined, incoming: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    // 先放已有的（保持原顺序，FIFO 靠这个顺序），再追加新的
+    for (const text of [...(existing || []), ...incoming]) {
+        if (typeof text !== 'string') continue;
+        const trimmed = text.trim();
+        if (!trimmed) continue;
+        const key = trimmed.replace(/\s+/g, ' ');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(trimmed);
+    }
+    // 超限从最旧的开始丢（out[0] 是最旧的）
+    return out.length > SELF_INSIGHTS_LIMIT ? out.slice(out.length - SELF_INSIGHTS_LIMIT) : out;
+}
+
 // ─── 轮数计数 & 自动触发 ─────────────────────────────
 
 /** 每聊 N 轮自动触发一次消化（1轮 = 用户发 + AI 回复） */

@@ -5,6 +5,10 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { saveCallAudio, loadCallAudio } from '../utils/callAudioStore';
+import { synthesizeSpeechDetailed } from '../utils/minimaxTts';
+import { CallVoiceRecorder, describeCallVoiceError } from '../utils/callVoice';
+import { transcribeCallAudio, pickCallAsrProvider } from '../utils/callAsr';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
@@ -14,7 +18,7 @@ import { Message, ChatTheme } from '../types';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type ViewMode = 'role-select' | 'in-call' | 'history' | 'record-detail';
-type CallBubble = { id: string; dbId?: number; role: 'user' | 'assistant'; text: string; time: string; audioUrl?: string; timestamp: number };
+type CallBubble = { id: string; dbId?: number; role: 'user' | 'assistant'; text: string; time: string; audioUrl?: string; audioKey?: string; timestamp: number };
 type CallRecord = {
   id: string;
   characterId: string;
@@ -384,6 +388,14 @@ const CallApp: React.FC = () => {
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showInputPanel, setShowInputPanel] = useState(true);
+  // 麦麦 2026-09-29：语音输入（按住说话）
+  const [isRecording, setIsRecording] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+  const [micError, setMicError] = useState('');
+  const [micAvailable, setMicAvailable] = useState(true);
+  const [recordedHint, setRecordedHint] = useState('');
+  const [recordedUrl, setRecordedUrl] = useState('');
+  const [isRecognizing, setIsRecognizing] = useState(false);
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
@@ -392,6 +404,24 @@ const CallApp: React.FC = () => {
   const [voiceLang, setVoiceLang] = useState('');
   const [showLangPicker, setShowLangPicker] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /**
+   * 通话记录**详情页**专用的播放器。
+   *
+   * 2026-09-30 暮色反馈「按钮有了但是听不到」——根因：`<audio ref={audioRef}>` 只渲染在
+   * 「通话中」那一页（组件在 `viewMode === 'record-detail'` 时提前 return 了，整块通话
+   * 界面包括那个 audio 元素都不挂载）。于是进详情页点「重播语音」，audioRef.current
+   * 是 null，`playAudio` 第一行就 return 了——**静默失败，连提示都没有**。
+   *
+   * 详情页有自己的一套：自己的 audio 元素、自己的状态、自己的地址回收。
+   * 通话中那个不受影响（它在通话时要跟着 setCallState 走）。
+   */
+  const detailAudioRef = useRef<HTMLAudioElement | null>(null);
+  const detailBlobUrlRef = useRef<string | null>(null);
+  const [detailPlayingId, setDetailPlayingId] = useState<string | null>(null);
+  // 麦麦 2026-09-29：录音器实例。挂 ref 而不是 state —— 每次渲染新建会丢流。
+  const recorderRef = useRef<CallVoiceRecorder | null>(null);
+  const isRecordingRef = useRef(false);
+  const recordedUrlRef = useRef<string | null>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const callTouchStartPos = useRef({ x: 0, y: 0 });
@@ -467,7 +497,118 @@ const CallApp: React.FC = () => {
       URL.revokeObjectURL(currentBlobUrlRef.current);
       currentBlobUrlRef.current = null;
     }
+    // 麦麦 2026-09-29：离开组件时把麦克风释放掉，不然指示灯会一直亮着
+    recorderRef.current?.cancel();
+    recorderRef.current = null;
   }, []);
+
+  // 麦麦 2026-09-29：进通话页就先探一次麦克风。
+  //   提前拿权限，用户第一次按住说话时才不用等系统弹窗，体验上快一大截。
+  useEffect(() => {
+    if (viewMode !== 'in-call') return;
+    let cancelled = false;
+    (async () => {
+      const result = await CallVoiceRecorder.preflight();
+      if (cancelled) return;
+      setMicAvailable(result.ok);
+      if (!result.ok && result.message) setMicError(result.message);
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode, currentSessionId]);
+
+  // 麦麦 2026-09-30：静音自动结束。
+  //   一直按住不放很别扭，跟真打电话不一样。安静一会儿就认为你说完了，
+  //   自动收尾送去识别。想接着说就再按一次。
+  //   具体阈值在 utils/callVoice.ts 里（1.2 秒），不在前端定 ——
+  //   定时器跑在录音模块里，阈值得跟采样节奏放一起才好调。
+
+  // 麦麦 2026-09-29：语音输入 —— 开始 / 停止
+  const startRecording = async () => {
+    if (isRecordingRef.current || isRecognizing) return;
+    if (draftInput.trim()) {
+      // 打字框里有字还没发，先提醒，别让用户以为说上去了
+      addToast('先把打的字发出去，或者说之前先清空', 'info');
+      return;
+    }
+    if (isAudioPlaying) pauseAudio();
+    setMicError('');
+    setRecordedHint('');
+    try {
+      if (!recorderRef.current) recorderRef.current = new CallVoiceRecorder();
+      await recorderRef.current.start({
+        onVolume: (v) => setMicVolume(v),
+        onSilence: () => {
+          if (isRecordingRef.current) stopRecording();
+        },
+        onInterrupted: (reason) => {
+          setMicError(reason);
+          setIsRecording(false);
+          isRecordingRef.current = false;
+          setMicVolume(0);
+        },
+      });
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      // 第一次点成功了就说明权限其实能拿到，把"不可用"的提示撤掉
+      setMicAvailable(true);
+    } catch (err: any) {
+      const message = describeCallVoiceError(err);
+      setMicError(message);
+      setMicAvailable(false);
+      addToast(`麦克风打不开：${message}`, 'error');
+    }
+  };
+
+  /** 录完了要送去识别。这段跟停止录音是分开的，方便失败时保留录音重试。 */
+  const recognizeAndSend = async (blob: Blob) => {
+    const target = pickCallAsrProvider(apiConfig);
+    if (!target) {
+      setMicError('还没配识别密钥，识别用不了（设置里填一把就行）');
+      return;
+    }
+    setIsRecognizing(true);
+    setCallState('thinking');
+    setRecordedHint('在听你在说什么…');
+    try {
+      const result = await transcribeCallAudio(blob, target);
+      setIsRecognizing(false);
+      if (!result.text) {
+        // 识别到静音不是错误，但用户确实说了什么，告诉他没听清比报错了强
+        setCallState('listening');
+        setRecordedHint('没听清，再说一次？');
+        return;
+      }
+      // 识别成功 → 走跟打字完全一样的发送路径
+      await handleTurn(result.text);
+    } catch (err: any) {
+      setIsRecognizing(false);
+      setCallState('listening');
+      setMicError(err?.message || '识别失败');
+    }
+  };
+
+  const stopRecording = async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || !isRecordingRef.current) return;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    setMicVolume(0);
+    try {
+      const result = await recorder.stop();
+      if (!result) {
+        setRecordedHint('没录到声音，再按住试试');
+        return;
+      }
+      // 挂个本地地址，识别失败时用户还能点「听听看」确认自己刚才说了什么
+      const url = URL.createObjectURL(result.blob);
+      if (recordedUrlRef.current) URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = url;
+      setRecordedUrl(url);
+      await recognizeAndSend(result.blob);
+    } catch (err: any) {
+      setMicError(describeCallVoiceError(err));
+    }
+  };
   useEffect(() => {
     if (!callStartedAt || ['idle', 'ended'].includes(callState)) return;
     const timer = window.setInterval(() => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000))), 1000);
@@ -491,16 +632,47 @@ const CallApp: React.FC = () => {
         const greetingBubble: CallBubble = { id: `${nowTs}-greeting`, role: 'assistant', text: greetingText, time: formatTime(), timestamp: nowTs };
         setCallState('speaking');
         setBubbles([greetingBubble]);
+        // 麦麦 2026-09-30：dbId 提到 if 外面——开场白的音频也要存进库并把键记进消息，
+        //   存音频那几步在下面拿得到它。
+        let greetingDbId: number | undefined;
         if (selectedChar?.id) {
-          const dbId = await DB.saveMessage({ charId: selectedChar.id, role: 'assistant', type: 'text', content: greetingText, metadata: { source: 'call', callSessionId: currentSessionId } });
-          setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, dbId: dbId } : b));
+          greetingDbId = await DB.saveMessage({ charId: selectedChar.id, role: 'assistant', type: 'text', content: greetingText, metadata: { source: 'call', callSessionId: currentSessionId } });
+          setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, dbId: greetingDbId } : b));
         }
+        /** 把开场白音频存进库 + 键写回消息（存不了不影响播放） */
+        const persistGreeting = async (blob: Blob | null | undefined) => {
+          if (!blob) return;
+          const key = await saveCallAudio(greetingDbId, blob);
+          if (key && greetingDbId) await DB.updateMessageMetadata(greetingDbId, { audioAssetKey: key });
+        };
         // 尝试语音合成开场白
         const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
         const voiceId = resolveVoiceId();
         const hasTimberWeights = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
         let greetingAudioPlayed = false;
-        if (isSpeakerOn && minimaxApiKey && (voiceId || hasTimberWeights)) {
+        // 麦麦 2026-09-30：开场白也要跟着设置走 Volink，
+        //   不然会出现「接电话是哑的，说两句突然有声音」的割裂感。
+        if (isSpeakerOn && apiConfig.ttsProvider === 'volink' && selectedChar) {
+          try {
+            const volinkText = convertNarrationCues(greetingText);
+            if (volinkText.trim()) {
+              const { url: volinkGreetingUrl, blob: volinkGreetingBlob } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+              if (currentBlobUrlRef.current) {
+                URL.revokeObjectURL(currentBlobUrlRef.current);
+                currentBlobUrlRef.current = null;
+              }
+              if (volinkGreetingUrl.startsWith('blob:')) currentBlobUrlRef.current = volinkGreetingUrl;
+              setAudioUrl(volinkGreetingUrl);
+              setBubbles(prev => prev.map(b => (b.id === greetingBubble.id ? { ...b, audioUrl: volinkGreetingUrl } : b)));
+              setTimeout(() => playAudio(volinkGreetingUrl), 0);
+              await persistGreeting(volinkGreetingBlob);
+              greetingAudioPlayed = true;
+            }
+          } catch (greetVolinkErr: any) {
+            console.warn('[call] greeting volink tts failed:', greetVolinkErr?.message);
+          }
+        }
+        if (!greetingAudioPlayed && isSpeakerOn && minimaxApiKey && (voiceId || hasTimberWeights)) {
           try {
             const groupId = resolveGroupId();
             const { speech: greetingVoiceTag } = extractVoiceTag(greetingText);
@@ -518,8 +690,12 @@ const CallApp: React.FC = () => {
             const greetingCacheKey = ttsCacheKeyFromPayload(ttsPayload);
             const cachedGreeting = await getCachedTts(greetingCacheKey);
             let greetingAudioUrl = '';
+            // 麦麦 2026-09-30：留住真正播的那份 blob（缓存命中和新合成两条路都要填），
+            //   下面存库要用。greetingBlob 那个变量声明在更内层，这里够不着。
+            let greetingFinalBlob: Blob | null = null;
             if (cachedGreeting) {
               greetingAudioUrl = URL.createObjectURL(cachedGreeting);
+              greetingFinalBlob = cachedGreeting;
             } else {
               const response = await minimaxFetch('/api/minimax/t2a', {
                 method: 'POST',
@@ -538,6 +714,7 @@ const CallApp: React.FC = () => {
                 }
                 if (greetingBlob) {
                   greetingAudioUrl = URL.createObjectURL(greetingBlob);
+                  greetingFinalBlob = greetingBlob;
                   saveCachedTts(greetingCacheKey, greetingBlob).catch(() => { /* ignore */ });
                 }
               }
@@ -547,6 +724,7 @@ const CallApp: React.FC = () => {
               setAudioUrl(greetingAudioUrl);
               setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, audioUrl: greetingAudioUrl } : b));
               setTimeout(() => playAudio(greetingAudioUrl), 0);
+              await persistGreeting(greetingFinalBlob);
               greetingAudioPlayed = true;
             }
           } catch { /* 语音合成失败不影响文字开场白 */ }
@@ -595,7 +773,12 @@ const CallApp: React.FC = () => {
           dbId: m.id,
           role: m.role as 'user' | 'assistant',
           text: m.content,
+          // 麦麦 2026-09-30：以前这里读 metadata.audioUrl，而那个字段从来没人写过
+          //   → 通话记录里的「重播语音」按钮永远不出现。
+          //   真正存下来的是 audioAssetKey（指向 assets 表里那份 blob），
+          //   回放时按需去取，不用在这里就把每个气泡的音频都读出来。
           audioUrl: m.metadata?.audioUrl,
+          audioKey: m.metadata?.audioAssetKey,
           time: formatTimeByTs(m.timestamp),
           timestamp: m.timestamp,
         })),
@@ -704,6 +887,70 @@ const CallApp: React.FC = () => {
     audioRef.current.play().catch(() => addToast('音频已生成，自动播放被浏览器拦截，请点击重播', 'info'));
     setCallState('speaking');
   };
+  /**
+   * 麦麦 2026-09-30：回放**通话中**气泡的语音。
+   * 通话中气泡上一直有内存地址，所以这里基本走第一分支；audioKey 只是兜底
+   * （比如刚挂断、地址还没挂上气泡的情况）。
+   */
+  const playBubbleAudio = async (b: CallBubble) => {
+    if (b.audioUrl) { playAudio(b.audioUrl); return; }
+    if (!b.audioKey) return addToast('这段没有语音', 'info');
+    const blob = await loadCallAudio(b.audioKey);
+    if (!blob) return addToast('这段语音找不到了（可能是改动之前存的记录）', 'info');
+    const url = URL.createObjectURL(blob);
+    // 交给 currentBlobUrlRef 管：下次生成新音频时会 revoke 掉，切换音频源时不会叠着播。
+    if (currentBlobUrlRef.current) {
+      URL.revokeObjectURL(currentBlobUrlRef.current);
+    }
+    currentBlobUrlRef.current = url;
+    setBubbles(prev => prev.map(x => (x.id === b.id ? { ...x, audioUrl: url } : x)));
+    playAudio(url);
+  };
+
+  /**
+   * 麦麦 2026-09-30：回放**通话记录详情页**里的语音。用自己那个 audio 元素，
+   * 不碰通话中的 audioRef（那边在详情页压根不存在，见 detailAudioRef 的注释）。
+   *
+   * 同样**按需取**：一次通话几十条，全读会让打开记录明显变慢，而用户通常只听一两句。
+   */
+  const playDetailAudio = async (item: CallBubble) => {
+    const el = detailAudioRef.current;
+    if (!el) return;
+    // 正在播同一条 → 当暂停用，不用重新取一遍音频
+    if (detailPlayingId === item.id) {
+      el.pause();
+      setDetailPlayingId(null);
+      return;
+    }
+    let url = item.audioUrl;
+    if (!url && item.audioKey) {
+      const blob = await loadCallAudio(item.audioKey);
+      if (!blob) return addToast('这段语音找不到了（可能是改动之前存的记录）', 'info');
+      // 换一条播之前先把上一条临时地址回收，别越点越多
+      if (detailBlobUrlRef.current) URL.revokeObjectURL(detailBlobUrlRef.current);
+      url = URL.createObjectURL(blob);
+      detailBlobUrlRef.current = url;
+    }
+    if (!url) return addToast('这段没有语音', 'info');
+    el.src = url;
+    el.currentTime = 0;
+    try {
+      await el.play();
+      setDetailPlayingId(item.id);
+    } catch (e) {
+      console.warn('[call] detail playback failed', e);
+      setDetailPlayingId(null);
+      addToast('播放失败，再点一次试试', 'error');
+    }
+  };
+
+  // 离开通话记录页时回收详情页持有的临时地址
+  useEffect(() => {
+    return () => {
+      if (detailBlobUrlRef.current) URL.revokeObjectURL(detailBlobUrlRef.current);
+      detailBlobUrlRef.current = null;
+    };
+  }, []);
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
     audioRef.current.play().catch(() => addToast('继续播放失败，请点击重播', 'error'));
@@ -713,10 +960,12 @@ const CallApp: React.FC = () => {
     audioRef.current.pause();
     setCallState('listening');
   };
-  const handleTurn = async () => {
+  // 麦麦 2026-09-30：overrideText 供语音识别走同一条发送路径，
+  //   不必先把文字塞回输入框（那样会闪一下，用户看到字凭空冒出来）。
+  const handleTurn = async (overrideText?: string) => {
     const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
     const voiceId = resolveVoiceId();
-    const input = draftInput.trim();
+    const input = (overrideText ?? draftInput).trim();
     if (!input) return addToast('说点什么吧', 'info');
     if (['connecting', 'thinking'].includes(callState)) return addToast(`${selectedChar?.name || '对方'}还在想，等一等`, 'info');
     if (isAudioPlaying) pauseAudio();
@@ -725,7 +974,14 @@ const CallApp: React.FC = () => {
     const userBubble: CallBubble = { id: `${nowTs}-u`, role: 'user', text: input, time: now, timestamp: nowTs };
     setBubbles(prev => [...prev, userBubble]);
     setDraftInput('');
-    setShowInputPanel(false);
+    // 麦麦 2026-09-29：不再发完就收起输入框。
+    //   语音输入的提示、音量条都挂在输入框下面，收起来用户就看不到"还在录"了。
+    setRecordedHint('');
+    setRecordedUrl('');
+    if (recordedUrlRef.current) {
+      URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = null;
+    }
     let userDbId: number | undefined;
     if (selectedChar?.id) {
       userDbId = await DB.saveMessage({ charId: selectedChar.id, role: 'user', type: 'text', content: input, metadata: { source: 'call', callSessionId: currentSessionId } });
@@ -755,6 +1011,37 @@ const CallApp: React.FC = () => {
         return b;
       }));
     }
+    // 麦麦 2026-09-30：打电话之前只认 MiniMax，用户在设置里选的 Volink 被无视了
+    // （聊天走 synthesizeSpeechDetailed 会自动分流，打电话自己写了一套所以漏了）。
+    // 现在补上：配了 Volink 就走 Volink，用他在 Volink 平台挑的那个声音。
+    if (apiConfig.ttsProvider === 'volink' && selectedChar) {
+      try {
+        setCallState('thinking');
+        const volinkText = convertNarrationCues(assistantText);
+        if (!volinkText.trim()) throw new Error('可朗读文本为空');
+        const { url: volinkUrl, blob: volinkBlob } = await synthesizeSpeechDetailed(volinkText, selectedChar, apiConfig);
+        if (currentBlobUrlRef.current) {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+          currentBlobUrlRef.current = null;
+        }
+        if (volinkUrl.startsWith('blob:')) currentBlobUrlRef.current = volinkUrl;
+        setAudioUrl(volinkUrl);
+        setBubbles(prev => prev.map(b => (b.id === assistantBubbleId ? { ...b, audioUrl: volinkUrl } : b)));
+        setTimeout(() => playAudio(volinkUrl), 0);
+        // 麦麦 2026-09-30：存一份到库里并把键记进消息，通话记录以后才能回听。
+        //   volinkBlob 为 null 时（远程地址没 fetch 下来）存不了，跳过——见 callAudioStore 顶部说明。
+        if (assistantDbId && volinkBlob) {
+          const audioKey = await saveCallAudio(assistantDbId, volinkBlob);
+          if (audioKey) await DB.updateMessageMetadata(assistantDbId, { audioAssetKey: audioKey });
+        }
+        setCallState('listening');
+      } catch (volinkErr: any) {
+        addToast(`语音生成失败：${volinkErr?.message || '未知错误'}，已保留文字`, 'error');
+        setCallState('listening');
+      }
+      return;
+    }
+
     const hasTimberWeights2 = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
     if (!isSpeakerOn || !minimaxApiKey || (!voiceId && !hasTimberWeights2)) {
       setCallState('listening');
@@ -838,6 +1125,9 @@ const CallApp: React.FC = () => {
       const traceIds: string[] = [];
       const audioBlobs: Blob[] = [];
       let finalUrl = '';
+      // 麦麦 2026-09-30：留着「真正拿去播的那份 blob」，存进库让通话记录以后能回听。
+      //   finalUrl 是内存地址（blob: 或远程），刷新就没了，存它没意义。
+      let finalBlob: Blob | null = null;
 
       console.log('[call] tts request(full)', {
         model,
@@ -854,6 +1144,7 @@ const CallApp: React.FC = () => {
         if (singleResult.remoteUrl) {
           finalUrl = singleResult.remoteUrl;
         } else if (singleResult.blob) {
+          finalBlob = singleResult.blob;
           finalUrl = URL.createObjectURL(singleResult.blob);
         } else {
           throw new Error('未获得可播放音频');
@@ -876,7 +1167,10 @@ const CallApp: React.FC = () => {
         }
         if (!finalUrl) {
           if (!audioBlobs.length) throw new Error('未获得可播放音频');
-          finalUrl = URL.createObjectURL(audioBlobs.length === 1 ? audioBlobs[0] : new Blob(audioBlobs, { type: 'audio/mpeg' }));
+          // 合并成一份再存：分块合成时，合并出来的音频不对应任何单个 TTS 缓存键，
+          //   所以要自己落一份，见 utils/callAudioStore 顶部说明。
+          finalBlob = audioBlobs.length === 1 ? audioBlobs[0] : new Blob(audioBlobs, { type: 'audio/mpeg' });
+          finalUrl = URL.createObjectURL(finalBlob);
         }
       }
 
@@ -896,6 +1190,12 @@ const CallApp: React.FC = () => {
       if (assistantDbId) {
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
+        // 麦麦 2026-09-30：音频存一份 + 把键记进消息。
+        //   没有 dbId 或 finalBlob 为空（远程地址没 fetch 下来）就跳过，不影响文字回复。
+        if (finalBlob) {
+          const audioKey = await saveCallAudio(assistantDbId, finalBlob);
+          if (audioKey) await DB.updateMessageMetadata(assistantDbId, { audioAssetKey: audioKey });
+        }
       }
       setCallState('listening');
     } catch (e: any) {
@@ -987,8 +1287,11 @@ const CallApp: React.FC = () => {
             const rerollCacheKey = ttsCacheKeyFromPayload(ttsPayload);
             const cachedReroll = await getCachedTts(rerollCacheKey);
             let rerollAudioUrl = '';
+            // 麦麦 2026-09-30：跟主流程一样留住真正播的那份 blob，存进库让记录能回听
+            let rerollFinalBlob: Blob | null = null;
             if (cachedReroll) {
               rerollAudioUrl = URL.createObjectURL(cachedReroll);
+              rerollFinalBlob = cachedReroll;
             } else {
               const response = await minimaxFetch('/api/minimax/t2a', {
                 method: 'POST',
@@ -1012,6 +1315,7 @@ const CallApp: React.FC = () => {
                 }
                 if (rerollBlob) {
                   rerollAudioUrl = URL.createObjectURL(rerollBlob);
+                  rerollFinalBlob = rerollBlob;
                   saveCachedTts(rerollCacheKey, rerollBlob).catch(() => { /* ignore */ });
                 }
               }
@@ -1022,6 +1326,12 @@ const CallApp: React.FC = () => {
               setAudioUrl(rerollAudioUrl);
               setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
               setTimeout(() => playAudio(rerollAudioUrl), 0);
+              // 麦麦 2026-09-30：换个说法会产生新音频，存到同一个键（覆盖旧的）。
+              //   键跟消息 id 绑定，所以不管重 roll 几次，一条消息只留一份，不会越攒越多。
+              if (rerollFinalBlob) {
+                const audioKey = await saveCallAudio(bubble.dbId, rerollFinalBlob);
+                if (audioKey && bubble.dbId) await DB.updateMessageMetadata(bubble.dbId, { audioAssetKey: audioKey });
+              }
             }
           }
         } catch (ttsErr: any) {
@@ -1135,10 +1445,24 @@ const CallApp: React.FC = () => {
                 const { display, voiceText } = extractVoiceTag(item.text);
                 return <>{display}{voiceText && <div className="mt-1 text-[10px] text-slate-400/60 italic">{voiceText}</div>}</>;
               })()}</div>
-              {!!item.audioUrl && <button onClick={() => playAudio(item.audioUrl)} className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-400 transition hover:bg-white/15">重播语音</button>}
+              {(item.audioUrl || item.audioKey) && (
+                <button
+                  onClick={() => playDetailAudio(item)}
+                  className={`mt-2 text-xs px-2.5 py-1 rounded-full border transition ${detailPlayingId === item.id ? 'bg-white/20 border-white/30 text-white' : 'bg-white/8 border-white/15 text-slate-400 hover:bg-white/15'}`}
+                >
+                  {detailPlayingId === item.id ? '停止' : '重播语音'}
+                </button>
+              )}
             </div>
           ))}
         </div>
+        {/* 麦麦 2026-09-30：详情页自己的播放器。通话中那个 audio 元素在这页不挂载，
+            之前点「重播语音」就是走的那个空引用，静默失败。 */}
+        <audio
+          ref={detailAudioRef}
+          onEnded={() => setDetailPlayingId(null)}
+          onPause={() => setDetailPlayingId(null)}
+        />
         <button
           onClick={() => {
             setSelectedCharId(recordDetail.characterId || selectedCharId);
@@ -1247,7 +1571,7 @@ const CallApp: React.FC = () => {
             </div>
             {isLatest && bubble.role === 'assistant' && (
               <div className="mt-2 flex gap-2">
-                {bubble.audioUrl && <button onClick={() => playAudio(bubble.audioUrl)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15">重播语音</button>}
+                {(bubble.audioUrl || bubble.audioKey) && <button onClick={() => playBubbleAudio(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15">重播语音</button>}
                 <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-slate-300 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>
               </div>
             )}
@@ -1263,17 +1587,80 @@ const CallApp: React.FC = () => {
               onChange={(e) => setDraftInput(e.target.value)}
               className="flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-slate-500"
               placeholder={sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : `想对${selectedChar?.name || '对方'}说什么？`}
-              autoFocus
             />
-            <button onClick={handleTurn} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
+            {/* 麦麦 2026-09-29：按住说话。麦克风从底部挪到这里 —— 语音和打字挨着，
+                用户一眼就知道"这俩是同一个输入框的两种方式"，不用来回找。 */}
+            <button
+              onPointerDown={(e) => {
+                if (sendingBusy || isRecognizing) return;
+                e.preventDefault();
+                // 抓住这次触摸，手指滑出按钮再松手也能正确结束录音
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不住也不影响 */ }
+                startRecording();
+              }}
+              onPointerUp={() => { if (isRecordingRef.current) stopRecording(); }}
+              onPointerCancel={() => { if (isRecordingRef.current) stopRecording(); }}
+              onContextMenu={(e) => e.preventDefault()}
+              disabled={sendingBusy || isRecognizing}
+              // 麦麦 2026-09-29 修正：之前麦克风拿不到就把按钮彻底锁死（灰的、点不动），
+              //   用户只看到一个死按钮，连为什么都不显示。现在改成——
+              //   始终可以按（按下去会重新尝试申请权限），
+              //   只用红色描边提示"这会儿还没权限"，不再假装按钮不存在。
+              className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center transition select-none touch-none border ${
+                isRecording
+                  ? 'bg-emerald-400/40 border-emerald-200/70'
+                  : micAvailable
+                    ? 'bg-white/10 border-white/15'
+                    : 'bg-rose-500/20 border-rose-300/60'
+              } ${sendingBusy || isRecognizing ? 'opacity-40' : 'active:scale-95'}`}
+              title={isRecognizing ? '正在识别…' : (micAvailable ? '按住说话' : '麦克风还没开，按一下重试')}
+            >
+              <Microphone size={19} weight="fill" className={isRecording ? 'text-emerald-50' : (micAvailable ? 'text-slate-300' : 'text-rose-200')} />
+            </button>
+            <button onClick={() => handleTurn()} disabled={sendingBusy} className="px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor }}>{sendingBusy ? '…' : '说'}</button>
           </div>
+
+          {/* 麦麦 2026-09-29：录音时的实时反馈 */}
+          {isRecording && (
+            <div className="mt-2 px-1 flex items-center gap-2">
+              <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-300/90 transition-[width] duration-75"
+                  style={{ width: `${Math.max(6, Math.min(100, micVolume * 100))}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-emerald-100/80 shrink-0 animate-pulse">说完松手</span>
+            </div>
+          )}
+
+          {/* 麦麦 2026-09-29 修正：原来只在"录过音"时才显示这一块，
+              结果麦克风拿不到的时候错误信息根本不显示，界面上只剩一个死按钮。
+              现在只要有提示就显示。 */}
+          {!isRecording && (recordedHint || micError) && (
+            <div className="mt-2 px-1 flex flex-wrap items-center gap-2">
+              <span className={`text-[10px] ${micError ? 'text-rose-300/90' : 'text-slate-400/80'}`}>
+                {micError || recordedHint}
+              </span>
+              {recordedUrl && (
+                <button
+                  onClick={() => { const a = new Audio(recordedUrl); a.play().catch(() => {}); }}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-slate-300 shrink-0"
+                >
+                  听听看
+                </button>
+              )}
+              {/* 麦克风拿不到时，直接把该去哪开说清楚，别让用户自己猜 */}
+              {!micAvailable && !micError.includes('被别的程序') && (
+                <span className="text-[10px] text-slate-400/70 w-full mt-0.5">
+                  没开的话去手机「设置 → 应用 → 语音测试 → 权限 → 麦克风」打开
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="px-5 pb-5 pt-1.5">
-        <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md px-6 py-3 flex items-center justify-between">
-          <button onClick={() => setShowInputPanel(prev => !prev)} className={`w-12 h-12 rounded-full border flex items-center justify-center transition ${showInputPanel ? 'bg-emerald-400/25 border-emerald-300/50' : 'bg-white/10 border-white/20'}`}>
-            <Microphone size={22} weight="fill" className={showInputPanel ? 'text-emerald-100' : 'text-slate-300'} />
-          </button>
+        <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md px-6 py-3 flex items-center justify-center gap-5">
           <button
             onClick={() => setShowLangPicker(prev => !prev)}
             className={`w-12 h-12 rounded-full border flex items-center justify-center transition ${voiceLang ? 'bg-amber-400/25 border-amber-300/50' : 'bg-white/10 border-white/20'}`}

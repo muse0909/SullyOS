@@ -28,7 +28,11 @@ export const ContextBuilder = {
         context += `${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
 
         // 2b. 自我领悟词条（常驻自我认知，影响情绪评估）
-        if (char.selfInsights && char.selfInsights.length > 0) {
+        // 麦麦 2026-10-04 暮色要求：认知消化开关关着时，这些词条一并停止注入。
+        //   背景：开关原本只管「不再生成新的」，已经存下来的旧词条照样每轮全量进请求体，
+        //   而项目里根本没有查看/删除入口 → 关了开关也删不掉，等于开关名不副实。
+        //   这里跟注入点用同一个 digestionEnabled 判据，开关现在真正是总闸。
+        if (char.digestionEnabled !== false && char.selfInsights && char.selfInsights.length > 0) {
             context += `### 内在认知\n`;
             char.selfInsights.forEach(insight => {
                 context += `- ${insight}\n`;
@@ -122,7 +126,9 @@ export const ContextBuilder = {
 
         // 1b. 自我领悟词条 (Self Insights) — 消化过程中反刍产生的常驻自我认知
         // 像情绪底色一样影响角色的行为和感受，注入在角色设定紧下方
-        if (char.selfInsights && char.selfInsights.length > 0) {
+        // 麦麦 2026-10-04 暮色要求：认知消化开关关着时不再注入（跟上面 2b 同一个判据）。
+        // 主聊天和纯聊天都走这个函数，所以两处模式一起生效。
+        if (char.digestionEnabled !== false && char.selfInsights && char.selfInsights.length > 0) {
             context += `### 内在认知 (Self Insights)\n`;
             context += `以下是你在独处反思中逐渐想明白的事，它们已经成为你的一部分：\n`;
             char.selfInsights.forEach(insight => {

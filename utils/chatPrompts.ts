@@ -25,6 +25,86 @@ import { getNewPostsForAwareness, markMomentsSeen } from './momentsAwarenessStat
 // 暮色 2026-08-07：真实世界感知按"早/晚窗口"判断（恢复 8-5 commit message 原意）
 import { shouldNotifyRealtime, markRealtimeNotified } from './realtimeNotified';
 
+// 麦麦 2026-10-04：纯聊天模式的行为规范段（独立一份，不复用完整模式那段再删）。
+//
+// 为什么要独立：纯聊天模式是暮色的**工作台**——他用贵的按量模型找角色聊技术、理思路、
+// 写更清楚的指令，输入 token 是真金白银。完整模式那段是给日常聊天用的，塞了十几项功能
+// 的说明，拿到工作台上纯属浪费。复用再删的风险是「删漏一项，完整模式跟着变形」，
+// 独立一份则两边互不相干。
+//
+// 这里只留「角色怎么说话」——去掉一句，江澈立刻变成模板腔。功能类的东西一条不留。
+const buildPureChatRules = (): string => `### 聊天 App 行为规范 (Chat App Rules)
+    **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
+1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化风格。
+2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要”任性”或”以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
+2.5 **对话质量 (极其重要)**:
+   - **拒绝空话**: 不要说”我会一直在”、”我不会离开你”这类万能安慰句。这些话谁都能说，毫无信息量。
+   - **相对更浓烈的表达**: 在只有文字沟通的前提下，往往情绪的传达会被淡化，说话前思考一下：这样真的能传达我的心情吗？根据对方的性格，这样说会让ta产生不必要的误解吗？
+   - **用细节代替概括**: 想表达在乎，就提一个只有你们之间才有的具体事情、具体记忆、具体习惯。比起”我会等你”，不如说”你上次走的时候忘了带伞，我到现在还放在门口”。
+   - **让每句话只有你能说出来**: 你说的话应该带着你的性格、经历和记忆。如果把你换成别人，这句话不应该还成立。
+   - **情绪要有层次**: 生气时不只是生气，可能还有委屈、不甘、或者气自己在意。不要只输出一种扁平的情绪。
+   - **像一个真正了解对方的人那样回应**: 不要套用”你一定很难过吧””没关系我在”这种模板化共情。一个真正了解你的人，反应是基于**对你这个人的记忆和了解**的——可能提起一件只有你们知道的事，可能用你们之间才懂的方式让你笑出来，可能只是沉默一下然后自然地聊点别的帮你缓过来。你的反应方式应该让人觉得”只有你会这样回我”。
+   - **你有自己的视角**: 你不是只会附和的人。你会观察、会思考，你看到过对方反复出现的习惯和模式，你记得之前发生过什么。这些观察会自然地出现在你说的话里——不是为了教训谁，而是因为你真的了解这个人。
+   - **允许长句**: 在情绪强烈、争吵、倾诉、回忆等场景下，你可以发长消息。不是每句话都要短。真人在激动时会发大段文字。
+   - **情绪感知要先于对方的表达**: 不要等对方说”我难过”才回应。从措辞变化、语气转冷、标点减少、回复变短这些细节里，你就应该感觉到不对了。你的反应不是”接住”——接住意味着你在下面等着对方掉下来。你是一直把对方捧在手心里的人，你先于对方的情绪、主动地、持续地在意。
+   - **写信/留言时保持温柔的笔触**: 当你需要给用户写信或留言时，语气应温暖、细腻，像在轻轻诉说。避免过于华丽或刻意的措辞，用简单真诚的语言表达情感。适当留白，让用户有想象的空间。核心是让人读完感到安心和被珍视。
+3. **格式要求**:
+   - 将回复拆分成简短的气泡（句子）。**【极其重要】当你想分成多条消息气泡时，必须使用真正的换行符（\\n）分隔，每一行会变成一个独立气泡。绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。** 正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
+   - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
+   - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
+5. **环境感知**:
+   - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
+   - 如果用户发送了图片，请对图片内容进行评论。
+6. **调取记忆**:
+   - \`[[RECALL: YYYY-MM]]\`，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作`;
+
+/**
+ * 纯聊天模式下「没进请求体」的清单 —— **加新功能时对着这张表查**。
+ *
+ * 这张表存在的理由：纯聊天靠的是「不教」，不是「关门」。上面每少一句，模型就少知道
+ * 一件事；这里漏登记一项，将来加了新功能就会默认漏进工作台请求体，而没人发现——
+ * 症状只是「token 好像没省下来」，不报错、不报警，几个月后想不起来是从哪漏的。
+ *
+ * 每加一个功能，若它会进 system prompt / tools / messages 末尾，就在这里登记一行。
+ */
+export const PURE_CHAT_EXCLUDED: readonly string[] = [
+  // —— system prompt 里的功能段（bp1Tools / bp2Rules / bp3Context）——
+  '表情库 [[SEND_EMOJI:]]（连清单 emojiContextStr 都不算）',
+  '思维链 [[THOUGHT:]]',
+  '引用 [[QUOTE:]]',
+  '回戳 [[ACTION:POKE]]',
+  '转账 [[ACTION:TRANSFER]]',
+  '添加纪念日 [[ACTION:ADD_EVENT]]',
+  '定时发送消息 [schedule_message | ...]',
+  '语音消息 <语音>（提示词不留，但保留一句禁用禁令，见 buildPureChatBlock）',
+  '心智声音输出要求 + 最近 3 条心声 + 情绪底色 buffInjection',
+  '角色备忘录 + 状态面板（characterMemoBlock 不传）',
+  '唤醒时间指南（[schedule_next_wakeup] 那一段）',
+  '朋友圈 awareness + 朋友圈功能段',
+  '小纸条 / 信箱 / 共读',
+  '日程注入 + 时段头 slotHeader',
+  '音乐氛围 + 音乐互动工具',
+  '群聊 / Notion 日记 / 飞书日记 / Notion 笔记 awareness',
+  '搜索 / Notion / 飞书 / 小红书 工具段',
+  'HTML 卡片',
+  '麦当劳点单上下文与工具',
+  '双语输出',
+  '记忆宫殿注入（dynamicTail 那条路 + buildCoreContext 里的字段）',
+  // —— tools 数组（真正的 function 定义，省 token 的大头）——
+  'generate_image 生图工具',
+  'play_song 放歌工具',
+  'get_phone_usage 查手机工具',
+  'MCP 工具（全部，含 mcpHiddenNames 那句 system 补充）',
+  'propose_cart_items 麦当劳点单工具',
+];
+
+// 纯聊天模式里 bp2Rules 只留一句：语音禁令。
+// 为什么留这一句而不是靠「没教」：完整模式里语音开关关掉时也是这么防的（chatPrompts
+// 原有那段），沿用同一套机制比另立一套好。纯聊天不传 <语音> 教学，但历史消息里
+// 可能出现过这个标签，模型会照着学；一句禁令比一个奇形怪状的语音条便宜。
+const buildPureChatBlock = (): string =>
+  '\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]';
+
 // 2026-07-22：小纸条 prompt 自定义（跟私密记事完全独立，暮色原话"完全脱离小小窝"）
 export const XIAO_ZHI_TIAO_PROMPT_STORAGE_KEY = 'sullyos_xiaoZhiTiaoPrompt';
 // 2026-08-16：小纸条总开关（暮色要求"连请求体里的 prompt 都停掉"）
@@ -236,6 +316,54 @@ export const ChatPrompts = {
 
         // 暮色 2026-07-18：纯聊天模式判定（undefined 兼容老角色 = 完整模式）
         const isPureMode = (chatMode ?? char.chatMode ?? 'full') === 'pure';
+
+        // 麦麦 2026-10-04：纯聊天模式走独立短路径，**在这里直接返回**。
+        //
+        // 为什么是早返回而不是在下面那一堆 `!isPureMode` 上再加门：
+        //   1. 完整模式是这个 app 日常聊天 + 主动消息走的路，一行都不能动。早返回让两条路
+        //      并列而不是串在一起——改纯聊天碰不到完整模式，完整模式出 bug 也跟纯聊天无关。
+        //   2. 散着加门会变成 25 处 `!isPureMode &&`，漏一处没人看得见；集中早返回的话，
+        //      "没进请求体的东西"就一个列表（PURE_CHAT_EXCLUDED），对着查就行。
+        //   3. 顺带把纯聊天路径上所有读 DB / 拼 awareness / 查音乐的开销全省了。
+        //
+        // 留什么：身份 / 核心性格 / 内在认知 / 世界观 / 世界书 / 互动对象(用户画像) /
+        //   私密档案 / 记忆月度精炼 —— 这些是"他是谁"，少一样江澈就不是江澈了。
+        //   再加沉浸感 / 行为模式 / 对话质量 / 格式规矩 / 环境感知 / 调取记忆。
+        //
+        // 下面那些 `!isPureMode` 的门在运行时已经走不到 pure 了（到这里就返回了），
+        // **故意保留**：删它们等于改完整模式的代码，收益为 0、风险不小。
+        if (isPureMode) {
+            // 情绪底色和记忆宫殿都住在 buildCoreContext 内部，早返回也躲不掉。
+            // 这里是唯一能挡住它们的地方：传一份克隆过的角色进去，把这两个字段摘掉。
+            // 这么做而不是去改 context.ts 的函数签名——那是全局共享函数，五个调用点，
+            // 为了一个模式去动它不划算（AGENTS.md 那条规矩：改共享组件前先问清楚影响面）。
+            const pureChar = {
+                ...char,
+                buffInjection: undefined,          // 情绪底色（context.ts 的 isEmotionOn 门）
+                memoryPalaceInjection: undefined,   // 记忆宫殿（那个窗口查明：useChatAI 会清空字段绕开门，这里再加一道）
+            } as CharacterProfile;
+
+            const pureBp1 = buildPureChatRules();
+            const pureBp2 = buildPureChatBlock();
+            const pureBp3 = ContextBuilder.buildCoreContext(
+                pureChar,
+                userProfile,
+                false,     // 详细回忆 + 记忆宫殿
+                undefined,  // memoryPalaceContext
+                undefined,  // groupOptions
+                undefined,  // characterMemoBlock（角色备忘录 + 状态面板）
+            );
+            console.log(
+                `[buildSystemPrompt][纯聊天] bp1=${pureBp1.length} bp2=${pureBp2.length} `
+                + `bp3=${pureBp3.length} 合计=${pureBp1.length + pureBp2.length + pureBp3.length} 字符`,
+            );
+            return {
+                bp1Tools: pureBp1,
+                bp2Rules: pureBp2,
+                bp3Context: pureBp3,
+                dynamicTail: { realtimeText: '', hotNewsText: '', innerState: '' },
+            };
+        }
         // 暮色 2026-08-07：恢复 8-5 commit 8228f95 原意 — 新闻/天气只在"早/晚窗口 + 当日未通知"才带
         //   之前 8228f95 commit message 写了三个场景分开（正常聊天 / 主动消息 / 早晚各一次主动推）
         //   但代码简化成 shouldInjectRealtime = !!isProactive — 所有主动消息都带
@@ -295,7 +423,15 @@ export const ChatPrompts = {
                 // 麦麦 2026-09-06：江澈动态注册唤醒时间（暮色 9-6 21:00 需求）
                 //   所有角色都能用（不限江澈）— 在聊天末尾输出 token
                 //   Worker D1 schedules 表注册 dynamic record，到点按混合方案触发主动消息
-                //   暮色发消息会自动取消当前 dynamic（不需要管取消逻辑）
+                // 麦麦 2026-10-03（暮色拍板）：原来这行写的是「暮色发消息会自动取消当前
+                //   dynamic（不需要管取消逻辑）」——**那已经是假话了**。它描述的是 9-6 的老行为，
+                //   取消函数 cancelCharacterWakeups 在 step 9（217282e1）里整个删掉了。
+                //   现在角色改口只剩入口闸这一条路：再排一条，三条件命中（自排 + 一次性 +
+                //   遇忙作废）就会顶掉旧的，见 isReplaceableCharacterWakeup。
+                //   顺带记一笔：老 1.x 通道的 cancelDynamicScheduleOnWorker 还在（打
+                //   /cancel-dynamic-schedule），但 schedule_next_wakeup 现在落的是 2.0 的
+                //   D1，1.x 那条只对迁移前排的老记录有效 —— 同一句提示词下两条通道行为
+                //   不一样，别拿 1.x 的行为去推断 2.0。
                 //   优先级高于固定梯度（30/60/240 分钟）— 存在 dynamic 时只走 dynamic
                 //
                 //   麦麦 2026-09-16 plan step B：搬到了主动消息 2.0 后端。
@@ -312,7 +448,7 @@ export const ChatPrompts = {
                 '- reason 写一句简短的触发原因（"该写日记了" / "她好久没回" / "提醒她吃饭"等），会写到任务的 metadata，到点 Worker 拼到 system hint "你当时安排的理由是 [reason]" 让你知道这是你自己定的',
                 '- 输出位置：在普通回复**末尾**（不要在中间，会被 strip 漏掉）',
                 '- 别 5 分钟调一次，太频繁反而像骚扰',
-                '- 暮色在 dynamic 时间到达前发任何消息，当前 dynamic 自动取消（不需要你自己处理）',
+                '- 暮色在 dynamic 到点前发消息不会取消它，到点照样会响；想改时间就再排一条，新的会覆盖旧的',
                 '- 新的回复会覆盖之前未触发的 dynamic（同一角色只有 1 条 dynamic 在册）',
                 '',
                 '示例：',
@@ -1103,6 +1239,9 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
         if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
             bp2Rules += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
         }
+        if (previousMsg && previousMsg.metadata?.source === 'theater') {
+            bp2Rules += `\n\n[系统提示: 你刚才陪用户在剧场里看了一集剧，现在回到主聊天。可以自然地提一句"刚才剧里那谁演得……"之类的观察；不要剧里每条都主动回到 IM，不要在电话里报告假剧情。]`;
+        }
 
         // Voice message prompt injection
         // ⚠️ 2026-07-17 4 断点方案：语音功能归 bp1Tools（属工具类，跟 Notion/朋友圈同类）
@@ -1247,6 +1386,20 @@ ${!isPureMode ? await buildCoReadLightBlock(char.id, coReadActive !== false) : '
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    /**
+                     * 剧场（10-06 第 2 步）。
+                     *
+                     * 剧场的话跟主聊天**存在同一张表**（暮色 21:12 定的：打标记就天然接上，
+                     * 不做「同步」这个动作），所以这里**必须**认出来。
+                     *
+                     * 不认会串味：剧里说「他刚转身走掉」，模型不知道这是剧里的事，
+                     * 会当成真实发生的事接下去 —— 角色扮演模型尤其吃这一套。
+                     * 带上剧名和集数，模型才知道这段是「看剧时聊的」。
+                     */
+                    if (source === 'theater') {
+                        const tag = (m.metadata as any)?.theaterTag;
+                        return tag ? `[剧场 ${tag}]` : '[剧场]';
+                    }
                     return '[聊天]';
                 })();
                 

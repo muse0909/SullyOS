@@ -10,6 +10,22 @@ import { ChatParser, playSongAndJoinHandled } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
+// 麦麦 2026-09-30：主动消息 2.0 排程块 + 回执注入 / 消费。
+import {
+  buildNoticeConsumeRuntime,
+  collectAmsg2TaskContext,
+  consumeAmsg2Notices,
+} from '../utils/amsg2TaskContext';
+import { AMSG_FALLBACK_DELAY_MS, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
+// 麦麦 2026-09-30：回执被消费后立刻重传一份不带它的 fire_pack（方向一）。
+import { flushAmsgState, markAmsgStateDirty } from '../utils/amsgStateSync';
+// 麦麦 2026-10-02：补上「活跃会话租约」的调用点（startAmsgChatPresence 此前从无调用者，
+//   云端 client_state 的 chat_presence 一直是 0 行 → worker 那道 active-chat-presence 门
+//   等于不存在）。函数体与心跳逻辑在 amsgStateSync 里是现成的，只缺这里两个调用。
+import { startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+// 「真实用户消息」判定复用同一个叶子 helper（不自己另写一套，见 amsg2ExpireGuard）。
+import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
@@ -18,10 +34,12 @@ import { useMusic, toHttps, musicApi } from '../context/MusicContext';
 import { pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, extractGeminiKeys, shortKey } from '../utils/geminiKeyPool';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
-import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
+import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle, mergeSelfInsights } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
+// 麦麦 2026-10-04：纯聊天模式的 prompt cache 断点（off / 5m / 1h）
+import { getChatCacheTtl, buildCacheControl } from '../utils/chatCacheTtl';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -76,14 +94,15 @@ const isApiLogEnabled = (): boolean => {
 // 暮色 2026-08-23 v3：MCP 工具调用多轮循环（OpenAI 协议第一版）
 //   实现已抽到 utils/mcpChatAI.ts（可独立测试 + 维护）
 import { processMcpToolCalls } from '../utils/mcpChatAI';
+import { normalizeChatBaseUrl } from '../utils/chatApiCompat';
 
 // URL 归一化：已有 /v1、/v2 等版本路径直接用，否则自动补 /v1
-const normalizeApiUrl = (url?: string): string => {
-    const raw = (url || '').trim().replace(/\/+$/, '');
-    if (!raw) return '';
-    if (/\/v\d+$/i.test(raw)) return raw;
-    return `${raw}/v1`;
-};
+//   麦麦 2026-09-30：实现搬到 utils/chatApiCompat.normalizeChatBaseUrl（跟 OSContext 那份
+//   合并成一处），多一条 Gemini 例外——结尾 /v1beta、/v1alpha、/openai 的不补 /v1，
+//   否则 Gemini 地址会被补成 `.../v1beta/v1` 打错。
+//   注意本文件的主聊天走原生 Gemini 分支（:generateContent + key 走 URL 参数，
+//   见下方 useGeminiProtocol），不经过这个函数——这里只管 OpenAI 那种调法。
+const normalizeApiUrl = normalizeChatBaseUrl;
 
 // —— 生图工具定义 ——
 const IMAGE_GENERATION_TOOL = {
@@ -823,6 +842,31 @@ export const useChatAI = ({
 
     const triggerAI = async (currentMsgs: Message[], overrideApiConfig?: { baseUrl: string; apiKey: string; model: string }, callSite?: string) => {
         if (isTyping || !char) return;
+        // 麦麦 2026-10-02：活跃会话租约。位置和前置条件都照搬原作者
+        //   （upstream/master:hooks/useChatAI.ts:1352-1355），一个字没改语义：
+        //   - 就在主请求即将发出前开，finally 里停 —— 租约的语义是「这一轮生成期间用户在这边」，
+        //     生成一结束就该停，剩下的清库交给远端 45s TTL 自然失效。
+        //   - 只对「开了主动消息 2.0 且还有会响的 AI 任务」的角色开：其余角色云端没有对应
+        //     任务，开了纯浪费一次 PUT 还刷 warn。
+        //   云端 expire 任务到点先读它：新鲜（45s TTL 内）就直接 skip，reason 记
+        //   'active-chat-presence'，别在用户正聊天时插一条定时消息（worker bundle 15813 行那道门）。
+        //
+        //   TDZ 三点都在上面查过，不会崩：
+        //     1. `char` —— 上一行 `if (isTyping || !char) return;` 已经判过空；
+        //     2. `hasActiveAiTask` —— 模块顶层 import，模块初始化时就绑好了；
+        //     3. `activeMsg2Config` —— types.ts:1427 的可选字段，`?.` 兜住。
+        //
+        //   为什么用 currentMsgs 而不是原作者的 contextMsgs：本地 contextMsgs 在本函数
+        //   1092 行才定义（可能换成 fullHistory），在本行引用会是 TDZ。这里取的是
+        //   triggerAI 的入参，触发本轮生成的那批消息。
+        //   ⚠️ 与原作者的已知差异（暮色 2026-10-03 拍板：接受，记成遗留项）：若
+        //   currentMsgs 里一条真实用户消息都没有（全是角色主动发的 / 卡片 / 转发），
+        //   这里算出 null，而原作者会从完整历史里翻出最后一条真实用户消息。
+        //   lastUserMessageAt 传 null 时，worker 侧 laterOf 会退回用 fire_pack 里的旧值。
+        const amsg2Cfg = char.activeMsg2Config;
+        if (amsg2Cfg?.enabled && hasActiveAiTask(amsg2Cfg)) {
+            startAmsgChatPresence(char.id, getLastRealUserMessageAt(currentMsgs));
+        }
         // 麦麦 2026-09-24 v2：临时诊断 — 给每次 triggerAI 一个 triggerId，写入 wakeup-trigger-start。
         //   排查 20:14 和 20:15 两条任务时用来对应「同次 triggerAI」vs「跨次 triggerAI」。
         //   callSite 由调用方（Chat.tsx 多处 triggerAI 调用）传入字符串标签；未传则记 'unknown'。
@@ -934,7 +978,13 @@ export const useChatAI = ({
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
             //     此时已有"…"气泡，不额外显示状态提示
-            await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
+            //
+            //     麦麦 2026-10-04：纯聊天模式整条跳过。省的不只是后面拼进请求体的那段文本，
+            //     **连这次向量检索的网络往返都省了** —— 检索结果本轮根本没人用。
+            //     （注入点两处都关：这里不检索，下面 dynamicTailParts 也不 push。）
+            if (char.chatMode !== 'pure') {
+                await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
+            }
 
             // ⚠️ 2026-07-17 4 断点优化：把记忆宫殿挪出 bp3Context 段
             //   改前：buildCoreContext 读 char.memoryPalaceInjection 拼到 bp3Context
@@ -1029,7 +1079,11 @@ export const useChatAI = ({
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             //   4 断点方案：双语是「输出格式工具」→ 归 bp1Tools
-            const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
+            // 麦麦 2026-10-04：纯聊天模式跳过双语输出。
+            //   判据加在**定义处**而不是两处 if 上——bilingualActive 下面还有一处
+            //   dynamicTailParts.push 的提醒句，定义处关掉才能两处一起干净。
+            const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang
+                && translationConfig.targetLang && char.chatMode !== 'pure';
             if (bilingualActive) {
                 bp1Tools += `\n\n[CRITICAL: 双语输出模式 - 必须严格遵守]
 你的每句话都必须用以下XML标签格式输出双语内容：
@@ -1200,7 +1254,10 @@ let _tempImageCleanupKeys: string[] = [];
             // 小程序模式下, 所有这一轮新落库的 assistant 消息都打 fromMcdMiniApp 标,
             // 让 InAppChat 面板能 filter 出来显示 (否则用户看不到 char 的回复, 以为没触发 LLM)
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
-            if (mcdMiniOpen) {
+            // 麦麦 2026-10-04：纯聊天模式不注入麦当劳小程序上下文。
+            //   （mcdInheritMeta 那行不在这个 if 里、也不动 —— 它只给落库消息打
+            //   fromMcdMiniApp 标，不进请求体，省不了 token 也不该在这里改。）
+            if (mcdMiniOpen && char.chatMode !== 'pure') {
                 const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
                 if (block) {
                     // 4 断点方案：麦当劳 MiniApp 是「工具上下文」→ 归 bp1Tools
@@ -1215,7 +1272,13 @@ let _tempImageCleanupKeys: string[] = [];
             // 4 断点方案分段：
             //   - 心声输出要求（规则/格式约束）→ 归 bp2Rules（行为规范）
             //   - 最近 5 条心声（历史感知上下文）→ 归 bp3Context（角色上下文）
-            if (isEmotionOn(char)) {
+            //
+            // 麦麦 2026-10-04：纯聊天模式跳过整个心声块。
+            //   输出要求（本段拼进 bp2Rules）+ 最近 3 条（dynamicRecentEmotions）+ 情绪底色
+            //   （chatPrompts 早返回里那份克隆角色已清掉）三处是一套，一起关才干净。
+            //   判据直接写 char.chatMode，跟本文件 HTML 那处（line 1103）同一把尺——
+            //   不在这里引 isPureChat 变量：它在 1709 才声明，提前引用会 TDZ。
+            if (isEmotionOn(char) && char.chatMode !== 'pure') {
                 const scheduleStyle = char.scheduleStyle || 'lifestyle';
                 const mindfulRule = scheduleStyle === 'mindful'
                     ? '你是意识系角色，innerState 只能包含思考、回忆、感受、等待，不虚构物理行为。'
@@ -1279,6 +1342,17 @@ let _tempImageCleanupKeys: string[] = [];
             const useGeminiProtocol = apiProtocol === 'gemini';
             // 任务 2：删 Claude 协议分支（system 转 user、claudeSystemField 构造、history 协议分支）
             //   OpenAI 协议：system 在 messages[0].role = 'system'
+            //
+            // 麦麦 2026-10-04：纯聊天模式挂 prompt cache 断点（1 个，挂在 system 消息上）。
+            //   为什么只给纯聊天：纯聊天的 system 段全是静态文本（身份/性格/内在认知/世界观/
+            //   世界书/用户画像/记忆月度），逐字不变 → 每轮命中同一段前缀。
+            //   完整模式的 system 段带日程时段和最近心声时间戳，每轮都变 → 挂了也是白付写入费。
+            //   暮色 2026-10-04 拍板"现在只给纯聊天开就行"。
+            //   判据写 char.chatMode 而不是 isPureChat：后者在 1738 行才声明，在这儿引用会 TDZ。
+            //   ttl 取值 off | 5m | 1h，默认 5m；off 时字段整个不挂，请求体跟以前一模一样。
+            const pureChatCacheControl = char.chatMode === 'pure'
+                ? buildCacheControl(getChatCacheTtl())
+                : null;
             const fullMessages: any[] = [
                 {
                     role: 'system',
@@ -1291,6 +1365,8 @@ let _tempImageCleanupKeys: string[] = [];
                               `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
                               `不要猜测这些工具的参数格式，向用户询问需要的参数。`
                             : ''),
+                    // 纯聊天 + 缓存开启时才有这个键；其它情况一律不带（不能留 null，newapi 可能报错）
+                    ...(pureChatCacheControl ? { cache_control: pureChatCacheControl } : {}),
                 },
                 ...cleanedApiMessages
             ];
@@ -1421,8 +1497,35 @@ let _tempImageCleanupKeys: string[] = [];
                 dynamicTailParts.push(dynamicRecentEmotions);
             }
             // ⚠️ 2026-07-17 4 断点优化：记忆宫殿
-            if (dynamicMemoryPalace) {
+            //   麦麦 2026-10-04：纯聊天模式跳过。这是 dynamicTail 里最重的一段（向量检索
+            //   结果全文），而且每轮都在变——留着既烧 token 又会把缓存前缀顶掉。
+            if (dynamicMemoryPalace && char.chatMode !== 'pure') {
                 dynamicTailParts.push(dynamicMemoryPalace);
+            }
+
+            // 麦麦 2026-09-30：主动消息 2.0 排程块 + 回执，插在**易变尾段之前**。
+            //
+            // 位置为什么是这儿（不是贴数组尾巴）：「回到你自己」钢印焊在 dynamicTail 末尾，
+            // 靠 recency 抢模型开口前的最后一眼。排程块贴在它后面时，模型最后读到的是一份
+            // 带原文的待办清单，于是把排在今晚的任务当成本轮就该办的事——用户侧的表现是
+            // 「说了今天要看书，之后每轮结尾都问看到哪了」。所以排在它**前面**。
+            //
+            // 前缀缓存一个 token 都不动：插入点在 cache 断点之后，历史前缀完整复用。
+            //
+            // 这条链路的另一半是「消费」：本轮请求成功之后才把这批回执标成已消费
+            // （见下方成功分支），失败 / 取消都留着，下一轮重新带上。
+            let amsg2TaskContextResult: Awaited<ReturnType<typeof collectAmsg2TaskContext>> | null = null;
+            if (isAmsg2EnabledForChar(char)) {
+                try {
+                    amsg2TaskContextResult = await collectAmsg2TaskContext(char);
+                    if (amsg2TaskContextResult.text) {
+                        fullMessages.push({ role: 'system', content: amsg2TaskContextResult.text });
+                    }
+                } catch (amsgCtxErr) {
+                    // 排程块丢一次不连累这一轮聊天：它只影响角色知不知道自己名下有什么，
+                    // 而聊天本身是用户此刻真正要的事。
+                    console.warn('[ChatAI] 组装主动消息排程块失败（继续聊天）', amsgCtxErr);
+                }
             }
 
             // 暮色 2026-08-05：dynamic tail 6 段合并成 1 条 system 消息
@@ -1639,7 +1742,17 @@ if (hasImageInLatest && !alreadyDescribed) {
             // toolsList 提前到这里——Gemini 协议下也要用（line 1682 / 1720 都要引用）
             // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
             // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
+            // 麦麦 2026-10-04：纯聊天模式下 tools 数组**整个不传**。
+            //
+            // 为什么这层最重要：工具的 description 是**每轮常驻**在请求体里的，
+            // 不管这一轮用不用都在算钱。纯聊天是暮色花钱的工作台（2026-10-04 说明），
+            // 所以这里一个都不留——不只是提示词不教，是连定义都不发。
+            //
+            // 顺带把 mcpHiddenNames 也留在空状态：那是在这个 if 里赋值的，
+            // 不进 if 就没有「按需注入的隐藏工具」那一句 system 补充，跟实际没注入的工具对得上。
+            const isPureChat = char.chatMode === 'pure';
             const toolsList: any[] = [];
+            if (!isPureChat) {
             if (mcdMiniOpen) {
                 toolsList.push(MCD_PROPOSE_TOOL);
             }
@@ -1697,6 +1810,8 @@ if (hasImageInLatest && !alreadyDescribed) {
                     mcpHiddenNames = mcpResult.hiddenNames;
                 }
             }
+            } // ← 麦麦 2026-10-04：关闭 if (!isPureChat)。纯聊天下 toolsList 恒为空，
+              //   下面的 `if (toolsList.length > 0)` 自然不挂 tools，tool_choice 也不设。
             const apiT0 = performance.now();
             const userTemp = (effectiveApi as any).temperature ?? apiConfig.temperature ?? 0.85;
             const userStream = (effectiveApi as any).stream ?? apiConfig.stream ?? false;
@@ -1829,6 +1944,14 @@ if (hasImageInLatest && !alreadyDescribed) {
                     toolCount: toolsList.length,
                     hasCacheControl: cacheControlFieldCount > 0,
                     cacheControlCount: cacheControlFieldCount,
+                    // 麦麦 2026-10-04：暮色实测缓存用。
+                    //   cacheTtlRequested = 设置里选的档（'off' | '5m' | '1h'）
+                    //   cacheApplied = 这次请求体里实际挂上的值（'off' | '5m' | '1h'，非纯聊天一律 'off'）
+                    //   两个都看 'off' 之外的值 → 说明标记确实发出去了；
+                    //   之后看中转站日志的「缓存读取」是不是非零 → 判断有没有真命中。
+                    //   2026-07-18 那次踩过：以为发出去了，实际被 newapi 丢了，读取恒为 0。
+                    cacheTtlRequested: getChatCacheTtl(),
+                    cacheApplied: pureChatCacheControl ? pureChatCacheControl.ttl : 'off',
                     promptChars: {
                         bp1Tools: bp1Tools.length,
                         bp2Rules: bp2Rules.length,
@@ -2070,6 +2193,58 @@ if (hasImageInLatest && !alreadyDescribed) {
             }
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
+
+            // 麦麦 2026-09-30：回执**消费**。定义钉死在这里 —— 回执进了一次**成功**的
+            // 模型请求才算消费；请求抛错 / 被用户取消 / 走到 catch 都不算，台账原样留着，
+            // 下一轮重新带上（角色不知道自己有话要说，比重复说一遍更糟）。
+            //
+            // 放在拿到 data 之后：safeFetchJson 抛异常时根本走不到这，catch 分支也就不会
+            // 误标。这里之前不做任何记账。
+            if (amsg2TaskContextResult?.expiredIds?.length) {
+                void consumeAmsg2Notices(char, amsg2TaskContextResult.expiredIds,
+                  buildNoticeConsumeRuntime({
+                    delayMs: AMSG_FALLBACK_DELAY_MS,
+                    schedule: async ({ mainTask: t, nextOccurrenceMs }) => {
+                      const built = await ActiveMsgClient.scheduleFallbackTask({
+                        char, config: char.activeMsg2Config!,
+                        forClientTaskId: t.clientTaskId,
+                        forSource: t.source,
+                        mainOccurrenceMs: nextOccurrenceMs,
+                        mainMode: t.mode,
+                        mainHintOrReason: t.promptHint,
+                        mainUserMessage: t.userMessage,
+                        mainRecurrence: t.recurrenceType,
+                        userProfile, groups,
+                        // 这个作用域的 realtimeConfig 是可选的（外层签名允许不传）。
+                        // 兜底是 fixed 模式、云端压根不调模型，这份只走建任务接口的
+                        // 入参校验，缺了就给一个空壳——真要靠它渲染内容的是
+                        // prompted/auto 主任务，那条在面板/工具桥里传的是真值。
+                        realtimeConfig: realtimeConfig ?? ({} as RealtimeConfig),
+                        apiConfig,
+                        enabledOverride: char.activeMsg2Config?.enabled === true,
+                      });
+                      return built?.record ?? null;
+                    },
+                    cancelRemote: async (uuid) => { await ActiveMsgClient.cancelTask(uuid); },
+                    persist: async (charId, mutate) => {
+                      const fresh = (await DB.getCharacter(charId).catch(() => null));
+                      if (!fresh?.activeMsg2Config) return;
+                      await DB.saveCharacter({
+                        ...fresh,
+                        activeMsg2Config: { ...fresh.activeMsg2Config, tasks: mutate(fresh.activeMsg2Config.tasks ?? []) } as any,
+                      });
+                    },
+                    // 麦麦 2026-09-30：回执刚被消费掉，云端那份 fire_pack 里的旧快照也得换掉
+                    // （到点时角色会把同一件事再说一遍）。这一轮本来就会打脏，但打脏走的是
+                    // 合并窗口 + 微任务，等它落地之前到点可能已经到了，所以这里立刻冲一次。
+                    // 传不上去有冲刷自己的退避重排和底账兜着（amsgStateSync），不另起一套。
+                    resync: () => {
+                      markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                      void flushAmsgState('amsg2-notice-consumed');
+                    },
+                  }),
+                );
+            }
 
             // 3.4 麦当劳小程序 propose_cart_items UI 钩子工具循环
             //     不调 MCP, 只把模型的 args 作为 mcd_card kind=proposal 落库, 让小程序聊天面板渲染
@@ -5113,6 +5288,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            // 麦麦 2026-10-02：活跃会话租约到此结束（生成成功 / 抛错 / 被中断都算结束）。
+            //   放在 finally 开头，早于本块里那些后台异步任务：租约的语义是「这一轮生成
+            //   期间用户在这边」，生成一结束就该停，剩下的清库交给远端 45s TTL 自然失效。
+            //   stop 只清本地的 interval，不发「离线」写入（见 amsgStateSync 的注释）。
+            stopAmsgChatPresence(char.id);
             // 麦麦 2026-09-27：主回复完成（catch 块 setMessages 已经跑了）→ finally 块启动后台识图 IIFE
             //   - 暮色 9-27 拍板：原识别 API 触发时机从"请求前阻塞"改为"主回复完成后后台异步"
             //   - 之前在主请求前 fire-and-forget 启动，导致 IIFE 跑得快时识别完成日志出现在主请求响应之前
@@ -5472,9 +5652,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name, mpEmb);
                             if (result) {
                                 // 持久化自我领悟词条到角色档案
+                                // 麦麦 2026-10-04：改走 mergeSelfInsights（去重 + 上限 10 条 FIFO），
+                                // 跟手动触发那条路径共用同一套规则，不然两条路会长出不同的词条表。
                                 if (result.selfInsights.length > 0) {
-                                    const existing = char.selfInsights || [];
-                                    const updatedInsights = [...existing, ...result.selfInsights];
+                                    const updatedInsights = mergeSelfInsights(char.selfInsights, result.selfInsights);
                                     await DB.saveCharacter({ ...char, selfInsights: updatedInsights });
                                 }
                                 const total = result.resolved.length + result.deepened.length + result.faded.length +
@@ -5533,8 +5714,11 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
     audioBlob: Blob,
     config: APIConfig,
   ): Promise<string> => {
-   const apiKey = (config as any).volinkApiKey;
-    if (!apiKey) throw new Error('Volink API key not configured');
+   // 麦麦 2026-09-30：原来读的是 config.volinkApiKey —— APIConfig 里根本没这个字段
+    // （用 as any 绕过了类型检查），所以聊天语音输入一直是坏的，还以为没配 key。
+    // 现在统一读设置里新加的正式字段。
+    const apiKey = config.siliconflowApiKey;
+    if (!apiKey) throw new Error('还没配硅基流动的识别密钥（设置 → 语音识别）');
 
     const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -5550,8 +5734,8 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
         apiKey,
         audioBase64: base64,
         mimeType:    audioBlob.type || 'audio/webm',
-        model:       (config as any).volinkModel    || 'FunAudioLLM/SenseVoiceSmall',
-        language:    (config as any).volinkLanguage || 'auto',
+        model:       config.siliconflowSttModel || 'FunAudioLLM/SenseVoiceSmall',
+        language:    'auto',
       }),
     });
 

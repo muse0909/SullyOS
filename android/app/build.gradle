@@ -35,6 +35,51 @@ def readCfg = { String key, String fallback ->
     return fallback                                                // 4. 占位符兜底
 }
 
+// 麦麦 2026-10-03：测试包指向 fix 分支的网页部署，正式包继续指 master。
+//
+// ## 为什么需要这个
+//
+// capacitor.config.json 里写着 server.url，Capacitor 有它就会**从远程加载网页**，
+// APK 里那份本地 assets 根本不参与。于是「打一个 fix 分支的包」拿到的还是 master 的
+// 代码——2026-10-03 就在这上面栽了：暮色装上 67b8defc 测了半天，屏幕上跑的是 master。
+// 五条独立证据都对上了（APK 内 config / git 历史 / 截图旧文案 / 远端 bundle 符号 /
+// D1 数据），最后才定位到这里。
+//
+// ## 为什么放在 gradle 而不是手动改 assets
+//
+// android/app/src/main/assets/capacitor.config.json 是 `npx cap copy` 的产物，
+// 而且**在 .gitignore 里**（android/.gitignore:99），从没提交过。手动改它有两个坏处：
+// 一是 `npx cap sync` 每次都会用根目录那份覆盖回去（2026-10-03 那次就是这么丢的）；
+// 二是没有任何记录，回头没人说得清当时指向的是哪个分支。
+//
+// 改成 build 时按 property 选：
+//   ./gradlew assembleDebug -PtestBuild              → 用 capacitor.config.test.json
+//   ./gradlew assembleDebug                          → 用 capacitor.config.json
+// **两个方向都写**，所以不管上一次 build 留下了什么，每次都会纠正回正确的那份。
+//
+// ## 两份文件的差异只有 server.url 和 allowNavigation 多一行
+//   capacitor.config.json        → https://sully-muse-vert.vercel.app（master，暮色手机在用）
+//   capacitor.config.test.json   → https://sully-os-git-fix-amsg2-realign-...vercel.app（fix）
+// 改其中一份时记得用 python 从另一份重新生成，别手抄整个文件。
+
+def syncCapacitorConfig = tasks.register('syncCapacitorConfig') {
+    def isTest = project.hasProperty('testBuild')
+    def rootDir = rootProject.projectDir.parentFile
+    def target = new File(project.projectDir, 'src/main/assets/capacitor.config.json')
+    def source = new File(rootDir, isTest ? 'capacitor.config.test.json' : 'capacitor.config.json')
+    inputs.file(source)
+    outputs.file(target)
+    doLast {
+        if (!source.exists()) {
+            throw new GradleException("找不到 ${source} —— 服务器地址配置读不到，拒绝构建")
+        }
+        target.parentFile.mkdirs()
+        target.bytes = source.bytes
+        def which = isTest ? '测试包' : '正式包'
+        logger.lifecycle("[amsg] ${which} 的 capacitor.config 来自 ${source.name}（server.url 指向 ${which == '测试包' ? 'fix 分支' : 'master'}）")
+    }
+}
+
 android {
     namespace "com.aetheros.simulator"
     compileSdk rootProject.ext.compileSdkVersion
@@ -47,8 +92,15 @@ android {
         //   2026-09-29 麦麦：测试版桌面上改个名字（暮色要求），否则两个图标一模一样分不清。
         //     名字在 resValue 里覆盖 strings.xml 的 app_name / title_activity_main。
         //     resValue 只对当前变体生效，资源优先级高于 res/values/strings.xml。
-        resValue "string", "app_name", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
-        resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? "Solly" : "拾光机")
+        //   -PtestAppName=xxx 可以临时换名字（暮色 9-29 打语音测试包时要求叫「语音测试」），
+        //     不传就用下面这个默认值，所以不影响之前 amsg2 那套既有流程。
+        //   麦麦 2026-10-03 更正：默认值原来写成 Solly（多一个 o）。项目里到处是 Sully
+        //     ——index.html 的 title 就是 SullyOS、全仓 274 处 Sully 对 4 处 Solly，
+        //     那 4 处全是这个名字自己写出来的。正式包名「拾光机」是 strings.xml 里的，
+        //     不受这里影响。
+        def testAppName = project.findProperty('testAppName') ?: "Sully"
+        resValue "string", "app_name", (project.hasProperty('testBuild') ? testAppName : "拾光机")
+        resValue "string", "title_activity_main", (project.hasProperty('testBuild') ? testAppName : "拾光机")
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // 暮色 2026-09-10：APK 自动版本号
@@ -102,13 +154,19 @@ android {
         }
     }
 
-    // 暮色 2026-09-10：APK 文件名带版本号 + 应用名（"拾光机-xxxx"）
-    //   xxxx = versionName（例如 2026-09-10-6b76cac3）
+    // 暮色 2026-09-10：APK 文件名带版本号；2026-10-03 更正前缀为 sully
+    //   xxxx = versionName（例如 2026-10-03-67b8defc）
     //   debug 包后缀加 -debug，release 包不加后缀
+    //   为什么从「拾光机」改成 sully（暮色 10-03 原话「省得搞错了」）：
+    //     文件名是给暮色看的，桌面上真正显示的是 app_name 那个「拾光机」。两个名字
+    //     长得不一样，每次发包都要解释一遍哪个是哪个——「怎么还是拾光机，不是 sully
+    //     吗」这句话 10-03 就说过一次。统一成 sully，文件名和包名对得上，也跟
+    //     index.html 的 title（SullyOS）一致。
+    //     正式包桌面名**不改**，仍是 strings.xml 里的「拾光机」——那是你自己在用的名字。
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             def versionName = variant.versionName
-            def apkName = "拾光机-${versionName}"
+            def apkName = "sully-${versionName}"
             if (variant.buildType.name == 'debug') {
                 apkName += '-debug'
             }
@@ -116,6 +174,11 @@ android {
             output.outputFileName = apkName
         }
     }
+
+    // 麦麦 2026-10-03：把 server.url 的选择挂到 preBuild 上，保证「打包时读到的 config」
+    //   一定是这次 build 该用的那份。用 dependsOn 而不是直接写在 assets 任务里，是因为
+    //   mergeDebugAssets 跑在 preBuild 之后——顺序反了 assets 目录里就会留着上一份。
+    preBuild.dependsOn syncCapacitorConfig
 }
 
 // 麦麦 2026-09-03：占位符 build-time 警告

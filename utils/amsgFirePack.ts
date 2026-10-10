@@ -192,14 +192,29 @@ export const unpackStateValue = async (value: string): Promise<string> => {
  */
 export const AMSG_LAST_SKIP_KEY = 'last_skip';
 
-/** last_skip 的原因枚举（新增值时 describeLastSkip 的人话文案要一起补）。 */
+/**
+ * last_skip 的原因枚举（新增值时 describeLastSkip 的人话文案要一起补）。
+ *
+ * ⚠️ 这份必须跟云端 onBeforeFire 里 recordSkip 的实参**逐个对齐**（2026-09-30 修）：
+ * 以前这里只列了 6 个，其中 3 个是云端根本不写的（旧的空生成类），却漏了云端实际在写的
+ * 4 个闸名（schedule-off / min-gap / recurring-unanswered / daily-limit）。漏掉的后果是
+ * parseLastSkip 判成「不认识」直接返回 null —— 面板在这些情况下**什么都不显示**，用户
+ * 只看到"任务到点了但没响"，查不出是哪道闸拦的。枚举是照抄云端的那份，不是照抄历史。
+ */
 const LAST_SKIP_REASONS = [
+  // —— 遇忙作废那类（策略 = expire 时才判）——
   'active-chat-presence',
   'conversation-moved-on',
+  // —— 开关 / 限流那类（对所有任务生效）——
+  'schedule-off',
+  'min-gap',
+  'unanswered-limit',
+  'recurring-unanswered',
+  'daily-limit',
+  // —— 云端早期 / 其它路径写的（保留兼容，老记录里可能有）——
   'empty-generation',
   'side-effects-only',
   'stale',
-  'unanswered-limit',
 ] as const;
 
 export interface AmsgLastSkip {
@@ -211,10 +226,14 @@ export interface AmsgLastSkip {
   /**
    * active-chat-presence  到点时用户正跟这个角色聊天
    * conversation-moved-on 排程之后对话已经往前走了，原本要说的话过时了
+   * schedule-off          角色的主动消息 2.0 开关关着，或没开自排许可，整条不跑
+   * min-gap               角色自排的上一次主动消息还没过间隔（默认 10 分钟），这次不响
+   * unanswered-limit      角色自排的任务到点时，用户未回复期间的连发条数已到用户设的上限
+   * recurring-unanswered  这条循环任务用户已经连续几声都没回，达到上限，之后不再自己响
+   * daily-limit           今天这个角色主动找用户的次数已经到上限
    * empty-generation      模型这次没写出任何能发的正文（空输出 / 纯拒答）
    * side-effects-only     模型这次只做了副作用（点赞、写日记之类）却没说话，整条不发
    * stale                 到点时已经过期太久（服务停摆后恢复），不再补发
-   * unanswered-limit      角色自排的任务到点时，用户未回复期间的连发条数已到用户设的上限
    */
   reason: (typeof LAST_SKIP_REASONS)[number];
   skippedAt: number;
@@ -266,6 +285,15 @@ export const describeLastSkip = (skip: AmsgLastSkip, formatTime: (ms: number) =>
       }
       return `${when} 那次主动消息没发——到点时已经过去太久（服务中断过），过期的话就不补发了。`;
     }
+    case 'schedule-off':
+      return `${when} 那次主动消息没发——这个角色的主动消息 2.0 开关是关着的（或者没允许 ta 给自己排任务），到点整条都不跑。`;
+    case 'min-gap':
+      return `${when} 那次主动消息没发——ta 上一次主动找你还没过间隔（默认 10 分钟），这次让开了。`;
+    case 'recurring-unanswered':
+      return `${when} 那次主动消息没发——这条循环任务你已经连续几声都没回，ta 就不再自己响了。`
+        + '回一句话就会重新开始。';
+    case 'daily-limit':
+      return `${when} 那次主动消息没发——今天 ta 主动找你的次数已经到上限了。`;
     case 'unanswered-limit':
       // 照 stale 那支的口径说实话：被闸拦下的那一次是**跳过**，不是排队等着补发。
       // 上游把跳过当成功消费——一次性任务的行当场就删了，循环任务只是快进到下一次。

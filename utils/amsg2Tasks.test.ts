@@ -3,9 +3,11 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_ACTIVE_TASKS_PER_CHAR,
   REPLACE_CANCEL_FAILED_NOTE,
+  AMSG_FALLBACK_DELAY_MS,
   applyRemoteTaskDelta,
   applyScheduledTask,
   AMSG2_SCHEDULE_SECRECY_NOTE,
+  buildFallbackText,
   buildFireTaskListBlock,
   currentOccurrenceMs,
   describeRemoteLastError,
@@ -13,15 +15,25 @@ import {
   findTaskByShortId,
   getPendingTasks,
   hasActiveAiTask,
+  isFallbackTask,
+  isForcePolicy,
   isPendingTask,
   isRemoteMissingTask,
+  noticeKindForTask,
   keepUncancelledTasks,
   parseRemoteTaskLastError,
   pruneFiredTasks,
   pruneStaleTasks,
   reconcileTasksWithRemote,
+  FIXED_AS_PROMPTED_PREFIX,
+  resolveCloudExpirePolicy,
   shortTaskId,
   toDatetimeLocalValue,
+  visibleTasks,
+  isReplaceableCharacterWakeup,
+  EXPIRE_POLICY_OPTIONS,
+  EXPIRE_POLICY_HINT,
+  describeExpirePolicy,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
 
@@ -469,7 +481,9 @@ describe('buildFireTaskListBlock', () => {
     const block = buildFireTaskListBlock([fireTask({ expirePolicy: 'force', mode: 'prompted', promptHint: '叫他起床' })], {
       nowMs: NOW, tzId: 'UTC',
     });
-    expect(block).toContain('强制发送');
+    // 麦麦 2026-10-03：这条断言盯的是"到点那份清单里带着策略名"。策略名当天换了措辞
+    // （强制发送 → 你在忙就晚点提），跟着改断言，别改成「只要有字就行」那种糊弄版。
+    expect(block).toContain(describeExpirePolicy('force'));
     expect(block).toContain('叫他起床');
   });
 });
@@ -538,5 +552,276 @@ describe('currentOccurrenceMs 跨夏令时', () => {
     });
     const now = Date.parse('2026-03-20T00:00:00.000Z');
     expect(currentOccurrenceMs(stale, now)).toBeGreaterThan(now);
+  });
+});
+
+// 麦麦 2026-09-30：发往云端那份的策略翻译。
+//
+// 云端 shouldExpireFire 对 force 一次窗口都不判（`policy !== 'expire' → false`），
+// 所以「force + 到点前 10 分钟用户说过话就不推」这条新规则只能靠翻译让云端去跳。
+// 本地记录始终是真策略，翻译只发生在发给云端的那份 metadata 上。
+
+// ─── 麦麦 2026-09-30：30 分钟兜底 ───
+// 兜底是「强制发送」被让开、角色又一直没顺口带出来时的最终保证。三个判定都纯，
+// 单测能锁住；真正建任务的编排（排程 + 落账）靠联调看诊断和 D1。
+describe('isForcePolicy（谁需要配兜底）', () => {
+  it('提示词/自动 + 强制发送 → 要兜底', () => {
+    for (const mode of ['prompted', 'auto'] as const) {
+      expect(isForcePolicy(mode, 'force')).toBe(true);
+    }
+  });
+
+  it('遇忙作废 → 不要兜底（没有需要补的后路）', () => {
+    expect(isForcePolicy('auto', 'expire')).toBe(false);
+    expect(isForcePolicy('auto', undefined)).toBe(false);
+  });
+
+  // 钙片这类提醒多是固定模式。固定恒 force，之前不会走「到点让路」那套，
+  // 但它在云端压根不进判定闸 —— 到点必推，也就永远等不到兜底接手。
+  // 把它纳进来才是「固定模式 + 强制发送」这条新规则真正落地的样子。
+  it('固定模式恒 force → 要兜底（哪怕调用方没写策略）', () => {
+    expect(isForcePolicy('fixed', undefined)).toBe(true);
+    expect(isForcePolicy('fixed', 'expire')).toBe(true);
+    expect(isForcePolicy('fixed', 'force')).toBe(true);
+  });
+});
+
+describe('AMSG_FALLBACK_DELAY_MS', () => {
+  it('就是 30 分钟', () => {
+    expect(AMSG_FALLBACK_DELAY_MS).toBe(30 * 60_000);
+  });
+});
+
+describe('buildFallbackText（兜底到点原样发的那句）', () => {
+  // 固定模式就是「原样补那句」，一个字都不能改——补的是钙片提醒，就还得是那句提醒。
+  it('固定模式用主任务原文，不改一个字', () => {
+    expect(buildFallbackText('fixed', '别太油', '该吃钙片了')).toBe('该吃钙片了');
+  });
+
+  // 没有那句可补就不该建兜底（返回空串，由调用方跳过），总比补一句不相干的话强。
+  it('固定模式没原文 → 空串（调用方据此不建兜底）', () => {
+    expect(buildFallbackText('fixed', '别太油', '   ')).toBe('');
+    expect(buildFallbackText('fixed', '别太油', undefined)).toBe('');
+  });
+
+  // 暮色 2026-09-30 拍板：提示词/自动**不能丢掉原文换默认句**。丢了的话兜底推过来
+  // 就是一句看不出在提醒什么的话，等于没提醒。方向词（"别太油"）照样原样带进去。
+  it('提示词/自动：方向词原样带进模板', () => {
+    expect(buildFallbackText('prompted', '别太油', undefined)).toBe('到点啦：别太油');
+    expect(buildFallbackText('auto', '记得提醒我吃药', undefined)).toBe('到点啦：记得提醒我吃药');
+  });
+
+  it('提示词/自动：长句也带，一字不改', () => {
+    const hint = '别太油，自然一点，像平时聊天那样';
+    expect(buildFallbackText('prompted', hint, undefined)).toBe(`到点啦：${hint}`);
+  });
+
+  it('首尾空白先去掉再拼（免得模板里出现"到点啦：  "这种空隙）', () => {
+    expect(buildFallbackText('prompted', '  记得提醒我吃药  ', undefined)).toBe('到点啦：记得提醒我吃药');
+  });
+
+  it('什么都没给 → 兜底默认句', () => {
+    expect(buildFallbackText('auto', undefined, undefined)).toBe('你之前定的那件事，到点啦。');
+  });
+});
+
+describe('isFallbackTask / visibleTasks（兜底不给人看）', () => {
+  it('带 fallbackFor 的是兜底，其余不是', () => {
+    expect(isFallbackTask({ fallbackFor: 'cid-main' })).toBe(true);
+    expect(isFallbackTask({})).toBe(false);
+  });
+
+  // 兜底躺在本地清单里是第 5 步取消它的前提，但它不该在面板列表里冒充用户排的任务。
+  it('visibleTasks 滤掉兜底，其余原样保留（顺序不变）', () => {
+    const main = task({ clientTaskId: 'cid-main' });
+    const fb = task({ clientTaskId: 'cid-fb', fallbackFor: 'cid-main' });
+    const other = task({ clientTaskId: 'cid-other' });
+    expect(visibleTasks([main, fb, other])).toEqual([main, other]);
+    // 原数组不能被就地改——面板拿 allTasks 还要用来关 2.0 时取消全部。
+    expect(visibleTasks([main, fb, other])).not.toBe([main, fb, other]);
+  });
+});
+
+// ─── 麦麦 2026-09-30：发给云端那份的形态 ───
+// 云端那道到点判定的真实长相（对着线上 bundle 逐行核过）：
+//   shouldExpireFire 第一行 `policy !== 'expire' → return false` —— 对 force 一次不判；
+//   taskNeedsLlm 只放 prompted / auto 进 onBeforeFire —— fixed 连门都摸不到。
+// 所以「force + 到点前 10 分钟用户说过话就不推」这条新规则，客户端只能靠翻译
+// 让云端去跳。本地记录始终是真策略，翻译只发生在发给云端的那一份上。
+describe('resolveCloudExpirePolicy（翻译成云端认得的形态）', () => {
+  it('提示词/自动 + 强制发送 → 云端收到 expire，标记被翻过', () => {
+    for (const mode of ['prompted', 'auto'] as const) {
+      expect(resolveCloudExpirePolicy(mode, 'force')).toEqual({
+        cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: false,
+      });
+    }
+  });
+
+  it('没写策略（默认）→ 原样 expire，两条标记都不打', () => {
+    expect(resolveCloudExpirePolicy('auto', undefined))
+      .toEqual({ cloudPolicy: 'expire', forceAsExpire: false, fixedAsPrompted: false });
+    expect(resolveCloudExpirePolicy('prompted', 'expire'))
+      .toEqual({ cloudPolicy: 'expire', forceAsExpire: false, fixedAsPrompted: false });
+  });
+
+  // 固定 + 强制发送：光翻策略没用（taskNeedsLlm 挡着），必须连模式一起翻成 prompted。
+  // 这是钙片那类提醒第一次真正走进新规则——代价是每个周期多一次模型调用。
+  it('固定 + 强制发送 → 策略翻 expire，且模式也翻成 prompted（附提示词前缀）', () => {
+    for (const policy of [undefined, 'force'] as const) {
+      const r = resolveCloudExpirePolicy('fixed', policy);
+      expect(r.cloudPolicy).toBe('expire');
+      expect(r.forceAsExpire).toBe(true);
+      expect(r.fixedAsPrompted).toBe(true);
+      expect(r.cloudHint).toBe(FIXED_AS_PROMPTED_PREFIX);
+    }
+  });
+
+  // 固定模式恒 force（resolveExpirePolicy 钉死，面板上它永远显示「强制发送」），
+  // 所以"固定 + 遇忙作废"这个组合压根不存在 —— 每一条固定任务都会走翻译。
+  // 这不是 bug，是暮色 9-30 定的规则本身：固定模式也要走 10 分钟窗、不接受照发。
+  it('固定模式无论调用方写什么策略，一律翻成 prompted + expire', () => {
+    for (const policy of [undefined, 'expire', 'force'] as const) {
+      const r = resolveCloudExpirePolicy('fixed', policy);
+      expect(r).toMatchObject({ cloudPolicy: 'expire', forceAsExpire: true, fixedAsPrompted: true });
+    }
+  });
+});
+
+describe('FIXED_AS_PROMPTED_PREFIX', () => {
+  // 「原话」不是「原样发送」：模型没法逐字复读，说「原样发送」它会理解成照着意思说，
+  // 措辞飘得更远；约束"内容不许变"、放它决定语气，才是暮色接受的那点代价。
+  it('写"原话"而不是"原样发送"', () => {
+    expect(FIXED_AS_PROMPTED_PREFIX).toContain('原话');
+    expect(FIXED_AS_PROMPTED_PREFIX).not.toContain('原样');
+  });
+});
+
+// ─── 麦麦 2026-09-30：回执的四种类型 ───
+// 旧口径只有两种（作废 / 手动取消），把「强制发送」和「固定」一起排除了。新规则下
+// 强制发送同样会被让开，它得有一条自己的回执——说「这轮顺口带出来」，不是「别提了」。
+// 这两种给角色的动作是相反的，混在一段里说它会随便挑一条。
+describe('noticeKindForTask（这条没发出去时，角色该听到哪一种交代）', () => {
+  it('遇忙作废 → expired', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'expire' }))).toBe('expired');
+    expect(noticeKindForTask(task({ mode: 'prompted', expirePolicy: 'expire' }))).toBe('expired');
+  });
+
+  it('强制发送 → deferred（旧口径这里返回的是「不用判」，角色压根不知道被让开过）', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'force' }))).toBe('deferred');
+    expect(noticeKindForTask(task({ mode: 'prompted', expirePolicy: 'force' }))).toBe('deferred');
+  });
+
+  // 固定模式恒无条件发，真没发出去是投递失败，走 lastError 那条路。
+  // 在回执里告诉角色"你那条没发"是骗它去补一句它压根不需要说的话。
+  it('固定模式 → 不产回执（恒无条件发）', () => {
+    expect(noticeKindForTask(task({ mode: 'fixed', expirePolicy: 'force' }))).toBeNull();
+    expect(noticeKindForTask(task({ mode: 'fixed', expirePolicy: 'expire' }))).toBeNull();
+  });
+
+  it('已取消的任务 → 不产回执', () => {
+    expect(noticeKindForTask(task({ mode: 'auto', expirePolicy: 'expire', status: 'cancelled' }))).toBeNull();
+  });
+});
+
+// ─── 入口闸「只替换 自排+once+遇忙作废」（麦麦 2026-10-01 step 9）───
+describe('isReplaceableCharacterWakeup（角色改口时能顶掉哪一条）', () => {
+  // task() 的默认值恰好就是「自排 + 一次性 + 遇忙作废」这一组，下面每条只改一个字段。
+  it('自排 + 一次性 + 遇忙作废 → 可以顶掉', () => {
+    expect(isReplaceableCharacterWakeup(task())).toBe(true);
+  });
+
+  // 用户自己排的任务，角色没资格替他改主意。
+  it('手动排的 → 不许顶', () => {
+    expect(isReplaceableCharacterWakeup(task({ source: 'user' }))).toBe(false);
+  });
+
+  // 循环是长期约定，悄悄换成另一条等于单方面撕毁。
+  it('循环的 → 不许顶（每天早安那种）', () => {
+    for (const r of ['daily', 'weekly'] as const) {
+      expect(isReplaceableCharacterWakeup(task({ recurrenceType: r }))).toBe(false);
+    }
+  });
+
+  // 强制发送的保证就是"到点一定送到"，角色能自己撤掉，这条保证就没了。
+  it('强制发送 → 不许顶', () => {
+    expect(isReplaceableCharacterWakeup(task({ expirePolicy: 'force' }))).toBe(false);
+  });
+
+  // 兜底抄了主任务的 source（主任务是自排时兜底也是 'character'），只看来源会误顶。
+  it('兜底 → 不许顶（它 source 看着也是 character）', () => {
+    expect(isReplaceableCharacterWakeup(task({ fallbackFor: 'cid-main' }))).toBe(false);
+  });
+
+  it('已取消的 → 不在考虑范围（入口闸那边本来就先滤掉了，这里兜住）', () => {
+    expect(isReplaceableCharacterWakeup(task({ status: 'cancelled' }))).toBe(false);
+  });
+
+  // 固定模式恒 force（resolveExpirePolicy 钉死），哪怕记录里写着 expire 也算强制发送。
+  it('固定模式 → 恒不许顶（恒 force）', () => {
+    expect(isReplaceableCharacterWakeup(task({ mode: 'fixed' }))).toBe(false);
+  });
+
+  // 三种"不许顶"和一种"可以顶"必须互不重叠：判据的四个条件各自都在挡一类，
+  // 任一条写松了就会让角色撤掉它没资格撤的承诺。
+  it('四条判据各自都能单独挡住（逐个放宽就放行了）', () => {
+    expect(isReplaceableCharacterWakeup(task({ source: 'user' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ recurrenceType: 'daily' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ expirePolicy: 'force' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task({ fallbackFor: 'x' }))).toBe(false);
+    expect(isReplaceableCharacterWakeup(task())).toBe(true);
+  });
+});
+
+// ─── 策略选项的文案（麦麦 2026-10-01 step 10；10-03 改过两轮）───
+describe('EXPIRE_POLICY_OPTIONS（面板上那两个按钮）', () => {
+  const opt = (id: 'expire' | 'force') => EXPIRE_POLICY_OPTIONS.find((o) => o.id === id)!;
+
+  it('两个都在，顺序是「自动取消」在前', () => {
+    expect(EXPIRE_POLICY_OPTIONS.map((o) => o.id)).toEqual(['expire', 'force']);
+  });
+
+  // 任务列表、那张「最近没响的」卡、兜底提示用的都是 describeExpirePolicy。
+  // 选择器叫一个名而别处叫另一个名时，用户会当成两种策略。
+  it('标签跟 describeExpirePolicy 用同一对词', () => {
+    for (const o of EXPIRE_POLICY_OPTIONS) {
+      expect(o.label).toBe(describeExpirePolicy(o.id));
+    }
+  });
+
+  // 这条 2026-10-03 一天之内已经红过两回：上午「遇忙作废/强制发送」换成
+  // 「你在忙就算了/你在忙就晚点提」，傍晚又换成「自动取消/转入下轮」。每换一次
+  // 底下那些断言就得跟着改一遍——那就干脆把名字本身钉住：将来谁再改标签，
+  // 这里先红，提醒他同一次提交里把 describeExpirePolicy 和这块说明一起改了。
+  it('按钮名就是「自动取消」/「转入下轮」', () => {
+    expect(opt('expire').label).toBe('自动取消');
+    expect(opt('force').label).toBe('转入下轮');
+  });
+
+  // 每个按钮底下的 desc 已经删掉了，说明文字合并成下面那一整段小字。
+  // 盯这条是防"有人把 desc 加回来"：留一份没人渲染的文案，下次改文案的人改到
+  // 那份上，界面上一个字都不会变。
+  it('按钮上不再挂自己的描述（说明合并成一段小字）', () => {
+    for (const o of EXPIRE_POLICY_OPTIONS) {
+      expect((o as { desc?: string }).desc).toBeUndefined();
+    }
+  });
+
+  // 这一整段是暮色逐字给的，四个承诺缺一不可，少说一条用户就会按错的预期去等：
+  //   1. 自动取消 = 不叫醒角色、没有提示（否则他会等一条提示，白等）
+  //   2. 想遇忙不取消就选「转入下轮」→ 下一轮对话里自然带出
+  //   3. 一直没带出来 → 30 分钟后再自动触发一次（兜底是用户真的会收到的）
+  //   4. 想干脆到点定时发 → 用「固定」模式任务（最容易漏的一条）
+  it('小字说明把四件事都讲全了', () => {
+    expect(EXPIRE_POLICY_HINT).toContain('不会叫醒角色');
+    expect(EXPIRE_POLICY_HINT).toContain('也没有提示');
+    expect(EXPIRE_POLICY_HINT).toContain('「转入下轮」');
+    expect(EXPIRE_POLICY_HINT).toContain('自然带出');
+    expect(EXPIRE_POLICY_HINT).toContain('30 分钟');
+    expect(EXPIRE_POLICY_HINT).toContain('「固定」');
+  });
+
+  // 老规矩继续盯着：小字不许把"自动取消"说成"会在聊天里出现"。
+  it('不许承诺"自动取消了会在聊天里出现"', () => {
+    expect(EXPIRE_POLICY_HINT).not.toContain('转为对话里');
   });
 });

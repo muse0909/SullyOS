@@ -22,9 +22,70 @@ export interface FavoriteItem {
 }
 
 /**
+ * 语音收藏的音频**自己存一份**，不再借用 Chat 的 `voice_msg_*`。
+ *
+ * 2026-09-30 暮色反馈「收藏的每次都存不住，做了缓存也很快失效」。查下来两条路都是断的：
+ *
+ *   1. **云端那条从一开始就没通过**。`getFavoriteVoiceCloudUrl` 指向
+ *      `/api/v1/voice-favorite-store`——那是 **Netlify** 的路径。项目早就搬到 Vercel，
+ *      `api/v1/` 这个目录压根不存在，上传过去只有 404。何况 2026-07-22 取消「语音自动
+ *      加入收藏」时，Chat 里那整段上传代码已经被删了，现在收藏时**根本不会去上传**，
+ *      `item.url` 自然是空的。
+ *   2. **本地那条是「借」来的**。收藏自己不存音频，只记一个 `sourceMessageId`，
+ *      播放时跑去 `voice_msg_<消息id>` 找 Chat 存的那份。于是只要 Chat 那边没存过
+ *      （那条消息你还没点过播放）或被清了，收藏跟着一起失效。
+ *
+ * 改成收藏自己落一份，键 `fav_voice_<收藏id>`。从此不依赖聊天那边——清聊天缓存、
+ * 删原消息都不影响收藏。代价是同一段音频可能存两份（聊天一份、收藏一份），
+ * 一段 5 秒的话约 100–300 KB。
+ */
+const favVoiceKey = (favId: string) => `fav_voice_${favId}`;
+
+/** 把收藏的语音存进 IndexedDB，返回键。存不进去返回空串（不抛）。 */
+export async function saveFavoriteVoiceBlob(favId: string, blob: Blob): Promise<string> {
+  try {
+    const key = favVoiceKey(favId);
+    const { DB } = await import('./db');
+    await DB.saveAssetRaw(key, { blob, createdAt: Date.now() });
+    return key;
+  } catch (e) {
+    console.warn('[favorites] 保存语音失败', e);
+    return '';
+  }
+}
+
+/**
+ * 取收藏的语音。按**收藏自己的键**优先，老数据（改动前存的、没自己留底的）
+ * 再回退去借 Chat 的 `voice_msg_*`。
+ */
+export async function getFavoriteVoiceBlobByFavId(favId: string, sourceMessageId: string): Promise<Blob | null> {
+  if (favId) {
+    try {
+      const { DB } = await import('./db');
+      const entry = await DB.getAssetRaw(favVoiceKey(favId));
+      if (entry && entry.blob instanceof Blob) return entry.blob;
+    } catch { /* 落到下面的老路径 */ }
+  }
+  return getFavoriteVoiceBlob(sourceMessageId);
+}
+
+/** 删收藏时把它自己存的那份也删掉（老数据借的那份归 Chat 管，不动）。 */
+export async function deleteFavoriteVoiceBlob(favId: string): Promise<void> {
+  if (!favId) return;
+  try {
+    const { DB } = await import('./db');
+    await DB.deleteAsset(favVoiceKey(favId));
+  } catch {
+    /* 删不掉只是留个孤儿文件，不影响功能 */
+  }
+}
+
+/**
  * 从 IndexedDB 读语音收藏的 blob。
  * voice favorite 通过 sourceMessageId 关联到 Chat 自己存的 voiceAssetKey(`voice_msg_${msgId}`)。
  * 返回 null 表示数据丢失（迁移前的老数据 / Chat 没存过 / IndexedDB 被清）。
+ *
+ * ⚠️ 这是**老路径**，只作为回退。新的收藏走 `getFavoriteVoiceBlobByFavId`。
  */
 export async function getFavoriteVoiceBlob(sourceMessageId: string): Promise<Blob | null> {
   try {

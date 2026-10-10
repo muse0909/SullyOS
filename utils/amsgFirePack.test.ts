@@ -600,6 +600,21 @@ describe('last_skip 新原因', () => {
     expect(text).toContain('不会补发');
     expect(text).not.toContain('等你回复后恢复');
   });
+
+  // 2026-09-30：云端 onBeforeFire 实际会写这 4 个闸名，以前客户端枚举里一个都没有，
+  // parseLastSkip 判成不认识直接返回 null —— 面板在这些情况下什么都不显示。锁死这份对齐。
+  it('云端写的那 4 个闸名都认（以前全被当不认识扔掉）', () => {
+    for (const reason of ['schedule-off', 'min-gap', 'recurring-unanswered', 'daily-limit'] as const) {
+      expect(parseLastSkip(JSON.stringify({ ...base, reason }))?.reason).toBe(reason);
+    }
+  });
+
+  it('那 4 个闸名各自有人话', () => {
+    expect(describeLastSkip({ ...base, reason: 'schedule-off' }, fmt)).toContain('开关');
+    expect(describeLastSkip({ ...base, reason: 'min-gap' }, fmt)).toContain('间隔');
+    expect(describeLastSkip({ ...base, reason: 'recurring-unanswered' }, fmt)).toContain('循环任务');
+    expect(describeLastSkip({ ...base, reason: 'daily-limit' }, fmt)).toContain('上限');
+  });
 });
 
 describe('fire_pack 任务指令槽', () => {

@@ -541,7 +541,7 @@ export const settleInstantChatApiLog = (uuid: string, metadata?: Record<string, 
  *
  * 字段映射必须和 SW 收到真推送时写的那一份一致（worker/sw-keep-alive.ts 的
  * saveContentToInbox），否则同一条消息经两条路进来会长得不一样：时间戳口径、
- * 多段等齐守卫、防穿帮闸读的全是这些字段。
+ * 多段等齐守卫、收件箱路由读的全是这些字段。
  */
 export const outboxPushToInbox = (
   payload: Record<string, any>,
@@ -606,7 +606,7 @@ export interface OutboxDrainResult {
   /**
    * 写进收件箱的那几条的 messageId。
    *
-   * 「写进收件箱」离「上了屏」还差一道冲刷（防穿帮闸、落库去重、多段等齐都可能把它
+   * 「写进收件箱」离「上了屏」还差一道冲刷（落库去重、多段等齐都可能把它
    * 拦下）。调用方要如实告诉用户「补回了几条」时，得拿这份名单跟冲刷那边真正落库的
    * 名单对一次，光看 written 会把被拦下的也算成补回来了。
    */

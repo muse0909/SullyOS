@@ -1,0 +1,26 @@
+{
+  "appId": "com.aetheros.simulator",
+  "appName": "拾光机",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "url": "https://sully-os-git-fix-amsg2-realign-muse0909s-projects.vercel.app",
+    "allowNavigation": [
+      "sully-muse-vert.vercel.app",
+      "sully-os-git-preview-muse0909s-projects.vercel.app",
+      "sully-os-git-fix-amsg2-realign-muse0909s-projects.vercel.app"
+    ]
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1000
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark",
+      "resizeOnFullScreen": true
+    }
+  },
+  "allowMixedContent": true
+}

@@ -34,6 +34,7 @@ import {
   Plugs,
   Planet,
   PaintBucket,
+  FilmSlate,
 } from '@phosphor-icons/react';
 import type { IconWeight } from '@phosphor-icons/react';
 
@@ -50,6 +51,9 @@ export const Icons: Record<string, React.FC<{ className?: string; weight?: IconW
   Appearance: ({ className, weight = 'bold' }) => <Palette className={className} weight={weight} />,
   Date: ({ className, weight = 'bold' }) => <Heart className={className} weight={weight} />,
   Journal: ({ className, weight = 'bold' }) => <BookOpenText className={className} weight={weight} />,
+  // 剧场（暮色 10-10 06:58 放到桌面，占交换日记的位置）—— FilmSlate = 场记板，
+  // 跟 TheaterApp 内部聊天框空状态用的是同一个图标，认得出是同一个 app
+  Theater: ({ className, weight = 'bold' }) => <FilmSlate className={className} weight={weight} />,
   Schedule: ({ className, weight = 'bold' }) => <SealCheck className={className} weight={weight} />,
   Room: ({ className, weight = 'bold' }) => <House className={className} weight={weight} />,
   CheckPhone: ({ className, weight = 'bold' }) => <DeviceMobileCamera className={className} weight={weight} />,
@@ -83,7 +87,11 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Call, name: '电话', icon: 'Call', color: 'emerald' },
   { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' },
   { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },         // 原电话位置
-  { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },            // 原小小窝位置
+  // 暮色 10-10 06:58：「在桌面建一个剧场的 APP 图标，位置放在现在交换日志那里，
+  //   把交换日志图标替换成剧场 APP」—— 交换日记整个挪出 Launcher，不占桌面位置了。
+  //   ⚠️ AppID.Journal 没删：发现页那个「日记」入口还开着（DiscoverPage.tsx），
+  //      删了那条路就断了。
+  { id: AppID.Theater, name: '剧场', icon: 'Theater', color: 'sky' },                 // 原交换日记位置
   { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.VRWorld, name: '彼方', icon: 'VRWorld', color: 'purple' },               // 原气泡工坊位置

@@ -1,10 +1,37 @@
+// utils/activeMsgRuntime.ts
+/**
+ * 收件箱冲刷：云端推来的东西落进聊天流。
+ *
+ * ⚠️ 这里**没有**「这条该不该说出口」的判定了。麦麦 2026-10-02（step 11）整条删掉，
+ * 别再加回来。原来的「防穿帮闸·客户端兜底层」会在 push 落地前拿本地聊天记录再判一次，
+ * 判成作废就整条吞掉（不进聊天流、不弹提示、顺带撤销云端自述日志），另外还有一整套
+ * 配套件：判定缓存（多分段同吞同放）、fire 归属键、自述日志撤销、判不出来时的压箱重试。
+ *
+ * 删它的理由是那条判定**跟云端必然打架**，不是"重复劳动太浪费"：
+ *
+ * 1. 判据已经分叉。线上 worker（2026-10-01.2，`shouldExpireFire`）是对称 ±10 分钟窗，
+ *    一次性 / 每天 / 每周一视同仁，**锚点这个概念整个没了**（线上 bundle 里 `anchorMs`
+ *    出现 0 次）。客户端这份还留着仓库里的旧版：一次性任务走"锚点之后有任何消息就作废"，
+ *    没有时间上限。一次性的遇忙作废任务只要用户到点后说过话就被吞——而那条消息云端
+ *    是照规矩推了的。
+ * 2. 判的时刻不一样，答案就可能不一样。客户端拿的是**送达时刻**的 Date.now() 配本地
+ *    历史，云端拿的是**到点那一刻**。生成 + 送达晚几十分钟是常事。
+ * 3. 新鲜度上的顾虑已经不成立。云端读的是 `laterOf(fire_pack 快照, presence 行)`，
+ *    presence 是每轮聊天一开场就写的小值、TTL 45s，本来就是为盖住 fire_pack 上传滞后
+ *    才加的那条通道。客户端这道闸当初存在的理由（补那条滞后）已经有人补了。
+ *
+ * 现在"到点发不发"只有一个真相来源：云端。客户端对 push 的职责只剩"把它落到该落的地方"。
+ * 至于"这次为什么没响"，那是**面板**的事，不是收件箱的事——云端把原因写进 last_skip，
+ * 客户端在面板那侧读它、说明白（见 ActiveMsg2SettingsModal + amsg2MissedSummary）。
+ */
 import { loadCharacterContextMessages } from './chatContextRange';
 import { ActiveMsg2InboxMessage, ActiveMsg2TaskRecord, APIConfig, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
 import { ChatPrompts } from './chatPrompts';
 import { ActiveMsgStore } from './activeMsgStore';
 import { ActiveMsgClient, type AmsgOutboxEntry, type RemoteTaskStatus } from './activeMsgClient';
-import { AMSG_CHAT_FAIL_KEY, AMSG_SELF_LOG_KEY, amsgStateNamespace, parseChatFailRecord, parseSelfLog } from './amsgFirePack';
+import { withEffectiveChatApi } from './chatApiCompat';
+import { AMSG_CHAT_FAIL_KEY, amsgStateNamespace, parseChatFailRecord } from './amsgFirePack';
 import {
   applyAssistantPostProcessing,
   type PostProcessDirective,
@@ -18,7 +45,6 @@ import { processNewMessagesWithAutoArchive } from './memoryPalace/autoArchive';
 import { loadMusicHooks } from '../context/MusicContext';
 import type { XhsNote } from './realtimeContext';
 import { appendDevDebugInstantPushLog, appendDevDebugLog, isCaptureEnabled, makeDebugLogger } from './devDebug';
-import { getLastRealUserMessageAt, shouldExpireFire } from './amsg2ExpireGuard';
 import {
   AMSG_INSTANT_CHAT_PENDING_EVENT,
   INSTANT_CHAT_STATUS_CHECK_INTERVAL_MS,
@@ -33,6 +59,8 @@ import {
 import { dispatchAmsgResult } from './amsgResults';
 import { flushAmsgState } from './amsgStateSync';
 import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError } from './amsg2Tasks';
+import { AMSG_FALLBACK_DELAY_MS } from './amsg2Tasks';
+import { resolveOccurrenceForPairing, retireFallbackForOccurrence } from './amsg2FallbackPair';
 // 线协议常量的唯一出处是 shared（amsg-sw 只是 re-export 同一份）。
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import { appendInstantTraceEntry } from './instantTraceLog';
@@ -91,39 +119,6 @@ export const pushXhsCaches: XhsCaches = {
 };
 export const pushLastXhsNotesRef: { current: XhsNote[] } = { current: [] };
 
-// 防穿帮闸·送达判定缓存：一次 fire 的多分段 push 必须同吞同放（不能吞一半），
-// 按「任务 + occurrence」记住首段判定。Web Push/FCM 不保证分段按序到达，逻辑
-// 上的最后一段可能最先到，所以不能在 messageIndex===totalMessages 时立即删除；
-// 保留 5 分钟 TTL，让迟到分段仍复用同一决定。
-// （导出仅为让 activeMsgRuntime.test.ts 用真实 TTL 校验重判边界，运行时不消费。）
-export const EXPIRE_DECISION_TTL_MS = 5 * 60_000;
-type ExpireDecisionEntry = { expired: boolean; expiresAt: number };
-const expireDecisionByFire = new Map<string, ExpireDecisionEntry>();
-
-/**
- * 送达判定的 get-or-compute（带 TTL 过期清扫）。从吞没闸里抽出来单测：
- *   - 同一 fireKey 的多次调用只 evaluate 一次——一次 fire 的多分段 push 同吞同放；
- *   - TTL 过后同 key 才允许重新 evaluate（迟到分段仍复用同一决定）。
- * cache 由调用方注入：运行时传模块级 expireDecisionByFire，测试传临时 Map 做隔离。
- * 行为与内联版逐字节对齐（先扫过期、再 get、缺失才 compute-and-set）。
- */
-export async function resolveFireExpireDecision(
-  cache: Map<string, ExpireDecisionEntry>,
-  fireKey: string,
-  now: number,
-  evaluate: () => Promise<boolean>,
-): Promise<boolean> {
-  for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now) cache.delete(key);
-  }
-  let cached = cache.get(fireKey);
-  if (!cached) {
-    cached = { expired: await evaluate(), expiresAt: now + EXPIRE_DECISION_TTL_MS };
-    cache.set(fireKey, cached);
-  }
-  return cached.expired;
-}
-
 type MemoryPalaceGlobalConfig = {
   embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number };
   lightLLM: { baseUrl: string; apiKey: string; model: string };
@@ -147,12 +142,15 @@ const loadApiConfigFromLocalStorage = (): APIConfig => {
     const raw = localStorage.getItem('os_api_config');
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    return {
+    // 麦麦 2026-09-30：存的是原始配置，protocol='gemini' 时 baseUrl 是空的（真值在
+    //   gemini* 三件套里）。这里跑在 React 之外、拿不到 OSContext 归一化后那份，所以自己
+    //   归一化一次——下面 api.baseUrl / effectiveApi 都要按 OpenAI 那种调法用。
+    return withEffectiveChatApi({
       baseUrl: parsed.baseUrl || '',
       apiKey: parsed.apiKey || '',
       model: parsed.model || '',
       ...parsed,
-    };
+    });
   } catch {
     return fallback;
   }
@@ -864,127 +862,6 @@ function isLastChunk(message: ActiveMsg2InboxMessage): boolean {
 }
 
 /**
- * 送达时的作废判定（防穿帮闸·客户端兜底层）。worker onBeforeFire 已做同一
- * 判定，但它读的 fire_pack 随 amsgStateSync 最多滞后 15s+，且判定通过后还有
- * 10-30s 生成窗口，期间用户又说话就会撞车——这里用本地全量历史再判一次。
- * 判定所需字段全部来自 push 自己带的，不依赖本地 config——push 在途期间任务被 renew
- * 换锚也不会误判。其中 recurrenceType / occurrenceMs 读 push 顶层那份（库盖的，两条
- * 排程路径同源）；策略与锚点是应用自己的语义，仍在任务 metadata 里。
- *
- * **读不到聊天记录时抛错，不猜。** 拿不准就先别开口：调用方会把消息压回收件箱、
- * 过一会儿等本地存储缓过来再判一次（见 flushInboxToChatImpl 的 expire-unknown 分支）。
- * 猜「放行」的代价是角色可能当着正在聊天的用户冒出一句定时问候，一眼假。
- */
-/**
- * 一次 fire 的归属键：吞放缓存按它记（多分段同吞同放），trace 也按它归组。
- *
- * 必须含 occurrence——sessionId 对循环任务的每次触发、对同一次的每次重试都可能重复，
- * 裸用会把上次的判定串给下一次。两处调用抄两份的话，改一处就会静默失联（缓存按新键
- * 存、trace 按旧键归组），所以公式只在这里写一次。
- */
-const buildFireKey = (message: ActiveMsg2InboxMessage): string =>
-  `${(message.metadata as any)?.amsgClientTaskId}:${message.occurrenceMs ?? ''}`;
-
-async function evaluateScheduledPushExpired(message: ActiveMsg2InboxMessage): Promise<boolean> {
-  const meta = (message.metadata || {}) as Record<string, any>;
-  const messages = await DB.getRecentMessagesByCharId(message.charId, 200);
-  const input = {
-    policy: meta.amsgExpirePolicy,
-    recurrenceType: message.recurrenceType ?? undefined,
-    // 麦麦 2026-09-12：anchorMs 跟 occurrenceMs 走相同值（任务首次创建时刻客户端不一定记得，
-    // 拿本次 occurrence 顶替；SullyOS 旧版 amsg2ExpireGuard 不强校验）
-    anchorMs: message.occurrenceMs ?? undefined,
-    lastUserMessageAt: getLastRealUserMessageAt(messages),
-    nowMs: Date.now(),
-    // 窗口锚定到点时刻而不是送达时刻：生成+送达可能比到点晚十几分钟，拿 Date.now()
-    // 算 10 分钟窗会把撞上对话的消息误放行。
-    occurrenceMs: message.occurrenceMs ?? undefined,
-  };
-  const expired = shouldExpireFire(input);
-  // 判定输入原样留一行，**放行也留**。吞掉是这条链路上唯一「用户什么都看不到」的出口
-  // （不进聊天流、不弹提示、还会去云端账本销账），事后只剩这一行说得出发生过什么；
-  // 而放行同样要留——三种去向（吞了 / 放行了 / 闸没跑，见调用方的
-  // runtime-expire-gate-skipped）各留各的痕，才不用靠别的 trace 反推是哪一种。
-  // 判定每次 fire 只跑一趟（多分段共用缓存），不会刷屏。
-  // 与 worker 的 [amsg:expire-skip] / [amsg:expire-pass] 字段同源：两边结论分叉时
-  // （worker 放行、客户端吞掉）对照着看就知道是哪个字段不一样。
-  activeMsgTrace(expired ? 'runtime-expire-decision-swallow' : 'runtime-expire-decision-pass', {
-    sessionId: buildFireKey(message),
-    messageId: message.messageId,
-    charId: message.charId,
-    taskId: message.taskId,
-    ...input,
-  });
-  return expired;
-}
-
-/**
- * 云端自述日志里这条 push 对应的条目 id。
- *
- * 格式跟 worker 写日志时用的那一份对齐（`<clientTaskId>@<触发时刻>`，见 amsgFirePack
- * 的 AmsgSelfLogEntry.id 与 worker/amsg/src/index.ts 的 amsgFireSettled）——两边拼法
- * 必须一模一样，差一个字符就对不上号。缺任务归属键时 worker 用的是字面量 'task'。
- * 触发时刻缺失（老 push 不带）返回 null：没有 id 就没法精确认领，宁可不动。
- */
-export const buildSelfLogEntryId = (message: ActiveMsg2InboxMessage): string | null => {
-  const occurrenceMs = message.occurrenceMs;
-  if (typeof occurrenceMs !== 'number' || !Number.isFinite(occurrenceMs)) return null;
-  const clientTaskId = (message.metadata as any)?.amsgClientTaskId;
-  const owner = typeof clientTaskId === 'string' && clientTaskId ? clientTaskId : 'task';
-  return `${owner}@${occurrenceMs}`;
-};
-
-/**
- * 被兜底闸吞掉的这条，顺手把云端「我说过什么」里对应的那条也撤掉。
- *
- * 不撤的话：worker 发完就把正文记进了 client_state 的 self_log，而这条消息在客户端被吞、
- * 用户一个字都没看到；下一次到点的 prompt 里【这之后你又主动发过】赫然列着它，角色接着
- * 往下说一句没人看过的话。
- *
- * 只摘被吞的那一条，其余原样留着：日志里别的条目是用户真收到过的话，跟着一起抹掉的话
- * 角色反而会把说过的再说一遍；角色自排的任务清单同理，缺一块下次就会把同一件事再排一遍。
- * 摘完整份空了（没有条目也没有任务）就直接写空串——空日志和没有日志对 worker 是同一件事
- * （parseSelfLog 拿不到 → 重新建一份空的），比留一份空壳 JSON 省事。
- *
- * 值是裸 JSON，跟 worker 写这份时的口径一致（amsgFireSettled 里也是 JSON.stringify 直传，
- * 不走 fire_pack 那套压缩）。
- *
- * best-effort：读写失败只留 warn，不影响「吞」这个动作本身（与 worker 侧 writeLastSkip 同语义）。
- */
-export const revokeSwallowedSelfLogEntry = async (
-  charId: string,
-  entryId: string,
-): Promise<'no-log' | 'not-found' | 'cleared' | 'rewritten'> => {
-  const namespace = amsgStateNamespace(charId);
-  const raw = await ActiveMsgClient.readClientStateValue(namespace, AMSG_SELF_LOG_KEY);
-  const selfLog = parseSelfLog(raw ?? '');
-  if (!selfLog) return 'no-log';
-  const revoked = selfLog.entries.find((e) => e.id === entryId);
-  if (!revoked) return 'not-found';
-
-  const rest = selfLog.entries.filter((e) => e.id !== entryId);
-  if (rest.length === 0 && selfLog.tasks.length === 0) {
-    await ActiveMsgClient.clearClientStateValue(namespace, AMSG_SELF_LOG_KEY);
-    return 'cleared';
-  }
-  // 连发计数也要跟着退回去，规则跟 appendSelfLogEntry 的加法一一对应（reply 当初就没加，
-  // 这里也不减）。不减的话，用户清空聊天记录那条吞消息的分支会留下一笔糊涂账：那时
-  // lastUserMessageAt 是 null，下一次 fire 的 reconcileSelfLogWithPack 归零条件够不到，
-  // 这些用户根本没看见的消息会一直占着连发额度，直到额度满、正常的主动消息被拦下，
-  // 面板还说「你未回复期间 ta 连发已到上限」。
-  await ActiveMsgClient.writeClientStateValue(
-    namespace,
-    AMSG_SELF_LOG_KEY,
-    JSON.stringify({
-      ...selfLog,
-      entries: rest,
-      unansweredSends: Math.max(0, selfLog.unansweredSends - (revoked.reply ? 0 : 1)),
-    }),
-  );
-  return 'rewritten';
-};
-
-/**
  * 认领到新任务之后广播的事件名。detail 只带 charId，监听方（OSContext）自己重读角色、
  * 把新任务合并进内存清单并打脏。事件名和 detail 形状是两侧的约定，改这里要同步改那边。
  */
@@ -1037,6 +914,158 @@ async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise
   } catch (e) {
     console.warn('[ActiveMsg] adopt self-scheduled tasks failed', charId, e);
   }
+}
+
+/**
+ * 麦麦 2026-09-30 step 5：一条主任务真说出来了，销掉它那条 +30 分钟兜底。
+ *
+ * 触发点是"确实上屏了"（调用点在 landedMessageIds.push 之后）。云端判了"这次别发"的那批
+ * 压根不会有 push 到这里——那正是兜底该顶上的场合，销了它消息就真的没了。
+ *
+ * 三个触发点（这里 / 回执被消费 / 面板手动改）共用 amsg2FallbackPair 的判定和执行，
+ * 抄三遍的代价是以后改配对逻辑要改三个地方，漏一个就出现「每天早安说完话，
+ * 30 分钟后又说一遍」。本函数只负责把运行时上下文（角色、API 配置、写回）备齐。
+ */
+async function settleFallbackAfterDelivery(message: ActiveMsg2InboxMessage): Promise<void> {
+  const meta = (message.metadata || {}) as Record<string, any>;
+  const clientTaskId = meta.amsgClientTaskId;
+  // 没有归属键就配不上对：兜底是按主任务的 clientTaskId 建的（amsgFallbackFor），
+  // 拿不到主任务身份时宁可什么都不做，也不要瞎销掉别人的兜底。
+  if (typeof clientTaskId !== 'string' || !clientTaskId) return;
+  if (meta.amsgFallbackFor) return;   // 这条自己就是兜底，别把主任务的兜底再销一遍
+
+  const char = (await DB.getAllCharacters()).find((c) => c.id === message.charId);
+  if (!char) return;
+  const mainTask = (char.activeMsg2Config?.tasks ?? [])
+    .find((t) => t.clientTaskId === clientTaskId && !t.fallbackFor);
+  if (!mainTask) return;
+
+  const nowMs = Date.now();
+  // 拿「当前这一次」而不是首次：循环任务每天都在响，拿首次当 occurrence 会让
+  // 每天都在销第一天的兜底，真正的后路留着不管。
+  const occurrenceMs = resolveOccurrenceForPairing(mainTask, nowMs)
+    ?? message.occurrenceMs
+    ?? new Date(mainTask.firstSendTime).getTime();
+  if (!Number.isFinite(occurrenceMs)) return;
+
+  // 运行时上下文照本文件既有取法（loadApiConfigFromLocalStorage 等）：收件箱这条路
+  // 不在 React 树里，拿不到 useOS 传下来的那套。别从 ActiveMsg2GlobalConfig 里找——
+  // 那是后端连接配置，不含角色运行时。
+  const userProfile: UserProfile = (await DB.getUserProfile())
+    ?? { name: 'User', avatar: '', bio: '' };
+  const groups = await DB.getGroups();
+  const apiConfig = loadApiConfigFromLocalStorage();
+  const realtimeConfig = loadRealtimeConfigFromLocalStorage()!;
+
+  await retireFallbackForOccurrence({
+    char,
+    schedule: async ({ mainTask: t, nextOccurrenceMs }) => {
+      const built = await ActiveMsgClient.scheduleFallbackTask({
+        char,
+        config: char.activeMsg2Config!,
+        forClientTaskId: t.clientTaskId,
+        forSource: t.source,
+        mainOccurrenceMs: nextOccurrenceMs,
+        // 重建时那句话从主任务重算：面板上改过兜底内容的话，会在这里被覆盖回
+        // 模板句。刻意这么做——用户改的是"这一次的兜底说什么"，不是"以后每句都这么写"。
+        mainMode: t.mode,
+        // 落盘的任务记录里没有 reason 字段（那是建任务入参，worker 专用 metadata），
+        // 提示方向统一走 promptHint。固定模式取原文。
+        mainHintOrReason: t.promptHint,
+        mainUserMessage: t.userMessage,
+        mainRecurrence: t.recurrenceType,
+        userProfile,
+        groups,
+        realtimeConfig,
+        apiConfig,
+        enabledOverride: char.activeMsg2Config?.enabled === true,
+      });
+      return built?.record ?? null;
+    },
+    cancelRemote: async (uuid) => { await ActiveMsgClient.cancelTask(uuid); },
+    persist: async (mutate) => {
+      const fresh = (await DB.getAllCharacters()).find((c) => c.id === message.charId);
+      if (!fresh?.activeMsg2Config) return;
+      const nextTasks = mutate(fresh.activeMsg2Config.tasks ?? []);
+      await DB.saveCharacter({
+        ...fresh,
+        activeMsg2Config: { ...fresh.activeMsg2Config, tasks: nextTasks } as any,
+      });
+      try {
+        window.dispatchEvent(new CustomEvent(AMSG2_TASKS_ADOPTED_EVENT, { detail: { charId: message.charId } }));
+      } catch { /* SSR-safe */ }
+    },
+    diag: (extra) => {
+      amsgDiag({ stage: 'fallback-cancelled', charId: message.charId, ...(extra as any) });
+    },
+  }, { mainTask, occurrenceMs, delayMs: AMSG_FALLBACK_DELAY_MS, nowMs });
+}
+
+/**
+ * 麦麦 2026-09-30（方向二）：这条真上屏了 → 这一包里带过的回执算「角色已经说出来了」。
+ *
+ * ## 为什么需要
+ *
+ * 回执有两条出口：普通聊天注入（那边销，见 buildNoticeConsumeRuntime）和到点推送。
+ * 到点这条路上，回执是**提前混在 fire_pack 里**送上云的（同步那一刻就把当次未消费的
+ * 回执拼进模板尾部），到点时角色读着它把话说出来。话说完了，本地台账却还挂着这条
+ * 「未告知」——下一轮普通聊天就会把同一件事再交代一遍。
+ *
+ * ## 台账从哪来
+ *
+ * 同步 fire_pack 成功之后写（activeMsgClient.syncCharFirePacks 末尾）：包里带了哪几条
+ * 回执的 id，逐角色记一份。取用就是这里 —— 一条推送真落进聊天流才取，取一次就清。
+ * 口径跟即时对话那条路完全一致（amsgInstantChat 的 staged notices + settle…）。
+ *
+ * ## 什么情况不算
+ *
+ * 生成失败、闸吞掉、还在收件箱里排队 —— 那几种都走不到这个函数（调用点在
+ * landedMessageIds.push 之后），台账原样留着，下轮该带的还得带。
+ *
+ * 精度上的已知缺口（先按「上屏即消费」实现，不猜）：台账是**按角色**记的，不是按任务。
+ * 另一条不相干的主动消息先落地的话，会把这份包里所有回执一并销掉。多数时候这正是
+ * 想要的（新规则本来就是「在角色下一轮回复里带出」，主动消息也是回复），但严格说
+ * 判不了「角色这轮到底有没有提起那件事」。真要判准得让 worker 回传它实际引用了哪条，
+ * 那边不能改（方案一）。
+ */
+async function settleShippedNoticesAfterDelivery(message: ActiveMsg2InboxMessage): Promise<number> {
+  const charId = message.charId;
+  if (!charId) return 0;
+  let shipped: string[];
+  let pick: (ids: string[], ledger: any[]) => string[];
+  try {
+    // 动态 import：amsg2TaskContext 那边会引本模块的对面（buildNoticeConsumeRuntime
+    // 走的是 activeMsgClient），静态引容易成环。函数体内引，模块求值期互不触碰。
+    const mod = await import('./amsg2TaskContext');
+    shipped = mod.takeShippedNoticeIds(charId);
+    pick = mod.pickConsumableShippedIds;
+  } catch (e) {
+    log.warn('取这包里带过的回执失败（下一轮会再说一遍）', { messageId: message.messageId, error: e });
+    return 0;
+  }
+  if (!shipped.length) return 0;
+  // 只销还在台账里、且没被别的路销掉的那几条。读台账失败就按原样销：多销一条已不在的
+  // 是 no-op，少销一条才会让角色多说一遍。
+  let target = shipped;
+  try {
+    target = pick(shipped, await ActiveMsgStore.getExpiredNotices(charId));
+  } catch { /* 见上 */ }
+  if (!target.length) return 0;
+  try {
+    await ActiveMsgStore.markExpiredNoticesNotified(charId, target);
+  } catch (e) {
+    log.warn('到点推送带的回执销账失败（下一轮会再说一遍）', {
+      messageId: message.messageId, charId, ids: target, error: e,
+    });
+    return 0;
+  }
+  amsgDiag({
+    stage: 'shipped-notices-consumed',
+    charId,
+    // extra 是这个诊断表留给临时字段的口子（ids / messageId 都不在固定字段里）。
+    extra: { ids: target.join(','), messageId: message.messageId, count: target.length },
+  });
+  return target.length;
 }
 
 /**
@@ -1440,8 +1469,8 @@ const scheduleInboxRetry = (attempts: number) => {
 /**
  * 这一趟冲刷里被写回收件箱、还要再处理一次的消息。
  *
- * 云端账本的销账口径是「这条消息在客户端有着落了」——落库、按重复丢弃、被防穿帮闸
- * 吞掉都算有着落，唯独写回收件箱不算：账一销，下次就再也拉不回来了，而它还没处理完。
+ * 云端账本的销账口径是「这条消息在客户端有着落了」——落库、按重复丢弃都算有着落，
+ * 唯独写回收件箱不算：账一销，下次就再也拉不回来了，而它还没处理完。
  * 所以这里反过来记「没着落的」，冲刷收尾时从本批里刨掉它们再销账。
  *
  * 用模块级集合而不是层层传参：冲刷本身是串行链（flushChain），同一时刻只有一趟在跑，
@@ -1588,7 +1617,7 @@ const holdUntilEarlierChunksLand = async (
  * 送达失败发生在哪一段。**每条上报都要带**：不带的话面板上会多出一个空分组，
  * 而空分组恰恰是最需要被看见的那种「不知道哪来的」。
  */
-type InboxFailureStage = '收发' | '防穿帮闸' | '后处理' | '补收';
+type InboxFailureStage = '收发' | '后处理' | '补收';
 
 /**
  * 告诉用户「有条消息没能正常显示」。
@@ -1645,7 +1674,7 @@ const cancelOrphanedRemoteTasks = async (charId: string): Promise<void> => {
  * 收件箱这条消息在处理途中抛了错，按跟后处理失败同一套去向收尾。
  *
  * 后处理管线自己那圈 try/catch 只盖住 applyAssistantPostProcessing 那一小截；查近史去重、
- * 认领角色自排任务、防穿帮闸、等齐守卫、算落库时间戳这些步骤同样会读本地存储，同样会因
+ * 认领角色自排任务、等齐守卫、算落库时间戳这些步骤同样会读本地存储，同样会因
  * IndexedDB 被占 / 配额满而抛错。收件箱已经在 consumeInboxMessages 那一刻被原子取空，
  * 让异常冒出去就等于整批消息凭空蒸发（既不在聊天记录、也不在收件箱、也没有任何提示）。
  *
@@ -1815,93 +1844,11 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       }
 
       // 角色到点自己给自己排的任务：worker 直接在 D1 建了行，客户端这边并不知道它存在。
-      // 记账排在防穿帮闸**之前**——「这条消息该不该说出口」和「这条任务存不存在」是两回事。
-      // 排在闸后面的话，被吞的那条 push 会把任务认领一起带走：面板列不出来、用户取消不掉，
-      // 而它照常到点触发；订阅登记和凭据刷新也都够不着它，成了推不出去又删不掉的幽灵。
       await adoptSelfScheduledTasks(message);
       // 对称的另一半：角色在 fire 里取消 / 改期掉的既有任务，本地清单跟着消账。
-      // 同样排在闸之前——D1 行已经没了（或换了时间），消息被吞不改变这个事实。
       await applyRemoteTaskMutations(message);
 
-      // ─── 防穿帮闸·客户端兜底 ───
-      // 只拦定时任务的 push（source==='scheduled' 且带策略字段）；instant 聊天
-      // 回复 source==='instant'，与这道闸无关。吞掉 = 不进聊天流、不重放
-      // directives（作废消息的副作用一并作废）；生成 token 浪费掉，换不穿帮。
-      // 系统通知层面：content push 默认可能在前台/后台先展示；页面线程无权追回
-      // 已弹通知。防通知主力是 worker 预检 + chat_presence 活跃会话租约。
-      // 排程现状块不在这里记——useChatAI 组请求时独立检出，两侧结论一致。
-      if (message.source === 'scheduled' && (message.metadata as any)?.amsgExpirePolicy) {
-        // 缓存键必须含 occurrence（Codex #2）：sessionId 对循环任务的每次 occurrence、
-        // 对同一次的每次重试都可能重复——裸 sessionId 会把上次的判定串给下一次
-        // （第一次放行 → 后续永远放行；第一次吞 → 后续全吞）。公式见 buildFireKey。
-        const fireKey = buildFireKey(message);
-        const now = Date.now();
-        // 多分段 push 的一次 fire 共用一个决定（同吞同放）：get-or-compute + TTL 清扫
-        // 抽进 resolveFireExpireDecision，见其单测。
-        let expired: boolean;
-        try {
-          expired = await resolveFireExpireDecision(
-            expireDecisionByFire,
-            fireKey,
-            now,
-            () => evaluateScheduledPushExpired(message),
-          );
-        } catch (gateErr) {
-          // 判不出来「用户此刻是不是正在跟这个角色聊天」。压回收件箱等本地存储缓过来再判，
-          // 别猜——猜错的那一面是角色当着正在进行的对话冒出一句定时问候。
-          // （evaluate 抛错时 resolveFireExpireDecision 不写缓存，所以下次是真的重判。）
-          const attempts = (message.processAttempts ?? 0) + 1;
-          if (attempts < MAX_INBOX_PROCESS_ATTEMPTS) {
-            log.warn('防穿帮闸判定失败，压回收件箱稍后重判', { messageId: message.messageId, attempts, error: gateErr });
-            await requeueForRetry(message, attempts);
-            notifyInboxProcessFailed(message, 'retrying', '防穿帮闸');
-            continue;
-          }
-          // 压到上限还是判不了：本地存储这时候基本是真出问题了，让角色继续冒新消息只会更乱。
-          // 按吞掉处理（与闸判定为「已作废」同一个出口），但要明确告诉用户有这么一条被跳过了。
-          log.error('防穿帮闸重试到上限仍判不了，按作废吞掉', { messageId: message.messageId, attempts, error: gateErr });
-          activeMsgTrace('runtime-expire-swallow-unknown', {
-            sessionId: fireKey,
-            messageId: message.messageId,
-            charId: message.charId,
-            taskId: message.taskId,
-          });
-          notifyInboxProcessFailed(message, 'swallowed', '防穿帮闸');
-          continue;
-        }
-        if (expired) {
-          activeMsgTrace('runtime-expire-swallow', {
-            sessionId: fireKey,
-            messageId: message.messageId,
-            charId: message.charId,
-            taskId: message.taskId,
-          });
-          // 吞掉的是「这次要说的话」，云端那份「我说过什么」也得跟着撤，否则下一次到点
-          // 角色会接着一句没人看过的话往下说。不 await：这是一次网络往返，不能让它拖住
-          // 收件箱里后面几条的落库；失败只 warn（见 revokeSwallowedSelfLogEntry）。
-          const selfLogEntryId = buildSelfLogEntryId(message);
-          if (selfLogEntryId) {
-            void revokeSwallowedSelfLogEntry(message.charId, selfLogEntryId)
-              .catch((e) => log.warn('撤销云端自述日志条目失败（下次重传 fire_pack 时整份作废）', {
-                charId: message.charId, entryId: selfLogEntryId, error: e,
-              }));
-          }
-          continue;
-        }
-      } else if (message.source === 'scheduled') {
-        // 这条定时 push 没带策略字段（老 worker 发的），闸整个没跑。留一行把它跟
-        // 「闸跑了、放行了」区分开——不然排查时两者长得一模一样，只能靠别的 trace
-        // 反推，而反推恰恰是这条链路最不该有的东西。
-        activeMsgTrace('runtime-expire-gate-skipped', {
-          messageId: message.messageId,
-          charId: message.charId,
-          taskId: message.taskId,
-          reason: 'no-policy-field',
-        });
-      }
-
       // 多段消息的等齐守卫：前面的段还没着落就先扣住这条（见 holdUntilEarlierChunksLand）。
-      // 排在防穿帮闸后面——这次 fire 整个被吞掉的话，没必要为它的后半段白等几秒。
       if (await holdUntilEarlierChunksLand(message, pendingMessages)) continue;
 
       // 落库时间戳按「在线送达 vs 离线补收」二选一（undefined = 交给 DB.saveMessage 默认取
@@ -2045,6 +1992,27 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       // continue 都是「没上屏」：闸吞了、跟已有的重了、等前面的分段、压回收件箱重试。
       landedMessageIds.push(message.messageId);
 
+      // 麦麦 2026-09-30：这条真说出来了 → 它那条 +30 分钟兜底就多余了。
+      // 不取消的话，30 分钟后角色会把同一件事再说一遍（"刚不是说了吗"）。
+      // 循环任务取消的同时按下个周期重建——今天这条说完了，明天的后路还得在。
+      // 排在 landedMessageIds 之后：兜底是「没说出来时补一句」，说出来了才轮到它退场；
+      // 排在它前面的话，闸吞掉的那批（上面 continue 掉的）会连兜底一起取消。
+      if (message.source === 'scheduled') {
+        void settleFallbackAfterDelivery(message).catch((e) => {
+          log.warn('推送送达后取消兜底失败（兜底会照常到点补一条，重复一句）', {
+            messageId: message.messageId, error: e,
+          });
+        });
+        // 麦麦 2026-09-30（方向二）：同一次上屏，把这一包里带过的回执也销掉。
+        // 不销的话下一轮普通聊天会把同一件事再交代一遍。跟上面那条各管各的：
+        // 一个销兜底任务，一个销回执台账，谁失败都不连累谁。
+        void settleShippedNoticesAfterDelivery(message).catch((e) => {
+          log.warn('到点推送带的回执销账失败（下一轮会再说一遍）', {
+            messageId: message.messageId, error: e,
+          });
+        });
+      }
+
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',
       // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
       // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
@@ -2178,7 +2146,7 @@ let flushChain: Promise<unknown> = Promise.resolve();
  *
  * 返回**这一趟真正落进聊天流**的 messageId 名单。绝大多数调用方不看它（冲刷是纯副作用），
  * 但手动补收要拿它跟自己写进收件箱的名单对一次才敢说「补回了 N 条」——写进收件箱只是
- * 排上队，防穿帮闸、落库去重、多段等齐都可能把它拦在上屏之前。整趟挂掉时返回空数组
+ * 排上队，落库去重、多段等齐都可能把它拦在上屏之前。整趟挂掉时返回空数组
  * （异常在这里吞掉，跟原来一样不外抛）。
  *
  * （导出仅为让 activeMsgRuntime.test.ts 走真库钉「主路径 / 降级路径落库时间戳同口径」，
@@ -2430,7 +2398,7 @@ export const catchUpMissedPushes = async (
  * 工具请求这些本来就不进聊天流的条目，减出来会把「丢了 3 条」说成「丢了 11 条」。
  *
  * `written` 数的是**真的上了屏**的条数，不是写进收件箱的条数：中间还隔着一趟冲刷，
- * 防穿帮闸、落库去重、多段等齐都会把消息拦在上屏之前。按收件箱那个数报的话，界面会
+ * 落库去重、多段等齐都会把消息拦在上屏之前。按收件箱那个数报的话，界面会
  * 说「补回 3 条，去聊天里看看」，用户翻遍聊天记录一条也找不到。
  *
  * 这条路不广播 active-msg-backfill-stale：用户正盯着这个按钮等结果，面板会把三个

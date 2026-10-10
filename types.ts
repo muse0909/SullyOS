@@ -37,6 +37,7 @@ export enum AppID {
   VRWorld = 'vrworld', // 彼方 — 角色自主登入的虚拟世界
   CoupleSpace = 'couple_space', // 情侣空间 — 用户和 AI 角色的双人小窝（基础版 3 模块：打卡 / 时间线 / 悄悄话）
   DrawGuess = 'draw_guess', // 你画我猜 — 角色联动版（cjjc 移植，B 方案视觉模型 + 角色 API 拆开调）
+  Theater = 'theater', // 短剧剧场 — 看短剧 + 边看边跟角色聊（暮色 2026-10-05，入口在聊天页 + 号）
 }
 
 export interface SystemLog {
@@ -276,6 +277,13 @@ volinkTtsBaseUrl?: string;
 volinkTtsApiKey?: string;
 volinkTtsVoice?: string;   // 全局默认声音ID（角色没配时用这个）
 volinkTtsModel?: string;
+// 麦麦 2026-09-30：语音识别。设置里那一栏之前只有一句「无需额外配置」的空话，
+//   实际上没有任何输入框也没接任何实现（界面文案写的 Groq 更是压根没有 Groq 代码）。
+//   聊天语音输入 transcribeWithVolink 读的是 config.volinkApiKey —— 一个从不存在
+//   于 APIConfig 的野字段（用 as any 绕过了类型检查），所以那个功能也一直是坏的。
+//   这里补上正式字段，聊天和打电话共用。
+siliconflowApiKey?: string;   // 硅基流动密钥（识别用，免费的）
+siliconflowSttModel?: string; // 识别模型，留空用默认的 FunAudioLLM/SenseVoiceSmall
 }
 
 export interface InstantPushConfig {
@@ -2980,8 +2988,25 @@ export interface VRApiCall {
 //   TaskRecord/ExpiredNoticeRecord/InboxMessage），不重复定义 GlobalConfig/CharacterConfig
 // ============================================================================
 
-/** 任务过期策略：到期让路 / 强制触发 */
-export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
+/**
+ * 任务触发规则（2026-10-03 暮色拍板，从两个值加到三个）。
+ *
+ * ⚠️ **这三个值跟云端那两个值语义是反的，看之前先看这段**：
+ *
+ *   客户端（这三个，用户在面板上看到的）      云端（这两个，worker 认识的）
+ *     自动取消 expire  ──原样发──▶              expire  会判那 10 分钟，判中就跳过
+ *     转入下轮 force  ──翻译成──▶              expire  会判那 10 分钟，判中就跳过
+ *     强制触发 always ──原样发──▶              force   **一次都不判**，到点必推
+ *
+ * 所以客户端的 `force`（转入下轮）发给云端会变成 `expire`，客户端的 `always`
+ * （强制触发）发给云端才是 `force`。**同名不同义，是这套设计里最容易踩的坑**。
+ * 名字保持 `force` 不改，是为了老任务存的值（localStorage / D1 里都是它）还能读；
+ * 读代码时看到 `resolveCloudExpirePolicy` 的翻译就明白为什么了。
+ *
+ * 三者只有「转入下轮」配 30 分钟兜底：它承诺"一定会说到"，所以要留后路。
+ * 另两个要么到点就发（不需要），要么本来就不发（兜什么）。
+ */
+export type ActiveMsg2ExpirePolicy = 'expire' | 'force' | 'always';
 
 /** 任务来源：用户排的 / 角色自己排的 */
 export type ActiveMsg2TaskSource = 'user' | 'character';
@@ -3005,6 +3030,17 @@ export interface ActiveMsg2TaskRecord {
   status: ActiveMsg2TaskStatus;
   createdAt: number;
   lastError?: string;
+  /**
+   * 麦麦 2026-09-30：这是「强制发送」任务 30 分钟后那条**兜底**，值是主任务的 clientTaskId。
+   *
+   * 有这个字段 = 这条是系统补的后路，不是用户/角色亲手排的：
+   *   - 面板任务列表不显示它（用户没排过，凭什么让他看见一条不认识的「重复任务」）；
+   *   - 第 5 步靠它配对：主任务真推送了 / 真顺口带出了 → 取消这条；
+   *   - 循环任务每推进一个周期，取消后按下一个周期重建。
+   *
+   * 没有这个字段的普通任务，两条规则都不适用。
+   */
+  fallbackFor?: string;
 }
 
 /** 任务"作废"回执记录：闸自动作废 / 用户手动取消 */
@@ -3015,7 +3051,19 @@ export interface Amsg2ExpiredNoticeRecord {
   mode: ActiveMsg2Mode;
   promptHint?: string;
   recurrenceType: ActiveMsg2Recurrence;
-  kind?: 'expired' | 'user-cancelled';
+  /**
+   * 这次触发到底怎么了。四种，给角色的话各不相同（见 amsg2TaskContext 的 buildNoticeSections）：
+   *
+   * - `expired`         遇忙作废：到点时对话正在进行，为避免撞车直接取消。
+   * - `deferred`        到点推迟：策略是「强制发送」，到点前 10 分钟用户刚说过话，
+   *                     所以这次不插嘴，改在角色下一轮上下文里顺口带出（麦麦 2026-09-30 新规则）。
+   * - `quota-blocked`   没排上名额满：额度用完了（今日次数 / 连发条数到上限），
+   *                     内容没能发出去。跟「作废」是两回事——不是时机不对，是没轮上。
+   * - `user-cancelled`  用户手动取消。
+   *
+   * 老记录没有这个字段，按 `expired` 读。
+   */
+  kind?: 'expired' | 'deferred' | 'quota-blocked' | 'user-cancelled';
   notifiedAt?: number;
   createdAt: number;
 }

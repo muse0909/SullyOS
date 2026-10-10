@@ -19,6 +19,10 @@
  */
 
 import type { APIConfig, ActiveMsg2CharacterConfig, CharacterProfile } from '../types';
+import { resolveChatApiTriplet } from './chatApiCompat';
+import type { MaybeProtocolApi } from './chatApiCompat';
+
+export type { MaybeProtocolApi };
 
 /** 凭据行的值：三个字段全必填，服务端只查非空、不做格式校验。 */
 export interface LlmCredentialValue {
@@ -55,14 +59,6 @@ export const supportsLlmCredentials = (features: string[] | null | undefined): b
 export const normalizeChatApiUrl = (baseUrl: string): string =>
   `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
-/** 能带协议的那一份配置（全局主 API；角色的单独 API 只有 baseUrl/apiKey/model 三个字段）。 */
-type MaybeProtocolApi = Partial<APIConfig> & {
-  geminiBaseUrl?: string;
-  geminiApiKey?: string;
-  geminiApiKeys?: string[];
-  geminiModel?: string;
-};
-
 /**
  * 把任意来源的 API 配置归一化成 2.0 要的那三件套（baseUrl / apiKey / model）。
  *
@@ -76,32 +72,18 @@ type MaybeProtocolApi = Partial<APIConfig> & {
  * `Authorization: Bearer`，打向 normalizeChatApiUrl 拼出来的终点。直接拿 geminiBaseUrl
  * 去拼会得到 `.../v1beta/chat/completions`，Google 那边没有这个路径。
  * 而 Google 官方有 OpenAI 兼容层 `.../v1beta/openai/chat/completions`——鉴权头和请求体
- * 跟 worker 发的一模一样，所以这里把 baseUrl 补上 `/openai` 就能直接通，worker 一行不用改。
- * 用户已经填了 `/openai` 的不重复补。
+ * 跟 worker 发的一模一样，所以补上 `/openai` 就能直接通，worker 一行不用改。
  *
- * 读字段的口径与 OSContext 那段本地生成（apiProtocol === 'gemini' 读 gemini* 字段）同源；
- * 密钥池的取法跟 extractGeminiKeys 一致（数组优先，回落单字符串）。
+ * 2026-09-30：这段「按协议取字段 + 补 /openai」的规则已经不止 2.0 在用了（全项目 100 多处
+ * 同样的毛病），所以搬进 utils/chatApiCompat.ts 变成全项目唯一的一份实现，这里改成调它。
+ * 别再在这里抄一份——改了这里别的地方不会跟着变。语义不变：缺任一字段照样返回 null。
  */
 export const resolveAmsgApiTriplet = (
   source: MaybeProtocolApi | null | undefined,
 ): { baseUrl: string; apiKey: string; model: string } | null => {
   if (!source) return null;
-  const anySource = source as MaybeProtocolApi & Record<string, unknown>;
-  if (source.protocol !== 'gemini') {
-    const baseUrl = source.baseUrl;
-    const apiKey = source.apiKey;
-    const model = source.model;
-    if (!baseUrl || !apiKey || !model) return null;
-    return { baseUrl, apiKey, model };
-  }
-  // Gemini 协议：主字段可能还留着上一次 OpenAI 的值，所以 gemini* 优先，缺项才回落。
-  const rawBaseUrl = anySource.geminiBaseUrl || source.baseUrl;
-  const pool = Array.isArray(anySource.geminiApiKeys) ? anySource.geminiApiKeys : [];
-  const apiKey = pool.find((k) => typeof k === 'string' && k.trim()) || anySource.geminiApiKey || source.apiKey;
-  const model = anySource.geminiModel || source.model;
-  if (!rawBaseUrl || !apiKey || !model) return null;
-  const trimmed = rawBaseUrl.replace(/\/+$/, '');
-  const baseUrl = /\/openai$/i.test(trimmed) ? trimmed : `${trimmed}/openai`;
+  const { baseUrl, apiKey, model } = resolveChatApiTriplet(source);
+  if (!baseUrl || !apiKey || !model) return null;
   return { baseUrl, apiKey, model };
 };
 

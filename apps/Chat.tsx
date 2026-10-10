@@ -4,7 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB, CoReadBook } from '../utils/db';
 // 暮色 2026-08-26 P0 3 步：角色查手机 — 权限检查 + 跳系统设置
 import { phoneUsage } from '../utils/phoneUsage';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
 import { playSongAndJoinHandled } from '../utils/chatParser';
 // 🛟 麦麦 2026-09-22：共读浮窗（暮色点 + 号里"共读"→ 选书 → 浮窗 + 自动发章节内容给江澈）
 import CoReadFloatingBookshelf from './CoReadFloatingBookshelf';
@@ -71,7 +71,7 @@ const sanitizeChatMessages = (items: any[]): Message[] => {
 };
 
 const Chat: React.FC = () => {
-       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive } = useOS();
+       const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, updateCharApiConfig, apiConfig, updateApiConfig, apiPresets, addApiPreset, removeApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, updateUserProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, consumePendingHighlightMessageId, requestHighlightMessage, highlightRequestId, requestOpenDiscoverTab, remoteVectorConfig, coReadSessionActive, setCoReadSessionActive, openApp } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
 
     // 收藏页"定位到聊天" — 收到 pending highlight messageId 时，scroll + 高亮
@@ -123,6 +123,7 @@ const Chat: React.FC = () => {
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
     const safeMessages = useMemo(() => sanitizeChatMessages(messages), [messages]);
+
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -227,6 +228,7 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+
     charRef.current = char; // Keep ref in sync for async callbacks
     // 角色独立 API 编辑态（暮色 2026-07-24）— 必须在 char 定义之后，TDZ
     const [perCharApiBaseUrl, setPerCharApiBaseUrl] = useState('');
@@ -954,7 +956,7 @@ const Chat: React.FC = () => {
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = sanitizeChatMessages(allMsgs)
-                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
@@ -969,7 +971,7 @@ const Chat: React.FC = () => {
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
                 const chatScopeMsgs = sanitizeChatMessages(retryMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -1040,7 +1042,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
                 const filtered = sanitizeChatMessages(allMsgs)
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
             });
@@ -1363,15 +1365,13 @@ const Chat: React.FC = () => {
             console.warn('[Chat] cancelDynamicScheduleOnWorker 失败:', e);
         });
 
-        // 麦麦 2026-09-24：暮色 9-24 拍板 — 用户发消息取消该角色的 2.0 character wakeup
-        //   老 cancelDynamicScheduleOnWorker 只走 1.x /cancel-dynamic-schedule（暮色已确认
-        //   1.0 老路径不动），但 schedule_next_wakeup 9-17 之后走的是 2.0 amsg 通道，老接口
-        //   碰不到。本接口走 2.0 cancelTask（删 D1 行 + 标 cancelled），跟面板取消同一条路径。
-        //   范围：source='character' + 未触发。手动排的（source='manual'）不动。
-        //   fire-and-forget — 同 1.x 那条，不阻塞消息保存 / triggerAI；失败静默。
-        void ActiveMsgClient.cancelCharacterWakeups(char).catch((e) => {
-            console.warn('[Chat] ActiveMsgClient.cancelCharacterWakeups 失败:', e);
-        });
+        // 麦麦 2026-10-01 step 9：这里原来会调 ActiveMsgClient.cancelCharacterWakeups
+        //   （用户发消息 → 取消该角色所有未触发的角色自排任务），已删。
+        //   删除理由：新规矩把判断收在「到点那一刻」——用户什么时候说话不该影响已经
+        //   排好的事。更要命的是它连「强制发送」的任务一起删了：那条的定义就是到点
+        //   一定送达，被用户随手一条消息吞掉，兜底也就跟着失去意义。
+        //   角色自己改口的能力收进了 schedule_next_wakeup 的入口闸
+        //   （isReplaceableCharacterWakeup：只顶掉 自排 + 一次性 + 遇忙作废）。
 
         // 麦麦 2026-09-06：用户说"晚安"短句 → 触发该角色今晚的日记
         //   暮色原话："这个时间改成说晚安后吧，现在设置的是 10 点有点太早了"
@@ -1592,6 +1592,12 @@ const Chat: React.FC = () => {
                 // 🛟 麦麦 2026-09-22：暮色点 + 号里「共读」→ 打开迷你书架选择器
                 setShowPanel('none');
                 setShowCoReadPicker(true);
+                break;
+            case 'theater':
+                // 麦麦 2026-10-05：短剧剧场。暮色定的位置在转账和戳一戳之间。
+                // 从谁的聊天页进去，剧场就用谁的人设和记忆。
+                setShowPanel('none');
+                openApp(AppID.Theater);
                 break;
             case 'html-mode-settings': {
                 // 长按 → 跳进聊天设置抽屉的 HTML 模块板块 (顺便确保开关已打开, 不然滚下去看不见 textarea)
@@ -2433,6 +2439,11 @@ if (keepN > 0) {
         console.warn('DB 更新失败，仅更新内存:', e);
     }
     setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+    // ⚠️⚠️ 这里原来还有一行 `setTheaterMsgs(...)`，10-08 撤剧场记录块时**状态一起删了**，
+    // 这一行漏掉了 —— 它一执行就抛「setTheaterMsgs is not a function」，
+    // 于是下面两行（关弹窗 + 弹 toast）**根本没轮到执行**。
+    // 现象正是暮色 22:03 报的：「保存按钮没反馈，一直都是灰的，但是能保存」
+    // —— 内容改了（上面那行已经跑完）、弹窗不关、也没有提示。
     setModalType('none');
     setSelectedMessage(null);
     addToast('消息已修改', 'success');
@@ -2760,14 +2771,20 @@ if (keepN > 0) {
 
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
+    //
+    // ⚠️ theater（剧场）跟 date/ccall 一样**只过滤视觉层，不动 prompt**。
+    // 剧场里聊的照样进 historySlice 发给 LLM（chatPrompts.ts 打 `[剧场 剧名第N集]`），
+    // 所以他记得看剧时说过什么，但聊天界面上不刷屏（暮色 23:54 定的）。
     const displayMessages = useMemo(() => sanitizeChatMessages(messages)
-        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
         [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+
+
 
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
@@ -3327,48 +3344,68 @@ if (keepN > 0) {
                     </div>
                 )}
 
+
                 {displayMessages.map((m, i) => {
                     // 防御：sanitizeChatMessages 应已过滤 null，但渲染时再兜一道。
                     // 之前 m.role 在 MessageItem 里没守卫，遇到 null 直接白屏。
                     if (!m) return null;
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    // 暮色 2026-08-02 21:48：calcBreaks 改成"每轮一个 group"逻辑
-                    //   暮色原话："每轮一个时间戳，不管几个气泡一个头像一个时间戳"
-                    //   暮色反馈之前 7-23/7-27 改的方向不对——盯在 30 分钟 group 上，
-                    //   实际要的是 role 切换 = 轮边界（不是 30 分钟）
+                    // 暮色 2026-09-29：一轮 = 一个头像 + 一个时间戳。
+                    //   7-23 到 8-07 那几次改动都是在这条错的地基上贴膏药，这轮把地基换掉。
                     //
-                    //   新规则：
-                    //   - 主动消息 vs 正常消息：永远独立 group（保持 7-27 v2，不让主动消息并入正常聊天）
-                    //   - 主动消息内部：cur 是新轮首（proactiveRoundStart=true）→ 自己开始新 group
-                    //     否则同 group（接续上一轮）。老数据没 proactiveRoundStart 标记 → fallback 同 group
-                    //     （老数据 4 个气泡会变成 1 头像 + 1 时间戳，暮色要的"按轮"行为）
-                    //   - 普通 user/AI 对话：role 切换 = 轮边界
-                    //     user 1 + AI 1 = 2 轮（各 1 个时间戳）
-                    //     user 5 + AI 1 = 2 轮
-                    //     5 轮 user/AI 交替 = 10 个时间戳（没合并）
-                    //     30 分钟规则：同 role 内超过 30 分钟也算轮边界（避免"聊一整晚"合并成 1 轮）
-                    const USER_CHAT_GAP_MS = 30 * 60 * 1000;
+                    //   轮边界只有三条：
+                    //   1. 角色切换 —— 我说一句、江澈说一句，各算一轮
+                    //   2. 戳一戳打断 —— 它居中自己渲染，前后断开
+                    //   3. 主动消息换了「一次对话」—— 2.0 一次对话 = 一个 sessionId
+                    //
+                    //   这几次删掉的：
+                    //   - 30 分钟规则：2026-03-21 上游 e3330cb3 加的（"split message groups by time"），
+                    //     照搬微信"隔很久说话算新一段"的习惯。它切的是时间不是轮，导致主动消息
+                    //     时灵时不灵——够 30 分钟就断开显示，不够就并进上一条，看着像没发过。
+                    //   - isProactive / proactiveRoundStart 两套标记当分组判据（8-02、8-07 的补丁）：
+                    //     靠"第一条打标记后面不打"这种约定，而约定是会漏的 —— 2.0 压根没写这两个
+                    //     标记（activeMsgRuntime 只写 source + activeMsg2），主动消息就一直走
+                    //     30 分钟兜底。
+                    //
+                    //   注 1：isProactive 字段本身仍保留 —— utils/proactiveCount.ts 靠它统计
+                    //        每天主动消息条数上限，那是业务闸门不是显示逻辑。
+                    // 一次主动对话的标识 —— 用来把这一轮切开成 N 轮。
+                    //
+                    //   ⚠️ 这里必须用 sessionId，不能用 messageId（2026-09-30 暮色实测踩出来的）：
+                    //   2.0 是把「一次对话」切成 totalMessages 条 push 下发的，每条一个
+                    //   messageIndex / messageId，**而且文字和每个 [[SEND_EMOJI]] 各占一条**
+                    //   （worker/instant-push 侧这么切的，applyAssistantPostProcessing.ts:740 的
+                    //   注释也记着这件事）。这些 push 共享同一个 sessionId。
+                    //   所以 messageId 的粒度是「一个气泡」，拿它分轮 = 一轮切成 N 轮 =
+                    //   每个气泡都带头像。sessionId 的粒度才是「一次对话」。
+                    //   旁证：activeMsgRuntime 的等齐守卫 holdUntilEarlierChunksLand 和
+                    //   findPersistedChunkIndexes 都是按 (sessionId, messageIndex) 认"同一次对话"的。
+                    //
+                    //   兜底 taskId：万一某个老路径没带 sessionId，同一次唤醒任务至少算一轮。
+                    //   （2.0 现在每条 push 都带 sessionId，这条几乎不会触发。）
+                    const roundIdOf = (msg: typeof m): string | undefined => {
+                        const meta: any = msg.metadata || {};
+                        const a2 = meta.activeMsg2 || {};
+                        return meta.sessionId || a2.sessionId || a2.taskId || undefined;
+                    };
                     const calcBreaks = (cur: typeof m, neighbor: typeof m | null): boolean => {
                         if (!neighbor) return true;
                         if (!cur) return true;  // 兜底：cur 也不该是 null，但 calcBreaks 多次互相调用时防御
-                        if (neighbor.role !== cur.role) return true;  // role 切换 = 轮边界
-                        // 暮色 2026-08-07：type 不同也算 break
-                        //   戳一戳（type='interaction'）消息跟普通 text 消息 role 相同但语义不同
-                        //   不并入 group → 下一条 AI 回复的 isFirstInGroup=true → 带头像
-                        if (neighbor.type !== cur.type) return true;
-                        const curProactive = !!cur.metadata?.isProactive;
-                        const neighborProactive = !!neighbor.metadata?.isProactive;
-                        // 主动消息 vs 正常消息：永远独立 group
-                        if (curProactive !== neighborProactive) return true;
-                        // 主动消息内部：cur 是新轮首 → 自己开始新 group；否则同 group
-                        if (curProactive && neighborProactive) {
-                            if (cur.metadata?.proactiveRoundStart === true) return true;
-                            return false;
-                        }
-                        // 普通 user/AI 对话：30 分钟规则（避免长时间对话合并成 1 轮）
-                        const gap = Math.abs(cur.timestamp - neighbor.timestamp);
-                        return gap > USER_CHAT_GAP_MS;
+                        if (neighbor.role !== cur.role) return true;  // 1. 角色切换 = 轮边界
+                        // 2. 戳一戳打断：它走自己的渲染分支（MessageItem.tsx:803），居中全宽、不带头像，
+                        //    被并进相邻轮次的话那一轮会莫名多出半截内容。
+                        //    （原先这里是"type 不同就断开"，本意也是为了解决戳一戳，但打错了目标 ——
+                        //     戳一戳压根不经过带头像那段代码。代价是表情包↔文字混发被拆成碎轮，
+                        //     一次回复 4 个气泡顶 4 个头像 4 个时间戳。）
+                        if (cur.type === 'interaction' || neighbor.type === 'interaction') return true;
+                        // 3. 主动消息：一次对话（sessionId）= 一轮。任一侧带轮标识就说明这头
+                        //    掺了主动消息；标识相同 = 同一次对话的几条 push = 同一轮，
+                        //    不同（含一侧为空）= 换了新一轮。
+                        const curRound = roundIdOf(cur);
+                        const neighborRound = roundIdOf(neighbor);
+                        if (curRound || neighborRound) return curRound !== neighborRound;
+                        return false;
                     };
                     const breaksWithPrevious = calcBreaks(m, prevMessage);
                     const breaksWithNext = calcBreaks(nextMessage, m);
@@ -3535,6 +3572,7 @@ if (keepN > 0) {
                     userProfile={userProfile}
                     groups={groups}
                     realtimeConfig={realtimeConfig}
+                    messages={safeMessages}
                     onSave={(updater) => updateCharacter(char.id, { activeMsg2Config: updater(char.activeMsg2Config) })}
                     addToast={addToast}
                 />

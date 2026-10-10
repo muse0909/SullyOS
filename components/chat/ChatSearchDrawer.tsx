@@ -65,7 +65,7 @@ const ChatSearchDrawer: React.FC<ChatSearchDrawerProps> = ({
         DB.getMessagesByCharId(activeCharacter.id, true).then((msgs) => {
             if (cancelled) return;
             // 跟 Chat.tsx 一样的过滤：date/call 来源不进聊天主界面
-            const filtered = msgs.filter(isValidSearchMessage).filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call');
+            const filtered = msgs.filter(isValidSearchMessage).filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'theater');
             setAllMessages(filtered);
             setLoading(false);
             setTimeout(() => inputRef.current?.focus(), 80);

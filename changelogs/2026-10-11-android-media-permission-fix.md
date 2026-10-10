@@ -1,7 +1,7 @@
 # 保存图片报「Missing the following permissions」— 换掉 Media 插件改走 MediaStore
 
 **日期**：2026-10-11
-**涉及 commit**：`3378d179`
+**涉及 commit**：`66856cd8`
 
 ## 改了什么
 

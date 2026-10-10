@@ -83,7 +83,21 @@ async function defaultTrigger(charId: string) {
     console.log(`[ProactiveDiary] ${char.name} wrote a diary for ${entry.date}`);
   } catch (e: any) {
     // "今天已经写过" / API 错误：静默，只打日志
-    console.log(`[ProactiveDiary] Skipped: ${e?.message || e}`);
+    const msg = String(e?.message || e);
+    console.log(`[ProactiveDiary] Skipped: ${msg}`);
+    /**
+     * ⚠️ **模型没写出正文时要说一声**（暮色 10-10 08:59）
+     *
+     * 旧行为：静默跳过，用户只看到「啥也没发生」。江澈连着好几天日记空白，
+     * 界面上一个标记都没有 —— 只能靠翻聊天记录才发现。
+     *
+     * 「今天已经写过」是正常业务，不提示（那是去重，不是失败）。
+     * 其他错误（模型没写出 / API 挂了 / 网络断）一律提示失败，
+     * 否则用户永远不知道「今天根本没写出来」。
+     */
+    if (msg.includes('今天已经写过')) return;
+    addToast?.(`${char.name} 这篇日记没写出来`, 'error');
+    console.error(`[ProactiveDiary] ${char.name} 写日记失败:`, e);
   }
 }
 

@@ -34,10 +34,12 @@ import { useMusic, toHttps, musicApi } from '../context/MusicContext';
 import { pickGeminiKey, reportGeminiFailure, reportGeminiSuccess, extractGeminiKeys, shortKey } from '../utils/geminiKeyPool';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories, incrementExtractRound } from '../utils/memoryPalace/pipeline';
 
-import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
+import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle, mergeSelfInsights } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn, isEmotionOn } from '../utils/scheduleGenerator';
+// 麦麦 2026-10-04：纯聊天模式的 prompt cache 断点（off / 5m / 1h）
+import { getChatCacheTtl, buildCacheControl } from '../utils/chatCacheTtl';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -1340,6 +1342,17 @@ let _tempImageCleanupKeys: string[] = [];
             const useGeminiProtocol = apiProtocol === 'gemini';
             // 任务 2：删 Claude 协议分支（system 转 user、claudeSystemField 构造、history 协议分支）
             //   OpenAI 协议：system 在 messages[0].role = 'system'
+            //
+            // 麦麦 2026-10-04：纯聊天模式挂 prompt cache 断点（1 个，挂在 system 消息上）。
+            //   为什么只给纯聊天：纯聊天的 system 段全是静态文本（身份/性格/内在认知/世界观/
+            //   世界书/用户画像/记忆月度），逐字不变 → 每轮命中同一段前缀。
+            //   完整模式的 system 段带日程时段和最近心声时间戳，每轮都变 → 挂了也是白付写入费。
+            //   暮色 2026-10-04 拍板"现在只给纯聊天开就行"。
+            //   判据写 char.chatMode 而不是 isPureChat：后者在 1738 行才声明，在这儿引用会 TDZ。
+            //   ttl 取值 off | 5m | 1h，默认 5m；off 时字段整个不挂，请求体跟以前一模一样。
+            const pureChatCacheControl = char.chatMode === 'pure'
+                ? buildCacheControl(getChatCacheTtl())
+                : null;
             const fullMessages: any[] = [
                 {
                     role: 'system',
@@ -1352,6 +1365,8 @@ let _tempImageCleanupKeys: string[] = [];
                               `如果用户明确要求使用这些工具，先告知用户你想调用哪个工具（说明工具名 + 需要的参数），用户确认后再调用。\n` +
                               `不要猜测这些工具的参数格式，向用户询问需要的参数。`
                             : ''),
+                    // 纯聊天 + 缓存开启时才有这个键；其它情况一律不带（不能留 null，newapi 可能报错）
+                    ...(pureChatCacheControl ? { cache_control: pureChatCacheControl } : {}),
                 },
                 ...cleanedApiMessages
             ];
@@ -1929,6 +1944,14 @@ if (hasImageInLatest && !alreadyDescribed) {
                     toolCount: toolsList.length,
                     hasCacheControl: cacheControlFieldCount > 0,
                     cacheControlCount: cacheControlFieldCount,
+                    // 麦麦 2026-10-04：暮色实测缓存用。
+                    //   cacheTtlRequested = 设置里选的档（'off' | '5m' | '1h'）
+                    //   cacheApplied = 这次请求体里实际挂上的值（'off' | '5m' | '1h'，非纯聊天一律 'off'）
+                    //   两个都看 'off' 之外的值 → 说明标记确实发出去了；
+                    //   之后看中转站日志的「缓存读取」是不是非零 → 判断有没有真命中。
+                    //   2026-07-18 那次踩过：以为发出去了，实际被 newapi 丢了，读取恒为 0。
+                    cacheTtlRequested: getChatCacheTtl(),
+                    cacheApplied: pureChatCacheControl ? pureChatCacheControl.ttl : 'off',
                     promptChars: {
                         bp1Tools: bp1Tools.length,
                         bp2Rules: bp2Rules.length,
@@ -5629,9 +5652,10 @@ if (!mcdMiniOpen && getToolCalls(data).length) {
                             const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name, mpEmb);
                             if (result) {
                                 // 持久化自我领悟词条到角色档案
+                                // 麦麦 2026-10-04：改走 mergeSelfInsights（去重 + 上限 10 条 FIFO），
+                                // 跟手动触发那条路径共用同一套规则，不然两条路会长出不同的词条表。
                                 if (result.selfInsights.length > 0) {
-                                    const existing = char.selfInsights || [];
-                                    const updatedInsights = [...existing, ...result.selfInsights];
+                                    const updatedInsights = mergeSelfInsights(char.selfInsights, result.selfInsights);
                                     await DB.saveCharacter({ ...char, selfInsights: updatedInsights });
                                 }
                                 const total = result.resolved.length + result.deepened.length + result.faded.length +

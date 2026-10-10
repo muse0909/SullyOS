@@ -50,7 +50,10 @@ export {
 } from './anticipation';
 
 // 认知消化
-export { runCognitiveDigestion, incrementDigestRound, getDigestRoundCount, detectPersonalityStyle } from './digestion';
+export {
+    runCognitiveDigestion, incrementDigestRound, getDigestRoundCount, detectPersonalityStyle,
+    mergeSelfInsights, SELF_INSIGHTS_LIMIT,
+} from './digestion';
 export type { DigestResult } from './digestion';
 
 // 迁移

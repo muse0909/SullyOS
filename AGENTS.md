@@ -305,6 +305,8 @@ footer：`shrink-0` + `px-6 pb-6 flex gap-3`（无 footer 时显示默认"关闭
 
 | 日期 | 标题 | 报告文件 |
 |---|---|---|
+| 2026-10-04 | 纯聊天缓存时长开关（5m/1h/关闭，默认 5m，只纯聊天生效）+ 日志加 cacheApplied 字段方便实测 | [`changelogs/2026-10-04-pure-chat-cache-ttl.md`](./changelogs/2026-10-04-pure-chat-cache-ttl.md) |
+| 2026-10-04 | 认知消化开关连注入一起管（原来只管生成，旧词条照样每轮进请求体）+ 自我领悟列表可看可改可删 + 上限 10 条 FIFO | [`changelogs/2026-10-04-digestion-switch-and-self-insights-list.md`](./changelogs/2026-10-04-digestion-switch-and-self-insights-list.md) |
 | 2026-09-30 | 主动消息分轮改用 sessionId — 修「每个气泡都带头像」（messageId 粒度是一个气泡，不是一轮） | [`changelogs/2026-09-30-chat-round-session-id.md`](./changelogs/2026-09-30-chat-round-session-id.md) |
 | 2026-09-30 | 语音真正存下来 — 通话记录能回听 + 语音收藏自己存一份（顺便发现收藏云端那条路一直是死的） | [`changelogs/2026-09-30-voice-playback-and-favorites.md`](./changelogs/2026-09-30-voice-playback-and-favorites.md) |
 | 2026-09-30 | Gemini 直连 baseUrl 全量归一化 — 100 多处调 API 的地方一次接上（新增 `utils/chatApiCompat.ts` 唯一出处） | [`changelogs/2026-09-30-gemini-baseurl-normalize.md`](./changelogs/2026-09-30-gemini-baseurl-normalize.md) |
